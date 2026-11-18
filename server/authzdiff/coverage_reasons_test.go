@@ -44,7 +44,7 @@ var reasonRules = []struct{ match, reason string }{
 	{" /api/v1/end-impersonation", "fixture: needs an impersonation session (deferred to the not-yet list)"},
 	{" /api/v1/admin/impersonate", "fixture: needs an impersonation session (deferred to the not-yet list)"},
 	{" /system/init", "design: one-time bootstrap of an uninitialised install; the template is already initialised"},
-	{" /scim/v2/", "fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)"},
+	{" /scim/v2/", "design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)"},
 	{"DynamicSecretService.", "fixture: needs a dynamic-secret backend (database/cloud) configured"},
 	{" /api/v1/dynamic-secrets/", "fixture: needs a dynamic-secret backend (database/cloud) configured"},
 	{"ConnectService.", "fixture: needs a Keyorix Connect connector configured"},
@@ -103,7 +103,7 @@ var uncoveredReasons = map[string]string{
 	"REST PUT /api/v1/secrets/{id}/tags":                                         "design: metadata edit outside the initially bound secret set; not bound",
 	"REST POST /api/v1/projects/{id}/secrets/bulk-delete":                        "design: bulk secret operation outside the initially bound secret set; not bound",
 	"REST POST /api/v1/projects/{id}/secrets/bulk-rename":                        "design: bulk secret operation outside the initially bound secret set; not bound",
-	"REST POST /api/v1/projects/{id}/secrets/bulk-rotate":                        "design: bulk secret operation outside the initially bound secret set; not bound",
+
 	"REST POST /api/v1/projects/{id}/secrets/extend-expiring":                    "fixture: needs expiring secrets",
 	"REST POST /api/v1/projects/{id}/secrets/render":                             "fixture: needs a template referencing secrets",
 	"REST POST /api/v1/projects/{id}/secrets/resume-all":                         "design: bulk secret operation outside the initially bound secret set; not bound",
