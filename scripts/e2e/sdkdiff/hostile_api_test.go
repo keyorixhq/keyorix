@@ -4,8 +4,10 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The 1, 16 and 64 MiB strings of U18-U20 are built on first use, not at package init.
@@ -31,6 +33,30 @@ func TestReadLineMax(t *testing.T) {
 	l, over, err = readLineMax(r, 1024)
 	if err != nil || over || l != `{"ok":true}`+"\n" {
 		t.Fatalf("next line: %q %v %v", l, over, err)
+	}
+}
+
+// The last answer of a driver that exits right after printing it must still be readable once the process has
+// been waited for. exec.Cmd.Wait closes a StdoutPipe as soon as the process has exited, so a reader that had not
+// yet picked the answer up (a loaded runner) got "file already closed" and the call was recorded as "died" with
+// exit status nil (#4390). Here the read is made late on purpose: it starts only after Wait has returned, which
+// is the worst case of that race and no longer depends on scheduling.
+func TestHDriverAnswerSurvivesTheDriverExiting(t *testing.T) {
+	d := shDriver(t, `read l; echo '{"ok":true}'`)
+	if err := d.start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(d.in, "x\n"); err != nil {
+		t.Fatal(err)
+	}
+	for stop := time.Now().Add(20 * time.Second); len(d.waitCh) == 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(stop) {
+			t.Fatal("the driver did not exit")
+		}
+	}
+	line, over, err := readLineMax(d.out, 1024)
+	if err != nil || over || line != `{"ok":true}`+"\n" {
+		t.Fatalf("answer printed before the exit: %q over=%v err=%v", line, over, err)
 	}
 }
 
