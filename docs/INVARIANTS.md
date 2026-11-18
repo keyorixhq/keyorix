@@ -66,6 +66,8 @@ excluded from the counts table, which tracks production packages only.
 | `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 7 | 7 | 0 |
 | `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 4 | 4 | 0 |
 | `fuzz/thirdparty/otp` | [fuzz/thirdparty/otp/INVARIANTS.md](../fuzz/thirdparty/otp/INVARIANTS.md) | 5 | 5 | 0 |
+| `fuzz/thirdparty/compress` | [fuzz/thirdparty/compress/INVARIANTS.md](../fuzz/thirdparty/compress/INVARIANTS.md) | 2 | 2 | 0 |
+| `fuzz/thirdparty/uuid` | [fuzz/thirdparty/uuid/INVARIANTS.md](../fuzz/thirdparty/uuid/INVARIANTS.md) | 2 | 2 | 0 |
 | `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |
 
 ## Highest-priority UNGUARDED gaps
