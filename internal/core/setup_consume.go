@@ -516,10 +516,27 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		return err
 	})
 	if uerr != nil {
-		// The grants are live but the invitation still reads pending: undo them and
-		// the account, like a failed grant, so a resend starts clean. If the write
-		// actually committed (ambiguous error), the row reads accepted with no grants
-		// and no account: fail-closed, but the "still pending" message is then wrong.
+		// An error does not say the write did not commit (#4409 shape 3): undoing an
+		// accept that landed left the invitation accepted with no account and no
+		// grant, which the inviter cannot resend. Read it back, as userCreateLanded
+		// does for the account.
+		switch landed, state, rerr := c.invitationAcceptLanded(ctx, inv.ID); {
+		case landed:
+			// Committed: the accept stands, with its account and grants.
+			log.Printf("invitation %d: marking it accepted reported %v but it reads accepted; the accept committed", inv.ID, uerr)
+			ok, uerr = true, nil
+		case rerr == nil && state != InvitationPending:
+			// Not ours: a concurrent revoke or expiry won. The race path below.
+			ok, uerr = false, nil
+		case rerr != nil:
+			uerr = fmt.Errorf("%w (and reading the invitation back failed too: %v)", uerr, rerr)
+		}
+	}
+	if uerr != nil {
+		// The write did not land (or could not be read back): the grants are live
+		// but the invitation reads pending. Undo them and the account, like a failed
+		// grant, so a resend starts clean. Fail closed when the read-back failed: no
+		// live account is left behind an invitation nobody marked accepted.
 		inv.State, inv.AcceptedAt = InvitationPending, nil
 		return nil, c.abandonInvitationAccept(ctx, inv, user, invitationAcceptStepAccept, uerr)
 	}
@@ -584,6 +601,28 @@ func runInvitationAcceptStep(step string, fn func() error) (err error) {
 		}
 	}()
 	return fn()
+}
+
+// invitationAcceptLanded reads the invitation back after marking it accepted
+// reported an error, and reports whether that write committed (it reads
+// accepted: this accept spent the only live link, so nobody else accepted it) and
+// the state it reads. A failed or panicking read is rerr, never "landed".
+func (c *KeyorixCore) invitationAcceptLanded(ctx context.Context, invitationID uint) (landed bool, state string, rerr error) {
+	rerr = runInvitationAcceptStep("reading the invitation back", func() error {
+		got, err := c.storage.GetProjectInvitation(ctx, invitationID)
+		if err != nil {
+			return err
+		}
+		if got == nil {
+			return fmt.Errorf("invitation %d read back as nothing", invitationID)
+		}
+		state = got.State
+		return nil
+	})
+	if rerr != nil {
+		return false, "", rerr
+	}
+	return state == InvitationAccepted, state, nil
 }
 
 // revertInvitationAcceptGrants is revokeInvitationGrants for the undo paths of
