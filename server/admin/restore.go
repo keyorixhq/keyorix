@@ -677,7 +677,7 @@ func unusedArchivedSaltIndex(cfg *config.Config, n int, originalPath func(int) s
 	for i := range n {
 		if originalPath(i) == salt {
 			fmt.Fprintf(os.Stderr, "restore: not installing the archived KEK salt %s: storage.encryption.salt_path names it, "+
-				"but no configured key provider reads a salt (#4395); remove salt_path from the config\n", salt)
+				"but no configured key provider reads a salt; remove salt_path from the config\n", salt)
 			return i
 		}
 	}
