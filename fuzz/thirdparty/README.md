@@ -48,6 +48,19 @@ env GOCACHE=... GOMODCACHE=... GOFLAGS= GOMAXPROCS=2 \
 Seed corpora (valid exchanges + known-bad shapes) are added via `f.Add` in
 `seed_test.go`; discovered crashers live under `<pkg>/testdata/fuzz/<Target>/`.
 
+## Database drivers (h6)
+
+`pgx/` and `mysql/` attack the two DB client libraries the dynamic-secrets
+engine dials against an **operator-configured target** database
+(`internal/dynamic/{postgres,mysql}.go`, `internal/rotation/{postgres,mysql}.go`):
+`jackc/pgx/v5` (COPY, notice-flood, TLS-negotiation coverage) and
+`go-sql-driver/mysql` v1.10.1 (handshake/auth, query, prepared-statement and
+LOCAL INFILE oracles). Same threat model as above (attacker-controlled target
+server, real client, loopback listener, no Keyorix wrapper in the loop) but
+each package states its own oracles in its file header rather than the four
+HTTP-SDK classes above, since these are different wire protocols. See
+`pgx/hostile_pgx_test.go` and `mysql/hostile_mysql_test.go`.
+
 ## Findings
 
 See `/mnt/data/wave4/out/h3-REPORT.md`. Summary: **AZURE-1** — a library panic
