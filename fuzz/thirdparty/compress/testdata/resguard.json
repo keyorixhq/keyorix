@@ -1,0 +1,18 @@
+{
+  "target": "mongo_decompress_payload",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 36,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 4386240,
+      "per_byte": 1.73150634765625,
+      "abs_max": 17544960
+    },
+    "mallocs": {
+      "floor": 306,
+      "per_byte": 0.0001220703125,
+      "abs_max": 1224
+    }
+  }
+}
