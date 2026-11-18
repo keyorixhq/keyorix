@@ -1,0 +1,17 @@
+=== RUN   TestRVF1_UpdateRole_FailOpen_PermReplace
+
+2026/11/16 22:41:54 [31;1m/mnt/data/wave4/rvf1/.claude/worktrees/t4fix/internal/storage/store/local_audit_chain.go:233 [35;1mSQL logic error: no such table: audit_events (1)
+[0m[33m[0.273ms] [34;1m[rows:-][0m SELECT `entry_hash` FROM `audit_events` ORDER BY id DESC LIMIT 1
+2026/11/16 22:41:54 SECURITY: failed to persist audit event "role.updated" (success=0x33eea05916c8): SQL logic error: no such table: audit_events (1)
+
+2026/11/16 22:41:54 [31;1m/mnt/data/wave4/rvf1/.claude/worktrees/t4fix/internal/storage/store/local_audit_chain.go:233 [35;1mSQL logic error: no such table: audit_events (1)
+[0m[33m[0.022ms] [34;1m[rows:-][0m SELECT `entry_hash` FROM `audit_events` ORDER BY id DESC LIMIT 1
+2026/11/16 22:41:54 SECURITY: failed to persist audit event "permission.removed" (success=0x33eea062e270): SQL logic error: no such table: audit_events (1)
+
+2026/11/16 22:41:54 [31;1m/mnt/data/wave4/rvf1/.claude/worktrees/t4fix/internal/storage/store/local_audit_chain.go:233 [35;1mSQL logic error: no such table: audit_events (1)
+[0m[33m[0.022ms] [34;1m[rows:-][0m SELECT `entry_hash` FROM `audit_events` ORDER BY id DESC LIMIT 1
+2026/11/16 22:41:54 SECURITY: failed to persist audit event "permission.assigned" (success=0x33eea062e338): SQL logic error: no such table: audit_events (1)
+    rbac_updaterole_failopen_rvf1_test.go:116: RVF1 observed: http_status=200 persisted_perms=[secrets.write]
+--- PASS: TestRVF1_UpdateRole_FailOpen_PermReplace (0.01s)
+PASS
+ok  	github.com/keyorixhq/keyorix/server/http/handlers	0.365s
