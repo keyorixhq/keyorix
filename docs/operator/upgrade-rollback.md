@@ -19,6 +19,38 @@ was done on 0.96.1 before the upgrade, so each run also had an audit history wit
 verified chain. Every check below passed unless it says otherwise. v0.96.2 has a tag
 but its images were never published: go from 0.96.1 to 0.96.3 directly.
 
+## Verifying a release candidate
+
+Run from a checkout of the RC tag (`git checkout "$RC"`), where `RC` is the tag, for example
+`v0.97.0-rc.1`. `OLD` is the release you upgrade from. `P` is `linux_amd64`, `linux_arm64`,
+`darwin_arm64` or `darwin_amd64`.
+
+```sh
+RC=<rc-tag>; OLD=v0.96.3; P=linux_amd64
+# 1. Signed artifacts: GitHub Release, 6 images, 3 charts, SLSA provenance, CI runs.
+#    Needs cosign >= 3 and network access to github.com and ghcr.io. Exit 0 = every check passed.
+scripts/release/verify-release.sh "$RC"
+#    The install docs and compose files pin the FINAL version, not the RC tag: check against that.
+scripts/release/check-docs-version.sh "${RC%%-*}"
+# 2. The old release's binary, checked against its own checksums.txt before it is run.
+mkdir -p .scratch/old && cd .scratch/old
+B=https://github.com/keyorixhq/keyorix/releases/download/$OLD
+curl -fsSLO "$B/checksums.txt" -O "$B/keyorix-server_$P"
+grep " keyorix-server_$P\$" checksums.txt > one.sum && sha256sum -c one.sum   # macOS: shasum -a 256 -c one.sum
+chmod +x "keyorix-server_$P"; cd ../..
+# 3. Upgrade, then roll back by restoring the pre-upgrade backup into the old binary.
+#    The new binary is built from the checkout; set DRILL_SERVER_BIN and DRILL_CLI_BIN to test
+#    the RC's own release binaries instead. PostgreSQL needs an EMPTY database in DRILL_PG_DSN_FILE.
+export DRILL_OLD_SERVER_BIN="$PWD/.scratch/old/keyorix-server_$P"
+scripts/drills/upgrade.sh
+DRILL_BACKEND=postgres DRILL_PG_DSN_FILE=/path/to/dsn.txt scripts/drills/upgrade.sh
+```
+
+Each drill ends with `elapsed: Ns (backend: ...)` and `UPGRADE DRILL PASSED`; anything else is
+a failed check. Step 1 without cosign or without `ghcr.io` ends `INCOMPLETE` (exit 2), which is
+not a pass. The container and Kubernetes legs of the upgrade (§2 to §4 with Compose or Helm) are
+not covered by these scripts.
+
 ## 1. Which binary can run on which database
 
 | Release | Schema epoch | Floor it records | Runs on a database last migrated by |

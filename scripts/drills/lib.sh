@@ -89,6 +89,7 @@ drill_begin() {
     esac
     command -v curl >/dev/null || fail "curl is required"
     command -v jq >/dev/null || fail "jq is required"
+    DRILL_T0=$SECONDS
     mkdir -p "$DRILL_ROOT"
     DRILL_DIR="$(mktemp -d "$DRILL_ROOT/$name.XXXXXX")"
     trap drill_cleanup EXIT
@@ -123,7 +124,25 @@ drill_begin() {
 drill_end() {
     DRILL_FAILED=0
     echo ""
+    echo "    elapsed: $((SECONDS - ${DRILL_T0:-$SECONDS}))s (backend: $DRILL_BACKEND)"
     echo "$1 PASSED"
+}
+
+# pg_empty_schema <dsn-file>: DROP and recreate schema public in the database of the DSN, behind the
+# server's back (the documented step before restoring with a v0.96.x binary, which does not empty a
+# PostgreSQL database itself: docs/operator/upgrade-rollback.md 4B). psql when installed, else the
+# go-run stand-in tools/pgsql.go (the sandboxed sessions have no psql client).
+pg_empty_schema() {
+    pg_parse "$1"
+    local url="postgres://$PG_USER@$PG_HOST:$PG_PORT/$PG_DB?sslmode=disable"
+    local sql='DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+    if command -v psql >/dev/null; then
+        PGPASSWORD="$PG_PASS" psql "$url" -v ON_ERROR_STOP=1 -q -c "$sql" >/dev/null || fail "cannot empty the public schema of $PG_DB"
+    else
+        [ -x "$DRILL_DIR/bin/pgsql" ] || (cd "$DRILL_REPO_ROOT/scripts/drills/tools" && go build -o "$DRILL_DIR/bin/pgsql" pgsql.go) \
+            || fail "cannot build the tools/pgsql.go stand-in"
+        PGPASSWORD="$PG_PASS" "$DRILL_DIR/bin/pgsql" exec "$url" "$sql" || fail "cannot empty the public schema of $PG_DB"
+    fi
 }
 
 # ---------------------------------------------------------------------------

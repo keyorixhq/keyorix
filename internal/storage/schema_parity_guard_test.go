@@ -171,7 +171,7 @@ func spReadSQLite(db *sql.DB) (*spShape, error) {
 		switch o.typ {
 		case "table":
 			s.tables[o.name] = ""
-			cols, err := db.Query(fmt.Sprintf("PRAGMA table_info(%q)", o.name))
+			cols, err := db.Query(fmt.Sprintf("PRAGMA table_info(%q)", o.name)) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- name read from sqlite_master of a scratch test DB
 			if err != nil {
 				return nil, err
 			}
@@ -197,7 +197,7 @@ func spReadSQLite(db *sql.DB) (*spShape, error) {
 		if o.typ != "table" {
 			continue
 		}
-		idxs, err := db.Query(fmt.Sprintf("PRAGMA index_list(%q)", o.name))
+		idxs, err := db.Query(fmt.Sprintf("PRAGMA index_list(%q)", o.name)) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- name read from sqlite_master of a scratch test DB
 		if err != nil {
 			return nil, err
 		}
@@ -220,7 +220,7 @@ func spReadSQLite(db *sql.DB) (*spShape, error) {
 		}
 		_ = idxs.Close()
 		for _, i := range list {
-			ic, err := db.Query(fmt.Sprintf("PRAGMA index_info(%q)", i.name))
+			ic, err := db.Query(fmt.Sprintf("PRAGMA index_info(%q)", i.name)) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- name read from PRAGMA index_list of a scratch test DB
 			if err != nil {
 				return nil, err
 			}
@@ -279,7 +279,7 @@ func spBuildSQLite(t *testing.T, mutate func(db *sql.DB)) (upgraded, fresh *spSh
 		t.Fatalf("loading %s snapshot: %v", spOldestSupported, err)
 	}
 	upPath := filepath.Join(dir, "upgraded.db")
-	if err := ugCopyFile(tpl.dbFile, upPath); err != nil {
+	if err := os.WriteFile(upPath, tpl.image, 0o600); err != nil {
 		t.Fatalf("copying template: %v", err)
 	}
 	st, err = NewStorageFactory().CreateStorage(ugLocalConfig(upPath))

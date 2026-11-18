@@ -1,0 +1,23 @@
+{
+  "target": "pgx_copy",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 9,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 90680,
+      "per_byte": 5652.5,
+      "abs_max": 362720
+    },
+    "cpu_ns": {
+      "floor": 1049000,
+      "per_byte": 58250,
+      "abs_max": 4196000
+    },
+    "mallocs": {
+      "floor": 211,
+      "per_byte": 13.125,
+      "abs_max": 844
+    }
+  }
+}
