@@ -253,6 +253,77 @@ var plants = append([]plant{
 		op:             "breakglass.revoke",
 		minUnexplained: 5,
 	},
+	{
+		// V5EXT2: removes the access-review ATTEST REST router gate
+		// (RequireScopedPermission roles.read@project).
+		// core.AttestAccessReviewGrant does NOT re-check the permission gate
+		// (coreGateExcluded, humanOnly). With the gate gone, any authenticated
+		// human that passes reviewer-independence can attest a grant, over-
+		// allowing principals the roles.read@project model rule denies.
+		name:           "accessreview-attest-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Post("/projects/{id}/access-review/attest", catalogHandler.AttestProjectAccessReview)`,
+		repl:           `r.Post("/projects/{id}/access-review/attest", catalogHandler.AttestProjectAccessReview) // PLANT: REST gate removed`,
+		op:             "accessreview.attest",
+		minUnexplained: 2,
+	},
+	{
+		// V5EXT2: removes the access-review REVOKE REST router gate
+		// (RequireScopedPermission roles.assign@project).
+		// core.RevokeAccessReviewGrant does NOT re-check the permission gate
+		// (coreGateExcluded, humanOnly). With the gate gone, any authenticated
+		// human that passes reviewer-independence can revoke a grant, over-
+		// allowing principals the roles.assign@project model rule denies.
+		name:           "accessreview-revoke-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/access-review/revoke", catalogHandler.RevokeProjectAccessReview)`,
+		repl:           `r.Post("/projects/{id}/access-review/revoke", catalogHandler.RevokeProjectAccessReview) // PLANT: REST gate removed`,
+		op:             "accessreview.revoke",
+		minUnexplained: 2,
+	},
+	{
+		// V5EXT2: removes the campaign DECIDE REST router gate
+		// (RequireScopedPermission roles.assign@project).
+		// core.DecideAccessReviewItem does NOT re-check the permission gate
+		// (coreGateExcluded, humanOnly). With the gate gone, any authenticated
+		// human on the campaign project can decide an item, over-allowing
+		// principals the roles.assign@campaignProject model rule denies.
+		name:           "campaign-decide-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide", catalogHandler.DecideAccessReviewCampaignItem)`,
+		repl:           `r.Post("/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide", catalogHandler.DecideAccessReviewCampaignItem) // PLANT: REST gate removed`,
+		op:             "campaign.decide",
+		minUnexplained: 2,
+	},
+	{
+		// V5EXT2: removes the campaign CLOSE REST router gate
+		// (RequireScopedPermission roles.assign@project).
+		// core.CloseAccessReviewCampaign has core_refusal:"none" (ID-2: core
+		// enforces no permission gate of its own). With the router gate gone,
+		// REST lets any authenticated principal close a fully-decided campaign,
+		// over-allowing principals the roles.assign@campaignProject model rule
+		// denies — a clean router-gate differential.
+		name:           "campaign-close-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/access-review/campaigns/{campaignId}/close", catalogHandler.CloseAccessReviewCampaign)`,
+		repl:           `r.Post("/projects/{id}/access-review/campaigns/{campaignId}/close", catalogHandler.CloseAccessReviewCampaign) // PLANT: REST gate removed`,
+		op:             "campaign.close",
+		minUnexplained: 2,
+	},
+	{
+		// V5EXT2: removes the break-glass REVIEW roles.assign gate from the REST
+		// router (retains BlockWhenImpersonating). core.ReviewBreakGlass does NOT
+		// re-check the permission gate (coreGateExcluded, humanOnly). With the
+		// gate gone, any authenticated human that passes the self-review-
+		// independence and human-only checks can review a concluded activation,
+		// over-allowing principals the roles.assign@project model rule denies.
+		name:           "breakglass-review-router-gate-removed",
+		file:           "server/http/router.go",
+		anchor:         `r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/break-glass/{activationId}/review", catalogHandler.ReviewBreakGlass)`,
+		repl:           `r.With(customMiddleware.BlockWhenImpersonating).Post("/projects/{id}/break-glass/{activationId}/review", catalogHandler.ReviewBreakGlass) // PLANT: roles.assign gate removed`,
+		op:             "breakglass.review",
+		minUnexplained: 2,
+	},
 }, fixRegressionPlants...)
 
 // fixRegressionPlants revert, one each, the authorization fixes merged after

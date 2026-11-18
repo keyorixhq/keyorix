@@ -341,6 +341,14 @@ type requirement struct {
 	// a permission denial, so the model denies it here and the untyped-core
 	// refusal is absorbed by known-09 at the partition.
 	memberOnly bool
+	// humanOnly: the op requires a human reviewer (actorID ≠ 0, i.e. not a machine).
+	// Core's requireHumanReviewer refuses a machine actor (actorID==0 for machines)
+	// even when the router's permission gate passes. The model denies machines
+	// outright so Oracle 2 matches what REST returns (the router gate passes for a
+	// machine holding the permission, then core's handler refuses it → 403 Denied).
+	// Used for access-review attest/revoke/decide and break-glass review. Does NOT
+	// apply to the coreGateExcluded core leg (which is excluded from both oracles).
+	humanOnly bool
 	// tokenForMachineID != 0: the op mints a credential for that machine. The
 	// caller must then cover the target: it is not the target itself, the
 	// target holds no role that bypasses permission checks, and the caller

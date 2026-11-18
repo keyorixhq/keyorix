@@ -116,7 +116,38 @@ type perProject struct {
 	// breakGlassActivationID is an ACTIVE break-glass activation in this project
 	// (activated by u-bg, a dedicated member), the breakglass.revoke target (V5EXT).
 	breakGlassActivationID uint
-	sx                     secretFixtures
+
+	// V5EXT2: access-review and break-glass review fixtures.
+	//
+	// accessReviewDecision is a decision for u-target's project_viewer grant at
+	// this project, used by accessreview.attest and accessreview.revoke. The
+	// reviewer (any probed principal) is never u-target, so reviewer-independence
+	// always passes.
+	accessReviewDecision core.AccessReviewDecision
+
+	// campaignProjectID is a minimal project (only u-target, project_viewer) for
+	// campaign.decide and campaign.close. Using A/B directly brings in many
+	// principals, complicating the fully-decided state for closeCampaignID.
+	campaignProjectID uint
+
+	// decideCampaignID is an open campaign on campaignProjectID with one pending
+	// item (u-target's project_viewer grant). The reviewer (any probed principal)
+	// is never u-target → reviewer-independence always passes.
+	decideCampaignID     uint
+	decideCampaignItemID uint
+
+	// closeCampaignID is an open campaign on campaignProjectID with 0 pending
+	// items (u-target's item was pre-decided by admin). Close with force=false
+	// succeeds for any roles.assign@campaignProjectID holder.
+	closeCampaignID uint
+
+	// reviewBGActivationID is a REVOKED break-glass activation (activated by u-bg,
+	// then revoked by admin in the seed). Different from breakGlassActivationID
+	// (which is ACTIVE). ReviewBreakGlass requires the activation to be concluded
+	// and the reviewer to be independent of the activator (u-bg).
+	reviewBGActivationID uint
+
+	sx secretFixtures
 }
 
 // fixtureSecret is one of the four per-project secrets selected by an op arg
@@ -562,6 +593,73 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	for _, pp := range []*perProject{&fx.A, &fx.B} {
 		act := must(c.ActivateBreakGlass(ctx, pp.projectID, bgUser.ID, "emergency-access-justification-fixture", ""))
 		pp.breakGlassActivationID = act.ID
+	}
+
+	// ---- V5EXT2 fixtures (access-review attest/revoke, campaign decide/close, break-glass review) ----
+	//
+	// accessReviewDecision: u-target has project_viewer@A and @B (seeded above).
+	// The decision body references u-target's role grant — not a probed principal,
+	// so reviewer-independence always passes for any probed reviewer.
+	for _, pp := range []*perProject{&fx.A, &fx.B} {
+		pp.accessReviewDecision = core.AccessReviewDecision{
+			Source:        "role",
+			PrincipalType: "user",
+			PrincipalID:   fx.targetUserID,
+			RoleID:        fx.roleIDs["project_viewer"],
+		}
+	}
+
+	// Campaign projects: a minimal project per A/B with only u-target as
+	// project_viewer. Using A/B directly brings in many principals (including the
+	// admin), complicating the fully-decided state for closeCampaignID. The
+	// campaign project allows the admin to decide u-target's one item without any
+	// self-certification issue, leaving the close campaign with 0 pending items.
+	for i, pp := range []*perProject{&fx.A, &fx.B} {
+		campProj := must(ls.CreateProject(ctx, &models.Project{Name: fmt.Sprintf("projcamp-%d", i)}))
+		must(ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: campProj.ID}))
+		grant(fx.targetUserID, fx.roleIDs["project_viewer"], campProj.ID, nil)
+		pp.campaignProjectID = campProj.ID
+
+		// decide-campaign: open with one pending item (u-target's project_viewer@campProj).
+		decideCamp := must(c.OpenAccessReviewCampaign(ctx, admin.ID, 0, campProj.ID, "decide-campaign"))
+		pp.decideCampaignID = decideCamp.Campaign.ID
+		decideDetail := must(c.GetAccessReviewCampaign(ctx, campProj.ID, decideCamp.Campaign.ID))
+		for _, item := range decideDetail.Items {
+			if item.PrincipalID == fx.targetUserID {
+				pp.decideCampaignItemID = item.ID
+				break
+			}
+		}
+		if pp.decideCampaignItemID == 0 {
+			return nil, fmt.Errorf("seed: no pending item for u-target in decide-campaign for proj %d", campProj.ID)
+		}
+
+		// close-campaign: open with one pending item, then admin decides it (attest).
+		// With force=false, close succeeds for any roles.assign@campaignProjectID holder.
+		closeCamp := must(c.OpenAccessReviewCampaign(ctx, admin.ID, 0, campProj.ID, "close-campaign"))
+		pp.closeCampaignID = closeCamp.Campaign.ID
+		closeDetail := must(c.GetAccessReviewCampaign(ctx, campProj.ID, closeCamp.Campaign.ID))
+		for _, item := range closeDetail.Items {
+			if err := c.DecideAccessReviewItem(ctx, admin.ID, campProj.ID, closeCamp.Campaign.ID, item.ID, "attest", ""); err != nil {
+				return nil, fmt.Errorf("seed: pre-decide close-campaign item: %w", err)
+			}
+		}
+	}
+
+	// break-glass review: a REVOKED activation per project. ReviewBreakGlass
+	// refuses a still-active activation (and bgUser already has one via
+	// breakGlassActivationID above), so we use a second dedicated member u-bg2.
+	// Activated then immediately revoked by admin — leaves a REVOKED state. Every
+	// probed principal passes reviewer-independence (none is u-bg2).
+	bg2User := mkUser("u-bg2")
+	grant(bg2User.ID, fx.roleIDs["project_viewer"], fx.A.projectID, nil)
+	grant(bg2User.ID, fx.roleIDs["project_viewer"], fx.B.projectID, nil)
+	for _, pp := range []*perProject{&fx.A, &fx.B} {
+		reviewAct := must(c.ActivateBreakGlass(ctx, pp.projectID, bg2User.ID, "emergency-access-justification-review-fixture-seed", ""))
+		if err := c.RevokeBreakGlass(ctx, admin.ID, 0, pp.projectID, reviewAct.ID); err != nil {
+			return nil, fmt.Errorf("seed: revoke break-glass review fixture: %w", err)
+		}
+		pp.reviewBGActivationID = reviewAct.ID
 	}
 
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the
