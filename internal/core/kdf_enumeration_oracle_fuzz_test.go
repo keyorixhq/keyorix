@@ -120,10 +120,10 @@ func seedKDFEnumWorld(t *testing.T, w *fuzzworld.World) {
 			t.Fatalf("seed user %q: %v", uname, err)
 		}
 	}
-	mk(1, "alice", "active", true, nil)              // known-active
-	mk(2, "locked", "active", true, &future)         // locked
-	mk(3, "deact", "active", false, nil)             // deactivated (IsActive=false)
-	mk(4, "susp", "suspended", true, nil)            // suspended account_state
+	mk(1, "alice", "active", true, nil)                     // known-active
+	mk(2, "locked", "active", true, &future)                // locked
+	mk(3, "deact", "active", false, nil)                    // deactivated (IsActive=false)
+	mk(4, "susp", "suspended", true, nil)                   // suspended account_state
 	mk(5, "resetreq", "password_reset_required", true, nil) // restricted state
 }
 
