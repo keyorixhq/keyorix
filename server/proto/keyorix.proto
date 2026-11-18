@@ -1486,6 +1486,10 @@ message IdentityPosture {
 message EmergencyAccessPosture {
   int32 active_activations = 1;
   int32 total_activations = 2;
+  // Break-glass activations committed while the audit log refused their rows
+  // whose owed audit rows are not yet in the hash chain. Non-zero means the
+  // audit record of an emergency elevation is incomplete and its review is owed.
+  int32 degraded_activations = 3;
 }
 
 message ClassificationCounts {
