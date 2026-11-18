@@ -30,8 +30,8 @@ func buildFixedModel() *vModel {
 		fields: []vField{{"user", m.uniqueVal("V", "admin")}, {"pass", m.uniqueVal("V", "s3cr3t")}}})
 	add(vLeaf{segs: []string{"team-b", "token"}, state: 0, version: 5, created: "2026-01-02T03:04:05Z",
 		fields: []vField{{"value", m.uniqueVal("V", "tok")}}})
-	add(vLeaf{segs: []string{"team-b", "gone"}, state: 1, version: 4})     // soft-deleted
-	add(vLeaf{segs: []string{"team-b", "empty"}, state: 3, version: 1})    // empty leaf
+	add(vLeaf{segs: []string{"team-b", "gone"}, state: 1, version: 4})  // soft-deleted
+	add(vLeaf{segs: []string{"team-b", "empty"}, state: 3, version: 1}) // empty leaf
 	for i := range m.leaves {
 		m.byPath[m.leaves[i].path()] = &m.leaves[i]
 	}

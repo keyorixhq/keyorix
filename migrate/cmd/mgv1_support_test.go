@@ -119,11 +119,11 @@ type vLeaf struct {
 }
 
 type vModel struct {
-	mount   string
-	kv2     bool
-	leaves  []vLeaf
-	byPath  map[string]*vLeaf // "a/b" -> leaf
-	valTag  int               // monotonic unique-value counter
+	mount  string
+	kv2    bool
+	leaves []vLeaf
+	byPath map[string]*vLeaf // "a/b" -> leaf
+	valTag int               // monotonic unique-value counter
 }
 
 // path returns the leaf path relative to mount, e.g. "team-a/db".
@@ -419,9 +419,9 @@ func (m *vModel) newVaultServer() *httptest.Server {
 type faultMode int
 
 const (
-	faultOK       faultMode = iota // write succeeds
-	faultBefore                    // return error, persist nothing (clean pre-commit failure)
-	faultAfter                     // persist atomically, THEN return error (committed, response lost)
+	faultOK     faultMode = iota // write succeeds
+	faultBefore                  // return error, persist nothing (clean pre-commit failure)
+	faultAfter                   // persist atomically, THEN return error (committed, response lost)
 )
 
 type storedSecret struct {
