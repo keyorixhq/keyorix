@@ -1086,6 +1086,39 @@ var osKnownUndeclared5xx = []struct {
 	// becomes an undeclared 500 instead of a 403/409. No session is minted; nothing leaks.
 	// Fix: classify these as 403 (authority/credential refusal) / 409 (target-state refusal).
 	{id: "OPENAPI-STATEFUL-7", opID: "startImpersonation", princ: -1, code: 500, reason: "core impersonation refusal (suspended/inactive target, ceiling-exceeded, admin-not-found) falls through the handler switch to an undeclared 500 instead of 403/409. admin_impersonation.go:97."},
+
+	// OPENAPI-STATEFUL-1 (siblings still on the legacy per-handler switch, #4132): the three
+	// secret read-metadata routes below answer a non-user (machine) principal's core read
+	// re-check through a `default: InternalError 500` branch instead of the shared classifier
+	// answerCoreError, exactly like GetSecretCertificate/AccessHistory did before they were
+	// migrated. A machine token with a valid project-scoped reader role gets 500 where the
+	// global admin gets 200 (deterministically reproduced: TestOpenAPIStrictExceptions). The
+	// genuine storage-fault 5xx on these routes (TestSecretReadRoutes_StorageFaultIs5xxInEveryLocale)
+	// is ALSO undeclared by the spec, so the waiver is princ-agnostic. Fix: route the error
+	// branch through answerCoreError (machine-not-permitted -> declared 4xx) AND declare the
+	// storage-fault 503 in openapi.yaml. owner: secrets handlers.
+	{id: "OPENAPI-STATEFUL-1", opID: "getSecretAuditTrail", princ: -1, code: 500, reason: "machine principal reaches the legacy default:500 branch (secrets_audit_trail.go:61); should be a declared 4xx via answerCoreError. See TestOpenAPIStrictExceptions."},
+	{id: "OPENAPI-STATEFUL-1", opID: "getSecretOwnershipHistory", princ: -1, code: 500, reason: "machine principal reaches the legacy default:500 branch (secret_ownership_history.go:38); should be a declared 4xx via answerCoreError. See TestOpenAPIStrictExceptions."},
+	{id: "OPENAPI-STATEFUL-1", opID: "listAccessors", princ: -1, code: 500, reason: "machine principal reaches the legacy default:500 branch (secrets_access_list.go:36); should be a declared 4xx via answerCoreError. See TestOpenAPIStrictExceptions."},
+
+	// OPENAPI-STATEFUL-9 (NEW, no existing issue): a duplicate-name template create answers an
+	// undeclared 500. Both handlers DO use answerCoreError, but core wraps the DB unique-
+	// constraint violation in no Conflict sentinel, so errclass classifies it Internal -> 500
+	// instead of 409 Conflict. Deterministically reproduced (create same name twice) by
+	// TestOpenAPIStrictExceptions. Fix: core returns a Conflict-typed sentinel on the name
+	// uniqueness violation (missing-sentinel class). owner: catalog / secret-template handlers.
+	{id: "OPENAPI-STATEFUL-9", opID: "createSecretTemplate", princ: -1, code: 500, reason: "duplicate template name -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (missing Conflict sentinel in core). See TestOpenAPIStrictExceptions."},
+	{id: "OPENAPI-STATEFUL-9", opID: "createRejectionReasonTemplate", princ: -1, code: 500, reason: "duplicate rejection-reason-template name -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (missing Conflict sentinel in core). See TestOpenAPIStrictExceptions."},
+
+	// OPENAPI-STATEFUL-10 (NEW, caught by the STRICT fuzz pass itself, not the sweep — the
+	// nightly gate working as intended): createRotationPolicy answers an undeclared 500 when
+	// core.CreateRotationPolicy returns a PLAIN fmt.Errorf (not invalidInput) for an
+	// environment-scoped policy whose environment does not exist (rotation_policies.go:85) or
+	// whose environment/project pair cross tenants (rotation_policies.go:88). The handler only
+	// maps core.ErrInvalidInput -> 422; every other error falls to 500 (rotation_policies_handler.go:196).
+	// Deterministically reproduced (cross-project env/project pair) by TestOpenAPIStrictExceptions.
+	// Fix: wrap those two refusals in invalidInput (or a NotFound sentinel), then they render 422/404.
+	{id: "OPENAPI-STATEFUL-10", opID: "createRotationPolicy", princ: -1, code: 500, reason: "env-scoped policy with a cross-project or non-existent environment -> plain core error (rotation_policies.go:85/88) not caught by the handler's ErrInvalidInput check -> undeclared 500; should be 422/404. See TestOpenAPIStrictExceptions."},
 }
 
 // --- Oracle 2: response conformance ----------------------------------------
