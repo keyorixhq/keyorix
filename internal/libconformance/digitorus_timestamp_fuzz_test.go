@@ -85,9 +85,9 @@ func FuzzDigitorusTimestamp(f *testing.F) {
 		f.Add(s)
 	}
 	// Hostile ASN.1 shapes: indefinite-length BER, a huge-OID-ish prefix, deep nesting, empty.
-	f.Add([]byte{0x30, 0x80, 0x00, 0x00})                         // SEQUENCE, indefinite length, EOC
-	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01})                   // minimal DER SEQUENCE
-	f.Add(bytes.Repeat([]byte{0x30, 0x80}, 64))                   // deeply nested indefinite SEQUENCEs
+	f.Add([]byte{0x30, 0x80, 0x00, 0x00})                                           // SEQUENCE, indefinite length, EOC
+	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01})                                     // minimal DER SEQUENCE
+	f.Add(bytes.Repeat([]byte{0x30, 0x80}, 64))                                     // deeply nested indefinite SEQUENCEs
 	f.Add([]byte{0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02}) // an OID
 	f.Add([]byte{})
 

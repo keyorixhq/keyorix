@@ -124,7 +124,7 @@ func TestResguardDigitorusTimestampBudgetRedGreen(t *testing.T) {
 	mb := b.Meters["alloc_bytes"]
 	ceiling := b.Factor * (mb.Floor + mb.PerByte*float64(len(good)))
 	over := uint64(ceiling*10) + 1
-	red := resguard.Cost{InputLen: len(good), Sampled: true, AllocBytes: over}
+	red := resguard.Cost{InputLen: len(good), Sampled: true, AllocSampled: true, AllocBytes: over}
 	if !b.Check(func(string, ...any) {}, red) {
 		t.Fatalf("RED: a Cost with alloc=%d (10x over budget) must trip Check", over)
 	}
