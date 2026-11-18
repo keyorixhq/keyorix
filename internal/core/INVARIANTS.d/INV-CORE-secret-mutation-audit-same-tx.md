@@ -1,6 +1,8 @@
 - **INV-CORE-secret-mutation-audit-same-tx** A secret mutation called with
   `WithSecretMutationAudit` (every HTTP and gRPC create, update (both HTTP paths),
-  rotate, delete and folder delete), every `RollbackSecret` and every `RestoreSecret`
+  rotate, delete and folder delete, and each item of the HTTP bulk delete, where an audit
+  outage fails that item with `BulkErrCodeAuditUnavailable`, retryable, and a delete writes
+  one `secret.deleted` row, not that row plus a post-commit copy), every `RollbackSecret` and every `RestoreSecret`
   (undelete) writes its audit row
   (`secret.created` / `secret.updated` / `secret.rotated` / `secret.deleted` /
   `secret.rolled_back` / `secret.restored`, plus the `secret_access_logs` row where it has one) through
@@ -25,8 +27,8 @@
   `internal/solewriter` `TestTracker_SecretMutationWithItsAuditRowIsOneFencedWrite`
   (pg-gated).
   **Not covered**: a caller that reaches these core methods without
-  `WithSecretMutationAudit` writes no mutation row from core (bulk delete, copy,
-  bulk rename, the rotation scheduler audit separately and are unchanged), except
+  `WithSecretMutationAudit` writes no mutation row from core (the CLI's embedded bulk
+  delete, copy, bulk rename, the rotation scheduler audit separately and are unchanged), except
   `RestoreSecret`, which always writes `secret.restored` for its `actorID`, as it did
   before; the context only adds username, IP and user agent. `RestoreSecret` takes the environment's named lock BEFORE its transaction (the
   storage restore's own order: lock, then transaction) and the nested storage call

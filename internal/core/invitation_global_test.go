@@ -204,7 +204,8 @@ func TestApplyInvitationGrants_GlobalInvite(t *testing.T) {
 	}
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
-	// System role grant at scope 0.
+	// System role grant at scope 0 (AssignUserRole: the target must exist, ERRMAP-TAILS-NOV-4).
+	store.On("GetUser", ctx, uint(20)).Return(&models.User{ID: 20}, nil)
 	store.On("GetRoleByName", ctx, "system_auditor").Return(&models.Role{ID: 3, Name: "system_auditor"}, nil)
 	store.On("GetRole", ctx, uint(3)).Return(&models.Role{ID: 3, Name: "system_auditor"}, nil) // #3546 role-scope check
 	store.On("AssignRole", ctx, uint(20), uint(3), storage.Scope{ProjectID: 0}).Return(nil)

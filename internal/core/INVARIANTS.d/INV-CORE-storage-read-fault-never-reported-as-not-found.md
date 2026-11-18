@@ -3,7 +3,10 @@
   invitation, access request, dynamic-secret lease, access-review attestation, bulk delete and
   bulk rename), on own-session and own-PAT revoke, and on the grant / create paths that read a
   parent (user create with a role or assignments, role-grant validation, environment create and
-  copy, member invite, access-request approval, secret-access approval; STORAGE-ERR-CLASS-2) a storage READ that fails is classified by `classifyReadError`
+  copy, member invite, access-request approval, secret-access approval; STORAGE-ERR-CLASS-2), and on the
+  secret lookups of `ClassifySecret`, `SetSecretAutoRotate` and the by-name reads
+  (`GetSecretByName`, `GetSecretByNameWithPermissionCheck`; ERRMAP-TAILS-NOV-4,
+  `TestClassifyAutoRotateByName_ReadFaultIs503`), a storage READ that fails is classified by `classifyReadError`
   (`storage_read_class.go`): a positive no-such-row (`gorm.ErrRecordNotFound` or a typed
   not-found sentinel) keeps the caller's "not found" text, and anything else becomes
   `ErrStorageReadUnavailable` (matched with `errors.Is`, never by text). The row is untouched,
