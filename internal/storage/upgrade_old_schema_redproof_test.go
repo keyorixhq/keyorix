@@ -179,6 +179,22 @@ func TestUpgradeOracles_RedProof(t *testing.T) {
 		}
 	})
 
+	t.Run("invariant5_stop_swallowed_or_rewrapped", func(t *testing.T) {
+		// The stop fired, but the upgrade reported success (or lost the cause).
+		for name, res := range map[string]func(error) error{
+			"swallowed": func(error) error { return nil },
+			"rewrapped": func(err error) error { return fmt.Errorf("migration failed: %v", err) },
+		} {
+			t.Run(name, func(t *testing.T) {
+				f := ugRun(t, tag, true, ugRedSeed, ugRedStop, ugHooks{stopResult: res})
+				found := ugAssertFires(t, f, 5)
+				if !strings.Contains(found.Detail, "not the injected crash") {
+					t.Fatalf("expected the stop-result finding: %s", found.Detail)
+				}
+			})
+		}
+	})
+
 	t.Run("invariant5_step_leaves_a_half_state", func(t *testing.T) {
 		// A step that rebuilds a table by moving it aside first, without a
 		// transaction around the move and the rebuild: the crash leaves the table
@@ -186,7 +202,15 @@ func TestUpgradeOracles_RedProof(t *testing.T) {
 		f := ugRun(t, tag, true, ugRedSeed, ugRedStop, ugHooks{halfStateAtStop: func(db *sql.DB) error {
 			return ugExecStmts(db, "ALTER TABLE user_roles RENAME TO user_roles_rebuild")
 		}})
+		// It must be the restart that trips over the moved table, not some
+		// other oracle-5 finding that happens to be present.
 		ugAssertFires(t, f, 5)
+		for _, fnd := range f {
+			if fnd.Invariant == 5 && strings.Contains(fnd.Detail, "CreateStorage") && strings.Contains(fnd.Detail, "UserRole") {
+				return
+			}
+		}
+		t.Fatalf("expected the restart to fail on the moved user_roles table, got %v", f)
 	})
 }
 

@@ -107,6 +107,7 @@ type ugTemplate struct {
 	enc       *encryption.Service
 	writeOnce sync.Once
 	writes    int64
+	writeErr  error
 }
 
 var ugTemplates sync.Map
@@ -243,6 +244,9 @@ type ugHooks struct {
 	// halfStateAtStop adds what a step that is not crash-safe would have left
 	// behind, on top of the state the stop left, before the restart.
 	halfStateAtStop func(db *sql.DB) error
+	// stopResult replaces the interrupted migration's own result, as a step
+	// that swallows or re-wraps the injected failure would.
+	stopResult func(error) error
 }
 
 // ugRun is one exec. stopAfter == 0 runs the real startup path once;
@@ -309,16 +313,21 @@ func ugRunStages(t testing.TB, tag string, chainVerifiable bool, data []byte, st
 		if err != nil {
 			t.Fatalf("interrupted run: %v", err)
 		}
+		if hooks.stopResult != nil {
+			outcome.Err = hooks.stopResult(outcome.Err)
+		}
 		if !outcome.Fired {
 			if outcome.Err != nil {
 				return append(findings, ugFinding{5, fmt.Sprintf("upgrade from %s failed on its own after %d writes, before the stop at %d: %v", tag, outcome.Writes, stopAfter, outcome.Err)})
 			}
 			t.Skipf("stop %d is past this upgrade's last write (%d writes from %s): nothing was interrupted", stopAfter, outcome.Writes, tag)
 		}
-		// Not a finding: the restart below is still a real test of what the stop
-		// left. It would mean a step swallowed or re-wrapped the injected failure.
+		// The stop fails every write from here on, so the upgrade must report that
+		// crash. nil means a step swallowed a failed write and the upgrade claimed
+		// success; any other error means a step replaced the cause (no %w). The
+		// restart below still runs: it tests what the stop left either way.
 		if !errors.Is(outcome.Err, errUgInterrupted) {
-			t.Logf("stop %d fired but the upgrade from %s returned %v, not the injected crash", stopAfter, tag, outcome.Err)
+			findings = append(findings, ugFinding{5, fmt.Sprintf("stop %d fired but the upgrade from %s returned %v, not the injected crash", stopAfter, tag, outcome.Err)})
 		}
 		if hooks.halfStateAtStop != nil {
 			halfRaw, _, closeHalf := ugOpenRaw(t, dbPath)
@@ -378,10 +387,10 @@ func ugRunStages(t testing.TB, tag string, chainVerifiable bool, data []byte, st
 	c := core.NewKeyorixCore(again)
 	c.SetAuthEncryptor(tpl.enc)
 	c.SetSecretValueEncryptor(tpl.enc)
-	return append(findings, ugCheckOracles(t, tag, chainVerifiable, dbPath, c, tpl, exp, model, preAudit, len(data), stopAfter)...)
+	return append(findings, ugCheckOracles(t, tag, chainVerifiable, dbPath, c, tpl, exp, model, preAudit, len(data))...)
 }
 
-func ugCheckOracles(t testing.TB, tag string, chainVerifiable bool, dbPath string, c *core.KeyorixCore, tpl *ugTemplate, exp *ugExpect, model *ugModel, preAudit int64, probeOffset, stopAfter int) []ugFinding {
+func ugCheckOracles(t testing.TB, tag string, chainVerifiable bool, dbPath string, c *core.KeyorixCore, tpl *ugTemplate, exp *ugExpect, model *ugModel, preAudit int64, probeOffset int) []ugFinding {
 	t.Helper()
 	var out []ugFinding
 	fail := func(inv int, format string, args ...any) {
@@ -498,7 +507,7 @@ func ugCheckOracles(t testing.TB, tag string, chainVerifiable bool, dbPath strin
 	}
 
 	// Oracle 6: the same schema a fresh install gets, minus the listed differences.
-	return append(out, ugCheckFreshSchema(t, ugSchemaScenario(tag, stopAfter), raw)...)
+	return append(out, ugCheckFreshSchema(t, tag, raw)...)
 }
 
 // ugOpenRaw opens a plain connection for harness-side reads and writes (never
@@ -562,7 +571,7 @@ func ugDumpDB(dbPath string) ([]byte, error) {
 		for i, c := range cols {
 			exprs[i] = `quote("` + c + `")`
 		}
-		rs, err := db.Query(`SELECT ` + strings.Join(exprs, ",") + ` FROM "` + tbl + `" ORDER BY rowid`)
+		rs, err := db.Query(`SELECT ` + strings.Join(exprs, ",") + ` FROM "` + tbl + `" ORDER BY rowid`) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- table and column names read from sqlite_master of a scratch test DB
 		if err != nil {
 			return nil, fmt.Errorf("dumping %s: %w", tbl, err)
 		}
@@ -683,8 +692,8 @@ const ugAllSeedsEnv = "KEYORIX_UPGRADE_FUZZ_ALL_SEEDS"
 const ugPlainSeed = 5
 
 // ugAllSeeds reports whether to add every seed: each one is a full upgrade and
-// there are 94 across both targets, so a plain run keeps one per source, and a
-// fuzz run or ugAllSeedsEnv gets them all.
+// there are 102 across both targets (6 sources x 9 seeds, 6 sources x 8 stops),
+// so a plain run keeps one per source, and a fuzz run or ugAllSeedsEnv gets them all.
 func ugAllSeeds() bool {
 	if os.Getenv(ugAllSeedsEnv) != "" {
 		return true
@@ -738,17 +747,24 @@ func ugStopChoices(t testing.TB, tag string) int {
 	if err != nil {
 		t.Fatalf("loading %s snapshot: %v", tag, err)
 	}
+	// The count is stored with its error, never t.Fatalf'd inside the Once: a
+	// failed first count would otherwise leave writes at 0 for every later exec.
 	tpl.writeOnce.Do(func() {
 		dbPath := filepath.Join(t.TempDir(), "count.db")
 		if err := os.WriteFile(dbPath, tpl.image, 0o600); err != nil {
-			t.Fatalf("writing template: %v", err)
+			tpl.writeErr = fmt.Errorf("writing template: %w", err)
+			return
 		}
 		outcome, err := ugInterruptedMigrate(t, dbPath, math.MaxInt32, false)
 		if err != nil || outcome.Err != nil || outcome.Writes == 0 {
-			t.Fatalf("counting %s upgrade writes: %v, %v, %d writes", tag, err, outcome.Err, outcome.Writes)
+			tpl.writeErr = fmt.Errorf("%v, %v, %d writes", err, outcome.Err, outcome.Writes)
+			return
 		}
 		tpl.writes = outcome.Writes
 	})
+	if tpl.writeErr != nil {
+		t.Fatalf("counting %s upgrade writes: %v", tag, tpl.writeErr)
+	}
 	return int(tpl.writes + tpl.writes/4)
 }
 

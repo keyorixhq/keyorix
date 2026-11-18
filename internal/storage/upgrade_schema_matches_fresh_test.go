@@ -125,16 +125,9 @@ func ugSchemaDiff(fresh, upgraded []string) []string {
 	return out
 }
 
-// ugSchemaScenario names the schema expectation a run is checked against. An
-// interrupted upgrade goes through the real boot path (withMigrationLock), so
-// every source's interrupted upgrade has to end at its own uninterrupted schema.
-func ugSchemaScenario(tag string, _ int) string {
-	return tag
-}
-
 const (
-	ugWhyFreshOnly = "open: only the fresh-install tail creates this and no step adds it to an existing table; below the v0.93.x support floor"
-	ugWhyNotNull   = "open: the upgrade's ALTER declares NOT NULL, the model does not"
+	ugWhyFreshOnly = "open #4518: only the fresh-install tail creates this and no step adds it to an existing table; below the v0.93.x support floor"
+	ugWhyNotNull   = "open #4517: the upgrade's ALTER declares NOT NULL, the model does not"
 	ugWhyRetained  = "by design: an upgrade does not drop a column a later release stopped using"
 )
 
@@ -177,7 +170,10 @@ var ugExpectedSchemaDiffs = []struct {
 	}},
 }
 
-// ugCheckFreshSchema is oracle 6. raw must be the upgraded database.
+// ugCheckFreshSchema is oracle 6. raw must be the upgraded database and scenario
+// its source tag. An interrupted upgrade goes through the real boot path
+// (withMigrationLock), so it is checked against the same entries as that
+// source's uninterrupted one.
 func ugCheckFreshSchema(t testing.TB, scenario string, raw *sql.DB) []ugFinding {
 	t.Helper()
 	fresh, err := ugFreshSchema()
