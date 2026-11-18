@@ -1,0 +1,28 @@
+{
+  "target": "authcache_differential",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 16,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 2315344,
+      "per_byte": 145926.66666666666,
+      "abs_max": 9261376
+    },
+    "cpu_ns": {
+      "floor": 1278806000,
+      "per_byte": 86231666.66666667,
+      "abs_max": 5115224000
+    },
+    "mallocs": {
+      "floor": 21783,
+      "per_byte": 1420,
+      "abs_max": 87132
+    },
+    "wall_ns": {
+      "floor": 1717388859,
+      "per_byte": 156347712.5,
+      "abs_max": 6869555436
+    }
+  }
+}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 // Drivers.
@@ -383,6 +385,7 @@ func TestAuthzDiffSweep(t *testing.T) {
 func FuzzAuthzDiff(f *testing.F) {
 	f.Add(byte(0), byte(4), byte(0), byte(0), uint16(0xff), byte(0), byte(0))
 	f.Add(byte(12), byte(4), byte(1), byte(1), uint16(0x80), byte(1), byte(2))
+	probe, budget, haveBudget := authzResguardProbe(f)
 	f.Fuzz(func(t *testing.T, opSel, pSel, tSel, arg byte, mask uint16, routeSel, scopeSel byte) {
 		specs := withDerived(t, ops())
 		spec := specs[int(opSel)%len(specs)]
@@ -411,7 +414,12 @@ func FuzzAuthzDiff(f *testing.F) {
 			return // not a valid request for any principal (opSpec.invalidArg)
 		}
 		k := caseKey{Op: spec.name, Principal: pk, Target: tg.String(), Arg: arg % 4, variation: v}
-		r := runCase(t, spec, k, tg)
+		// resguard meters the authz comparison's allocation (fatal) and CPU/wall
+		// (advisory — where the bcrypt-storm #119 class shows) against a calibrated
+		// absolute ceiling. The existing differential oracles are UNCHANGED below.
+		var r *caseResult
+		cost := probe.Measure(authzNominalInputLen, func() { r = runCase(t, spec, k, tg) })
+		resguard.FeedCoverage(cost)
 		sink.write(r)
 		if r.uncalibrated() {
 			t.Errorf("UNCALIBRATED %s", r.line())
@@ -420,6 +428,9 @@ func FuzzAuthzDiff(f *testing.F) {
 			t.Errorf("UNEXPLAINED %s", r.line())
 		} else if r.Bucket != "" {
 			t.Logf("FLAGGED [%s] %s", r.Bucket, r.line())
+		}
+		if haveBudget {
+			budget.Check(t.Fatalf, cost)
 		}
 	})
 }

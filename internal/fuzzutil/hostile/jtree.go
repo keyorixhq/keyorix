@@ -36,7 +36,8 @@ type Node struct {
 
 // ParseJSON parses b into a Node tree. Duplicate keys are preserved.
 func ParseJSON(b []byte) (*Node, error) {
-	dec := json.NewDecoder(bytes.NewReader(b))
+	// b is already in memory; the cap makes the decoder's bound explicit.
+	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(b), int64(len(b))))
 	dec.UseNumber()
 	n, err := parseVal(dec)
 	if err != nil {

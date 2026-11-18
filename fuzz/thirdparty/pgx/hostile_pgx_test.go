@@ -91,6 +91,29 @@ func runWithOracles(t *testing.T, fn func(ctx context.Context)) {
 	}
 }
 
+// drivePgxHandshake runs one FuzzPgxHandshake input under the no-panic/bounded-time
+// oracles. Extracted so the resguard Probe (resguard_pgx_test.go) can measure it and
+// the calibration/red-green tests can replay the same path.
+func drivePgxHandshake(t *testing.T, server []byte) {
+	srv := hostile.NewServer(t, func(c net.Conn) {
+		if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
+			return
+		}
+		writeAll(c, server)
+		// Keep reading any auth response the client writes, so a SASL/md5 client
+		// write does not block; then close.
+		drainBriefly(c)
+	})
+	defer srv.Close()
+	cfg := newConfig(t, srv.Addr())
+	runWithOracles(t, func(ctx context.Context) {
+		conn, err := pgx.ConnectConfig(ctx, cfg)
+		if err == nil {
+			_ = conn.Close(ctx)
+		}
+	})
+}
+
 // FuzzPgxHandshake fuzzes the entire server→client stream from the auth phase on:
 // Authentication* (cleartext/md5/SCRAM subtypes), ParameterStatus, BackendKeyData,
 // NoticeResponse, ErrorResponse, ReadyForQuery, and malformed variants of each.
@@ -100,24 +123,33 @@ func FuzzPgxHandshake(f *testing.F) {
 	f.Add([]byte{'R', 0, 0, 0, 12, 0, 0, 0, 5, 1, 2, 3, 4})                               // md5 req
 	f.Add([]byte{'E', 0, 0, 0, 11, 'S', 'E', 'R', 'R', 0, 0})                             // ErrorResponse
 	f.Add([]byte{'R', 0, 0, 0, 23, 0, 0, 0, 10, 'S', 'C', 'R', 'A', 'M', '-', 'X', 0, 0}) // SASL
+	probe, budget, haveBudget := pgxResguardProbe(f, pgxBudgetHandshake)
 	f.Fuzz(func(t *testing.T, server []byte) {
-		srv := hostile.NewServer(t, func(c net.Conn) {
-			if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
-				return
-			}
-			writeAll(c, server)
-			// Keep reading any auth response the client writes, so a SASL/md5 client
-			// write does not block; then close.
-			drainBriefly(c)
-		})
-		defer srv.Close()
-		cfg := newConfig(t, srv.Addr())
-		runWithOracles(t, func(ctx context.Context) {
-			conn, err := pgx.ConnectConfig(ctx, cfg)
-			if err == nil {
-				_ = conn.Close(ctx)
-			}
-		})
+		measurePgx(t, probe, budget, haveBudget, server, drivePgxHandshake)
+	})
+}
+
+// drivePgxSimpleQuery runs one FuzzPgxSimpleQueryResponse input under the oracles.
+func drivePgxSimpleQuery(t *testing.T, server []byte) {
+	srv := hostile.NewServer(t, func(c net.Conn) {
+		if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
+			return
+		}
+		writeAll(c, cannedHandshake)
+		drainBriefly(c) // drain the client's Query message
+		writeAll(c, server)
+		drainBriefly(c)
+	})
+	defer srv.Close()
+	cfg := newConfig(t, srv.Addr())
+	runWithOracles(t, func(ctx context.Context) {
+		conn, err := pgx.ConnectConfig(ctx, cfg)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(ctx) }()
+		// Mirror internal/dynamic/postgres.go and internal/rotation/postgres.go.
+		_, _ = conn.Exec(ctx, "ALTER ROLE kx_dyn WITH PASSWORD 'x'")
 	})
 }
 
@@ -128,61 +160,49 @@ func FuzzPgxSimpleQueryResponse(f *testing.F) {
 	f.Add([]byte{'C', 0, 0, 0, 11, 'C', 'R', 'E', 'A', 'T', 'E', 0, 'Z', 0, 0, 0, 5, 'I'}) // CommandComplete+RFQ
 	f.Add([]byte{'E', 0, 0, 0, 11, 'S', 'E', 'R', 'R', 0, 0})                              // ErrorResponse
 	f.Add([]byte{'T', 0, 0, 0, 6, 0, 1, 'D', 0, 0, 0, 10, 0, 1, 0, 0, 0, 2, 'h', 'i'})     // RowDescription+DataRow
+	probe, budget, haveBudget := pgxResguardProbe(f, pgxBudgetSimpleQuery)
 	f.Fuzz(func(t *testing.T, server []byte) {
-		srv := hostile.NewServer(t, func(c net.Conn) {
-			if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
-				return
-			}
-			writeAll(c, cannedHandshake)
-			drainBriefly(c) // drain the client's Query message
-			writeAll(c, server)
-			drainBriefly(c)
-		})
-		defer srv.Close()
-		cfg := newConfig(t, srv.Addr())
-		runWithOracles(t, func(ctx context.Context) {
-			conn, err := pgx.ConnectConfig(ctx, cfg)
-			if err != nil {
-				return
-			}
-			defer func() { _ = conn.Close(ctx) }()
-			// Mirror internal/dynamic/postgres.go and internal/rotation/postgres.go.
-			_, _ = conn.Exec(ctx, "ALTER ROLE kx_dyn WITH PASSWORD 'x'")
-		})
+		measurePgx(t, probe, budget, haveBudget, server, drivePgxSimpleQuery)
 	})
 }
 
 // FuzzPgxExtendedResponse fuzzes the extended-protocol response (Parse/Bind/Describe/
 // RowDescription/DataRow/CommandComplete/ReadyForQuery) that pgx drives for a
 // Query-with-args — the shape rotation's parameterized ALTER and any arg query produce.
+// drivePgxExtended runs one FuzzPgxExtendedResponse input under the oracles.
+func drivePgxExtended(t *testing.T, server []byte) {
+	srv := hostile.NewServer(t, func(c net.Conn) {
+		if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
+			return
+		}
+		writeAll(c, cannedHandshake)
+		drainBriefly(c) // drain P/B/D/E/S
+		writeAll(c, server)
+		drainBriefly(c)
+	})
+	defer srv.Close()
+	cfg := newConfig(t, srv.Addr())
+	runWithOracles(t, func(ctx context.Context) {
+		conn, err := pgx.ConnectConfig(ctx, cfg)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(ctx) }()
+		rows, err := conn.Query(ctx, "SELECT $1::int", 1)
+		if err == nil {
+			for rows.Next() {
+				_ = rows.RawValues()
+			}
+			rows.Close()
+		}
+	})
+}
+
 func FuzzPgxExtendedResponse(f *testing.F) {
 	f.Add([]byte{'1', 0, 0, 0, 4, '2', 0, 0, 0, 4, 'C', 0, 0, 0, 5, 0, 'Z', 0, 0, 0, 5, 'I'}) // Parse/BindComplete/CC/RFQ
 	f.Add([]byte{'t', 0, 0, 0, 6, 0, 0, 'n', 0, 0, 0, 4})                                     // ParameterDescription/NoData
+	probe, budget, haveBudget := pgxResguardProbe(f, pgxBudgetExtended)
 	f.Fuzz(func(t *testing.T, server []byte) {
-		srv := hostile.NewServer(t, func(c net.Conn) {
-			if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
-				return
-			}
-			writeAll(c, cannedHandshake)
-			drainBriefly(c) // drain P/B/D/E/S
-			writeAll(c, server)
-			drainBriefly(c)
-		})
-		defer srv.Close()
-		cfg := newConfig(t, srv.Addr())
-		runWithOracles(t, func(ctx context.Context) {
-			conn, err := pgx.ConnectConfig(ctx, cfg)
-			if err != nil {
-				return
-			}
-			defer func() { _ = conn.Close(ctx) }()
-			rows, err := conn.Query(ctx, "SELECT $1::int", 1)
-			if err == nil {
-				for rows.Next() {
-					_ = rows.RawValues()
-				}
-				rows.Close()
-			}
-		})
+		measurePgx(t, probe, budget, haveBudget, server, drivePgxExtended)
 	})
 }
