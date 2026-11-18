@@ -70,6 +70,11 @@ printf '%s' '3LPS9-HWETE-XULZS-SDNYS-XQ5K9-VDY89-3YVQ8-SU8AP-EP7JG-PJFWU-FH' | \
   keyorix-server admin recover-admin --user admin@example.com --recovery-key - --config ./keyorix.yaml
 ```
 
+`--user` is the account's **email**, not its username: `--user admin` answers
+`Error: recover-admin: no account with email "admin": User not found: user not found` (exit 1).
+The first admin created by `keyorix system init` has the email `admin@keyorix.local` unless
+`--admin-email` was given.
+
 `--recovery-key` must be exactly `-` — the key is always read from stdin, never a
 command-line argument, so it never ends up in shell history or `ps` output.
 
@@ -87,6 +92,14 @@ Log in as "admin" with this password. That session lasts at most 15 minutes and 
 password (keyorix change-password) and enrol a second factor (keyorix mfa enroll + activate), in either
 order. When both are done it ends; log in again with the new password and a code.
 ```
+
+*Capture status (RUNBOOK-CAPTURE-2, 2026-11-18, main `c60a499ff`, SQLite).* Sections 0 and 2 were run
+natively and their output matches, line for line, the blocks above (the one-time password, key and
+times differ). That instance ran with `security.require_mfa: false`, so the last line of step 2 read
+`Log in as "admin" with this password; you will be required to set a new one immediately.` instead of
+the setup-session sentence shown above. The setup-session, MFA enrolment and `change-password`
+output in sections 3 to 5 (which need `require_mfa: true`, a TOTP app and TLS) was **not** re-captured
+and the SSO, container and Kubernetes variants are pending the e2e VM.
 
 This reactivates the account if it was deactivated, sets a one-time password (printed
 above, shown exactly once — copy it now), clears MFA/WebAuthn enrollment and the old
