@@ -706,6 +706,12 @@ func (c *KeyorixCore) planAuditGaps(ctx context.Context, f *auditLossFindings, i
 		if legacy {
 			return nil, nil, auditLossRefused("audit event #%d was written with the old audit-hash format: an upgrade step that was not run, not a loss (run `keyorix audit migrate-chain-encoding`)", id)
 		}
+		// A walk that breaks on the row an accepted (or already planned) gap
+		// resumes at found that row changed since its hash was recorded: a
+		// modified row, never a second gap at the same id.
+		if g, ok := gapResumingAt(all, id); ok {
+			return nil, nil, auditLossRefused("audit event #%d is where the gap of seal #%d resumes and it no longer matches the recorded hash (%s): a modified row, not a lost one", id, g.Seq, v.Reason)
+		}
 		// The storage walk sets LinkBroken on a walk from the chain start only:
 		// there it must be set. A walk pinned after a sealed gap never carries
 		// it; its broken link is proven from the rows below (row.PrevHash).
@@ -721,6 +727,13 @@ func (c *KeyorixCore) planAuditGaps(ctx context.Context, f *auditLossFindings, i
 		}
 		if row == nil || row.EntryHash == "" {
 			return nil, nil, auditLossRefused("audit event #%d cannot be read back with its hash", id)
+		}
+		// The last surviving row before an accepted gap is pinned by the hash
+		// the seal recorded: a rewritten one is not the start of a new gap.
+		for _, g := range all {
+			if g.LastGoodID == id && row.EntryHash != g.LastGoodHash {
+				return nil, nil, auditLossRefused("audit event #%d is the last surviving row before the gap of seal #%d and no longer has the hash the seal recorded: a rewritten row, not a lost one", id, g.Seq)
+			}
 		}
 		pin, err := c.storage.VerifyAuditChainSegment(ctx, storage.AuditChainSegment{AfterID: id, SeedHash: row.EntryHash, ThroughID: id})
 		if err != nil {
@@ -763,6 +776,15 @@ func (c *KeyorixCore) planAuditGaps(ctx context.Context, f *auditLossFindings, i
 		gaps = append(gaps, AuditSealGap{LastGoodID: pre.HeadID, LastGoodHash: pre.HeadHash, ResumeID: id, ResumeHash: row.EntryHash})
 	}
 	return gaps, rest, nil
+}
+
+// gapResumingAt returns the gap in gaps that resumes at id.
+func gapResumingAt(gaps []sealedGap, id uint) (sealedGap, bool) {
+	i := slices.IndexFunc(gaps, func(g sealedGap) bool { return g.ResumeID == id })
+	if i < 0 {
+		return sealedGap{}, false
+	}
+	return gaps[i], true
 }
 
 // auditLossBefore is the newest authenticated certification before the loss:

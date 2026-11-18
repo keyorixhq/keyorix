@@ -4,10 +4,14 @@
   `LinkBroken` must be set. A walk pinned after a sealed gap never carries it, so there the
   resume row's `prev_hash` must differ from the `HeadHash` of the verified chain before it.
   `LinkBroken` is also set for an earliest row that does not match the retention re-anchor;
-  with no verified row before the break and an anchor present, that is refused. `LinkBroken`
+  with no verified row before the break and an anchor present, that is refused. A break on
+  the row an accepted or already planned gap resumes at is a modified row, and a break on a
+  gap's last surviving row whose hash differs from the one the seal recorded is a rewritten
+  row: both are refused by `planAuditGaps` itself, not left to a later full walk. `LinkBroken`
   comes from the storage walk only (`VerifyAuditChain`/`VerifyAuditChainSegment`), merged by
   `walkAuditChainGaps`; no request field sets it. Why: AUDIT-GUARDS-TAILS-NOV-1 item 1, a
   reworded verifier message must not change an accept-loss verdict. Guard:
   `audit_seal_link_broken_typed_test.go` (`TestAuditSeal_LinkBrokenAcceptedWithRewordedReason`,
   `_PinnedGapAcceptedWithRewordedReason`, `_LinkTextWithoutLinkBrokenRefused`,
-  `_PinnedModifiedRowRefused`, `_ReanchorMismatchRefusedDespiteLinkBroken`).
+  `_PinnedModifiedRowRefused`, `_ReanchorMismatchRefusedDespiteLinkBroken`,
+  `_PinnedSealedResumeRowRewrittenRefused`, `_PinnedSealedLastGoodRowRewrittenRefused`).

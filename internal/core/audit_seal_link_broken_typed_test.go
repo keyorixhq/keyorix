@@ -123,3 +123,39 @@ func TestAuditSeal_ReanchorMismatchRefusedDespiteLinkBroken(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuditLossRefused)
 	require.Contains(t, err.Error(), "does not match the retention re-anchor")
 }
+
+// REVFIX-4415-1 (review probe): after two gaps are sealed, the second gap's
+// resume row is rewritten so it still recomputes. The pinned walk breaks on
+// that row; naming it again is a modified row, refused by planAuditGaps
+// itself, not a second gap with the same resume id.
+func TestAuditSeal_PinnedSealedResumeRowRewrittenRefused(t *testing.T) {
+	fcRun(t, func(t *testing.T, e *fcEnv) {
+		fcCertify(t, e)
+		first := sealDeleteRow(t, e, e.c, 3)
+		require.NoError(t, e.db.Exec("DELETE FROM audit_events WHERE id = 7").Error)
+		sealAccept(t, e.c, sealReq(first, 8))
+		rehashFrom(t, e.db, 8, 8)
+		c := e.restart()
+		before := sealWriteState(t, c)
+		sealRefused(t, c, sealReq(8), "is where the gap of seal #1 resumes")
+		require.Equal(t, before, sealWriteState(t, c))
+	})
+}
+
+// The last surviving row before a sealed gap is pinned by the seal too: with
+// the row before it deleted and it rewritten (so it still recomputes and its
+// link breaks), naming it is a rewritten row, not a new gap.
+func TestAuditSeal_PinnedSealedLastGoodRowRewrittenRefused(t *testing.T) {
+	fcRun(t, func(t *testing.T, e *fcEnv) {
+		fcCertify(t, e)
+		first := sealDeleteRow(t, e, e.c, 3)
+		require.NoError(t, e.db.Exec("DELETE FROM audit_events WHERE id = 7").Error)
+		sealAccept(t, e.c, sealReq(first, 8))
+		require.NoError(t, e.db.Exec("DELETE FROM audit_events WHERE id = 5").Error)
+		rehashFrom(t, e.db, 6, 6)
+		c := e.restart()
+		before := sealWriteState(t, c)
+		sealRefused(t, c, sealReq(6), "is the last surviving row before the gap of seal #1")
+		require.Equal(t, before, sealWriteState(t, c))
+	})
+}
