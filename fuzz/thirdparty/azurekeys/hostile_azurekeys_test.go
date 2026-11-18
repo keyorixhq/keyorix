@@ -56,6 +56,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/cloudfuzz"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 // azBearerCanary is the bearer token this harness's fake credential hands out —
@@ -88,6 +89,7 @@ func FuzzAzureKeysResponse(f *testing.F) {
 	f.Add(200, []byte(`{"value":12345}`)) // wrong type
 	f.Add(429, []byte(`{"error":{"code":"TooManyRequests"}}`))
 
+	probe, budget, haveBudget := azkeysResguardProbe(f)
 	f.Fuzz(func(t *testing.T, status int, body []byte) {
 		code := cloudfuzz.ClampHTTPStatus(status)
 
@@ -135,24 +137,30 @@ func FuzzAzureKeysResponse(f *testing.F) {
 			}},
 		}
 
-		for _, op := range ops {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			hits.Store(0)
-			var oerr error
-			cloudfuzz.RunGuarded(t, "azkeys."+op.name, func() {
-				oerr = op.run(ctx)
-			})
-			cancel()
+		cost := probe.Measure(len(body), func() {
+			for _, op := range ops {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				hits.Store(0)
+				var oerr error
+				cloudfuzz.RunGuarded(t, "azkeys."+op.name, func() {
+					oerr = op.run(ctx)
+				})
+				cancel()
 
-			if (code < 200 || code >= 300) && oerr == nil {
-				t.Fatalf("BYPASS: azkeys.%s treated non-2xx status %d as success", op.name, code)
+				if (code < 200 || code >= 300) && oerr == nil {
+					t.Fatalf("BYPASS: azkeys.%s treated non-2xx status %d as success", op.name, code)
+				}
+				cloudfuzz.AssertNoSecretInError(t, "azkeys."+op.name, oerr, azBearerCanary)
+				if h := hits.Load(); h > azRetryCeiling {
+					t.Fatalf("RETRY STORM: azkeys.%s hit the fake endpoint %d times (MaxRetries=2)", op.name, h)
+				}
 			}
-			cloudfuzz.AssertNoSecretInError(t, "azkeys."+op.name, oerr, azBearerCanary)
-			if h := hits.Load(); h > azRetryCeiling {
-				t.Fatalf("RETRY STORM: azkeys.%s hit the fake endpoint %d times (MaxRetries=2)", op.name, h)
-			}
-		}
+		})
+		resguard.FeedCoverage(cost)
 
 		cloudfuzz.CheckNoLeak(t, "azkeys response fuzz")
+		if haveBudget {
+			budget.Check(t.Fatalf, cost)
+		}
 	})
 }

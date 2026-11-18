@@ -1,0 +1,23 @@
+{
+  "target": "awss3_putobject",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 12,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 197888,
+      "per_byte": 125008,
+      "abs_max": 791552
+    },
+    "cpu_ns": {
+      "floor": 2263000,
+      "per_byte": 2263000,
+      "abs_max": 9052000
+    },
+    "mallocs": {
+      "floor": 1479,
+      "per_byte": 720,
+      "abs_max": 5916
+    }
+  }
+}

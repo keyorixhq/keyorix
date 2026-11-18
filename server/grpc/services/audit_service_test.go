@@ -306,6 +306,8 @@ func TestAuditService_GetRBACAuditLogs_ReturnsRoleChanges(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 5, Username: "granter", UsernameFolded: "granter", Email: "granter@example.com", EmailFolded: "granter@example.com", IsActive: true}).Error)
 	// The granted role must exist: the #3546 role-scope check resolves it.
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor", AssignableScope: models.RoleAssignableAny}).Error)
+	// The grant target must exist: AssignUserRole refuses an absent user (ERRMAP-TAILS-NOV-4).
+	require.NoError(t, db.Create(&models.User{ID: 10, Username: "audit-target", UsernameFolded: "audit-target", Email: "audit-target@example.test", EmailFolded: "audit-target@example.test", AccountState: "active"}).Error)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	require.NoError(t, c.AssignUserRole(context.Background(), 5, 10, 2, core.Scope{ProjectID: 3}, false))
 

@@ -21,7 +21,7 @@ excluded from the counts table, which tracks production packages only.
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
 | `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 154 | 154 | 0 |
-| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 44 | 41 | 3 |
+| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 44 | 42 | 2 |
 | `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 75 | 75 | 0 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 44 | 44 | 0 |
 | `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 21 | 21 | 0 |
@@ -42,6 +42,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/securefiles` | [internal/securefiles/INVARIANTS.md](../internal/securefiles/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/logging` | [internal/logging/INVARIANTS.md](../internal/logging/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/evidencesink` | [internal/evidencesink/INVARIANTS.md](../internal/evidencesink/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/audit/siem` | [internal/audit/siem/INVARIANTS.md](../internal/audit/siem/INVARIANTS.md) | 1 | 1 | 0 |
@@ -75,7 +76,8 @@ One UNGUARDED item is flagged as materially more important than the rest, and on
 item has a known CI gap. Re-checked 2026-10-30 against `origin/main`.
 
 - **ADR-103's Postgres RLS tenancy layer is a ratified design with zero implementation and
-  zero tests** (`internal/storage/INVARIANTS.md` INV-STORAGE-31/32) — confirmed by direct grep:
+  zero tests** (`internal/storage/INVARIANTS.md` INV-STORAGE-31; its prerequisite INV-STORAGE-32,
+  ctx threading, is now guarded by `internal/storage/ctx_threading_guard_test.go`) — confirmed by direct grep:
   `rg -i 'ROW LEVEL SECURITY|app\.current_tenant|keyorix_migrator' internal/storage` matches only
   `internal/storage/INVARIANTS.md` itself, no code or test.
 - **`web/src/types` drift check does not run on an `openapi.yaml`-only PR** (INV-WEB-05,

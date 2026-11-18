@@ -1,0 +1,1 @@
+store:FoldMemoLenForTest:first-param	#2507	test-only introspection of an in-memory memo; no DB access

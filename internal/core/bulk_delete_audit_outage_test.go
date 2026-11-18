@@ -5,10 +5,9 @@ package core
 // WithSecretMutationAudit it must say the audit log is unavailable and the item can be
 // retried, delete nothing, and stay fail-closed.
 //
-// This proves the per-item classifier only. The HTTP bulk-delete handler passes an
-// untagged request context, so DeleteSecret writes no audit row in its transaction there
-// and the post-commit audit stays best effort (INV-CORE-secret-mutation-audit-same-tx,
-// "Not covered").
+// This proves the per-item classifier. The HTTP bulk-delete handler tags its request
+// context too (ERRMAP-TAILS-NOV-4), so the same outage shows over REST:
+// TestBulkDeleteSecrets_AuditOutageIsRetryablePerItem (server/http/handlers).
 
 import (
 	"errors"

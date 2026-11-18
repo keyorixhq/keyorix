@@ -1,0 +1,23 @@
+{
+  "target": "azurekeys_response",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 12,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 225392,
+      "per_byte": 225392,
+      "abs_max": 901568
+    },
+    "cpu_ns": {
+      "floor": 5391000,
+      "per_byte": 5288000,
+      "abs_max": 21564000
+    },
+    "mallocs": {
+      "floor": 1627,
+      "per_byte": 1627,
+      "abs_max": 6508
+    }
+  }
+}
