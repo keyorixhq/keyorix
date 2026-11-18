@@ -77,6 +77,16 @@ rc=0
 ok_rc=0; [ "$rc" -ne 0 ] || ok_rc=1
 check "fail exits non-zero (exit $rc)" "$ok_rc"
 
+# --- 5. drill_end prints the elapsed time, then the verdict as the LAST line (RC-DRILLS-NOV-1) -----
+# The PR/report summary of a drill is "elapsed + verdict"; the verdict line stays last (docs and
+# callers read the last line).
+rc=0
+out="$(export DRILL_T0=$((SECONDS - 7)) DRILL_BACKEND=sqlite; drill_end "SELFTEST DRILL")" || rc=1
+last="$(tail -1 <<<"$out")"
+[ "$last" = "SELFTEST DRILL PASSED" ] || rc=1
+grep -qE '^    elapsed: [0-9]+s \(backend: sqlite\)$' <<<"$out" || rc=1
+check "drill_end prints 'elapsed: Ns (backend: ...)' before the PASSED line (got: $(tr '\n' '|' <<<"$out"))" "$rc"
+
 # --- 3. no echo|printf ... | grep -q in the drill scripts --------------------------------------
 rc=0
 hits="$(grep -nE '\|[[:space:]]*grep[[:space:]]+-[a-zA-Z]*q' "$HERE"/*.sh | grep -v 'selftest.sh' || true)"
