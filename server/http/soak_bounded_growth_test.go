@@ -690,10 +690,10 @@ func checkLatencyDrift(tb testing.TB, samples []soakSample) {
 	if len(samples) < 4 {
 		return
 	}
-	q := len(samples) / 4
-	if q == 0 {
-		q = 1
-	}
+	// At least three samples per window: with two, the "median" was the larger of
+	// them, so one slow sample at either end decided the run (#4389: a queue run
+	// failed at 141 ms vs 24 ms with 1200 and 1350 ops at 52 and 23 ms).
+	q := min(max(len(samples)/4, 3), len(samples)/2)
 	early := medianP95(samples[:q])
 	late := medianP95(samples[len(samples)-q:])
 	tb.Logf("LATENCY probe p95 early=%v late=%v tolerance=%.1fx", early, late, soakLatencyDriftTolerance)
@@ -712,7 +712,7 @@ func medianP95(ss []soakSample) time.Duration {
 		ds = append(ds, s.probeP95)
 	}
 	slices.Sort(ds)
-	return ds[len(ds)/2]
+	return ds[(len(ds)-1)/2] // the lower median: an even count must not return its maximum
 }
 
 // runSoak drives the op loop with periodic sampling and returns the samples +
