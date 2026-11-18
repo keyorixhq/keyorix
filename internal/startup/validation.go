@@ -508,8 +508,8 @@ func validateEncryption(cfg *config.Config, result *ValidationResult, tolerateUn
 		return fmt.Errorf("KEK salt path is unsafe: %s", saltPath)
 	}
 	dekPath := resolveKeyPath(enc.DEKPath)
-	if strings.Contains(dekPath, "..") {
-		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
+	if err := checkDEKPathSafe(dekPath); err != nil {
+		return err
 	}
 
 	saltInfo, saltErr := os.Stat(saltPath)
@@ -528,20 +528,13 @@ func validateEncryption(cfg *config.Config, result *ValidationResult, tolerateUn
 		return fmt.Errorf("KEK salt file %s has invalid size %d bytes (expected 32)", saltPath, saltInfo.Size())
 	}
 
-	if dekErr != nil {
-		return fmt.Errorf("wrapped DEK file not found: %s", dekPath)
-	}
-	const minWrappedDEKSize = 60 // 12-byte GCM nonce + 32-byte key + 16-byte tag
-	if dekInfo.Size() < minWrappedDEKSize {
-		return fmt.Errorf("wrapped DEK file %s is too small (%d bytes) to be a valid wrapped key", dekPath, dekInfo.Size())
-	}
-	return nil
+	return checkWrappedDEK(dekPath, dekInfo, dekErr)
 }
 
 // validateWrappedDEKOnly is validateEncryption for a key set with no salt file.
 func validateWrappedDEKOnly(dekPath string, tolerateUnprovisionedKeys bool, result *ValidationResult) error {
-	if strings.Contains(dekPath, "..") {
-		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
+	if err := checkDEKPathSafe(dekPath); err != nil {
+		return err
 	}
 	dekInfo, dekErr := os.Stat(dekPath)
 	if tolerateUnprovisionedKeys && os.IsNotExist(dekErr) {
@@ -549,6 +542,19 @@ func validateWrappedDEKOnly(dekPath string, tolerateUnprovisionedKeys bool, resu
 			"wrapped DEK (%s) does not exist yet — treating as first boot; it will be generated before this check runs again", dekPath))
 		return nil
 	}
+	return checkWrappedDEK(dekPath, dekInfo, dekErr)
+}
+
+// checkDEKPathSafe and checkWrappedDEK are the DEK checks validateEncryption
+// and validateWrappedDEKOnly share, so the two cannot drift.
+func checkDEKPathSafe(dekPath string) error {
+	if strings.Contains(dekPath, "..") {
+		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
+	}
+	return nil
+}
+
+func checkWrappedDEK(dekPath string, dekInfo os.FileInfo, dekErr error) error {
 	if dekErr != nil {
 		return fmt.Errorf("wrapped DEK file not found: %s", dekPath)
 	}

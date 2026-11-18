@@ -1,6 +1,7 @@
 package keyfiles
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -44,4 +45,32 @@ func TestKeySetEnumerations_UnusedSaltPath(t *testing.T) {
 			require.Equal(t, tc.wantSalt, found)
 		})
 	}
+}
+
+// #4504 L1: a stale kek.salt.pending beside an unused salt_path is not a
+// rotation in progress, and an unsafe unused salt_path does not make Registry
+// fail. Under the password provider both still count.
+func TestRotationStaging_UnusedSaltPath(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "kek.salt.pending"), make([]byte, 32), 0o600))
+	enc := func(typ, salt string) *config.EncryptionConfig {
+		return &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: salt,
+			KeyProvider: config.KeyProviderConfig{Type: typ, EnvVar: "X"}}
+	}
+
+	pending, err := PendingRotationFiles(enc("env", "kek.salt"), dir)
+	require.NoError(t, err)
+	require.Empty(t, pending)
+	pending, err = PendingRotationFiles(enc("password", "kek.salt"), dir)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "dek.key"), make([]byte, 60), 0o600))
+	_, err = Registry(enc("env", "../outside/kek.salt"), dir)
+	require.NoError(t, err)
+	_, err = Registry(enc("password", "../outside/kek.salt"), dir)
+	require.Error(t, err)
+
+	require.Equal(t, filepath.Join(dir, "kek.salt"), UnusedSaltPath(enc("env", "./kek.salt"), dir))
+	require.Empty(t, UnusedSaltPath(enc("password", "kek.salt"), dir))
 }
