@@ -27,8 +27,8 @@ import (
 func deferAdoption(st *KeySetState, enc *config.EncryptionConfig, baseDir string, res *ReconcileResult) {
 	res.AdoptionDeferred = true
 	saltPending := ""
-	if enc.SaltPath != "" {
-		if clean, err := SafePath("KEK salt", enc.SaltPath); err == nil {
+	if enc.EffectiveSaltPath() != "" {
+		if clean, err := SafePath("KEK salt", enc.EffectiveSaltPath()); err == nil {
 			saltPending = resolve(baseDir, clean) + ".pending"
 		}
 	}
