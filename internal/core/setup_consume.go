@@ -710,8 +710,9 @@ func (c *KeyorixCore) abandonInvitationAccept(ctx context.Context, inv *models.P
 //     link and charges it like one, so the answer never tells the caller the token
 //     was valid (INV-HTTP-login-budget-counts-failures-only).
 //   - a project membership the grant had created stays as a revoked row
-//     (RemoveProjectMember): it grants nothing and does not block a resend (the
-//     active-membership index excludes revoked rows).
+//     (revokeInvitationGrants, revokeInvitationMembershipRow): it grants nothing
+//     and does not block a resend (the active-membership index excludes revoked
+//     rows).
 func (c *KeyorixCore) removeInvitationAcceptAccount(ctx context.Context, inv *models.ProjectInvitation, user *models.User, what string) bool {
 	derr := runInvitationAcceptStep("removing the account", func() error {
 		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {

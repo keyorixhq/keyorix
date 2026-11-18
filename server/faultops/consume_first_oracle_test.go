@@ -48,6 +48,7 @@ package faultops
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -81,6 +82,13 @@ type consumeFirstExemption struct {
 	// #2880 rule). Accepted only as a pure addition of at most ONE LoginAttempt
 	// row: a deleted or edited row, or a second one, still fails.
 	keepsLoginSlot bool
+	// revokedRowsAdded: tables where the op's own undo leaves a row it had
+	// added, in the terminal State "revoked" (a project membership that
+	// RemoveProjectMember revoked while undoing the step that created it). Maps
+	// the table to the most rows it may gain. Accepted only as a pure addition of
+	// at most that many rows, each reading State "revoked": a live row, an edited
+	// existing row or one row more still fails.
+	revokedRowsAdded map[string]int
 	// why is the one-line reason, printed in the ACCEPTABLE-BY-DESIGN log line
 	// so a passing run still says what it accepted and on what grounds.
 	why string
@@ -232,6 +240,26 @@ var consumeFirstExemptions = []consumeFirstExemption{
 		keepsLoginSlot:  true,
 		why:             "verifyMFAStepUpCode burned the matched TOTP time-step before the step-up grant write; it must stay burned so the same code cannot be replayed for a second grant",
 	},
+	// #4410 (INVITE-ACCEPT-NOV-1 item 4). completeInvitationAccept is a class-S
+	// saga; its link spend (consumeInspectedToken, after CreateUser, before the
+	// grants) is the class-B part, keyed CONSUME: in the ledger. A step that fails
+	// after the spend is undone by abandonInvitationAccept: grants reverted, the
+	// account removed with its baseline role and password history
+	// (removeInvitationAcceptAccount), the invitation left pending for a resend.
+	// What stays is exactly this entry: the spent link (SetupToken.State), the
+	// dead-link answer's kept LoginAttempt slot, and, when the grant got as far as
+	// the membership, that membership as one revoked row. Anything else that moved
+	// (a live account, a role, a history row, a live membership, the invitation)
+	// still fails. The sign-in failure after a committed accept is not this shape
+	// (everything committed); it has its own oracleAByDesign rows.
+	{
+		op:               setupInvitationOpKey,
+		fn:               "CONSUME:(*KeyorixCore).completeInvitationAccept",
+		consumedColumns:  map[string][]string{"SetupToken": {"State"}},
+		keepsLoginSlot:   true,
+		revokedRowsAdded: map[string]int{"ProjectMembership": 1},
+		why:              "the setup link was spent before the step that failed and stays spent (a resend issues a fresh one); the account, its roles and history were removed and a membership the grant made is left revoked",
+	},
 }
 
 // consumeFirstExemptionFor returns the entry for op, or nil.
@@ -287,6 +315,27 @@ func pureRowAdditionAtMost(before, after tableSnapshot, maxAdded int) bool {
 	return true
 }
 
+// addedRowsAllRevoked reports whether every row in after that is not in before
+// (multiset difference) is a canonical row whose State is "revoked". A row that
+// does not parse is not revoked.
+func addedRowsAllRevoked(before, after tableSnapshot) bool {
+	have := make(map[string]int, len(before.Rows))
+	for _, r := range before.Rows {
+		have[r]++
+	}
+	for _, r := range after.Rows {
+		if have[r] > 0 {
+			have[r]--
+			continue
+		}
+		var row struct{ State *string }
+		if err := json.Unmarshal([]byte(r), &row); err != nil || row.State == nil || *row.State != "revoked" {
+			return false
+		}
+	}
+	return true
+}
+
 // consumeFirstAccountsForDiff reports whether the entire before->after change
 // on this run is the op's declared single-use consumption and nothing else.
 func consumeFirstAccountsForDiff(in oracleInput) (*consumeFirstExemption, bool) {
@@ -309,6 +358,13 @@ func consumeFirstAccountsForDiff(in oracleInput) (*consumeFirstExemption, bool) 
 			return nil, false
 		}
 		excluded = append(excluded, "LoginAttempt")
+	}
+	for tbl, maxAdded := range e.revokedRowsAdded {
+		before, after := in.before.Tables[tbl], in.after.Tables[tbl]
+		if !pureRowAdditionAtMost(before, after, maxAdded) || !addedRowsAllRevoked(before, after) {
+			return nil, false
+		}
+		excluded = append(excluded, tbl)
 	}
 	if hashExcludingColumns(in.before, excluded, e.consumedColumns) !=
 		hashExcludingColumns(in.after, excluded, e.consumedColumns) {
@@ -412,6 +468,11 @@ func TestConsumeFirstExemptions_Documented(t *testing.T) {
 		if len(e.consumedColumns) == 0 && len(e.consumedByDeletion) == 0 {
 			t.Errorf("consumeFirstExemption for op %q declares no consumption at all -- it would "+
 				"accept ANY unchanged-elsewhere diff, which is not what this mechanism is for", e.op)
+		}
+		for tbl, maxAdded := range e.revokedRowsAdded {
+			if maxAdded <= 0 {
+				t.Errorf("consumeFirstExemption for op %q lists %q in revokedRowsAdded with no positive cap", e.op, tbl)
+			}
 		}
 		// An uncapped consumedByDeletion table would accept "the op deleted
 		// every row" as readily as "the op consumed its one token".
