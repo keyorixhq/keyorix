@@ -4,27 +4,25 @@
 // {zstd,s2,snappy} are the codecs behind two of those branches and are pulled
 // into the build only through this driver.
 //
-// Reachability (traced, honest): internal/dynamic/mongodb.go connectMongo ->
-// options.Client().ApplyURI(adminDSN) -> mongo.Connect. The driver calls
-// DecompressPayload on a reply only when compression was negotiated, which the
-// driver advertises only if adminDSN carries `compressors=`. So the path is
-// reachable but CONDITIONAL on (a) a MongoDB dynamic-secrets engine, (b) its
-// adminDSN opting into compression, (c) a malicious/compromised Mongo server.
-// Non-default; a trust-boundary crossing. See lf1-REPORT.md.
+// Reachability (traced): internal/dynamic/mongodb.go connectMongo ->
+// options.Client().ApplyURI(adminDSN) -> mongo.Connect. The driver decompresses
+// any reply whose opcode is OP_COMPRESSED, using the compressor ID and
+// UncompressedSize the server sends; it does not require compression to have been
+// negotiated. So the path is reachable by default for a MongoDB dynamic-secrets
+// engine whenever the target server is malicious or compromised (a
+// trust-boundary crossing). The gap itself is tracked in keyorix-private, not here.
 //
 // DESIGN NOTE — why UncompressedSize is derived, not fuzzed. DecompressPayload's
 // documented contract is "allocate opts.UncompressedSize bytes": feeding it an
 // arbitrary huge size and observing a huge allocation tests nothing about the
-// library — it is the caller asking for that memory (that mismatch, i.e. the
-// mongo driver reading UncompressedSize off the wire WITHOUT bounding it against
-// the real message, is a wire-layer concern that FuzzMongoReply owns, and is
-// written up as a HARDENING item in the report, not fuzzed here). To make a SOUND
-// decompression-bomb oracle, the harness derives UncompressedSize from the
-// GENUINE decoded length of `in` (bounded by safeMaxOut), so the only way an
-// allocation becomes disproportionate to the compressed input is a real
-// high-compression-ratio bomb intrinsic to the bytes — a small frame that
-// legitimately expands to a large output, exactly the zip-bomb a malicious
-// server would send.
+// library — it is the caller asking for that memory. The mongo driver reading
+// UncompressedSize off the wire WITHOUT bounding it against the real message is
+// a separate gap that NO test in this repo guards: UNGUARDED (keyorix-private,
+// id pending), and it is not fuzzed here. To keep the oracle SOUND, the harness
+// derives UncompressedSize from the GENUINE decoded length of `in` (bounded by
+// safeMaxOut), so a high-ratio frame (a small input that legitimately expands to
+// a large output, the zip-bomb shape) is allowed, and only an allocation far
+// above that genuine output can trip the oracle.
 package compresshostile
 
 import (
@@ -48,7 +46,7 @@ import (
 // real high-ratio bomb still trips the oracle; two -parallel workers cap
 // transient use at a few hundred MiB. The real driver has NO such clamp
 // (UncompressedSize is int32, up to ~2 GiB) — that larger ceiling is the
-// hardening gap the report documents, not a property of this test ceiling.
+// gap tracked in keyorix-private, not a property of this test ceiling.
 const safeMaxOut = 1 << 26
 
 const budgetPath = "testdata/resguard.json"
@@ -128,18 +126,27 @@ func sizeKey(in []byte, us int32) int {
 // the true decoded length of `in` (bounded by safeMaxOut), never fuzzed, so the
 // only amplification an input can express is intrinsic to the bytes.
 //
+// SENSITIVITY: the fatal ceiling is factor·(floor + per_byte·out) from
+// testdata/resguard.json (about 17.5 MB + 6.9·out). The floor is the p99 of the
+// largest calibration allocations, not the fixed decoder overhead, so for the
+// small inputs the fuzzer generates this is effectively an absolute ~17.5 MB
+// ceiling, not a tight proportionality check. Measured: a planted over-allocation
+// of 20× output at 1 MiB, and 3000× at 4 KiB, does NOT trip it; TestResguardCompressRedGreen
+// uses 50× at 1 MiB, which does.
+//
 // What this oracle does NOT verify: (1) it does NOT bound ABSOLUTE memory — a
 // malicious server CAN still force an allocation up to the genuine output size
 // (up to the driver's int32 ceiling, ~2 GiB, in production); that absence of a
-// decompressed-size CAP in driver.DecompressPayload is a real HARDENING item
-// written up in the report, NOT something this target can "trip" because
-// allocating the output you asked to decompress is the decompressor's correct
-// contract. (2) It does not flag ordinary high compression ratios (that is not a
-// defect). (3) It does not assert decode CORRECTNESS (FuzzSnappyRoundTrip owns
-// that). (4) It does not model OP_COMPRESSED wire framing (FuzzMongoReply owns
-// that). (5) live_heap/drift are deliberately excluded (pooled decoder buffers
-// make absolute live-heap a non-signal here) — only the per-input alloc delta is
-// fatal.
+// decompressed-size CAP in driver.DecompressPayload is a real gap, not
+// something this target can "trip" because allocating the output you asked to
+// decompress is the decompressor's correct contract. The same goes for the
+// server-declared UncompressedSize the driver pre-allocates: UNGUARDED
+// (keyorix-private, id pending). (2) It does not flag ordinary high compression
+// ratios (that is not a defect). (3) It does not assert decode CORRECTNESS
+// (FuzzSnappyRoundTrip owns that). (4) It does not model OP_COMPRESSED wire
+// framing; no test in this repo does (FuzzMongoReply cannot emit OP_COMPRESSED).
+// (5) live_heap/drift are deliberately excluded (pooled decoder buffers make
+// absolute live-heap a non-signal here) — only the per-input alloc delta is fatal.
 func FuzzMongoDecompressPayload(f *testing.F) {
 	seedDecompress(f)
 

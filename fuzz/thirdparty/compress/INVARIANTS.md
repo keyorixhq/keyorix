@@ -4,8 +4,8 @@ Read this before changing the decompression-amplification fuzz harness. This pac
 is test-only (`compresshostile`, imported from nothing). It drives the REAL sink the
 MongoDB dynamic-secrets engine reaches — `go.mongodb.org/mongo-driver/v2`
 `x/mongo/driver.DecompressPayload` (snappy / zlib / zstd branches), reached from
-`internal/dynamic/mongodb.go connectMongo` when `adminDSN` negotiates compression and
-the server sends `OP_COMPRESSED` — plus the klauspost/compress snappy block codec that
+`internal/dynamic/mongodb.go connectMongo` whenever the server sends an `OP_COMPRESSED`
+reply (no compression negotiation is required) — plus the klauspost/compress snappy block codec that
 sits behind one branch. These are regression tripwires on third-party behaviour at the
 Keyorix construction site, not proofs Keyorix owns the behaviour.
 

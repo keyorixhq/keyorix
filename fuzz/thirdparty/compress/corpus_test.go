@@ -106,9 +106,11 @@ func benignSamples(tb testing.TB) []sample {
 // only (256 KiB … 4 MiB), where a decompressor's marginal allocation is ≈ the
 // output (ratio ~1), so the per-byte slope reflects the true marginal cost and
 // is NOT inflated by the fixed decoder overhead that dominates tiny frames. The
-// floor term then absorbs that fixed overhead for small frames at runtime. GREEN
-// is still checked against the full benignSamples range (incl. tiny frames), so
-// a small frame whose fixed overhead somehow exceeded the floor would be caught.
+// floor is the p99 of the ABSOLUTE allocations of these large frames (about
+// 4.4 MB), so it is far above the fixed decoder overhead of a small frame: small
+// inputs get a generous allowance (this is the sensitivity limit stated in
+// decompress_fuzz_test.go). GREEN is still checked against the full benignSamples
+// range (incl. tiny frames).
 func calibrationSamples(tb testing.TB) []sample {
 	tb.Helper()
 	var out []sample
@@ -204,9 +206,11 @@ func overAllocDecode(in []byte, opts driver.CompressionOpts, mult int) {
 // keyed-to-OUTPUT alloc oracle. GREEN: every benign sample passes, AND a genuine
 // high-ratio zstd bomb (tiny frame -> ~60 MiB) ALSO passes — allocating the
 // output you decompressed is correct, not a defect. RED: a planted super-linear
-// decode (alloc = 20× output) on a benign frame trips the budget, proving the
-// oracle discriminates "alloc proportional to output" (fine) from "alloc
-// disproportionate to output" (a real decoder defect).
+// decode (alloc = 50× output at 1 MiB) on a benign frame trips the budget, proving
+// the oracle discriminates "alloc proportional to output" (fine) from "alloc far
+// above output" (a real decoder defect). It does NOT prove finer sensitivity: a
+// 20× plant at 1 MiB, or 3000× at 4 KiB, stays under the ceiling (see
+// decompress_fuzz_test.go).
 func TestResguardCompressRedGreen(t *testing.T) {
 	b := calibrateCompress(t)
 
