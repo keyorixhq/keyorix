@@ -273,7 +273,7 @@ export function proseOf(doc: Doc, path: string, method: string): string {
  */
 export function proseMissing(prose: string, fields: string[], label: string): string[] {
     return fields
-        .filter((f) => !new RegExp(`(?<![A-Za-z0-9_])${f}(?![A-Za-z0-9_])`).test(prose))
+        .filter((f) => !new RegExp(`(?<![A-Za-z0-9_])${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_])`).test(prose))
         .map((f) => `${label}.${f}`);
 }
 
