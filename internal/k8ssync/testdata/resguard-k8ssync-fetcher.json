@@ -1,0 +1,25 @@
+{
+  "target": "k8ssync-fetcher-resource",
+  "platform": "linux",
+  "factor": 8,
+  "seeds": 64,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 89880,
+      "per_byte": 89880,
+      "abs_max": 719040
+    },
+    "dials": {
+      "floor": 1,
+      "per_byte": 1,
+      "abs_max": 8,
+      "mode": "absolute"
+    },
+    "net_bytes_in": {
+      "floor": 704,
+      "per_byte": 704,
+      "abs_max": 5632,
+      "mode": "absolute"
+    }
+  }
+}

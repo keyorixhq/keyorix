@@ -199,8 +199,13 @@ step "Initialising config, keys and schema in $WORK"
 export KEYORIX_MASTER_PASSWORD="$MASTER_PASSWORD"
 # For PostgreSQL the first init only writes the config and exits non-zero until the DSN is
 # set (below); the second init then finishes the job.
-( cd "$WORK" && "$SERVER_BIN" admin init --dev --config keyorix.yaml ${STORAGE_ARGS[@]+"${STORAGE_ARGS[@]}"} >/dev/null 2>&1 ) \
-  || [ -n "${KEYORIX_DEMO_PG_DSN:-}" ] || { echo "admin init failed" >&2; exit 1; }
+init_rc=0
+init_err="$( cd "$WORK" && "$SERVER_BIN" admin init --dev --config keyorix.yaml ${STORAGE_ARGS[@]+"${STORAGE_ARGS[@]}"} 2>&1 >/dev/null )" || init_rc=$?
+if [ "$init_rc" -ne 0 ] && [ -z "${KEYORIX_DEMO_PG_DSN:-}" ]; then
+  echo "admin init failed (exit $init_rc); its stderr:" >&2
+  printf '%s\n' "$init_err" | sed 's/^/  /' >&2
+  exit 1
+fi
 # DEMO-ONLY edits: port, loopback trusted proxy (X-Forwarded-For for trigger-anomaly.sh),
 # the Postgres DSN when given, break-glass on, and a 15 s detection cadence.
 KEYORIX_DEMO_PORT_E="$PORT" KEYORIX_DEMO_OIDC_PORT="${KEYORIX_DEMO_OIDC_PORT:-18520}" python3 - "$WORK/keyorix.yaml" <<'PY'
@@ -242,7 +247,13 @@ open(p, "w").write(s)
 PY
 chmod 600 "$WORK/keyorix.yaml"
 if [ -n "${KEYORIX_DEMO_PG_DSN:-}" ]; then
-  ( cd "$WORK" && "$SERVER_BIN" admin init --dev --config keyorix.yaml >/dev/null 2>&1 ) || { echo "admin init (postgres, second pass) failed" >&2; exit 1; }
+  init_rc=0
+  init_err="$( cd "$WORK" && "$SERVER_BIN" admin init --dev --config keyorix.yaml 2>&1 >/dev/null )" || init_rc=$?
+  if [ "$init_rc" -ne 0 ]; then
+    echo "admin init (postgres, second pass) failed (exit $init_rc); its stderr:" >&2
+    printf '%s\n' "$init_err" | sed 's/^/  /' >&2
+    exit 1
+  fi
 fi
 ( cd "$WORK" && "$SERVER_BIN" admin encryption init --config keyorix.yaml >/dev/null 2>&1 \
   && "$SERVER_BIN" admin migrate --config keyorix.yaml >/dev/null 2>&1 )
