@@ -640,6 +640,22 @@ adopts the current files with a WARN and an `encryption.keyset_manifest_adopted`
 partial files and let first boot recreate them" is only right on an install that has **no data
 yet**. **In place:** no.
 
+### `salt_path` ignored for a non-password key provider (a warning, not a refusal) — from code
+
+```
+WARNING: storage.encryption.salt_path ("keys/kek.salt") is unused by provider env and is ignored: only the password key provider reads a KEK salt; remove salt_path from the config
+```
+
+**Match:** `is unused by provider`
+
+**Cause.** `storage.encryption.salt_path` is set, but no configured key provider (`file`, `env`,
+`exec`, `shamir`, `tpm`, `aws-kms`, `gcp-kms`, `azure-kms`, and no `password` fallback) reads a
+salt, so no salt file exists or is expected. The key is ignored: it is not required, checksummed
+or locked, and `admin validate` repeats the line as a warning. Earlier versions treated it as
+required key material and refused the second start with "key material is an incomplete set"
+naming the salt. **Fix.** Delete `salt_path` from the config. A `password` provider (or a
+`password` entry in `fallbacks`) still refuses a missing or unreadable salt. **In place:** yes.
+
 ### Key operation interrupted mid-commit — from code
 
 ```
