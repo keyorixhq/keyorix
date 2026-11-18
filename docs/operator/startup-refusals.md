@@ -654,7 +654,11 @@ salt, so no salt file exists or is expected. The key is ignored: it is not requi
 or locked, and `admin validate` repeats the line as a warning. Earlier versions treated it as
 required key material and refused the second start with "key material is an incomplete set"
 naming the salt. **Fix.** Delete `salt_path` from the config. A `password` provider (or a
-`password` entry in `fallbacks`) still refuses a missing or unreadable salt. **In place:** yes.
+`password` entry in `fallbacks`) still refuses a missing or unreadable salt. A backup taken by an
+earlier version archived the salt with the DEK: restore it with `salt_path` still in the config
+(the config the backup was taken from), and `admin restore` installs the other key files and skips
+the salt with a `not installing the archived KEK salt` line; delete `salt_path` after the restore.
+Without `salt_path`, that restore is refused as a mismatched key-file set. **In place:** yes.
 
 ### Key operation interrupted mid-commit — from code
 
