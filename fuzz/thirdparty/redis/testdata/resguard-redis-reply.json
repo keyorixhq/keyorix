@@ -1,0 +1,23 @@
+{
+  "target": "redis_reply",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 21,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 177144,
+      "per_byte": 35428.8,
+      "abs_max": 708576
+    },
+    "cpu_ns": {
+      "floor": 1722000,
+      "per_byte": 344400,
+      "abs_max": 6888000
+    },
+    "mallocs": {
+      "floor": 342,
+      "per_byte": 68.4,
+      "abs_max": 1368
+    }
+  }
+}
