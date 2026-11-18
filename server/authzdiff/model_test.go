@@ -276,6 +276,11 @@ func (m model) allowed(p *principal, req requirement) bool {
 		// Machines never have MFA; this check covers both user and machine paths.
 		return false
 	}
+	if req.pendingMFARequired && !m.pendingMFAEnrollment(p) {
+		// ActivateMFA: "no pending MFA enrolment; begin enrolment first"
+		// Only a user with an Activated=false row in mfa_secrets satisfies this.
+		return false
+	}
 	return true
 }
 
@@ -360,6 +365,11 @@ type requirement struct {
 	// permission or scope. Machines never have MFA; actor-0 is excluded by
 	// systemActor. The model reads users.mfa_enabled from the grant DB.
 	mfaRequired bool
+	// pendingMFARequired: the op requires a PENDING (not yet activated) MFA
+	// enrollment for the calling user (ActivateMFA: "no pending MFA enrolment").
+	// The check is on mfa_secrets.activated=false in the grant DB; a fully
+	// activated enrollment does NOT satisfy it. Machines and actor-0 always fail.
+	pendingMFARequired bool
 }
 
 // mfaEnabled: p has MFA enrolled and enabled (users.mfa_enabled = true).
@@ -370,6 +380,17 @@ func (m model) mfaEnabled(p *principal) bool {
 	}
 	var n int64
 	m.db.Raw(`SELECT COUNT(*) FROM users WHERE id = ? AND mfa_enabled = true`, p.userID).Scan(&n)
+	return n > 0
+}
+
+// pendingMFAEnrollment: p has a pending (not yet activated) MFA enrollment.
+// Machines and actor-0 always return false.
+func (m model) pendingMFAEnrollment(p *principal) bool {
+	if p.userID == 0 || p.machineID != 0 {
+		return false
+	}
+	var n int64
+	m.db.Raw(`SELECT COUNT(*) FROM mfa_secrets WHERE user_id = ? AND activated = false`, p.userID).Scan(&n)
 	return n > 0
 }
 
