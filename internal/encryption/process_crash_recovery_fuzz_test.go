@@ -218,7 +218,6 @@ type pcrashWorld struct {
 	migSchema string
 }
 
-func buildPCrashWorld() (_ *pcrashWorld, err error) {
 // pcrashStaleWorldAge is old enough that no run can still be using the directory.
 const pcrashStaleWorldAge = 24 * time.Hour
 
@@ -257,20 +256,9 @@ func buildPCrashWorld() (_ *pcrashWorld, err error) {
 		}
 	}()
 	fresh, err = os.MkdirTemp("", "pcrash-fresh-*")
-	defer func() {
-		if err != nil {
-			_ = os.RemoveAll(dir)
-		}
-	}()
-	fresh, err := os.MkdirTemp("", "pcrash-fresh-*")
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err != nil {
-			_ = os.RemoveAll(fresh)
-		}
-	}()
 	for _, args := range [][]string{
 		{"init", "--dev", "--config", "./keyorix.yaml"},
 		{"encryption", "init", "--config", "./keyorix.yaml"},
