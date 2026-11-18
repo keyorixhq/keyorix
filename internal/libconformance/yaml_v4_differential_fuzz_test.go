@@ -86,6 +86,18 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"key: |\n  multi\n  line\n",             // block scalar
 		"? [a, b]\n: val\n",                     // complex mapping key (both reject)
 		"!",                                     // non-specific tag on empty scalar (v3 null / v4 "")
+		"! 00",                                  // ! on NON-empty scalar: v3 int 0 / v4 "00" (D12)
+		"! true",                                // ! on bool-looking scalar: v3 bool / v4 "true" (D12)
+		"! null",                                // ! on null text: v3 nil / v4 "null" (D12)
+		"! 1.5",                                 // ! on float-looking scalar: v3 1.5 / v4 "1.5" (D12)
+		"a: ! 123",                              // ! on non-empty under a key (D12)
+		"- ! 00",                                // ! on non-empty in a sequence (D12)
+		"! abc",                                 // NOT a split: ! on a string-resolving scalar agrees
+		"! : 00",                                // ! on an empty KEY: v3 {nil:0} / v4 {"":"00"} (D17 structural)
+		"! 00 : x",                              // ! on a non-empty KEY (D17 structural)
+		"&a:b",                                  // colon in anchor name: v3 ":b" / v4 nil (D18)
+		"&00:00000",                             // colon in anchor name (D18)
+		"k: &00:00000",                          // colon in anchor name under a key (D18)
 		"a: !\nb: !!str\n",                      // mixed: ! diverges, !!str agrees
 		":",                                     // empty implicit key (v3 rejects / v4 null key)
 		"- :\n",                                 // empty implicit key inside a sequence
@@ -102,7 +114,17 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"|\n  00",                               // NOT a split: properly indented block scalar agrees
 		"o: &!0000",                             // anchor name with '!' (v3 rejects / v4 lenient)
 		"- -0",                                  // -0: v3 int 0 / v4 float -0.0
+		"-0:",                                   // -0 as a KEY: v3 int-0 key / v4 float-negzero key (D19)
+		"|\n\"",                                 // block scalar + lone quote: v3 rejects EOS / v4 accepts (D20)
+		"|\n%0",                                 // block scalar + %0: v3 rejects directive / v4 accepts (D21)
+		"<<",                                    // bare merge key: v3 "<<" / v4 drops to nil (D22)
+		"a: <<",                                 // merge key w/o map value: v3 keeps / v4 drops entry (D22)
+		"0: {0:} ",                              // flow-map colon no space: v3 key "0:" / v4 key 0 (D23)
 		"{!}",                                   // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
+		"[!x]",                                  // tagged empty node in flow seq (v3 rejects / v4 "")
+		"[0: !]",                                // tagged empty value in flow seq (v3 rejects / v4 "")
+		"[0: !t 1]",                             // NOT a split: tag on NON-empty flow scalar agrees
+		"[: 1]",                                 // empty key in flow seq (v3 rejects / v4 null key)
 		"'': empty-key\n",                       // empty key
 		"a: 1\nb: {c: 2, c: 3}\n",               // nested duplicate key
 		"---\na: 1\n---\nb: 2\n",                // multi-document (single-value decode)
@@ -227,6 +249,21 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// with this v3 error (`@`, backtick) are rejected by BOTH, so only the
 		// leading-TAB-ish case actually splits.
 		return side + ":token-start"
+	case strings.Contains(msg, "',' or ']'"):
+		// A tag (`!`, `!local`) applied to an EMPTY node inside a FLOW SEQUENCE
+		// (`[!x]`, `[0: !]`, `[a: !x]`). v3's flow scanner cannot handle a tag with
+		// no node content before the `,`/`]` and rejects ("did not find expected ','
+		// or ']'"); v4 accepts it, resolving the tagged-empty node to "". A tag on a
+		// NON-empty flow scalar (`[0: !t 1]`) is accepted by BOTH, so only the
+		// tagged-EMPTY-in-flow case splits. Same v4-lenient flow family as D11 (`{!}`),
+		// different container/error. v4 accepts what v3 rejects.
+		return side + ":flow-seq-tagged-empty"
+	case strings.Contains(msg, "did not find expected node content"):
+		// An EMPTY key/node in FLOW context (`[: 1]`). v3 rejects ("did not find
+		// expected node content"); v4 accepts it as a null-keyed single-pair map
+		// element. The flow-context analogue of D2 (block empty-implicit-key). v4
+		// accepts what v3 rejects.
+		return side + ":flow-node-content"
 	case strings.Contains(msg, "did not find expected") || strings.Contains(msg, "could not find expected"):
 		return side + ":syntax"
 	case strings.Contains(msg, "control characters are not allowed"):
@@ -240,6 +277,24 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		return side + ":tag-char"
 	case strings.Contains(msg, "mapping values are not allowed"):
 		return side + ":mapping-context"
+	case strings.Contains(msg, "mapping keys are not allowed"):
+		// A `?` complex-key / mapping-key indicator in a context v3 forbids — e.g.
+		// `&0?` (an anchor followed by `?`). v3 REJECTS ("mapping keys are not allowed
+		// in this context"); v4 is lenient and ACCEPTS. v4 accepts what v3 rejects.
+		return side + ":mapping-key-context"
+	case strings.Contains(msg, "directive"):
+		// A `%`-introduced directive v3 rejects — e.g. under-indented block-scalar
+		// content `%0` (`|\n%0`) that v3 re-scans as a document directive ("found
+		// unknown directive name"). v3 REJECTS; v4 is lenient and ACCEPTS. Same
+		// v4-lenient direction as D20; v4 accepts what v3 rejects on malformed input.
+		return side + ":directive"
+	case strings.Contains(msg, "unexpected end of stream"):
+		// A truncated / unterminated construct — e.g. a block scalar followed by a
+		// lone `"` at column 0 (`|\n"`), which v3 reads as an unterminated
+		// double-quoted scalar. v3 REJECTS ("found unexpected end of stream"); v4 is
+		// lenient and ACCEPTS. v4 accepts what v3 rejects (same strictness direction
+		// as D2/D3 — the migration-hazard direction) but benignly on malformed input.
+		return side + ":unexpected-eos"
 	case strings.Contains(msg, "comment without preceding whitespace"):
 		// A `#` not preceded by whitespace (e.g. "|#0", "a#b" in some contexts). The
 		// YAML spec requires a comment to be preceded by whitespace; v4 enforces this
@@ -274,7 +329,383 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if diffs, ok := negZeroIntVsFloatOnly(v3val, v4val); ok && diffs > 0 {
 		return "negative-zero-int-vs-float"
 	}
+	// The non-specific tag `!` applied to a NON-empty scalar (`! 00`, `! true`,
+	// `! 1.5`, …). v3 ignores the `!` and applies its normal implicit schema (so
+	// `! 00` → int 0, `! true` → bool); v4 treats `!` as forcing the failsafe
+	// `!!str` resolution and keeps the raw string (`"00"`, `"true"`). This is the
+	// same root cause as the empty-scalar D1 class, generalised to non-empty
+	// scalars. Recognised ONLY when every differing leaf is "v4 kept the raw
+	// string s, and v3's value is exactly the v3 implicit resolution of s" AND the
+	// input carries a non-specific `!` tag — so an unrelated value divergence is
+	// not absorbed.
+	if diffs, ok := nonspecificTagNonEmptyScalarOnly(v3val, v4val); ok && diffs > 0 && inputHasNonSpecificTag(data) {
+		return "nonspecific-tag-nonempty-scalar"
+	}
+	// A flow-mapping entry whose `:` is immediately followed by `}` or `,` with no
+	// space (`{0:}`): v3 keeps the `:` IN the key (key `"0:"`), v4 treats the `:` as
+	// the key/value separator (key `0`, null value). Recognised causally: inserting a
+	// space after such a `:` makes v3 agree with v4 (and v4 is unchanged).
+	if isFlowColonNoSpaceDivergence(data, v3val, v4val) {
+		return "flow-map-colon-nospace"
+	}
+	// The `<<` merge-key indicator used where it is not a valid map-merge (`<<`,
+	// `a: <<`, `- <<`): v3 keeps the literal string "<<", v4 treats it as a merge
+	// directive and SILENTLY DROPS the entry/element (empty container / nil).
+	// Recognised causally: single-quoting every `<<` (forcing a plain string in
+	// BOTH) makes the two agree and reproduces v3's value.
+	if strings.Contains(string(data), "<<") && isMergeKeyDivergence(data, v3val) {
+		return "merge-key-handling"
+	}
+	// The `-0` int-vs-float divergence (D10) landing in a KEY position (`-0:`),
+	// where v3's key is int 0 and v4's is float negative zero, so the maps do not
+	// align and the value-only walker falls through. Recognised by negZeroEq, scoped
+	// to inputs literally containing `-0`.
+	if strings.Contains(string(data), "-0") && negZeroEq(v3val, v4val) {
+		return "negative-zero-structural"
+	}
+	// A colon inside an anchor NAME (`&a:b`, `&00:00000`). v3 ends the anchor name
+	// at the `:` (so `&a:b` → anchor `a`, content ":b"); v4 absorbs the `:` into the
+	// name (anchor `a:b`, EMPTY node → nil). Both accept, values differ.
+	if isAnchorColonBoundaryDivergence(data, v3val, v4val) {
+		return "anchor-name-colon-boundary"
+	}
+	// Structural nonspecific-tag divergence that the value-only walkers above miss:
+	// the `!`-tag re-resolution landing in a KEY position (`! : 00`, `! 00: x`),
+	// where v3 and v4 produce DIFFERENT map keys (v3 nil / typed vs v4 raw string)
+	// so the entries cannot be paired by key. nonspecificTagEq pairs entries across
+	// the tag transformation at any position; scoped to inputs carrying a `!` tag.
+	if inputHasNonSpecificTag(data) && nonspecificTagEq(v3val, v4val) {
+		return "nonspecific-tag-structural"
+	}
 	return "value-mismatch"
+}
+
+// isFlowColonNoSpaceDivergence causally confirms the flow-mapping `:`-no-space
+// divergence (`{0:}`): inserting a space after every `:}`/`:, ` turns the disputed
+// `:` into an unambiguous separator. If after that v4 is UNCHANGED (it already read
+// the `:` as a separator) and v3 now equals v4, then v3's keeping of the `:` in the
+// key was the sole cause. A genuine divergence that merely contains `:}` is not
+// absorbed (v4 would change, or v3 would not come to match).
+func isFlowColonNoSpaceDivergence(data []byte, v3val, v4val any) bool {
+	s := string(data)
+	mod := strings.ReplaceAll(strings.ReplaceAll(s, ":}", ": }"), ":,", ": ,")
+	if mod == s {
+		return false
+	}
+	var m3, m4 any
+	if v3yaml.Unmarshal([]byte(mod), &m3) != nil || v4yaml.Unmarshal([]byte(mod), &m4) != nil {
+		return false
+	}
+	cm3, e3 := v3yaml.Marshal(m3)
+	cm4, e4 := v3yaml.Marshal(m4)
+	co4, e4b := v3yaml.Marshal(v4val)
+	if e3 != nil || e4 != nil || e4b != nil {
+		return false
+	}
+	// v4 unchanged by the space, and v3 now matches v4.
+	return reflect.DeepEqual(cm4, co4) && reflect.DeepEqual(cm3, cm4)
+}
+
+// isMergeKeyDivergence causally confirms a `<<` merge-key divergence: single-quote
+// every `<<` in the input (forcing it to be a plain string in BOTH libraries) and
+// require that v3 then reproduces its ORIGINAL value. If quoting the merge
+// indicator removes the divergence, `<<` merge-handling was the sole cause, so a
+// genuine divergence that merely contains `<<` is never absorbed. (We only need to
+// check v3 here: the caller already knows v3 and v4 disagreed on the original; if
+// quoting makes v3 unchanged, v4 — which has no live caller — simply stopped
+// dropping the entry, i.e. the drop was the whole divergence.)
+func isMergeKeyDivergence(data []byte, v3val any) bool {
+	quoted := strings.ReplaceAll(string(data), "<<", "'<<'")
+	if quoted == string(data) {
+		return false
+	}
+	var q3, q4 any
+	if v3yaml.Unmarshal([]byte(quoted), &q3) != nil || v4yaml.Unmarshal([]byte(quoted), &q4) != nil {
+		return false
+	}
+	cq3, e3 := v3yaml.Marshal(q3)
+	cq4, e4 := v3yaml.Marshal(q4)
+	if e3 != nil || e4 != nil || !reflect.DeepEqual(cq3, cq4) {
+		return false
+	}
+	co3, err := v3yaml.Marshal(v3val)
+	return err == nil && reflect.DeepEqual(co3, cq3)
+}
+
+// negZeroEq reports whether a (v3) and b (v4) are identical up to the `-0`
+// int-vs-float resolution (D10) applied at ANY position — value OR key, nested —
+// pairing map entries so a differing KEY (v3 int 0 vs v4 float negative zero) is
+// matched. It never equates a genuine diff: a differing leaf must be exactly int 0
+// (v3) vs a float negative zero (v4).
+func negZeroEq(a, b any) bool {
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	if ai, ok := a.(int); ok && ai == 0 {
+		if bf, ok := b.(float64); ok && bf == 0 && math.Signbit(bf) {
+			return true
+		}
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		bkeys := rb.MapKeys()
+		used := make([]bool, len(bkeys))
+		for _, k3 := range ra.MapKeys() {
+			v3v := ra.MapIndex(k3).Interface()
+			matched := false
+			for i, k4 := range bkeys {
+				if used[i] {
+					continue
+				}
+				if negZeroEq(k3.Interface(), k4.Interface()) && negZeroEq(v3v, rb.MapIndex(k4).Interface()) {
+					used[i], matched = true, true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+		return true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		for i := range ra.Len() {
+			if !negZeroEq(ra.Index(i).Interface(), rb.Index(i).Interface()) {
+				return false
+			}
+		}
+		return true
+	default:
+		return leafEq(a, b)
+	}
+}
+
+// v3AnchorTokenRe matches the anchor token as v3 scans it: `&` plus the
+// anchor-name characters up to (but not including) a flow/`:`/whitespace boundary.
+var v3AnchorTokenRe = regexp.MustCompile(`&[^\s:,\[\]{}]+`)
+
+// isAnchorColonBoundaryDivergence reports whether a v3/v4 value divergence is
+// caused solely by a `:` inside an anchor name — v3 ends the name at the colon,
+// v4 absorbs it. It is a CAUSAL test, not a shape guess: it strips the first
+// v3-anchor token (which must be immediately followed by `:` in the input, the
+// disputed boundary) and requires that (a) the two libraries then AGREE on the
+// stripped input, and (b) v3's value is unchanged by the strip (an unused anchor
+// is just a label, so removing it must not alter v3's decode). Only when removing
+// the anchor makes the divergence vanish is the anchor-name extent proven to be
+// the cause, so a genuine divergence that merely contains an anchor is never
+// absorbed. Scoped by construction to block context; the flow-sequence
+// anchor-colon combo (`[&a:b]`) is a separate, compounded divergence left in the
+// residual tail.
+func isAnchorColonBoundaryDivergence(data []byte, v3val, v4val any) bool {
+	loc := v3AnchorTokenRe.FindIndex(data)
+	if loc == nil || loc[1] >= len(data) || data[loc[1]] != ':' {
+		return false
+	}
+	stripped := append(append([]byte{}, data[:loc[0]]...), data[loc[1]:]...)
+	var m3, m4 any
+	if v3yaml.Unmarshal(stripped, &m3) != nil || v4yaml.Unmarshal(stripped, &m4) != nil {
+		return false
+	}
+	c3m, err3 := v3yaml.Marshal(m3)
+	c4m, err4 := v3yaml.Marshal(m4)
+	if err3 != nil || err4 != nil || !reflect.DeepEqual(c3m, c4m) {
+		return false
+	}
+	co3, err := v3yaml.Marshal(v3val)
+	return err == nil && reflect.DeepEqual(co3, c3m)
+}
+
+// nonspecificTagEq reports whether a (v3) and b (v4) are identical up to the
+// non-specific `!` tag rule applied at ANY scalar position — value OR key, nested
+// arbitrarily. Wherever a leaf differs, b must be a string s and a must be the v3
+// implicit resolution of s (the empty case a=nil,s="" included). Maps are paired
+// entry-by-entry allowing the key itself to differ by the same rule, which is why
+// this subsumes the KEY-position divergence the structural value-walkers (which
+// look keys up directly) cannot express. It never equates a genuine value diff:
+// the reparse of s must deep-equal a, so v3 `5` vs v4 `"6"` (reparse 6 ≠ 5) and
+// nil vs a non-empty string both return false.
+func nonspecificTagEq(a, b any) bool {
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	if bs, ok := b.(string); ok {
+		if a == nil && bs == "" {
+			return true
+		}
+		var r any
+		if err := v3yaml.Unmarshal([]byte(bs), &r); err == nil && reflect.DeepEqual(r, a) {
+			return true
+		}
+		return false
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		bkeys := rb.MapKeys()
+		used := make([]bool, len(bkeys))
+		for _, k3 := range ra.MapKeys() {
+			v3v := ra.MapIndex(k3).Interface()
+			matched := false
+			for i, k4 := range bkeys {
+				if used[i] {
+					continue
+				}
+				if nonspecificTagEq(k3.Interface(), k4.Interface()) && nonspecificTagEq(v3v, rb.MapIndex(k4).Interface()) {
+					used[i], matched = true, true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+		return true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return false
+		}
+		for i := range ra.Len() {
+			if !nonspecificTagEq(ra.Index(i).Interface(), rb.Index(i).Interface()) {
+				return false
+			}
+		}
+		return true
+	default:
+		return leafEq(a, b)
+	}
+}
+
+// mapLookupByLogicalKey looks up key k (taken from map a) in map m by LOGICAL key
+// value, tolerating a key-TYPE mismatch between the two maps. yaml decodes a
+// mapping with all-string keys into map[string]any but a mapping with any
+// non-string key into map[any]any, so comparing a v3 and a v4 document can pair a
+// map[string]any against a map[any]any for the same logical mapping; a naive
+// rb.MapIndex(stringKeyFromInterfaceMap) panics ("interface {} is not assignable
+// to type string"). This unwraps an interface key to its concrete value (and
+// relies on Go's auto-boxing for the concrete→interface direction) so the
+// structural walk compares the same logical entries. It does NOT equate maps that
+// genuinely differ — a missing logical key still returns ok=false; and the
+// classifier is only ever reached once the canonical-marshal bytes already differ,
+// where map[string]any vs map[any]any with identical entries canonicalise equal.
+func mapLookupByLogicalKey(m, k reflect.Value) (reflect.Value, bool) {
+	kt := m.Type().Key()
+	if k.Type().AssignableTo(kt) {
+		v := m.MapIndex(k)
+		return v, v.IsValid()
+	}
+	if k.Kind() == reflect.Interface {
+		if e := k.Elem(); e.IsValid() && e.Type().AssignableTo(kt) {
+			v := m.MapIndex(e)
+			return v, v.IsValid()
+		}
+	}
+	return reflect.Value{}, false
+}
+
+// nonSpecificTagRe matches a standalone non-specific `!` tag: a `!` that is a
+// complete tag token (not the `!!x` explicit-tag form, not the `!<…>` verbatim
+// form, not a `!local` named tag), preceded by start-of-line or a
+// whitespace/flow/indicator character and followed by whitespace or end-of-line.
+// Those are exactly the positions where `!` applies the non-specific tag to the
+// following (or empty) scalar: `! 00`, `x: !`, `- ! v`, `{a: !}`.
+var nonSpecificTagRe = regexp.MustCompile(`(?m)(^|[ \t:\-\[\]{},])!([ \t]|$)`)
+
+func inputHasNonSpecificTag(data []byte) bool {
+	return nonSpecificTagRe.Match(data)
+}
+
+// nonspecificTagNonEmptyScalarOnly reports whether a (v3) and b (v4) are
+// structurally identical except that wherever they differ, b is a NON-empty
+// string s and a is exactly the v3 implicit resolution of s (i.e. v4 kept the
+// `!`-tagged scalar as a raw string while v3 resolved it by the normal schema).
+// It returns the count of such differing leaves and whether every difference
+// matched that exact shape. The empty-string case (a=nil, b="") is intentionally
+// NOT handled here — that is the separate D1 nilVsEmptyStringOnly class.
+func nonspecificTagNonEmptyScalarOnly(a, b any) (int, bool) {
+	if bs, ok := b.(string); ok {
+		if bs == "" {
+			// Empty-string leaf belongs to D1 (nil-vs-""), not this class; only
+			// accept it here if a is an identical empty string (no divergence).
+			if as, ok := a.(string); ok && as == "" {
+				return 0, true
+			}
+			return 0, false
+		}
+		if as, ok := a.(string); ok && as == bs {
+			return 0, true // identical non-empty strings — not a divergence
+		}
+		// The divergence shape: a must equal the v3 implicit resolution of s.
+		var resolved any
+		if err := v3yaml.Unmarshal([]byte(bs), &resolved); err == nil && reflect.DeepEqual(resolved, a) {
+			return 1, true
+		}
+		return 0, false
+	}
+	if a == nil || b == nil {
+		return 0, reflect.DeepEqual(a, b)
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return 0, false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for _, k := range ra.MapKeys() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
+				return 0, false
+			}
+			n, ok := nonspecificTagNonEmptyScalarOnly(ra.MapIndex(k).Interface(), bval.Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for i := range ra.Len() {
+			n, ok := nonspecificTagNonEmptyScalarOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	default:
+		if leafEq(a, b) {
+			return 0, true
+		}
+		return 0, false
+	}
 }
 
 // negZeroIntVsFloatOnly reports whether a and b are structurally identical except
@@ -307,8 +738,8 @@ func negZeroIntVsFloatOnly(a, b any) (int, bool) {
 		}
 		total := 0
 		for _, k := range ra.MapKeys() {
-			bval := rb.MapIndex(k)
-			if !bval.IsValid() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
 				return 0, false
 			}
 			n, ok := negZeroIntVsFloatOnly(ra.MapIndex(k).Interface(), bval.Interface())
@@ -332,7 +763,7 @@ func negZeroIntVsFloatOnly(a, b any) (int, bool) {
 		}
 		return total, true
 	default:
-		if reflect.DeepEqual(a, b) {
+		if leafEq(a, b) {
 			return 0, true
 		}
 		return 0, false
@@ -380,8 +811,8 @@ func v3EmptyVsV4NonEmptyStringOnly(a, b any) (int, bool) {
 		}
 		total := 0
 		for _, k := range ra.MapKeys() {
-			bval := rb.MapIndex(k)
-			if !bval.IsValid() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
 				return 0, false
 			}
 			n, ok := v3EmptyVsV4NonEmptyStringOnly(ra.MapIndex(k).Interface(), bval.Interface())
@@ -405,7 +836,7 @@ func v3EmptyVsV4NonEmptyStringOnly(a, b any) (int, bool) {
 		}
 		return total, true
 	default:
-		if reflect.DeepEqual(a, b) {
+		if leafEq(a, b) {
 			return 0, true
 		}
 		return 0, false
@@ -442,8 +873,8 @@ func nilVsEmptyStringOnly(a, b any) (int, bool) {
 		}
 		total := 0
 		for _, k := range ra.MapKeys() {
-			bval := rb.MapIndex(k)
-			if !bval.IsValid() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
 				return 0, false
 			}
 			n, ok := nilVsEmptyStringOnly(ra.MapIndex(k).Interface(), bval.Interface())
@@ -467,11 +898,24 @@ func nilVsEmptyStringOnly(a, b any) (int, bool) {
 		}
 		return total, true
 	default:
-		if reflect.DeepEqual(a, b) {
+		if leafEq(a, b) {
 			return 0, true
 		}
 		return 0, false
 	}
+}
+
+// leafEq is reflect.DeepEqual for a scalar leaf, except that two NaN floats are
+// equal. reflect.DeepEqual(NaN, NaN) is false, so a document that carries `.nan`
+// anywhere (`0: .nan\n1: !`) made every structural walker above report "not the
+// known shape" and the known class fell through to "value-mismatch".
+func leafEq(a, b any) bool {
+	if af, ok := a.(float64); ok {
+		if bf, ok := b.(float64); ok && math.IsNaN(af) && math.IsNaN(bf) {
+			return true
+		}
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 const yamlV4BudgetPath = "testdata/resguard-yaml-v4.json"
