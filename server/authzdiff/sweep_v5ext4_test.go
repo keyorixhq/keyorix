@@ -21,14 +21,16 @@ import (
 // V5EXT4 bindings (ops_v5ext4_test.go): bulk.rotate and mfa.stepup.
 //
 // bulk.rotate:
-//   Router gate: secrets.write @ project. Core: no auth check at all
-//   (errNotAuthzLayer for all principals). No gRPC surface.
-//   Positive control: admin → 200+triggered=[secretID] (AutoRotate=true in fixture).
+//
+//	Router gate: secrets.write @ project. Core: no auth check at all
+//	(errNotAuthzLayer for all principals). No gRPC surface.
+//	Positive control: admin → 200+triggered=[secretID] (AutoRotate=true in fixture).
 //
 // mfa.stepup:
-//   No RBAC gate. Core: VerifyMFAStepUp checks user.MFAEnabled (core_refusal=none →
-//   coreEnforced=false). Positive control: pkMFAUser (the only MFA-enrolled principal).
-//   Named principals include pkMFAUser (world_test.go V5EXT4 seed).
+//
+//	No RBAC gate. Core: VerifyMFAStepUp checks user.MFAEnabled (core_refusal=none →
+//	coreEnforced=false). Positive control: pkMFAUser (the only MFA-enrolled principal).
+//	Named principals include pkMFAUser (world_test.go V5EXT4 seed).
 //
 // Strict rule: zero uncalibrated cases and zero "unexplained" cases.
 func TestV5ext4StrictSweep(t *testing.T) {
@@ -214,8 +216,10 @@ func TestSCIMStrictSweep(t *testing.T) {
 	cases := []scimCase{
 		{
 			name: "scim.user.create", method: http.MethodPost,
-			path:   func() string { return "/scim/v2/Users" },
-			body:   func() any { return map[string]any{"userName": "scim-new@example.invalid", "externalId": "ext-scim-new-sweep-1"} },
+			path: func() string { return "/scim/v2/Users" },
+			body: func() any {
+				return map[string]any{"userName": "scim-new@example.invalid", "externalId": "ext-scim-new-sweep-1"}
+			},
 			okCode: http.StatusCreated,
 		},
 		{
@@ -236,8 +240,10 @@ func TestSCIMStrictSweep(t *testing.T) {
 		},
 		{
 			name: "scim.group.create", method: http.MethodPost,
-			path:   func() string { return "/scim/v2/Groups" },
-			body:   func() any { return map[string]any{"displayName": "scim-new-group-sweep", "members": []map[string]any{{"value": fmt.Sprintf("%d", fx.scimUserID)}}} },
+			path: func() string { return "/scim/v2/Groups" },
+			body: func() any {
+				return map[string]any{"displayName": "scim-new-group-sweep", "members": []map[string]any{{"value": fmt.Sprintf("%d", fx.scimUserID)}}}
+			},
 			okCode: http.StatusCreated,
 		},
 		{
