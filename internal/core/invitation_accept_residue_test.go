@@ -4,8 +4,9 @@ package core
 // invitation accept soft-deleted the account it had created but left what CreateUser
 // gave it: the baseline system_viewer role (a RestoreUser brought it back) and the
 // password-history row. removeInvitationAcceptAccount now removes both with the account,
-// in one transaction. The spent link, the kept LoginAttempt slot and a revoked
-// membership row stay, by design (see its doc comment).
+// in one transaction. A membership the grant created is revoked, not left `active`
+// with no role (revokeInvitationMembershipRow). The spent link, the kept LoginAttempt
+// slot and that revoked membership row stay, by design (see its doc comment).
 
 import (
 	"context"
@@ -76,6 +77,12 @@ func TestCompleteInvitationAccept_AbandonRemovesBaselineRoleAndPasswordHistory(t
 			// Before: roles == 1 (system_viewer) and history == 1.
 			assert.Zero(t, roles, "no role is left on the removed account: a RestoreUser must not bring the baseline back")
 			assert.Zero(t, history, "the removed account's password history goes with it")
+			var live int64
+			require.NoError(t, w.st.DB().Model(&models.ProjectMembership{}).
+				Where("user_id = ? AND state <> ?", accounts[0].ID, MembershipRevoked).Count(&live).Error)
+			// Before: a grant that panicked, or one that succeeded before the accept
+			// write failed, left the membership `active` with no role behind it.
+			assert.Zero(t, live, "no live membership is left for the removed account")
 		})
 	}
 }
