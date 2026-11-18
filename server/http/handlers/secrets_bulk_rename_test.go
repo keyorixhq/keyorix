@@ -37,6 +37,7 @@ func TestBulkRenameSecretsHandler(t *testing.T) {
 	}).Error)
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	ensureActiveActorUser(t, c.Storage(), 1) // the withUserCtx user acts through core (#4159)
 	require.NoError(t, c.SetSecretNamePolicy(core.SecretNamePolicy{
 		Enabled: true, Pattern: "^[A-Z][A-Z0-9_]*$", MaxLength: 30,
 	}))

@@ -24,10 +24,12 @@ func TestBulkRenameSecrets(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{},
-		&models.AuditEvent{}, &models.SecretAccessLog{}, &models.UserRole{},
+		&models.AuditEvent{}, &models.SecretAccessLog{}, &models.UserRole{}, &models.User{},
 	))
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	ensureActiveActor(t, c.storage, 1) // the acting user must be an active account (#4159)
+	ensureActiveActor(t, c.storage, 2) // the non-owner caller is an active account too, so the per-secret gate is what refuses it
 	ctx := context.Background()
 	now := time.Now()
 
