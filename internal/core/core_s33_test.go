@@ -216,6 +216,7 @@ func TestAssignRoleToUser_Success(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByEmail", mock.Anything, "alice@example.com").Return(&models.User{ID: 5}, nil)
+	ms.On("GetUser", mock.Anything, uint(5)).Return(&models.User{ID: 5}, nil) // the grant target must exist (ERRMAP-TAILS-NOV-4)
 	ms.On("GetRoleByName", mock.Anything, "viewer").Return(&models.Role{ID: 3, Name: "viewer"}, nil)
 	// requireNoSoDViolation: ListSoDPolicies smart stub = nil → OK
 	// assignUserRoleSystemGrant calls AssignRole

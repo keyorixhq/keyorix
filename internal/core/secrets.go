@@ -476,6 +476,10 @@ func (c *KeyorixCore) checkSecretReadPermission(ctx context.Context, id, userID 
 func (c *KeyorixCore) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
 	secret, err := c.storage.GetSecretByName(ctx, name, projectID, environmentID)
 	if err != nil {
+		// A read FAULT is a retry answer, not "secret not found" (ERRMAP-TAILS-NOV-4).
+		if fault := ReadFault(err); fault != nil {
+			return nil, fault
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
 	return unexpiredSecret(secret)
@@ -488,6 +492,10 @@ func (c *KeyorixCore) GetSecretByName(ctx context.Context, name string, projectI
 func (c *KeyorixCore) GetSecretByNameWithPermissionCheck(ctx context.Context, name string, projectID, environmentID, userID uint) (*models.SecretNode, error) {
 	secret, err := c.storage.GetSecretByName(ctx, name, projectID, environmentID)
 	if err != nil {
+		// A read FAULT is a retry answer, not "secret not found" (ERRMAP-TAILS-NOV-4).
+		if fault := ReadFault(err); fault != nil {
+			return nil, fault
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
 	if _, err := c.EnforceSecretReadPermission(ctx, secret.ID, userID); err != nil {
