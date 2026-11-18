@@ -88,13 +88,13 @@ Keyorix caller does, against a loopback hostile server (`fuzz/thirdparty/interna
   built from scratch — byte-accurate handshake v10 server, three fuzz targets, the LOCAL
   INFILE red/green oracle, and the panic-classifier red proof.
 - **redis** (`redis_extra_test.go`): ASK + Sentinel egress scenarios with red proofs.
-- **shared** (`internal/hostile/hostile.go`): hardened with listen-retry + Skip-on-
-  exhaustion (ARTIFACT-1 fix).
+- **shared** (the harness's `hostile` helper package, not part of this report-only
+  change): hardened with listen-retry + Skip-on-exhaustion (ARTIFACT-1 fix).
 
 `scripts/fuzzing/targets.d/` gained 9 `fuzz-thirdparty-*` conf files; `targets.conf`
-regenerated; `gen-targets-conf.sh --check` passes. Changelog fragment
-`changelog.d/fuzz-thirdparty-h6.md` added (names no upstream defect).
-`changelog-assemble.sh --check` passes.
+regenerated; `gen-targets-conf.sh --check` passes. A changelog fragment was written
+on the original H6 branch (names no upstream defect); this report-only PR carries
+none. `changelog-assemble.sh --check` passed there.
 
 ---
 
