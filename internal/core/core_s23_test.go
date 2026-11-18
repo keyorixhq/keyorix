@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -591,6 +592,8 @@ func TestRevokeInvitationGrants_ProjectScoped_UserNotMember(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetUserRoleIDsExact", mock.Anything, uint(10), mock.Anything).Return([]uint{}, nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	// No membership row either (revokeInvitationMembershipRow).
+	ms.On("GetActiveProjectMembership", mock.Anything, uint(3), uint(10)).Return(nil, gorm.ErrRecordNotFound)
 	c := NewKeyorixCore(ms)
 	// A plain project invite (no SystemRole, no AssignmentsJSON).
 	inv := &models.ProjectInvitation{ID: 5, ProjectID: 3, Role: "viewer"}
