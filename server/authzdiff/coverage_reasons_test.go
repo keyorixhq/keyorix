@@ -117,4 +117,10 @@ var uncoveredReasons = map[string]string{
 	"REST POST /api/v1/secrets/{id}/rotate":                                      "design: rotation outside the initially bound secret set; not bound (auto-rotate is covered)",
 	"REST POST /api/v1/secrets/{id}/rotation/simulate":                           "design: rotation outside the initially bound secret set; not bound (auto-rotate is covered)",
 	"REST POST /api/v1/secrets/{id}/transfer-ownership":                          "model: ownership semantics are not in the reference model",
+	// risk-exception revoke (DELETE): router gate system.write@global PLUS a typed
+	// core gate "creator OR admin-tier (isGlobalAdminRoleName)" that the router gate
+	// alone does not capture (a system.write holder who is neither creator nor
+	// admin-tier is refused by core). Binding it needs the owner-style model
+	// extension, analyzed-not-bound in V8b — see the report's LEFTOVERS.
+	"REST DELETE /api/v1/risk-exceptions/{id}": "model: revoke authority (creator-or-admin-tier) is a typed core gate beyond the system.write@global router gate; needs the owner-style model extension (analyzed-not-bound)",
 }
