@@ -697,9 +697,39 @@ func (c *KeyorixCore) abandonInvitationAccept(ctx context.Context, inv *models.P
 // complete, so it is reported loudly (invitation.accept_orphaned_account_cleanup_failed,
 // MANUAL CLEANUP REQUIRED) rather than swallowed, and so is a panic in it (#4409).
 // what says why the accept ended.
+//
+// What CreateUser gave the account goes with it, in the same transaction (#4410):
+// its baseline system_viewer role (a RestoreUser would otherwise bring it back)
+// and its password-history row. Either all of it is removed or none is.
+//
+// Deliberately NOT undone, by design (#4410):
+//   - the spent setup link: a consumed token never becomes live again. Reviving it
+//     would make single use depend on every later step succeeding; the inviter
+//     resends instead, which issues a fresh link for the still-pending invitation.
+//   - the per-IP LoginAttempt slot: the handler answers this failure like a dead
+//     link and charges it like one, so the answer never tells the caller the token
+//     was valid (INV-HTTP-login-budget-counts-failures-only).
+//   - a project membership the grant had created stays as a revoked row
+//     (RemoveProjectMember): it grants nothing and does not block a resend (the
+//     active-membership index excludes revoked rows).
 func (c *KeyorixCore) removeInvitationAcceptAccount(ctx context.Context, inv *models.ProjectInvitation, user *models.User, what string) bool {
 	derr := runInvitationAcceptStep("removing the account", func() error {
-		return c.storage.DeleteUser(ctx, user.ID)
+		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if err := tx.DeleteUser(ctx, user.ID); err != nil {
+				return err
+			}
+			// The baseline grant is best-effort in CreateUser, so it may be absent.
+			role, err := tx.GetRoleByName(ctx, "system_viewer")
+			if err != nil && !isPositiveNotFound(err) {
+				return err
+			}
+			if err == nil {
+				if err := tx.RemoveRole(ctx, user.ID, role.ID, Scope{}); err != nil && !errors.Is(err, storage.ErrRoleNotAssigned) {
+					return err
+				}
+			}
+			return tx.PrunePasswordHistory(ctx, user.ID, 0)
+		})
 	})
 	if derr == nil {
 		return true
