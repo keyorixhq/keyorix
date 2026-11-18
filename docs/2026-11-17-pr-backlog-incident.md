@@ -75,7 +75,7 @@ this review, each because the rebase/merge itself introduced them:
   been caught *before* pushing, not after CI turned red — a union-merge of two sides of
   a real content conflict (as opposed to a genuinely append-only registry file) needs a
   read of both sides, not a mechanical concatenation.
-- **`internal/kdfmeter` missing from the core-dependency/invariants/guard-input ledgers**
+- **The kdfmeter package (not on main; it lives on the fuzz/kdf1 branch) missing from the core-dependency/invariants/guard-input ledgers**
   (fuzz/kdf1): a new package entering `internal/core`'s import closure needs registering
   in three places per ADR-121 and the guard-input fragment convention; the branch had the
   code but not the registrations, which is a real gap in the original work, not something
