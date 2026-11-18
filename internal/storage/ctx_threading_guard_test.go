@@ -16,7 +16,7 @@
 //	    points (backgroundEntryPoints) are exempt: they own a detached lifetime by
 //	    design and never serve a caller's request.
 //
-// EVERY existing violation sits in testdata/ctx_threading_allowlist.tsv with an
+// EVERY existing violation sits in testdata/ctx_threading_allowlist.d/ with an
 // owner and a one-line reason; a row whose violation is gone fails
 // TestCtxThreading_NoStaleAllowlistRows, like besteffort_callsite_guard_test.go.
 //
@@ -61,10 +61,10 @@ import (
 )
 
 const (
-	ctxGuardIfaceDir  = "internal/core/storage"
-	ctxGuardStoreDir  = "internal/storage/store"
-	ctxGuardAllowFile = "testdata/ctx_threading_allowlist.tsv"
-	ctxGuardFixture   = "testdata/ctxguard"
+	ctxGuardIfaceDir = "internal/core/storage"
+	ctxGuardStoreDir = "internal/storage/store"
+	ctxGuardAllowDir = "testdata/ctx_threading_allowlist.d"
+	ctxGuardFixture  = "testdata/ctxguard"
 )
 
 // backgroundEntryPoints are the documented functions that mint a root context on
@@ -336,21 +336,41 @@ type ctxAllowRow struct{ owner, reason string }
 
 func ctxLoadAllowlist(t *testing.T) map[string]ctxAllowRow {
 	t.Helper()
-	b, err := os.ReadFile(ctxGuardAllowFile)
+	entries, err := os.ReadDir(ctxGuardAllowDir)
 	if err != nil {
 		t.Fatalf("ctx-threading guard: %v", err)
 	}
 	rows := map[string]ctxAllowRow{}
-	for i, line := range strings.Split(string(b), "\n") {
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tsv") {
 			continue
 		}
-		cols := strings.Split(line, "\t")
-		if len(cols) != 3 || strings.TrimSpace(cols[0]) == "" || strings.TrimSpace(cols[1]) == "" || strings.TrimSpace(cols[2]) == "" {
-			t.Fatalf("%s:%d: want 3 non-empty tab-separated columns (key, owning issue, reason), got %q", ctxGuardAllowFile, i+1, line)
+		path := filepath.Join(ctxGuardAllowDir, e.Name())
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ctx-threading guard: %v", err)
+		}
+		var cols []string
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if cols != nil {
+				t.Fatalf("%s: want exactly one row per file", path)
+			}
+			cols = strings.Split(line, "\t")
+			if len(cols) != 3 || strings.TrimSpace(cols[0]) == "" || strings.TrimSpace(cols[1]) == "" || strings.TrimSpace(cols[2]) == "" {
+				t.Fatalf("%s: want 3 non-empty tab-separated columns (key, owning issue, reason), got %q", path, line)
+			}
+		}
+		if cols == nil {
+			t.Fatalf("%s: no row", path)
+		}
+		if want := strings.ReplaceAll(cols[0], ":", "__") + ".tsv"; e.Name() != want {
+			t.Fatalf("%s: file name must match its key; want %s", path, want)
 		}
 		if _, dup := rows[cols[0]]; dup {
-			t.Fatalf("%s:%d: duplicate key %q", ctxGuardAllowFile, i+1, cols[0])
+			t.Fatalf("%s: duplicate key %q", path, cols[0])
 		}
 		rows[cols[0]] = ctxAllowRow{owner: cols[1], reason: cols[2]}
 	}
@@ -373,7 +393,7 @@ func TestCtxThreading_EveryStorageMethodThreadsContext(t *testing.T) {
 			"storage.Storage / *LocalStorage must take a named leading `ctx context.Context`, and no exported method "+
 			"may reach context.Background()/TODO() (ADR-103's per-statement SET LOCAL needs the caller's ctx). "+
 			"Fix the method, or add a row (key, owning issue, reason) to internal/storage/%s:\n  %s",
-			len(bad), ctxGuardAllowFile, strings.Join(bad, "\n  "))
+			len(bad), ctxGuardAllowDir, strings.Join(bad, "\n  "))
 	}
 }
 
@@ -394,7 +414,7 @@ func TestCtxThreading_NoStaleAllowlistRows(t *testing.T) {
 	sort.Strings(stale)
 	if len(stale) > 0 {
 		t.Fatalf("INV-STORAGE-32: allowlist row(s) match no current violation; delete them from %s:\n  %s",
-			ctxGuardAllowFile, strings.Join(stale, "\n  "))
+			ctxGuardAllowDir, strings.Join(stale, "\n  "))
 	}
 }
 

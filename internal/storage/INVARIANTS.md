@@ -326,7 +326,7 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   with `TestCtxThreading_NoStaleAllowlistRows`, `TestCtxThreading_BackgroundEntryPointsExist`,
   `TestCtxThreading_ScanPreconditionHolds` and the planted-violation calibration
   `TestCtxThreading_ScannerFixture`. Reviewed exceptions (config/lifecycle setters, detached
-  background jobs, the audit cleanup helper) are rows in `testdata/ctx_threading_allowlist.tsv`,
+  background jobs, the audit cleanup helper) are rows in `testdata/ctx_threading_allowlist.d/`,
   each with an owner and a reason. It does not see multi-hop or interface calls and does not
   detect an accepted-but-unused ctx (header of the test file). Unblocks INV-STORAGE-31.
 - **INV-STORAGE-33** SQLite has no RLS and is not protected by this layer at all
