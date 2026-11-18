@@ -5,11 +5,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // GetSecretAccessSchedule returns the schedule for secretNodeID, or nil, nil
@@ -77,27 +79,62 @@ func (ls *LocalStorage) getCachedSchedule(ctx context.Context, secretNodeID uint
 	return cached.schedule, true
 }
 
-// SetSecretAccessSchedule upserts the schedule for schedule.SecretNodeID.
+// SetSecretAccessSchedule upserts the schedule for schedule.SecretNodeID and fills
+// schedule from the row written.
+//
+// Each attempt is one column-scoped UPDATE of the four window columns WHERE
+// secret_node_id = ?, so it writes only while a row exists, and when it matches none an
+// INSERT ... ON CONFLICT (secret_node_id) DO NOTHING of a new row. A conflict means
+// another writer created the row in between; the next attempt updates that row. It
+// replaces FirstOrCreate + Assign followed by a full-row Save (STORE-LOCKS-NOV-1): a
+// schedule deleted between FirstOrCreate's read and its UPDATE was re-inserted by the
+// Save under its old id and created_at, one deleted and re-created in that window made
+// the Save fail on the secret_node_id unique index, and the struct-form Assign dropped
+// zero values, so moving an existing window's start to hour 0 was not written.
 func (ls *LocalStorage) SetSecretAccessSchedule(ctx context.Context, schedule *models.SecretAccessSchedule) error {
-	result := ls.db.WithContext(ctx).
-		Where(models.SecretAccessSchedule{SecretNodeID: schedule.SecretNodeID}).
-		Assign(models.SecretAccessSchedule{
-			AllowedDays: schedule.AllowedDays,
-			StartHour:   schedule.StartHour,
-			EndHour:     schedule.EndHour,
-			Timezone:    schedule.Timezone,
-		}).
-		FirstOrCreate(schedule)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	db := ls.db.WithContext(ctx)
+	window := map[string]any{
+		"allowed_days": schedule.AllowedDays,
+		"start_hour":   schedule.StartHour,
+		"end_hour":     schedule.EndHour,
+		"timezone":     schedule.Timezone,
 	}
-	// If the row already existed (RowsAffected == 0 from FirstOrCreate), persist the Assign'd fields.
-	if result.RowsAffected == 0 {
-		if err := ls.db.WithContext(ctx).Save(schedule).Error; err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	for range 3 {
+		updated := db.Model(&models.SecretAccessSchedule{}).
+			Where("secret_node_id = ?", schedule.SecretNodeID).Updates(window)
+		if updated.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), updated.Error)
+		}
+		if updated.RowsAffected > 0 {
+			var row models.SecretAccessSchedule
+			err := db.Where("secret_node_id = ?", schedule.SecretNodeID).First(&row).Error
+			switch {
+			case err == nil:
+				*schedule = row
+			case !errors.Is(err, gorm.ErrRecordNotFound):
+				return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			}
+			// Not found: a delete landed after this write; the caller keeps its values.
+			return nil
+		}
+		row := models.SecretAccessSchedule{
+			SecretNodeID: schedule.SecretNodeID,
+			AllowedDays:  schedule.AllowedDays,
+			StartHour:    schedule.StartHour,
+			EndHour:      schedule.EndHour,
+			Timezone:     schedule.Timezone,
+		}
+		created := db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "secret_node_id"}}, DoNothing: true}).
+			Create(&row)
+		if created.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), created.Error)
+		}
+		if created.RowsAffected > 0 {
+			*schedule = row
+			return nil
 		}
 	}
-	return nil
+	return fmt.Errorf("%s: the schedule of secret %d kept changing concurrently", i18n.T("ErrorStorageFailed", nil), schedule.SecretNodeID)
 }
 
 // DeleteSecretAccessSchedule removes the schedule for secretNodeID.

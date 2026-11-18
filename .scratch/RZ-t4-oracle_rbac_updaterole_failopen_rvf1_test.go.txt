@@ -1,0 +1,129 @@
+// rbac_updaterole_failopen_rvf1_test.go — RVF1 RZ review-then-oracle check (F3a).
+//
+// Hypothesis under test (from the review arm): RBACHandler.UpdateRole replaces a
+// role's permission set via replaceRolePermissions, which removes every existing
+// permission and then (pre-fix) only LOGS an AssignPermissionToRole failure and
+// returns HTTP 200 "Role updated successfully" regardless — a silent fail-open.
+//
+// CORRECT red/green framing (this matters; an earlier draft asserted the set
+// equals the requested set unconditionally, which is RED at BOTH commits because
+// AssignPermissionToRole is FORCED to always fail, so the write can never land
+// and an atomic fix legitimately rolls back to the ORIGINAL set — i.e. that draft
+// was a "check that always fails"). The only state that is actually FORBIDDEN is:
+//
+//     the handler reported SUCCESS (2xx)  AND  the role's persisted permission
+//     set is NOT the requested set.
+//
+// That is the fail-open: success claimed, effect absent. It asserts the EFFECT,
+// not the return value (the project rule), and it is:
+//   - pre-fix (defect present): 200 + persisted set == []   -> FORBIDDEN -> RED
+//   - at the fix (atomic + error propagated): non-2xx on the forced failure, so
+//     the "reported success" condition is false -> the forbidden state cannot
+//     arise -> GREEN. (A fix that instead genuinely applied the write would be
+//     2xx + set=={secrets.write}, also GREEN.)
+package handlers
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
+)
+
+// failingAssignStore wraps a real storage.Storage and makes ONLY
+// AssignPermissionToRole fail — modelling a storage write error during the
+// permission-replace step of UpdateRole. Every other method delegates to the
+// embedded (real) store. Single-method-override idiom (matrixStorageOverride in
+// internal/core). NOTE: a fully atomic fix may route the assign through a
+// transaction handle that is a DIFFERENT object than this wrapper, so this
+// override may not fire post-fix; that is discussed in the RVF1 report and does
+// not affect the pre-fix RED result, which is the load-bearing demonstration.
+type failingAssignStore struct {
+	corestorage.Storage
+}
+
+func (s *failingAssignStore) AssignPermissionToRole(_ context.Context, _, _ uint) error {
+	return errors.New("rvf1: injected storage failure on AssignPermissionToRole")
+}
+
+func TestRVF1_UpdateRole_FailOpen_PermReplace(t *testing.T) {
+	cfg := &config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}
+	require.NoError(t, i18n.Initialize(cfg))
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Role{}, &models.Permission{}, &models.RolePermission{},
+		&models.UserRole{}, &models.Group{}, &models.UserGroup{},
+		&models.GroupRole{}, &models.User{}, &models.Project{},
+		&models.Environment{}, &models.SoDPolicy{}, &models.MachineIdentityRole{},
+	))
+
+	// UserID=1 is a global admin so the pre-mutation authorize gate passes.
+	adminRole := &models.Role{Name: "system_admin", Description: "Administrator", BypassesPermissionChecks: true}
+	require.NoError(t, db.Create(adminRole).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
+
+	// A non-builtin role that STARTS with one permission already bound.
+	role := &models.Role{Name: "rvf1-editor", Description: "Custom editable role"}
+	require.NoError(t, db.Create(role).Error)
+	oldPerm := &models.Permission{Name: "secrets.read", Resource: "secrets", Action: "read"}
+	require.NoError(t, db.Create(oldPerm).Error)
+	newPerm := &models.Permission{Name: "secrets.write", Resource: "secrets", Action: "write"}
+	require.NoError(t, db.Create(newPerm).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: oldPerm.ID}).Error)
+
+	inner := store.NewLocalStorage(db)
+	faulty := &failingAssignStore{Storage: inner}
+
+	coreService := core.NewKeyorixCore(faulty)
+	handler := NewRBACHandler(coreService)
+
+	// Request: replace the role's permission set with {secrets.write}.
+	body, _ := json.Marshal(map[string]any{"permissions": []string{"secrets.write"}})
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/roles/%d", role.ID),
+			bytes.NewReader(body)),
+		"id", fmt.Sprintf("%d", role.ID),
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.UpdateRole(w, req)
+
+	// Read the role's ACTUAL persisted permission set back from storage.
+	persisted, perr := inner.GetRolePermissions(req.Context(), role.ID)
+	require.NoError(t, perr)
+	gotNames := make([]string, 0, len(persisted))
+	for _, p := range persisted {
+		gotNames = append(gotNames, p.Name)
+	}
+	t.Logf("RVF1 observed: http_status=%d persisted_perms=%v", w.Code, gotNames)
+
+	reportedSuccess := w.Code/100 == 2
+	effectApplied := len(gotNames) == 1 && gotNames[0] == "secrets.write"
+
+	// The FORBIDDEN state: the handler claimed success but the role does not hold
+	// the requested set. Asserting the effect, not the status.
+	if reportedSuccess && !effectApplied {
+		t.Fatalf("FAIL-OPEN: UpdateRole reported success (HTTP %d) but the role's "+
+			"persisted permission set is %v, not the requested [secrets.write]. A "+
+			"storage failure during the permission replace must not be reported as a "+
+			"successful update.", w.Code, gotNames)
+	}
+}

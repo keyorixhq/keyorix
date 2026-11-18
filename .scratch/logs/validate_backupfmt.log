@@ -1,0 +1,13 @@
+fuzz: elapsed: 0s, gathering baseline coverage: 0/12 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 12/12 completed, now fuzzing with 2 workers
+fuzz: elapsed: 3s, execs: 3016 (1005/sec), new interesting: 5 (total: 17)
+fuzz: elapsed: 6s, execs: 6404 (1129/sec), new interesting: 12 (total: 24)
+fuzz: elapsed: 9s, execs: 9910 (1169/sec), new interesting: 26 (total: 38)
+fuzz: elapsed: 12s, execs: 12699 (930/sec), new interesting: 45 (total: 57)
+fuzz: elapsed: 15s, execs: 15918 (1073/sec), new interesting: 59 (total: 71)
+fuzz: elapsed: 18s, execs: 18473 (851/sec), new interesting: 66 (total: 78)
+fuzz: elapsed: 21s, execs: 22372 (1301/sec), new interesting: 75 (total: 87)
+fuzz: elapsed: 24s, execs: 25430 (1020/sec), new interesting: 88 (total: 100)
+fuzz: elapsed: 25s, execs: 26794 (1018/sec), new interesting: 91 (total: 103)
+PASS
+ok  	github.com/keyorixhq/keyorix/internal/backupfmt	25.385s
