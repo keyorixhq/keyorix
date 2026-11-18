@@ -89,6 +89,12 @@ type consumeFirstExemption struct {
 	// at most that many rows, each reading State "revoked": a live row, an edited
 	// existing row or one row more still fails.
 	revokedRowsAdded map[string]int
+	// requiresConsumption: the entry applies only to a run in which a
+	// consumedColumns table really changed. Without it, an op whose refusals
+	// before the consume leave just the kept slot would have those refusals
+	// accepted here too, shadowing the stricter per-tuple rows that also pin the
+	// response (oracleAByDesignErrors with wrongCredentialResponse).
+	requiresConsumption bool
 	// why is the one-line reason, printed in the ACCEPTABLE-BY-DESIGN log line
 	// so a passing run still says what it accepted and on what grounds.
 	why string
@@ -253,12 +259,14 @@ var consumeFirstExemptions = []consumeFirstExemption{
 	// still fails. The sign-in failure after a committed accept is not this shape
 	// (everything committed); it has its own oracleAByDesign rows.
 	{
-		op:               setupInvitationOpKey,
-		fn:               "CONSUME:(*KeyorixCore).completeInvitationAccept",
-		consumedColumns:  map[string][]string{"SetupToken": {"State"}},
-		keepsLoginSlot:   true,
-		revokedRowsAdded: map[string]int{"ProjectMembership": 1},
-		why:              "the setup link was spent before the step that failed and stays spent (a resend issues a fresh one); the account, its roles and history were removed and a membership the grant made is left revoked",
+		op:                  setupInvitationOpKey,
+		fn:                  "CONSUME:(*KeyorixCore).completeInvitationAccept",
+		consumedColumns:     map[string][]string{"SetupToken": {"State"}},
+		keepsLoginSlot:      true,
+		revokedRowsAdded:    map[string]int{"ProjectMembership": 1},
+		requiresConsumption: true, // the pre-account refusals keep their own response-pinning rows
+
+		why: "the setup link was spent before the step that failed and stays spent (a resend issues a fresh one); the account, its roles and history were removed and a membership the grant made is left revoked",
 	},
 }
 
@@ -342,6 +350,17 @@ func consumeFirstAccountsForDiff(in oracleInput) (*consumeFirstExemption, bool) 
 	e := consumeFirstExemptionFor(in.op)
 	if e == nil {
 		return nil, false
+	}
+	if e.requiresConsumption {
+		consumed := false
+		for tbl := range e.consumedColumns {
+			if in.before.Tables[tbl].Hash != in.after.Tables[tbl].Hash {
+				consumed = true
+			}
+		}
+		if !consumed {
+			return nil, false
+		}
 	}
 	for _, tbl := range e.consumedByDeletion {
 		before, after := in.before.Tables[tbl], in.after.Tables[tbl]

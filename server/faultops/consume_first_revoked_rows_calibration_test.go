@@ -53,6 +53,10 @@ func TestConsumeFirstRevokedRows_Calibration(t *testing.T) {
 		check(t, snap(tokSpent, []string{memberOld}, []string{slot}, []string{admin}), true,
 			"no membership row is a subset of the residue")
 	})
+	t.Run("red: the slot was kept but the link was never spent", func(t *testing.T) {
+		check(t, snap(tokLive, []string{memberOld}, []string{slot}, []string{admin}), false,
+			"a refusal before the spend belongs to the per-tuple rows that pin the dead-link response (requiresConsumption)")
+	})
 	t.Run("red: the added membership is live", func(t *testing.T) {
 		check(t, snap(tokSpent, []string{memberOld, live}, []string{slot}, []string{admin}), false,
 			"a live membership is a grant the undo did not revert")
