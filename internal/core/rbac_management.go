@@ -555,7 +555,38 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
 		return err
 	}
+	if err := c.requireGrantTargetUser(ctx, actorID, userID, roleID, scope, actorIsMachine); err != nil {
+		return err
+	}
 	return c.assignUserRole(ctx, noTxFence, actorID, userID, roleID, scope, actorIsMachine)
+}
+
+// requireGrantTargetUser refuses a direct role grant to a user id that does not exist:
+// user_roles has no foreign key, so the grant used to commit, with its role.assigned
+// audit row, for nobody (and for whoever is later created under that id). The granter
+// ceiling is judged first, as addProjectMember does (OWNERSHIP-ORACLE-1): an actor who
+// may not grant the role gets the ceiling refusal for every target, so the refusal never
+// says which user ids exist. A fault reading the target is ErrStorageReadUnavailable
+// (retry), never "user not found". assignUserRole judges the ceiling again.
+func (c *KeyorixCore) requireGrantTargetUser(ctx context.Context, actorID, userID, roleID uint, scope Scope, actorIsMachine bool) error {
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
+		return err
+	}
+	return c.requireGrantTargetExists(ctx, userID)
+}
+
+// requireGrantTargetExists is the existence half of requireGrantTargetUser, for a caller
+// that calls requireGranterHoldsRolePermissions itself (AssignUserRoleWithExpiry: the
+// grant-primitive gate table pins that direct call before the write).
+func (c *KeyorixCore) requireGrantTargetExists(ctx context.Context, userID uint) error {
+	if _, err := c.storage.GetUser(ctx, userID); err != nil {
+		if fault := ReadFault(err); fault != nil {
+			return fault
+		}
+		// Storage's own not-found: its translated text and storage.ErrUserNotFound.
+		return err
+	}
+	return nil
 }
 
 // assignUserRole is AssignUserRole with a caller fence run first in the grant's

@@ -176,6 +176,9 @@ func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
 	}
 	secret, err := h.coreService.ClassifySecret(r.Context(), userCtx.UserID, userCtx.Username, uint(id), reqBody.Classification)
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -220,6 +223,9 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 		Enabled: reqBody.Enabled, Length: reqBody.Length, Charset: reqBody.Charset,
 		Backend: reqBody.Backend, Ref: reqBody.Ref,
 	}, userCtx.UserID); err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -463,6 +469,9 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 		secret, err = h.coreService.GetSecretByNameWithPermissionCheck(r.Context(), name, uint(projectID), uint(environmentID), userCtx.UserID)
 	}
 	if err != nil {
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error getting secret by name: %v", err)
 		if isSecretNotFound(err) {
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
