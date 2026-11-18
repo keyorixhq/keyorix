@@ -42,21 +42,21 @@ func (e *EncryptionConfig) KeyDirLockIsDatabase() bool {
 	return e.KeyDirLock == KeyDirLockDatabase
 }
 
-// providerUsesSalt reports whether a provider type derives its KEK from the
-// on-disk KEK salt. Only the password provider (type "" or "password") does.
-func providerUsesSalt(providerType string) bool {
-	return providerType == "" || providerType == "password"
+// UsesSalt reports whether this provider derives its KEK from the on-disk KEK
+// salt. Only the password provider (type "" or "password") does.
+func (kp *KeyProviderConfig) UsesSalt() bool {
+	return kp.Type == "" || kp.Type == "password"
 }
 
 // UsesSalt reports whether the primary key provider, or any fallback, reads the
 // KEK salt file (#4395). A salt_path in a config whose providers are all
 // file/env/exec/shamir/tpm/*-kms is vestigial: nothing creates or reads it.
 func (e *EncryptionConfig) UsesSalt() bool {
-	if providerUsesSalt(e.KeyProvider.Type) {
+	if e.KeyProvider.UsesSalt() {
 		return true
 	}
 	for i := range e.KeyProvider.Fallbacks {
-		if providerUsesSalt(e.KeyProvider.Fallbacks[i].Type) {
+		if e.KeyProvider.Fallbacks[i].UsesSalt() {
 			return true
 		}
 	}
