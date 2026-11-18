@@ -1,0 +1,16 @@
+=== RUN   TestRVF1_UpdateRole_FailOpen_PermReplace
+
+2026/11/16 22:41:20 [31;1m/mnt/data/wave4/rvf1/.claude/worktrees/t4/internal/storage/store/local_audit_chain.go:233 [35;1mSQL logic error: no such table: audit_events (1)
+[0m[33m[0.193ms] [34;1m[rows:-][0m SELECT `entry_hash` FROM `audit_events` ORDER BY id DESC LIMIT 1
+2026/11/16 22:41:20 SECURITY: failed to persist audit event "role.updated" (success=0x23074485f0e8): SQL logic error: no such table: audit_events (1)
+
+2026/11/16 22:41:20 [31;1m/mnt/data/wave4/rvf1/.claude/worktrees/t4/internal/storage/store/local_audit_chain.go:233 [35;1mSQL logic error: no such table: audit_events (1)
+[0m[33m[0.022ms] [34;1m[rows:-][0m SELECT `entry_hash` FROM `audit_events` ORDER BY id DESC LIMIT 1
+2026/11/16 22:41:20 SECURITY: failed to persist audit event "permission.removed" (success=0x230744964280): SQL logic error: no such table: audit_events (1)
+2026/11/16 22:41:20 Warning: could not assign permission "secrets.write" to role 2: Storage operation failed: rvf1: injected storage failure on AssignPermissionToRole
+    rbac_updaterole_failopen_rvf1_test.go:116: RVF1 observed: http_status=200 persisted_perms=[]
+    rbac_updaterole_failopen_rvf1_test.go:124: FAIL-OPEN: UpdateRole reported success (HTTP 200) but the role's persisted permission set is [], not the requested [secrets.write]. A storage failure during the permission replace must not be reported as a successful update.
+--- FAIL: TestRVF1_UpdateRole_FailOpen_PermReplace (0.01s)
+FAIL
+FAIL	github.com/keyorixhq/keyorix/server/http/handlers	0.374s
+FAIL
