@@ -92,6 +92,36 @@ describe('CompliancePage posture panel', () => {
         expect(screen.getByText('NIS2 Directive')).toBeInTheDocument();
     });
 
+    // POSTURE-CONSUMERS-NOV-1: the degraded break-glass tile.
+    it('shows no degraded break-glass tile when the server does not report the field', async () => {
+        (complianceApi.getPosture as any).mockResolvedValue(posture);
+        render(<CompliancePage />);
+        expect(await screen.findByText('Controls posture')).toBeInTheDocument();
+        expect(screen.queryByText(/Break-glass degraded/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Review owed/i)).not.toBeInTheDocument();
+    });
+
+    it('shows a degraded count of zero without a review-owed hint', async () => {
+        (complianceApi.getPosture as any).mockResolvedValue({
+            ...posture,
+            emergencyAccess: { activeActivations: 0, totalActivations: 1, degradedActivations: 0 },
+        });
+        render(<CompliancePage />);
+        expect(await screen.findByText(/Break-glass degraded/i)).toBeInTheDocument();
+        expect(screen.queryByText(/Review owed/i)).not.toBeInTheDocument();
+    });
+
+    it.each([1, 4])('shows %i degraded break-glass activation(s) with a review-owed hint', async (n) => {
+        (complianceApi.getPosture as any).mockResolvedValue({
+            ...posture,
+            emergencyAccess: { activeActivations: 0, totalActivations: 9, degradedActivations: n },
+        });
+        render(<CompliancePage />);
+        const label = await screen.findByText(/Break-glass degraded/i);
+        expect(label.previousElementSibling).toHaveTextContent(String(n));
+        expect(screen.getByText('Review owed')).toBeInTheDocument();
+    });
+
     it('lists separation-of-duties violations when present', async () => {
         (complianceApi.getPosture as any).mockResolvedValue(posture);
         (complianceApi.getSoDViolations as any).mockResolvedValue([
