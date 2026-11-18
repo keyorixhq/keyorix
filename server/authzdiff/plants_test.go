@@ -436,6 +436,34 @@ var fixRegressionPlants = []plant{
 		op:             "machine.token.issue",
 		minUnexplained: 2,
 	},
+	{
+		// V5EXT6: removes the error-handling in DisableMFA so a "MFA is not enabled"
+		// (HTTP 400 / PreconditionFailed) response becomes a 200 success for
+		// principals who do not have MFA enabled. With the error swallowed, the REST
+		// leg returns 200 (Allowed) where the model says PreconditionFailed — an
+		// O2:allowed-but-model-precondition disagreement the strict sweep catches.
+		//
+		// This proves the oracle's HTTP 400 → PreconditionFailed mapping (V5EXT6
+		// oracle fix, Task 2): reverting the HANDLER's response to 200 re-opens the
+		// disagreement that the mapping fix closed.  A clean sweep of mfa.disable
+		// records zero unexplained cases because every non-pkMFAUser principal gets
+		// 400 → PreconditionFailed → agree.
+		name: "fix-v5ext6-precondition-failed-disable-mfa-error-swallowed",
+		file: "server/http/handlers/mfa.go",
+		anchor: "\terr := h.coreService.DisableMFA(r.Context(), userCtx.UserID, proof, extractBearerToken(r))\n" +
+			"\th.settleCredentialCheck(r, att, userCtx, \"disable_mfa\", err)\n" +
+			"\tif err != nil {\n" +
+			"\t\th.writeMFAErr(w, err)\n" +
+			"\t\treturn\n" +
+			"\t}\n" +
+			"\tsendSuccess(w, map[string]any{\"mfa_enabled\": false}, \"MFA disabled\")\n",
+		repl: "\terr := h.coreService.DisableMFA(r.Context(), userCtx.UserID, proof, extractBearerToken(r))\n" +
+			"\th.settleCredentialCheck(r, att, userCtx, \"disable_mfa\", err)\n" +
+			"\t_ = err // PLANT: V5EXT6 oracle regression — no-MFA-state 400 swallowed → 200\n" +
+			"\tsendSuccess(w, map[string]any{\"mfa_enabled\": false}, \"MFA disabled\")\n",
+		op:             "mfa.disable",
+		minUnexplained: 1,
+	},
 }
 
 func TestPlantsAreDetected(t *testing.T) {
