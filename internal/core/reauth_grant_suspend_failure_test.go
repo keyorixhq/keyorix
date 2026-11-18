@@ -25,9 +25,10 @@ func TestRequireReauth_ActiveRecheckGetUserFault_AuditedAsMFAError(t *testing.T)
 	mintReauthGrantFor(t, db, 1, fixed)
 
 	base := c.storage
-	// Call 1 is RegenerateMFARecoveryCodes' own read; call 2 is the re-check.
+	// Call 1 is requireActorActive's pre-check, call 2 is RegenerateMFARecoveryCodes'
+	// own read, call 3 is the use-time re-check inside requireReauth.
 	fs := faultstorage.NewFaultyStorage(base, &faultstorage.FaultSpec{
-		Method: "GetUser", NthCall: 2, Kind: faultstorage.KindError,
+		Method: "GetUser", NthCall: 3, Kind: faultstorage.KindError,
 		Err: errors.New("injected: GetUser"),
 	})
 	c.storage = fs

@@ -177,7 +177,7 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 // attributed it to requireReauth and was wrong (coordinator review).
 func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, password, keepSessionToken string) ([]string, error) {
 	if err := c.requireActorActive(ctx, userID); err != nil {
-		return nil, err
+		return nil, mfaActiveGuardRefusal(err)
 	}
 	// Refused before the password or the code is evaluated (nothing counted).
 	if err := totpUnavailable(); err != nil {
@@ -284,7 +284,7 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 // password, then clears the secret and all recovery codes.
 func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPassword, keepSessionToken string) error {
 	if err := c.requireActorActive(ctx, userID); err != nil {
-		return err
+		return mfaActiveGuardRefusal(err)
 	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
@@ -332,7 +332,7 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 // previously-recorded codes.
 func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uint, codeOrPassword string) ([]string, error) {
 	if err := c.requireActorActive(ctx, userID); err != nil {
-		return nil, err
+		return nil, mfaActiveGuardRefusal(err)
 	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
@@ -855,6 +855,26 @@ func (c *KeyorixCore) auditMFAError(ctx context.Context, userID uint, phase stri
 	uid := userID
 	c.writeAuditEventFailedFull(ctx, "mfa.error", &uid, nil, nil, "",
 		fmt.Sprintf("MFA %s for user %d could not be evaluated (storage error): %v", phase, userID, err))
+}
+
+// mfaActiveGuardRefusal converts a requireActorActive refusal for ActivateMFA /
+// DisableMFA / RegenerateMFARecoveryCodes into the same generic error an absent
+// or consumed step-up grant produces. Anti-enumeration: a caller who knows only
+// a username must not be able to distinguish "account suspended" from "wrong
+// credential" by the error text. The returned error:
+//   - has message "invalid code or password" (same as requireReauth's negative path)
+//   - satisfies errors.Is(err, ErrPermissionDenied) (typed refusal, so transports
+//     map it 403, not 401 — we do NOT want it counted as a login attempt)
+//   - satisfies errors.Is(err, ErrReauthRejected) (via reauthRejectedError.Is)
+//
+// A storage fault from requireActorActive (ErrStorageReadUnavailable) is not
+// an ErrPermissionDenied; it propagates unchanged as a 503.
+func mfaActiveGuardRefusal(err error) error {
+	if !errors.Is(err, ErrPermissionDenied) {
+		return err // storage fault: propagate as-is for 503 handling
+	}
+	// Re-wrap as a permission-denied that renders as the generic reauth message.
+	return markPermissionDenied(&reauthRejectedError{msg: "invalid code or password"})
 }
 
 // ErrReauthRejected marks the refusals of an authenticated re-check of the

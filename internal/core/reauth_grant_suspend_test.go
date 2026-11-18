@@ -149,3 +149,47 @@ func TestRequireReauth_DeactivatedAccountGrantRefusedAtUse(t *testing.T) {
 
 	requireStepUpActionRefused(t, c, 1)
 }
+
+// TestMFAOpsRefusalTextMatchesWrongPassword: for a suspended account, all three
+// MFA mutation ops must produce the EXACT same error text as a wrong password on
+// an active account. Any deviation leaks account state to the caller.
+//
+// Baseline: calling with the correct password but no step-up grant also returns
+// "invalid code or password" (the grant is what enables the correct-password path
+// to succeed; without it, the password alone is insufficient for MFA-enabled
+// accounts). This baseline is used rather than a genuinely wrong password because
+// it exercises the same path the ACTIVE-user case would take, and shows that the
+// suspended-actor guard uses an identical message despite firing earlier.
+func TestMFAOpsRefusalTextMatchesWrongPassword(t *testing.T) {
+	t.Parallel()
+	c, _, _ := newSuspendTestCore(t)
+	ctx := context.Background()
+
+	// Get the "wrong credential" text for each op on an active account
+	// (correct password, MFA enabled, no step-up grant → "invalid code or password").
+	_, activateActiveErr := c.ActivateMFA(ctx, 1, "123456", mfaTestPassword, "")
+	require.Error(t, activateActiveErr, "active-account baseline must refuse (no step-up grant)")
+	disableActiveErr := c.DisableMFA(ctx, 1, mfaTestPassword, "")
+	require.Error(t, disableActiveErr, "active-account baseline must refuse (no step-up grant)")
+	_, regenActiveErr := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	require.Error(t, regenActiveErr, "active-account baseline must refuse (no step-up grant)")
+
+	// Suspend the account.
+	require.NoError(t, c.SuspendUser(ctx, 0, 1))
+
+	// Now call with the actual password on the suspended account.
+	_, err := c.ActivateMFA(ctx, 1, "123456", mfaTestPassword, "")
+	require.Error(t, err)
+	assert.Equal(t, activateActiveErr.Error(), err.Error(),
+		"ActivateMFA: suspended-actor text must match wrong-credential text")
+
+	err = c.DisableMFA(ctx, 1, mfaTestPassword, "")
+	require.Error(t, err)
+	assert.Equal(t, disableActiveErr.Error(), err.Error(),
+		"DisableMFA: suspended-actor text must match wrong-credential text")
+
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	require.Error(t, err)
+	assert.Equal(t, regenActiveErr.Error(), err.Error(),
+		"RegenerateMFARecoveryCodes: suspended-actor text must match wrong-credential text")
+}
