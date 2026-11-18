@@ -59,7 +59,9 @@ func NewService(cfg *config.EncryptionConfig, baseDir string) *Service {
 ║  NEVER run with encryption disabled in production.               ║
 ╚══════════════════════════════════════════════════════════════════╝`)
 	}
-	km := NewKeyManager(baseDir, cfg.DEKPath, cfg.SaltPath)
+	// #4395: EffectiveSaltPath, not SaltPath: a salt_path no provider uses is not
+	// part of the key set and must not be required, locked or checksummed.
+	km := NewKeyManager(baseDir, cfg.DEKPath, cfg.EffectiveSaltPath())
 	// The manifest writer for the whole configured set (salt, DEK, provider
 	// blobs, Shamir shares), not just the two files km knows. An unsafe path
 	// is reported by Initialize, like any other key-path configuration error.
@@ -206,7 +208,7 @@ func newKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 	// from — also fixes the exact same bug in NewKeyProviderFromConfig's other real
 	// caller, the KEK-provider migration tool, which builds a target provider with no
 	// KeyManager of its own to normalize on its behalf.
-	normBaseDir, _, normSaltPath, err := normalizeKeyPaths(baseDir, cfg.DEKPath, cfg.SaltPath)
+	normBaseDir, _, normSaltPath, err := normalizeKeyPaths(baseDir, cfg.DEKPath, cfg.EffectiveSaltPath())
 	if err != nil {
 		return nil, err
 	}

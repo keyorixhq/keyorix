@@ -493,6 +493,16 @@ const autoFixPermsNotice = "Automatic file-permission fixing is on (security.aut
 func validateEncryption(cfg *config.Config, result *ValidationResult, tolerateUnprovisionedKeys bool) error {
 	enc := cfg.Storage.Encryption
 
+	// #4395: no configured provider reads a KEK salt (env/file/... without a
+	// password fallback), so there is no salt file to require: nothing ever
+	// creates one. A leftover salt_path is ignored with one warning.
+	if !enc.UsesSalt() {
+		if w := enc.UnusedSaltPathWarning(); w != "" {
+			result.Warnings = append(result.Warnings, w)
+		}
+		return validateWrappedDEKOnly(resolveKeyPath(enc.DEKPath), tolerateUnprovisionedKeys, result)
+	}
+
 	saltPath := resolveKeyPath(enc.SaltPath)
 	if strings.Contains(saltPath, "..") {
 		return fmt.Errorf("KEK salt path is unsafe: %s", saltPath)
@@ -518,6 +528,27 @@ func validateEncryption(cfg *config.Config, result *ValidationResult, tolerateUn
 		return fmt.Errorf("KEK salt file %s has invalid size %d bytes (expected 32)", saltPath, saltInfo.Size())
 	}
 
+	if dekErr != nil {
+		return fmt.Errorf("wrapped DEK file not found: %s", dekPath)
+	}
+	const minWrappedDEKSize = 60 // 12-byte GCM nonce + 32-byte key + 16-byte tag
+	if dekInfo.Size() < minWrappedDEKSize {
+		return fmt.Errorf("wrapped DEK file %s is too small (%d bytes) to be a valid wrapped key", dekPath, dekInfo.Size())
+	}
+	return nil
+}
+
+// validateWrappedDEKOnly is validateEncryption for a key set with no salt file.
+func validateWrappedDEKOnly(dekPath string, tolerateUnprovisionedKeys bool, result *ValidationResult) error {
+	if strings.Contains(dekPath, "..") {
+		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
+	}
+	dekInfo, dekErr := os.Stat(dekPath)
+	if tolerateUnprovisionedKeys && os.IsNotExist(dekErr) {
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"wrapped DEK (%s) does not exist yet — treating as first boot; it will be generated before this check runs again", dekPath))
+		return nil
+	}
 	if dekErr != nil {
 		return fmt.Errorf("wrapped DEK file not found: %s", dekPath)
 	}
