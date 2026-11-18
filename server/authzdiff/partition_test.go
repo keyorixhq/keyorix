@@ -78,7 +78,7 @@ func explain(r *caseResult) string {
 	// function rejects actorID=0, so REST answers 400/500. A business-rule
 	// exclusion, not an authorization gate; the model (router gate only)
 	// says "allowed". These ops have no gRPC surface.
-	// Tracked: TODO-ISSUE (no issue filed yet).
+	// Tracked: #4514.
 	case pk == pkMachine && slices.Contains([]string{"bulk.rename", "bulk.suspend", "resume.all"}, r.Op) &&
 		na(core) && restBadStatus && deniedOrNA(grpc):
 		return "known-10"
@@ -88,7 +88,7 @@ func explain(r *caseResult) string {
 	// read needs secrets.read, so the item is refused (core item-refused, REST
 	// 200 with an empty Deleted list). The model covers the gate, not the
 	// per-item data-access prerequisite. No gRPC surface.
-	// Tracked: TODO-ISSUE (no issue filed yet).
+	// Tracked: #4515.
 	case r.Op == "bulk.delete" && is(core, Denied) && core.Detail == "item-refused" &&
 		is(rest, Denied) && rest.Detail == "2xx-item-refused" && deniedOrNA(grpc):
 		return "known-11"
@@ -102,8 +102,8 @@ func explain(r *caseResult) string {
 // is a decision recorded on its issue, not a date bump.
 var waivers = []struct{ id, issue, expires string }{
 	{"known-04", "#4161", "2027-02-13"},
-	{"known-10", "#TBD", "2027-06-18"},
-	{"known-11", "#TBD", "2027-06-18"},
+	{"known-10", "#4514", "2027-06-18"},
+	{"known-11", "#4515", "2027-06-18"},
 }
 
 // waiverIDs is waivers' ids (the dead-waiver check's population).
