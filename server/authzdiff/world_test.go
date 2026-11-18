@@ -147,6 +147,13 @@ type perProject struct {
 	// and the reviewer to be independent of the activator (u-bg).
 	reviewBGActivationID uint
 
+	// V5EXT3: a dedicated secret created then immediately suspended in the seed
+	// (via SuspendSecret, not SuspendProjectSecrets, to avoid affecting other ops).
+	// resume.all calls ResumeProjectSecrets, which resumes all suspended secrets in
+	// the project; without at least one suspended secret the positive control returns
+	// n=0 and the oracle reads it as "denied" for every principal.
+	suspendedSecretID uint
+
 	sx secretFixtures
 }
 
@@ -660,6 +667,25 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 			return nil, fmt.Errorf("seed: revoke break-glass review fixture: %w", err)
 		}
 		pp.reviewBGActivationID = reviewAct.ID
+	}
+
+	// ---- V5EXT3 fixtures (bulk-secret ops: resume.all pre-suspended secret) ----
+	//
+	// resume.all calls ResumeProjectSecrets, which resumes every SUSPENDED secret in
+	// the project. Without at least one suspended secret the admin's positive control
+	// returns n=0, which the core leg maps to errItemRefused ("denied") — miscalibrated.
+	// SuspendSecret (single-secret) is used here instead of SuspendProjectSecrets so
+	// that only this dedicated secret is suspended; the main fixture secrets (secretID,
+	// secrets[0..3]) remain ACTIVE and other ops are unaffected.
+	for _, pp := range []*perProject{&fx.A, &fx.B} {
+		suspSec := must(c.CreateSecret(ctx, &core.CreateSecretRequest{
+			Name: "s-resume-fixture", Value: []byte("synthetic-suspend"), ProjectID: pp.projectID,
+			EnvironmentID: pp.envID, Type: "password", CreatedBy: "kxadmin", OwnerID: admin.ID,
+		}))
+		if _, err := c.SuspendSecret(ctx, suspSec.ID, admin.ID, "fixture-suspend-for-resume-all"); err != nil {
+			return nil, fmt.Errorf("seed: suspend resume-all fixture secret: %w", err)
+		}
+		pp.suspendedSecretID = suspSec.ID
 	}
 
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the
