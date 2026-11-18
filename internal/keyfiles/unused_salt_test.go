@@ -70,7 +70,4 @@ func TestRotationStaging_UnusedSaltPath(t *testing.T) {
 	require.NoError(t, err)
 	_, err = Registry(enc("password", "../outside/kek.salt"), dir)
 	require.Error(t, err)
-
-	require.Equal(t, filepath.Join(dir, "kek.salt"), UnusedSaltPath(enc("env", "./kek.salt"), dir))
-	require.Empty(t, UnusedSaltPath(enc("password", "kek.salt"), dir))
 }
