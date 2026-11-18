@@ -1,0 +1,22 @@
+{
+  "id": "KFZ-TEST-003",
+  "title": "Upstream libfoo: memory corruption in ParseXYZ",
+  "module": "github.com/example/libfoo",
+  "scope": "upstream",
+  "class": "memory-corruption",
+  "severity": "high",
+  "disposition": "active",
+  "dates": {
+    "found": "2026-03-01",
+    "reproduced": "2026-03-01",
+    "reported": "2026-03-01"
+  },
+  "repro": {
+    "private_path": "crashers/libs-extra/FuzzLibFooXYZ/abcdef123456"
+  },
+  "crashers": [
+    "crashers/libs-extra/FuzzLibFooXYZ/abcdef123456"
+  ],
+  "security": true,
+  "notes": "Third-party library; no fuzz target in this repo."
+}

@@ -1,0 +1,24 @@
+{
+  "id": "KFZ-TEST-004",
+  "title": "FuzzFoo: second finding — missing seed file",
+  "module": "keyorix",
+  "scope": "first-party",
+  "class": "panic-slice-bounds",
+  "severity": "low",
+  "disposition": "active",
+  "source": "fuzz",
+  "dates": {
+    "found": "2026-04-01",
+    "reproduced": "2026-04-01",
+    "fixed": "2026-04-02"
+  },
+  "repro": {
+    "private_path": "crashers/keyorix/github.com_keyorixhq_keyorix_internal_foo/FuzzFoo/deadbeef00001111"
+  },
+  "crashers": [
+    "crashers/keyorix/github.com_keyorixhq_keyorix_internal_foo/FuzzFoo/deadbeef00001111"
+  ],
+  "security": false,
+  "security_note": "Panic in internal helper, out of network reach.",
+  "notes": "Seed listed in registered-seeds but file has been deleted (test fixture for missing-seed test)."
+}
