@@ -1,0 +1,1 @@
+createRejectionReasonTemplate	500	missing-sentinel	NEEDS ISSUE	catalog-handlers	OPENAPI-STATEFUL-9: duplicate rejection-reason-template name -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (core lacks a Conflict sentinel).

@@ -122,14 +122,15 @@ func TestDeleteSecretACLsByUserAndProject_DBError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestSetSecretAccessSchedule_UpdateExistingSaveFails(t *testing.T) {
+// The row is updated, then the read-back of the written row fails (the table is gone).
+func TestSetSecretAccessSchedule_UpdateExistingReadBackFails(t *testing.T) {
 	t.Parallel()
 	ls := newPartialSecretsDB(t, &models.SecretAccessSchedule{})
 	require.NoError(t, ls.db.Create(&models.SecretAccessSchedule{
 		SecretNodeID: 1, AllowedDays: "1,2,3", StartHour: 9, EndHour: 17, Timezone: "UTC",
 	}).Error)
 
-	dropTableAfterQueries(t, ls.db, 1, "secret_access_schedules")
+	dropTableAfterUpdates(t, ls.db, 1, "secret_access_schedules")
 
 	err := ls.SetSecretAccessSchedule(context.Background(), &models.SecretAccessSchedule{
 		SecretNodeID: 1, AllowedDays: "1,2,3,4,5", StartHour: 8, EndHour: 18, Timezone: "UTC",
