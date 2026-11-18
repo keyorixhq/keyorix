@@ -4,7 +4,9 @@
 package admin
 
 import (
+	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,16 +20,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
-
-// klBackends returns the backends to exercise: SQLite always, Postgres when
-// KEYORIX_TEST_PG_DSN is set. The base DSN is returned for the postgres entry.
-func klBackends(t *testing.T) []struct{ name, pgBase string } {
-	out := []struct{ name, pgBase string }{{"sqlite", ""}}
-	if dsn := os.Getenv("KEYORIX_TEST_PG_DSN"); dsn != "" {
-		out = append(out, struct{ name, pgBase string }{"postgres", dsn})
-	}
-	return out
-}
 
 // FuzzKeyLifecycleProcess drives a fuzz-byte-encoded program of lifecycle steps
 // (3 bytes/step: op, arg0, arg1) as REAL child processes against a fresh encrypted
@@ -57,9 +49,40 @@ func FuzzKeyLifecycleProcess(f *testing.F) {
 		if os.Getenv(klEnvChild) == "1" {
 			t.Skip("child process must not re-enter the fuzzer")
 		}
+		// A plain `go test` runs every seed as a regression test. Eleven of the
+		// thirteen seeds are programs TestKeyLifecycleProcessReplay already runs
+		// through the same klRunProgram on SQLite (and with stricter assertions), at
+		// about 190 s under -race: the duplicate alone pushed the admin-2 CI leg
+		// to 1515 s of its 1800 s budget. Skip only that duplicate, and only
+		// outside fuzzing: a live `-fuzz` run, and its baseline pass over the seed
+		// corpus, still executes every seed.
+		if !klFuzzing() && klReplayCovers(program) {
+			t.Skip("program is a case of TestKeyLifecycleProcessReplay (same klRunProgram, same sqlite backend)")
+		}
 		require.NoError(t, i18n.InitializeForTesting())
 		_ = klRunProgram(t, "sqlite", "", program)
 	})
+}
+
+// klFuzzing reports whether this test binary was started to fuzz (-fuzz) or is a
+// fuzz worker, as opposed to a plain run that only replays the seed corpus.
+func klFuzzing() bool {
+	for _, name := range []string{"test.fuzz", "test.fuzzworker"} {
+		if fl := flag.Lookup(name); fl != nil && fl.Value.String() != "" && fl.Value.String() != "false" {
+			return true
+		}
+	}
+	return false
+}
+
+// klReplayCovers reports whether program is one of the replay matrix's programs.
+func klReplayCovers(program []byte) bool {
+	for _, tc := range klReplayCases() {
+		if bytes.Equal(tc.program, program) {
+			return true
+		}
+	}
+	return false
 }
 
 // klSeedPrograms are compact programs covering every op at least once. Kept small
@@ -83,22 +106,20 @@ func klSeedPrograms() [][]byte {
 	}
 }
 
-// TestKeyLifecycleProcessReplay is the deterministic replay matrix (step 2): a
-// fixed set of named programs run through the full harness on every backend. It is
-// the committed green self-test that proves the harness and every oracle run
-// clean over the real child-process lifecycle. Postgres is included when the DSN
-// is set.
-func TestKeyLifecycleProcessReplay(t *testing.T) {
-	require.NoError(t, i18n.InitializeForTesting())
-	// wantPhases: the phase each kill_rotate step must report, in order. A kill
-	// that lands before the rotation wrote anything cannot test recovery, so the
-	// kill cases assert where their kill landed (M1 in the PR #4142 review).
+// klReplayCase is one named program of the replay matrix.
+type klReplayCase struct {
+	name       string
+	program    []byte
+	wantPhases [][]string // per kill step: the accepted phases
+}
+
+// klReplayCases is the replay matrix. wantPhases: the phase each kill_rotate step
+// must report, in order. A kill that lands before the rotation wrote anything
+// cannot test recovery, so the kill cases assert where their kill landed (M1 in
+// the PR #4142 review).
+func klReplayCases() []klReplayCase {
 	pendingOrLater := []string{klPhasePendingUncommitted, klPhasePendingCommitted, klPhasePromoted}
-	cases := []struct {
-		name       string
-		program    []byte
-		wantPhases [][]string // per kill step: the accepted phases
-	}{
+	return []klReplayCase{
 		{"create_backup_restore", []byte{0, 0, 0, 5, 0, 0, 6, 0, 0}, nil},
 		{"create_rotatedek_reopen", []byte{0, 0, 0, 3, 0, 0, 10, 0, 0}, nil},
 		{"create_rotatekek_backup_restore", []byte{0, 0, 0, 4, 0, 0, 5, 0, 0, 6, 0, 0}, nil},
@@ -117,16 +138,42 @@ func TestKeyLifecycleProcessReplay(t *testing.T) {
 		{"delete_then_delete_is_noop", []byte{0, 0, 0, 2, 0, 0, 2, 0, 0}, nil},
 		{"rotate_backup_then_rotate_restore", []byte{0, 0, 0, 5, 0, 0, 3, 0, 0, 6, 0, 0}, nil},
 	}
-	for _, b := range klBackends(t) {
-		for _, tc := range cases {
-			t.Run(b.name+"/"+tc.name, func(t *testing.T) {
-				w := klRunProgram(t, b.name, b.pgBase, tc.program)
-				require.Lenf(t, w.killPhases, len(tc.wantPhases), "kill steps run: %v", w.killPhases)
-				for i, accepted := range tc.wantPhases {
-					require.Containsf(t, accepted, w.killPhases[i], "kill step %d landed in phase %q", i, w.killPhases[i])
-				}
-			})
-		}
+}
+
+// TestKeyLifecycleProcessReplay is the deterministic replay matrix (step 2): a
+// fixed set of named programs run through the full harness. It is the committed
+// green self-test that proves the harness and every oracle run clean over the real
+// child-process lifecycle. This is the SQLite half; the Postgres half is
+// TestKeyLifecycleProcessReplay_Postgres. They are two top-level tests because the
+// CI legs shard a package by top-level test name: as one test the matrix was
+// 546 s under -race locally (232 s SQLite + 314 s Postgres), more than any shard
+// target, so no weight could balance the admin legs.
+func TestKeyLifecycleProcessReplay(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	klReplayOn(t, "sqlite", "")
+}
+
+// TestKeyLifecycleProcessReplay_Postgres is the Postgres half of the replay matrix
+// (skipped without KEYORIX_TEST_PG_DSN).
+func TestKeyLifecycleProcessReplay_Postgres(t *testing.T) {
+	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("KEYORIX_TEST_PG_DSN not set")
+	}
+	require.NoError(t, i18n.InitializeForTesting())
+	klReplayOn(t, "postgres", dsn)
+}
+
+func klReplayOn(t *testing.T, backend, pgBase string) {
+	t.Helper()
+	for _, tc := range klReplayCases() {
+		t.Run(backend+"/"+tc.name, func(t *testing.T) {
+			w := klRunProgram(t, backend, pgBase, tc.program)
+			require.Lenf(t, w.killPhases, len(tc.wantPhases), "kill steps run: %v", w.killPhases)
+			for i, accepted := range tc.wantPhases {
+				require.Containsf(t, accepted, w.killPhases[i], "kill step %d landed in phase %q", i, w.killPhases[i])
+			}
+		})
 	}
 }
 
