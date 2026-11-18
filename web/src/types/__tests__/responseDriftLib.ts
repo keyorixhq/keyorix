@@ -272,13 +272,18 @@ export function proseOf(doc: Doc, path: string, method: string): string {
  * the web still reads); it cannot prove the field is where the web expects it.
  */
 export function proseMissing(prose: string, fields: string[], label: string): string[] {
-    return fields.filter((f) => !wholeWord(f).test(prose)).map((f) => `${label}.${f}`);
+    return fields.filter((f) => !hasWholeWord(prose, f)).map((f) => `${label}.${f}`);
 }
 
-/** `f` as a whole-word matcher: every regexp metacharacter in `f` is escaped, so it matches literally. */
-function wholeWord(f: string): RegExp {
-    const literal = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(?<![A-Za-z0-9_])${literal}(?![A-Za-z0-9_])`); // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- `literal` is `f` with every metacharacter escaped, so it cannot change the pattern's shape or backtrack
+const isWordChar = (c: string | undefined): boolean => c !== undefined && /[A-Za-z0-9_]/.test(c);
+
+/** True when `word` occurs in `text` with no [A-Za-z0-9_] on either side (literal match, no RegExp built from `word`). */
+function hasWholeWord(text: string, word: string): boolean {
+    if (word === '') return false;
+    for (let at = text.indexOf(word); at !== -1; at = text.indexOf(word, at + 1)) {
+        if (!isWordChar(text[at - 1]) && !isWordChar(text[at + word.length])) return true;
+    }
+    return false;
 }
 
 /** Declared query parameters (path-level and operation-level) of an operation: name -> schema type. */

@@ -94,6 +94,10 @@ func startServer(binary, dir string, withBootstrap bool) (*Instance, error) {
 	}
 	in := &Instance{Dir: dir, BaseURL: "http://127.0.0.1:" + port, cmd: cmd, done: make(chan struct{})}
 	go func() { _ = cmd.Wait(); close(in.done) }()
+	if err := validateLoopbackURL(in.BaseURL); err != nil {
+		in.Stop()
+		return nil, err
+	}
 	deadline := time.Now().Add(40 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
@@ -101,7 +105,7 @@ func startServer(binary, dir string, withBootstrap bool) (*Instance, error) {
 			return nil, fmt.Errorf("server exited early; see %s/server.log", dir)
 		default:
 		}
-		resp, err := http.Get(in.BaseURL + "/health") // #nosec G107 -- loopback
+		resp, err := loopbackClient.Get(in.BaseURL + "/health") // #nosec G107 -- BaseURL checked by validateLoopbackURL above
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == 200 {
@@ -135,7 +139,10 @@ func apiCall(method, base, path, token string, body any, hdr ...map[string]strin
 		b, _ := json.Marshal(body)
 		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, base+path, rd) // #nosec G107 G704 -- loopback
+	if err := validateLoopbackURL(base); err != nil {
+		return 0, nil, err
+	}
+	req, err := http.NewRequest(method, base+path, rd) // #nosec G107 G704 -- base checked by validateLoopbackURL above
 	if err != nil {
 		return 0, nil, err
 	}
@@ -150,7 +157,7 @@ func apiCall(method, base, path, token string, body any, hdr ...map[string]strin
 			req.Header.Set(k, v)
 		}
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loopbackClient.Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
