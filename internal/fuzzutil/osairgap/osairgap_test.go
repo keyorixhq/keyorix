@@ -56,17 +56,18 @@ func TestOsairgapNSInitDispatch(t *testing.T) {
 //     loopback canary (deterministic CanaryHit with target);
 //   - a direct TCP dial to a non-loopback host, which the netns blocks with
 //     ENETUNREACH (containment) and which may show as a SYN_SENT /proc peer.
+//
 // No production code is touched — the "defect" is this test-only helper.
 func runPhoneHome() {
 	// Proxy-respecting HTTP egress → canary.
 	cl := &http.Client{Timeout: 3 * time.Second}
 	if resp, err := cl.Get("http://malicious.example.net/beacon"); err == nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 	// Direct non-loopback dial → containment (ENETUNREACH) + maybe /proc.
 	d := net.Dialer{Timeout: 3 * time.Second}
 	if c, err := d.Dial("tcp", "10.255.255.1:443"); err == nil {
-		c.Close()
+		_ = c.Close()
 	} else {
 		fmt.Fprintf(os.Stderr, "phonehome direct dial blocked: %v\n", err)
 	}
@@ -81,13 +82,13 @@ func runBenign() {
 		fmt.Fprintf(os.Stderr, "benign listen: %v\n", err)
 		os.Exit(1)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	c, err := net.DialTimeout("tcp", ln.Addr().String(), 2*time.Second)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "benign dial: %v\n", err)
 		os.Exit(1)
 	}
-	c.Close()
+	_ = c.Close()
 	os.Exit(0)
 }
 

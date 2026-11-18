@@ -29,7 +29,6 @@
 package osairgap
 
 import (
-	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -86,25 +85,6 @@ func (a Allowlist) Classify(e Endpoint) (allowed bool, reason string) {
 	return false, "egress"
 }
 
-// parseDB turns a "host:port" (already resolved to an IP:port, or a loopback
-// host) into an Endpoint. A hostname that is not an IP is rejected — the DB
-// allowlist must be an exact IP so the classifier cannot be widened by DNS.
-func parseDB(hostport string) (*Endpoint, error) {
-	host, portStr, err := net.SplitHostPort(hostport)
-	if err != nil {
-		return nil, fmt.Errorf("db endpoint %q not host:port: %w", hostport, err)
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return nil, fmt.Errorf("db endpoint host %q is not a literal IP (a hostname would need DNS and cannot be allowlisted)", host)
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port < 0 || port > 65535 {
-		return nil, fmt.Errorf("db endpoint port %q invalid", portStr)
-	}
-	return &Endpoint{IP: ip, Port: port}, nil
-}
-
 // parseProcNetLine parses one data row of /proc/net/tcp|tcp6|udp|udp6 and
 // returns the REMOTE endpoint. The format: the 2nd whitespace field is
 // "local_addr:port", the 3rd is "rem_addr:port", both as big-endian hex of the
@@ -134,11 +114,11 @@ func parseProcNetLine(line string, v6 bool) (local, rem Endpoint, state int, ok 
 // parseHexAddr parses "AABBCCDD:PORT" (v4, 8 hex addr digits) or a 32-hex-digit
 // v6 form, both big-endian-hex-of-wire-bytes-in-word-LE as the kernel emits.
 func parseHexAddr(s string, v6 bool) (net.IP, int, bool) {
-	colon := strings.LastIndexByte(s, ':')
-	if colon < 0 {
+	before, after, ok := strings.CutLast(s, ":")
+	if !ok {
 		return nil, 0, false
 	}
-	addrHex, portHex := s[:colon], s[colon+1:]
+	addrHex, portHex := before, after
 	port64, err := strconv.ParseInt(portHex, 16, 32)
 	if err != nil || port64 < 0 || port64 > 65535 {
 		return nil, 0, false
@@ -149,10 +129,10 @@ func parseHexAddr(s string, v6 bool) (net.IP, int, bool) {
 		}
 		ip := make(net.IP, 16)
 		// Four 32-bit words, each little-endian within the hex.
-		for w := 0; w < 4; w++ {
+		for w := range 4 {
 			word := addrHex[w*8 : w*8+8]
 			var b [4]byte
-			for i := 0; i < 4; i++ {
+			for i := range 4 {
 				v, err := strconv.ParseUint(word[i*2:i*2+2], 16, 8)
 				if err != nil {
 					return nil, 0, false
@@ -171,7 +151,7 @@ func parseHexAddr(s string, v6 bool) (net.IP, int, bool) {
 		return nil, 0, false
 	}
 	var b [4]byte
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		v, err := strconv.ParseUint(addrHex[i*2:i*2+2], 16, 8)
 		if err != nil {
 			return nil, 0, false

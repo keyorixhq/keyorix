@@ -25,15 +25,15 @@ import (
 // /proc/net (best-effort). ContainmentErrs are the ENETUNREACH-class errors the
 // child itself reported when a non-loopback dial was blocked by the netns.
 type Result struct {
-	LoUp            bool        `json:"lo_up"`
-	CanaryAddr      string      `json:"canary_addr"`
-	CanaryHits      []string    `json:"canary_hits"`  // "method host:port" or raw first line
-	ProcPeers       []Endpoint  `json:"proc_peers"`   // non-loopback remote peers sampled from /proc/net
-	ProcSamples     int         `json:"proc_samples"` // how many times /proc/net was sampled
-	TargetExit      int         `json:"target_exit"`
-	TargetErr       string      `json:"target_err"`
+	LoUp             bool       `json:"lo_up"`
+	CanaryAddr       string     `json:"canary_addr"`
+	CanaryHits       []string   `json:"canary_hits"`  // "method host:port" or raw first line
+	ProcPeers        []Endpoint `json:"proc_peers"`   // non-loopback remote peers sampled from /proc/net
+	ProcSamples      int        `json:"proc_samples"` // how many times /proc/net was sampled
+	TargetExit       int        `json:"target_exit"`
+	TargetErr        string     `json:"target_err"`
 	TargetStderrTail string     `json:"target_stderr_tail"`
-	InitErr         string      `json:"init_err"`
+	InitErr          string     `json:"init_err"`
 }
 
 // RunSpec configures one jailed run.
@@ -75,7 +75,7 @@ func Run(ctx context.Context, self string, spec RunSpec) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, self, "-test.run=TestOsairgapNSInitDispatch")
+	cmd := exec.CommandContext(ctx, self, "-test.run=TestOsairgapNSInitDispatch") // #nosec G204 // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- self is the caller's own test binary (os.Args[0]); fuzz tooling, never shipped or fed attacker input
 	cmd.Env = append(os.Environ(), envRole+"="+roleNS, envSpec+"="+string(specJSON))
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWNET, // root with CAP_NET_ADMIN: net ns only
@@ -157,7 +157,7 @@ func RunNSInit() {
 
 	// Build target command. Proxy + resolver env point at the canary so any
 	// proxy-respecting egress intent lands on loopback and is recorded.
-	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...)
+	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...) // #nosec G204 // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- Argv is the parent test's own RunSpec, handed over by the re-exec above; the target is the program under test, run inside a network-less netns
 	base := sanitisedEnv()
 	proxy := "http://" + canary.addr
 	base = append(base,
@@ -225,7 +225,7 @@ func bringLoopbackUp() error {
 	if err != nil {
 		return err
 	}
-	defer unix.Close(fd)
+	defer func() { _ = unix.Close(fd) }()
 	ifr, err := unix.NewIfreq("lo")
 	if err != nil {
 		return err

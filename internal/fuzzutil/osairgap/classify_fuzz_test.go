@@ -98,7 +98,7 @@ func FuzzProcNetParser(f *testing.F) {
 // red/green test runs the fuzzer's own invariant over it to show the invariant
 // catches exactly this defect, and over the real Classify to show it passes.
 func buggyClassify(e Endpoint) (bool, string) {
-	if e.IP != nil && len(e.IP) >= 1 {
+	if len(e.IP) >= 1 {
 		if v4 := e.IP.To4(); v4 != nil && v4[0] == 10 {
 			return true, "internal-10/8" // the bug
 		}

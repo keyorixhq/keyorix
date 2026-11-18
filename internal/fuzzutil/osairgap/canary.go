@@ -50,7 +50,7 @@ func (c *canarySink) accept() {
 }
 
 func (c *canarySink) handle(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	r := bufio.NewReader(conn)
 	line, err := r.ReadString('\n')
