@@ -37,6 +37,7 @@ func newFS() *flag.FlagSet {
 	fs.CountP("debug", "d", "")
 	fs.Duration("timeout", 0, "")
 	fs.StringToString("label", nil, "")
+	fs.StringToInt("ratios", nil, "")
 	return fs
 }
 
@@ -46,6 +47,8 @@ func FuzzPflagParse(f *testing.F) {
 	f.Add("--name=x\x00-o\x00out\x00--count\x003\x00-vvv")
 	f.Add("--force\x00--tag\x00a\x00--tag\x00b\x00--\x00positional")
 	f.Add("-dddd\x00--label\x00k=v\x00--timeout\x005s")
+	f.Add("--ratios\x00a=1,b=x")
+	f.Add("--ratios=k=\x00--ratios==1")
 	f.Add("--=--")
 	f.Add("-")
 	f.Add("--name")
