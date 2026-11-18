@@ -1,0 +1,23 @@
+{
+  "target": "awskms_response",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 12,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 308888,
+      "per_byte": 308888,
+      "abs_max": 1235552
+    },
+    "cpu_ns": {
+      "floor": 2825000,
+      "per_byte": 2825000,
+      "abs_max": 11300000
+    },
+    "mallocs": {
+      "floor": 2964,
+      "per_byte": 2964,
+      "abs_max": 11856
+    }
+  }
+}

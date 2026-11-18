@@ -175,23 +175,30 @@ func FuzzRedisReply(f *testing.F) {
 	f.Add([]byte(",3.14\r\n"))                       // double
 	f.Add([]byte("#t\r\n"))                          // boolean
 	f.Add([]byte("_\r\n"))                           // null
+	probe, budget, haveBudget := redisResguardProbe(f, redisBudgetReply)
 	f.Fuzz(func(t *testing.T, reply []byte) {
-		srv := hostile.NewServer(t, func(c net.Conn) {
-			serveUntilRealCommand(c, reply)
-			_ = c.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-			buf := make([]byte, 1024)
-			for {
-				if _, err := c.Read(buf); err != nil {
-					break
-				}
-			}
-		})
-		defer srv.Close()
-		client := newClient(srv.Addr())
-		runWithOracles(t, func(ctx context.Context) {
-			// Mirror internal/dynamic/redis.go: ACL SETUSER with discrete args.
-			_ = client.Do(ctx, "ACL", "SETUSER", "kx_dyn_x", "on", ">pw", "~app:*", "+@read").Err()
-		})
-		_ = client.Close()
+		measureRedis(t, probe, budget, haveBudget, reply, driveRedisReply)
 	})
+}
+
+// driveRedisReply runs one FuzzRedisReply input under the existing oracles.
+// Extracted so the resguard Probe can measure it and calibration/red-green replay it.
+func driveRedisReply(t *testing.T, reply []byte) {
+	srv := hostile.NewServer(t, func(c net.Conn) {
+		serveUntilRealCommand(c, reply)
+		_ = c.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		buf := make([]byte, 1024)
+		for {
+			if _, err := c.Read(buf); err != nil {
+				break
+			}
+		}
+	})
+	defer srv.Close()
+	client := newClient(srv.Addr())
+	runWithOracles(t, func(ctx context.Context) {
+		// Mirror internal/dynamic/redis.go: ACL SETUSER with discrete args.
+		_ = client.Do(ctx, "ACL", "SETUSER", "kx_dyn_x", "on", ">pw", "~app:*", "+@read").Err()
+	})
+	_ = client.Close()
 }

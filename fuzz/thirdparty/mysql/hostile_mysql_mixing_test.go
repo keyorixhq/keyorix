@@ -11,6 +11,7 @@ import (
 	"net"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
 )
@@ -43,11 +44,14 @@ func FuzzMySQLResponseMixing(f *testing.F) {
 		// connection, and the driver reconnects after a hostile A poisons the socket. The
 		// first COM_QUERY on any connection gets A, every later one gets B.
 		var answeredA atomic.Bool
+		// Sensor state: how many sockets the driver opened and when B was answered.
+		var conns, bAnswered atomic.Int32
 		srv := hostile.NewServer(t, func(c net.Conn) {
 			r := bufio.NewReader(c)
 			if err := completeHandshake(c, r); err != nil {
 				return
 			}
+			conns.Add(1)
 			for {
 				if _, _, err := readOnePacket(r, capBytes); err != nil { // a COM_QUERY
 					return
@@ -55,6 +59,7 @@ func FuzzMySQLResponseMixing(f *testing.F) {
 				if answeredA.CompareAndSwap(false, true) {
 					_, _ = c.Write(respA)
 				} else {
+					bAnswered.Add(1)
 					_, _ = c.Write(respB)
 				}
 			}
@@ -64,6 +69,7 @@ func FuzzMySQLResponseMixing(f *testing.F) {
 		defer func() { _ = db.Close() }()
 		// Pin to a single underlying connection so A and B share one socket.
 		db.SetMaxOpenConns(1)
+		start := time.Now()
 		runWithOracles(t, func(ctx context.Context) {
 			// Statement A — hostile. Drain and ignore.
 			if rowsA, err := db.QueryContext(ctx, "SELECT c FROM a"); err == nil {
@@ -77,15 +83,35 @@ func FuzzMySQLResponseMixing(f *testing.F) {
 				return
 			}
 			defer func() { _ = rowsB.Close() }()
+			var bad []string
+			var live sql.RawBytes
+			defer func() {
+				for _, got := range bad {
+					kind := "REAL-MIXING (copy != sentinel, live view agrees)"
+					if string(live) != got {
+						kind = "ALIASING (live RawBytes view changed after the copy was taken)"
+					}
+					t.Errorf("ORACLE response-mixing [%s]: statement B returned %q, not sentinel %q "+
+						"(statement A contaminated it); conns=%d bAnswered=%d ctxErr=%v elapsed=%s",
+						kind, got, mysqlStmt2Sentinel, conns.Load(), bAnswered.Load(), ctx.Err(),
+						time.Since(start))
+				}
+			}()
 			for rowsB.Next() {
 				var v sql.RawBytes
 				if err := rowsB.Scan(&v); err != nil {
 					continue
 				}
-				if string(v) != mysqlStmt2Sentinel {
-					t.Errorf("ORACLE response-mixing: statement B returned %q, not sentinel %q "+
-						"(statement A contaminated it)", v, mysqlStmt2Sentinel)
+				// Sensor: copy BEFORE judging. RawBytes aliases the driver's read buffer, so a
+				// mismatch seen only through it could be buffer reuse, not real mixing. The
+				// copy is taken first, then the buffer is re-read; if the copy is the sentinel
+				// but the live view is not, the finding is a buffer-aliasing artifact.
+				got := string(v)
+				if got == mysqlStmt2Sentinel {
+					continue
 				}
+				bad = append(bad, got)
+				live = v
 			}
 		})
 	})

@@ -259,7 +259,8 @@ var shimRename = map[string]string{"id": "ID", "name": "Name", "type": "Type", "
 // shimKeys renames the object keys of data.secrets[], data.projects[], data.environments[]
 // and of a bare data object (create project) to the PascalCase names the SDKs read.
 func shimKeys(body []byte) []byte {
-	dec := json.NewDecoder(bytes.NewReader(body))
+	// body is already capped at 32MiB by the caller; the limit makes the decoder's bound explicit.
+	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(body), int64(len(body))))
 	dec.UseNumber()
 	var doc map[string]any
 	if dec.Decode(&doc) != nil {

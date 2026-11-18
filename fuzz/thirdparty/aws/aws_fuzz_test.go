@@ -62,6 +62,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 // Canaries: client-side secrets that must never surface in errors or output.
@@ -95,7 +96,14 @@ func boundedRetryer() aws.Retryer {
 }
 
 func httpClient() *http.Client {
-	return &http.Client{Timeout: 4 * time.Second}
+	// PK1: route the dial through the package-global air-gapped NetMeter (awsNet)
+	// so a non-loopback dial fails the air-gap oracle and request/response byte
+	// volume is metered per input. The fake server is loopback HTTP, so the dial
+	// passes the air-gap unchanged.
+	return &http.Client{
+		Timeout:   4 * time.Second,
+		Transport: &http.Transport{DialContext: awsNet.DialContext},
+	}
 }
 
 // runWithWatchdog runs fn and fails on panic or on exceeding the hang bound.
@@ -177,6 +185,7 @@ func checkOracles(t *testing.T, label string, specs []respSpec, out any, err err
 
 func FuzzSecretsManager(f *testing.F) {
 	seedCorpus(f)
+	probe, budget, haveBudget := awsResguardProbe(f, awsBudgetSecretsManager)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		specs := decodeSpecs(data)
 		fs, err := newFakeServer(specs)
@@ -191,17 +200,25 @@ func FuzzSecretsManager(f *testing.F) {
 			HTTPClient:   httpClient(),
 			Retryer:      boundedRetryer(),
 		})
-		out, oerr, timedOut := runWithWatchdog(t, "GetSecretValue", func() (any, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-			defer cancel()
-			return cl.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: aws.String(canaryRef)})
+		var out any
+		var oerr error
+		var timedOut bool
+		cost := probe.Measure(len(data), func() {
+			out, oerr, timedOut = runWithWatchdog(t, "GetSecretValue", func() (any, error) {
+				ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+				defer cancel()
+				return cl.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: aws.String(canaryRef)})
+			})
 		})
+		resguard.FeedCoverage(cost)
 		checkOracles(t, "GetSecretValue", specs, nilIfErr(out), oerr, timedOut, fs.lastResponseTruncated())
+		awsResguardCheck(t, budget, haveBudget, cost, "SecretsManager")
 	})
 }
 
 func FuzzSTS(f *testing.F) {
 	seedCorpus(f)
+	probe, budget, haveBudget := awsResguardProbe(f, awsBudgetSTS)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		specs := decodeSpecs(data)
 		fs, err := newFakeServer(specs)
@@ -216,20 +233,28 @@ func FuzzSTS(f *testing.F) {
 			HTTPClient:   httpClient(),
 			Retryer:      boundedRetryer(),
 		})
-		out, oerr, timedOut := runWithWatchdog(t, "AssumeRole", func() (any, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-			defer cancel()
-			return cl.AssumeRole(ctx, &sts.AssumeRoleInput{
-				RoleArn:         aws.String("arn:aws:iam::123456789012:role/" + canaryRef),
-				RoleSessionName: aws.String("fuzz"),
+		var out any
+		var oerr error
+		var timedOut bool
+		cost := probe.Measure(len(data), func() {
+			out, oerr, timedOut = runWithWatchdog(t, "AssumeRole", func() (any, error) {
+				ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+				defer cancel()
+				return cl.AssumeRole(ctx, &sts.AssumeRoleInput{
+					RoleArn:         aws.String("arn:aws:iam::123456789012:role/" + canaryRef),
+					RoleSessionName: aws.String("fuzz"),
+				})
 			})
 		})
+		resguard.FeedCoverage(cost)
 		checkOracles(t, "AssumeRole", specs, nilIfErr(out), oerr, timedOut, fs.lastResponseTruncated())
+		awsResguardCheck(t, budget, haveBudget, cost, "STS")
 	})
 }
 
 func FuzzKMS(f *testing.F) {
 	seedCorpus(f)
+	probe, budget, haveBudget := awsResguardProbe(f, awsBudgetKMS)
 	f.Fuzz(func(t *testing.T, data []byte) {
 		specs := decodeSpecs(data)
 		fs, err := newFakeServer(specs)
@@ -244,12 +269,19 @@ func FuzzKMS(f *testing.F) {
 			HTTPClient:   httpClient(),
 			Retryer:      boundedRetryer(),
 		})
-		out, oerr, timedOut := runWithWatchdog(t, "Decrypt", func() (any, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-			defer cancel()
-			return cl.Decrypt(ctx, &kms.DecryptInput{CiphertextBlob: []byte("fuzz-ciphertext-blob")})
+		var out any
+		var oerr error
+		var timedOut bool
+		cost := probe.Measure(len(data), func() {
+			out, oerr, timedOut = runWithWatchdog(t, "Decrypt", func() (any, error) {
+				ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+				defer cancel()
+				return cl.Decrypt(ctx, &kms.DecryptInput{CiphertextBlob: []byte("fuzz-ciphertext-blob")})
+			})
 		})
+		resguard.FeedCoverage(cost)
 		checkOracles(t, "Decrypt", specs, nilIfErr(out), oerr, timedOut, fs.lastResponseTruncated())
+		awsResguardCheck(t, budget, haveBudget, cost, "KMS")
 	})
 }
 

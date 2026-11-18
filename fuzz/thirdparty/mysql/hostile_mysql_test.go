@@ -266,17 +266,25 @@ func FuzzMySQLHandshake(f *testing.F) {
 	f.Add(errPacket(0, 1045, "Access denied"))                                                                                                                                // ERR as first packet
 	f.Add(append(greeting(), frame(2, []byte{0xfe, 'c', 'a', 'c', 'h', 'i', 'n', 'g', '_', 's', 'h', 'a', '2', '_', 'p', 'a', 's', 's', 'w', 'o', 'r', 'd', 0, 1, 2, 3})...)) // auth switch
 	f.Add(append(greeting(), frame(2, []byte{0x01, 0x03})...))                                                                                                                // AuthMoreData fast-auth-success (caching_sha2)
+	probe, budget, haveBudget := mysqlResguardProbe(f, mysqlBudgetHandshake)
 	f.Fuzz(func(t *testing.T, server []byte) {
-		srv := hostile.NewServer(t, func(c net.Conn) {
-			_, _ = c.Write(server)
-			drainWrites(c)
-		})
-		defer srv.Close()
-		db := openDB(t, srv.Addr())
-		defer func() { _ = db.Close() }()
-		runWithOracles(t, func(ctx context.Context) {
-			_ = db.PingContext(ctx)
-		})
+		measureMySQL(t, probe, budget, haveBudget, server, driveMySQLHandshake)
+	})
+}
+
+// driveMySQLHandshake runs one FuzzMySQLHandshake input under the existing oracles.
+// Extracted so the resguard Probe (resguard_mysql_test.go) can measure it and the
+// calibration/red-green tests can replay the same path.
+func driveMySQLHandshake(t *testing.T, server []byte) {
+	srv := hostile.NewServer(t, func(c net.Conn) {
+		_, _ = c.Write(server)
+		drainWrites(c)
+	})
+	defer srv.Close()
+	db := openDB(t, srv.Addr())
+	defer func() { _ = db.Close() }()
+	runWithOracles(t, func(ctx context.Context) {
+		_ = db.PingContext(ctx)
 	})
 }
 
@@ -297,24 +305,30 @@ func FuzzMySQLQueryResponse(f *testing.F) {
 	f.Add(rs)
 	f.Add(frame(1, []byte{0xfb, '/', 't', 'm', 'p', '/', 'x'})) // LOCAL INFILE request (non-empty path)
 	f.Add(frame(1, []byte{0x03, 'a', 'b', 'c'}))                // text column-count = 3 (well-formed header)
+	probe, budget, haveBudget := mysqlResguardProbe(f, mysqlBudgetQuery)
 	f.Fuzz(func(t *testing.T, resp []byte) {
-		srv := hostile.NewServer(t, func(c net.Conn) {
-			r := bufio.NewReader(c)
-			if err := completeHandshake(c, r); err != nil {
-				return
-			}
-			if _, _, err := readOnePacket(r, capBytes); err != nil { // client COM_QUERY
-				return
-			}
-			_, _ = c.Write(resp)
-			drainWrites(c)
-		})
-		defer srv.Close()
-		db := openDB(t, srv.Addr())
-		defer func() { _ = db.Close() }()
-		runWithOracles(t, func(ctx context.Context) {
-			_, _ = db.ExecContext(ctx, "CREATE USER 'kx_dyn_x'@'%' IDENTIFIED BY 'pw'")
-		})
+		measureMySQL(t, probe, budget, haveBudget, resp, driveMySQLQuery)
+	})
+}
+
+// driveMySQLQuery runs one FuzzMySQLQueryResponse input under the existing oracles.
+func driveMySQLQuery(t *testing.T, resp []byte) {
+	srv := hostile.NewServer(t, func(c net.Conn) {
+		r := bufio.NewReader(c)
+		if err := completeHandshake(c, r); err != nil {
+			return
+		}
+		if _, _, err := readOnePacket(r, capBytes); err != nil { // client COM_QUERY
+			return
+		}
+		_, _ = c.Write(resp)
+		drainWrites(c)
+	})
+	defer srv.Close()
+	db := openDB(t, srv.Addr())
+	defer func() { _ = db.Close() }()
+	runWithOracles(t, func(ctx context.Context) {
+		_, _ = db.ExecContext(ctx, "CREATE USER 'kx_dyn_x'@'%' IDENTIFIED BY 'pw'")
 	})
 }
 
@@ -332,28 +346,34 @@ func FuzzMySQLPreparedResponse(f *testing.F) {
 	f.Add(errPacket(1, 1146, "Table doesn't exist"))
 	// prepare-OK declaring large (but well-formed, header-complete) column/param counts.
 	f.Add(frame(1, []byte{0x00, 1, 0, 0, 0, 0xff, 0x7f, 0xff, 0x7f, 0, 0}))
+	probe, budget, haveBudget := mysqlResguardProbe(f, mysqlBudgetPrepared)
 	f.Fuzz(func(t *testing.T, resp []byte) {
-		srv := hostile.NewServer(t, func(c net.Conn) {
-			r := bufio.NewReader(c)
-			if err := completeHandshake(c, r); err != nil {
-				return
+		measureMySQL(t, probe, budget, haveBudget, resp, driveMySQLPrepared)
+	})
+}
+
+// driveMySQLPrepared runs one FuzzMySQLPreparedResponse input under the oracles.
+func driveMySQLPrepared(t *testing.T, resp []byte) {
+	srv := hostile.NewServer(t, func(c net.Conn) {
+		r := bufio.NewReader(c)
+		if err := completeHandshake(c, r); err != nil {
+			return
+		}
+		if _, _, err := readOnePacket(r, capBytes); err != nil { // client COM_STMT_PREPARE
+			return
+		}
+		_, _ = c.Write(resp)
+		drainWrites(c)
+	})
+	defer srv.Close()
+	db := openDB(t, srv.Addr())
+	defer func() { _ = db.Close() }()
+	runWithOracles(t, func(ctx context.Context) {
+		rows, err := db.QueryContext(ctx, "SELECT id FROM information_schema.processlist WHERE user = ?", "kx_dyn_x")
+		if err == nil {
+			for rows.Next() {
 			}
-			if _, _, err := readOnePacket(r, capBytes); err != nil { // client COM_STMT_PREPARE
-				return
-			}
-			_, _ = c.Write(resp)
-			drainWrites(c)
-		})
-		defer srv.Close()
-		db := openDB(t, srv.Addr())
-		defer func() { _ = db.Close() }()
-		runWithOracles(t, func(ctx context.Context) {
-			rows, err := db.QueryContext(ctx, "SELECT id FROM information_schema.processlist WHERE user = ?", "kx_dyn_x")
-			if err == nil {
-				for rows.Next() {
-				}
-				_ = rows.Close()
-			}
-		})
+			_ = rows.Close()
+		}
 	})
 }

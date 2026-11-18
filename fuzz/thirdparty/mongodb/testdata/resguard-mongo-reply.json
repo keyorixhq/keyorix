@@ -1,0 +1,23 @@
+{
+  "target": "mongo_reply",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 12,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 140112,
+      "per_byte": 952.5,
+      "abs_max": 560448
+    },
+    "cpu_ns": {
+      "floor": 2862000,
+      "per_byte": 22312.5,
+      "abs_max": 11448000
+    },
+    "mallocs": {
+      "floor": 735,
+      "per_byte": 9.765625,
+      "abs_max": 2940
+    }
+  }
+}
