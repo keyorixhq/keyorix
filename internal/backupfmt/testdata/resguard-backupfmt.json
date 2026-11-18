@@ -32,9 +32,9 @@
       "abs_max": 20
     },
     "live_heap": {
-      "floor": 1853760,
-      "per_byte": 2385.7915057915056,
-      "abs_max": 7415040
+      "floor": 22648,
+      "per_byte": 29.223225806451612,
+      "abs_max": 90592
     },
     "mallocs": {
       "floor": 233,
