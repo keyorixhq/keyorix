@@ -1,0 +1,26 @@
+{
+  "target": "pgx_handshake",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 15,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 312080,
+      "per_byte": 20805.333333333332,
+      "abs_max": 1248320,
+      "mode": "absolute"
+    },
+    "cpu_ns": {
+      "floor": 2454000,
+      "per_byte": 163600,
+      "abs_max": 9816000,
+      "mode": "absolute"
+    },
+    "mallocs": {
+      "floor": 521,
+      "per_byte": 34.733333333333334,
+      "abs_max": 2084,
+      "mode": "absolute"
+    }
+  }
+}

@@ -62,6 +62,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 func init() { runtime.GOMAXPROCS(2) }
@@ -465,10 +467,19 @@ func FuzzMongoReply(f *testing.F) {
 	f.Add(uint8(0), uint8(0), uint8(0), uint8(0), []byte{5, 0, 0, 0, 0})                // minimal empty BSON doc fragment
 	f.Add(uint8(0), uint8(0), uint8(0), uint8(0), []byte{0, 0, 0, 0, 0, 0xff, 0, 0, 0}) // bad BSON length
 
+	probe, budget, haveBudget := mongoResguardProbe(f, mongoBudgetReply)
 	f.Fuzz(func(t *testing.T, mode, opSel, lenMode, driveMode uint8, body []byte) {
 		if len(body) > maxWireLen {
 			body = body[:maxWireLen]
 		}
-		runInteraction(t, mode, opSel, lenMode, driveMode, body)
+		// resguard meters alloc/CPU against a calibrated budget; the pre-existing
+		// inline 32 MiB bound + canary/echo oracles inside runInteraction are kept.
+		cost := probe.Measure(len(body), func() {
+			runInteraction(t, mode, opSel, lenMode, driveMode, body)
+		})
+		resguard.FeedCoverage(cost)
+		if haveBudget {
+			budget.Check(t.Fatalf, cost)
+		}
 	})
 }

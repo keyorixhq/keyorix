@@ -59,6 +59,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/cloudfuzz"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 const (
@@ -85,6 +86,7 @@ func FuzzKMSResponse(f *testing.F) {
 	f.Add(308, []byte(``))
 	f.Add(200, []byte(`{"KeyMetadata":{"Arn":null}}`))
 
+	probe, budget, haveBudget := kmsResguardProbe(f)
 	f.Fuzz(func(t *testing.T, status int, body []byte) {
 		code := cloudfuzz.ClampHTTPStatus(status)
 
@@ -150,27 +152,33 @@ func FuzzKMSResponse(f *testing.F) {
 			}},
 		}
 
-		for _, op := range ops {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			hits.Store(0)
-			var err error
-			cloudfuzz.RunGuarded(t, "kms."+op.name, func() {
-				err = op.run(ctx)
-			})
-			cancel()
+		cost := probe.Measure(len(body), func() {
+			for _, op := range ops {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				hits.Store(0)
+				var err error
+				cloudfuzz.RunGuarded(t, "kms."+op.name, func() {
+					err = op.run(ctx)
+				})
+				cancel()
 
-			if (code < 200 || code >= 300) && err == nil {
-				t.Fatalf("BYPASS: kms.%s treated non-2xx status %d as success", op.name, code)
+				if (code < 200 || code >= 300) && err == nil {
+					t.Fatalf("BYPASS: kms.%s treated non-2xx status %d as success", op.name, code)
+				}
+				cloudfuzz.AssertNoSecretInError(t, "kms."+op.name, err, kmsFuzzAccessKeyID, kmsFuzzSecretKey)
+				if h := hits.Load(); h > kmsRetryCeiling {
+					t.Fatalf("RETRY STORM: kms.%s hit the fake endpoint %d times (MaxAttempts=3)", op.name, h)
+				}
 			}
-			cloudfuzz.AssertNoSecretInError(t, "kms."+op.name, err, kmsFuzzAccessKeyID, kmsFuzzSecretKey)
-			if h := hits.Load(); h > kmsRetryCeiling {
-				t.Fatalf("RETRY STORM: kms.%s hit the fake endpoint %d times (MaxAttempts=3)", op.name, h)
-			}
-		}
+		})
+		resguard.FeedCoverage(cost)
 
 		if h := attackerHits.Load(); h > 0 {
 			t.Fatalf("REDIRECT FOLLOWED: a kms op reached the cross-host attacker target (hits=%d)", h)
 		}
 		cloudfuzz.CheckNoLeak(t, "kms response fuzz")
+		if haveBudget {
+			budget.Check(t.Fatalf, cost)
+		}
 	})
 }
