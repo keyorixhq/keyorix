@@ -63,7 +63,7 @@ func startHostileLengthServer(t *testing.T, afterHandshake bool) string {
 }
 
 func serveHostileLength(conn net.Conn, afterHandshake bool) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	be := pgproto3.NewBackend(conn, conn)
 	if _, err := be.ReceiveStartupMessage(); err != nil {
 		return
