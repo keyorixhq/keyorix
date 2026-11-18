@@ -7446,7 +7446,7 @@
       "reached_by_all_ops": 1,
       "infra": false,
       "guards": null,
-      "core_refusal": "none"
+      "core_refusal": "typed"
     },
     {
       "core": "AddProjectMember",
@@ -8931,7 +8931,7 @@
       "reached_by_all_ops": 1,
       "infra": false,
       "guards": null,
-      "core_refusal": "none"
+      "core_refusal": "typed"
     },
     {
       "core": "EndImpersonation",
@@ -10193,7 +10193,7 @@
       "reached_by_all_ops": 1,
       "infra": false,
       "guards": null,
-      "core_refusal": "none"
+      "core_refusal": "typed"
     },
     {
       "core": "ReissueOneTimePassword",

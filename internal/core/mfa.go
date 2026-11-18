@@ -176,6 +176,9 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 // consume on the ActivateMFA path — spelled out because PR #2840 originally
 // attributed it to requireReauth and was wrong (coordinator review).
 func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, password, keepSessionToken string) ([]string, error) {
+	if err := c.requireActorActive(ctx, userID); err != nil {
+		return nil, err
+	}
 	// Refused before the password or the code is evaluated (nothing counted).
 	if err := totpUnavailable(); err != nil {
 		return nil, err
@@ -280,6 +283,9 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 // DisableMFA turns MFA off after verifying a current TOTP code OR the account
 // password, then clears the secret and all recovery codes.
 func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPassword, keepSessionToken string) error {
+	if err := c.requireActorActive(ctx, userID); err != nil {
+		return err
+	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
@@ -325,6 +331,9 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 // never stored. Invalidating the old set means a regenerate also revokes leaked or
 // previously-recorded codes.
 func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uint, codeOrPassword string) ([]string, error) {
+	if err := c.requireActorActive(ctx, userID); err != nil {
+		return nil, err
+	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		// A read fault is ErrStorageReadUnavailable (503), not "user not found".

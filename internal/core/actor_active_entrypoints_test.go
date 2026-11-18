@@ -115,6 +115,17 @@ func TestSuspendedActorRefusedAtEntryPoints(t *testing.T) {
 			_, err := c.BulkRotateSecrets(context.Background(), actor, BulkRotateRequest{ProjectID: 1, SecretIDs: []uint{1}})
 			return err
 		},
+		"ActivateMFA": func(c *KeyorixCore) error {
+			_, err := c.ActivateMFA(context.Background(), actor, "123456", "Az9!synthetic-only-Q7", "")
+			return err
+		},
+		"DisableMFA": func(c *KeyorixCore) error {
+			return c.DisableMFA(context.Background(), actor, "000000", "")
+		},
+		"RegenerateMFARecoveryCodes": func(c *KeyorixCore) error {
+			_, err := c.RegenerateMFARecoveryCodes(context.Background(), actor, "000000")
+			return err
+		},
 	}
 	for name, call := range cases {
 		t.Run(name, func(t *testing.T) {

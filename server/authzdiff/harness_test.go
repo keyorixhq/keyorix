@@ -148,6 +148,19 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 			if (model{lg.db}).allowed(p, req) && !patRefusesUngatedWrite(tb, lg.fx, spec, p) {
 				return Allowed
 			}
+			// PreconditionFailed: principal passes all RBAC and account-state
+			// checks but fails an MFA business-rule precondition on the caller's
+			// own account. Strip the MFA flags and re-evaluate: allowed without
+			// them → the denial is the precondition, not a permission gap.
+			// Closes known-12 (#4525).
+			if req.mfaRequired || req.pendingMFARequired {
+				noMFA := req
+				noMFA.mfaRequired = false
+				noMFA.pendingMFARequired = false
+				if (model{lg.db}).allowed(p, noMFA) && !patRefusesUngatedWrite(tb, lg.fx, spec, p) {
+					return PreconditionFailed
+				}
+			}
 			return Denied
 		}
 		if spec.secretArgs && k.Arg != 0 {
@@ -356,12 +369,20 @@ func classify(spec opSpec, p *principal, r *caseResult) []string {
 		switch {
 		case o == Allowed && r.Model == Denied:
 			out = append(out, "O2:allowed-but-model-denies:"+string(l))
+		case o == Allowed && r.Model == PreconditionFailed:
+			out = append(out, "O2:allowed-but-model-precondition:"+string(l))
 		case o == Denied && r.Model == Allowed:
 			out = append(out, "O2:over-denial:"+string(l))
 		case o == Other && r.Model == Denied:
 			out = append(out, "mapping-gap:other-where-model-denies:"+string(l))
 		case o == Other && r.Model == Allowed:
 			out = append(out, "mapping-gap:other-where-model-allows:"+string(l))
+		case o == Other && r.Model == PreconditionFailed:
+			out = append(out, "mapping-gap:other-where-model-precondition:"+string(l))
+		case o == PreconditionFailed && r.Model == Allowed:
+			out = append(out, "mapping-gap:precondition-where-model-allows:"+string(l))
+		case o == PreconditionFailed && r.Model == Denied:
+			out = append(out, "mapping-gap:precondition-where-model-denies:"+string(l))
 		}
 	}
 	sort.Strings(out)

@@ -20,6 +20,12 @@ const (
 	Other   Outcome = "other"
 	// ModelNA: the case is outside the reference model's domain (Oracle 2 not applied).
 	ModelNA Outcome = "n/a"
+	// PreconditionFailed: the principal is RBAC-permitted but a business-rule
+	// precondition on the caller's own account state is not met (HTTP 400).
+	// REST maps HTTP 400 here; the model returns PreconditionFailed when the
+	// principal passes all permission checks but fails an MFA precondition
+	// (mfaRequired / pendingMFARequired). Closes known-12 (#4525).
+	PreconditionFailed Outcome = "precondition-failed"
 )
 
 // result is one leg's mapped outcome plus a NON-SENSITIVE detail for the
@@ -59,6 +65,8 @@ func restOutcome(code int, body string) result {
 		return result{Allowed, d}
 	case code == http.StatusUnauthorized || code == http.StatusForbidden || code == http.StatusNotFound:
 		return result{Denied, d}
+	case code == http.StatusBadRequest:
+		return result{PreconditionFailed, d}
 	case code == http.StatusBadGateway && strings.Contains(body, core.ErrConnectUnknownConnector.Error()):
 		return result{Denied, "502-connect-collapse"}
 	}

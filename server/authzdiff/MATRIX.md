@@ -18,7 +18,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 |---|---|---|---|---|---|---|---|
 | `AcknowledgeAnomalyAlert` | Y |  | none |  | POST /api/v1/audit/anomalies/{id}/acknowledge | — | no gRPC |
 | `ActivateBreakGlass` | Y |  | typed |  | POST /api/v1/projects/{id}/break-glass | keyorix.v1.BreakGlassService.ActivateBreakGlass |  |
-| `ActivateMFA` | Y |  | none |  | POST /api/v1/auth/mfa/activate | — | no gRPC |
+| `ActivateMFA` | Y |  | typed |  | POST /api/v1/auth/mfa/activate | — | no gRPC |
 | `AddProjectMember` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize | POST /api/v1/projects/{id}/members | — | no gRPC |
 | `AddSecretDependency` | Y |  | typed | Authorize | POST /api/v1/secrets/{id}/dependencies | — | no gRPC |
 | `AddUserToGroup` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize | POST /api/v1/groups/{id}/members | keyorix.v1.GroupService.AddGroupMember |  |
@@ -116,7 +116,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `DeletedSecretPurgeAt` | Y |  | none |  | DELETE /api/v1/secrets/{id} | keyorix.v1.SecretService.DeleteSecret |  |
 | `DeprovisionSCIMGroup` | Y |  | none |  | DELETE /scim/v2/Groups/{id} | — | no gRPC |
 | `DeprovisionSCIMUser` | Y |  | none |  | DELETE /scim/v2/Users/{id} | — | no gRPC |
-| `DisableMFA` | Y |  | none |  | POST /api/v1/auth/mfa/disable | — | no gRPC |
+| `DisableMFA` | Y |  | typed |  | POST /api/v1/auth/mfa/disable | — | no gRPC |
 | `EndImpersonation` | Y |  | none |  | POST /api/v1/auth/end-impersonation | — | no gRPC |
 | `EndSetupSessionIfComplete` | Y |  | none |  | POST /api/v1/auth/change-password<br>POST /api/v1/auth/mfa/activate<br>POST /api/v1/auth/webauthn/register/finish | — | no gRPC |
 | `EnforceSecretWritePermission` | Y |  | typed | Authorize | PUT /api/v1/secrets/{id} | — | no gRPC |
@@ -198,7 +198,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `RecordPostVerdictLoginFailure` | Y |  | none |  | POST /auth/login | — | no gRPC |
 | `RecordSSOBeginAttempt` | Y |  | none |  | GET /auth/saml/{provider}/login<br>GET /auth/sso/{provider}/login | — | no gRPC |
 | `RefreshSession` | Y |  | none |  | POST /auth/refresh | — | no gRPC |
-| `RegenerateMFARecoveryCodes` | Y |  | none |  | POST /api/v1/auth/mfa/recovery-codes/regenerate | — | no gRPC |
+| `RegenerateMFARecoveryCodes` | Y |  | typed |  | POST /api/v1/auth/mfa/recovery-codes/regenerate | — | no gRPC |
 | `ReissueOneTimePassword` | Y |  | none | Authorize | POST /api/v1/users/{id}/reissue-one-time-password | keyorix.v1.UserService.ReissueOneTimePassword |  |
 | `RejectAccessRequest` | Y |  | none |  | PUT /api/v1/projects/{id}/access-requests/{requestId} | — | no gRPC |
 | `RejectSecretAccessRequest` | Y |  | untyped | requireAdminAuthorityAt, requireAccessRequestAuthorityAt | PUT /api/v1/secret-access-requests/{requestId} | — | no gRPC |

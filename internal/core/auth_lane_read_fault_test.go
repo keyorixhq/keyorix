@@ -21,37 +21,41 @@ import (
 func TestAuthLane_GetUserReadFault_IsUnavailableNotNotFound(t *testing.T) {
 	t.Parallel()
 	ops := []struct {
-		name     string
-		webauthn bool
-		call     func(c *KeyorixCore, userID uint) error
+		name         string
+		webauthn     bool
+		// skipNotFoundMsg: requireActorActive intercepts a missing userID with
+		// "not active" before the function's own "user not found" message; skip
+		// the message assertion for ops that have requireActorActive first.
+		skipNotFoundMsg bool
+		call            func(c *KeyorixCore, userID uint) error
 	}{
-		{"BeginMFAEnrollment", false, func(c *KeyorixCore, id uint) error {
+		{"BeginMFAEnrollment", false, false, func(c *KeyorixCore, id uint) error {
 			_, _, err := c.BeginMFAEnrollment(context.Background(), id)
 			return err
 		}},
-		{"ActivateMFA", false, func(c *KeyorixCore, id uint) error {
+		{"ActivateMFA", false, true, func(c *KeyorixCore, id uint) error {
 			_, err := c.ActivateMFA(context.Background(), id, "123456", mfaTestPassword, "")
 			return err
 		}},
-		{"DisableMFA", false, func(c *KeyorixCore, id uint) error {
+		{"DisableMFA", false, true, func(c *KeyorixCore, id uint) error {
 			return c.DisableMFA(context.Background(), id, mfaTestPassword, "")
 		}},
-		{"RegenerateMFARecoveryCodes", false, func(c *KeyorixCore, id uint) error {
+		{"RegenerateMFARecoveryCodes", false, true, func(c *KeyorixCore, id uint) error {
 			_, err := c.RegenerateMFARecoveryCodes(context.Background(), id, mfaTestPassword)
 			return err
 		}},
-		{"MFARecoveryCodesRemaining", false, func(c *KeyorixCore, id uint) error {
+		{"MFARecoveryCodesRemaining", false, false, func(c *KeyorixCore, id uint) error {
 			_, _, err := c.MFARecoveryCodesRemaining(context.Background(), id)
 			return err
 		}},
-		{"FinishWebAuthnRegistration", true, func(c *KeyorixCore, id uint) error {
+		{"FinishWebAuthnRegistration", true, false, func(c *KeyorixCore, id uint) error {
 			_, err := c.FinishWebAuthnRegistration(context.Background(), id, "sess", "key", webauthnTestPassword, nil)
 			return err
 		}},
-		{"DeleteWebAuthnCredential", true, func(c *KeyorixCore, id uint) error {
+		{"DeleteWebAuthnCredential", true, false, func(c *KeyorixCore, id uint) error {
 			return c.DeleteWebAuthnCredential(context.Background(), id, 1, webauthnTestPassword)
 		}},
-		{"FinishWebAuthnReauth", true, func(c *KeyorixCore, id uint) error {
+		{"FinishWebAuthnReauth", true, false, func(c *KeyorixCore, id uint) error {
 			return c.FinishWebAuthnReauth(context.Background(), id, "sess", nil)
 		}},
 	}
@@ -86,7 +90,9 @@ func TestAuthLane_GetUserReadFault_IsUnavailableNotNotFound(t *testing.T) {
 				err := op.call(c, 999)
 				require.Error(t, err)
 				assert.False(t, IsStorageReadUnavailable(err), "a positive not-found is a verdict, got %v", err)
-				assert.Contains(t, err.Error(), "user not found")
+				if !op.skipNotFoundMsg {
+					assert.Contains(t, err.Error(), "user not found")
+				}
 			})
 		})
 	}

@@ -3,7 +3,10 @@ package authzdiff
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+
+	"github.com/keyorixhq/keyorix/internal/core"
 )
 
 // V5EXT5 ops: MFA activate, disable, and recovery-codes regenerate.
@@ -18,7 +21,7 @@ import (
 //	           Fails "no pending MFA enrolment" for principals without a pending row.
 //	Model:    pendingMFARequired: true — only pkMFAEnrollee has an Activated=false
 //	          mfa_secrets row in the fixture.
-//	core_refusal: "none" (matrix.json) → coreEnforced=false → core excluded from Oracle 1.
+//	core_refusal: "typed" (matrix.json) → coreEnforced=true; coreGateExcluded=true → core excluded from Oracle 1/2.
 //	restOK:   recovery_codes is non-empty in the response.
 //
 // What this oracle does NOT verify:
@@ -36,7 +39,7 @@ import (
 //	Core gate: user.MFAEnabled check (before reauth) + requireReauth(code).
 //	           Returns "MFA is not enabled" for principals without mfa_enabled=true.
 //	Model:    mfaRequired: true — only pkMFAUser has mfa_enabled=true in the fixture.
-//	core_refusal: "none" → coreEnforced=false → core excluded from Oracle 1.
+//	core_refusal: "typed" (matrix.json) → coreEnforced=true; coreGateExcluded=true → core excluded from Oracle 1/2.
 //
 // What this oracle does NOT verify:
 //   - BlockWhenImpersonating: verified structurally by TestMFARouteGatesPresent.
@@ -50,7 +53,7 @@ import (
 //	No RBAC gate: any authenticated user may call it.
 //	Core gate: user.MFAEnabled check + requireReauth(code). Same structure as mfa.disable.
 //	Model:    mfaRequired: true — only pkMFAUser passes.
-//	core_refusal: "none" → coreEnforced=false → core excluded from Oracle 1.
+//	core_refusal: "typed" (matrix.json) → coreEnforced=true; coreGateExcluded=true → core excluded from Oracle 1/2.
 //	restOK:   recovery_codes is non-empty in the response.
 //
 // What this oracle does NOT verify:
@@ -76,12 +79,17 @@ func mfaActivateOps() []opSpec {
 			req: func(_ *fixtures, _ tgt, _ byte) requirement {
 				return requirement{pendingMFARequired: true}
 			},
-			// coreEnforced=false (core_refusal="none") → excluded from Oracle 1.
-			// Core leg for Oracle 2: ActivateMFA(userID, code, password, "").
-			// - pkMFAEnrollee: requireReauth(password, MFAEnabled=false) → ok; GetMFASecret → pending row; validate code → Allowed.
-			// - Others (no pending row): requireReauth succeeds then GetMFASecret fails → Denied.
-			// - pkMFAUser: requireReauth(MFAEnabled=true, password alone) → no step-up grant → Denied.
+			// coreGateExcluded=true: core enforces only actor-activity (requireActorActive),
+			// not the RBAC gate. Excluded from Oracle 1/2 (ID-2); participates only in
+			// TestCoreRefusesSuspendedActor (via suspendedAdminCoreCase).
+			// Core leg pattern: success → nil (Allowed, coreGateExcluded keeps it out of
+			// Oracle 1/2); ErrPermissionDenied (suspended) → returned; other business-rule
+			// error (no pending enrollment, wrong code) → errNotAuthzLayer.
+			// - pkMFAEnrollee active: succeeds → nil (Allowed, ignored by Oracle 1/2).
+			// - Others active: business-rule error → errNotAuthzLayer.
+			// - Suspended principal: requireActorActive → ErrPermissionDenied → returned.
 			// - Machines/system actor: errNotAuthzLayer.
+			coreGateExcluded: true,
 			core: func(ctx context.Context, lg *leg, p *principal, _ tgt, _ byte) error {
 				if p.isMachine() {
 					return errNotAuthzLayer
@@ -91,7 +99,13 @@ func mfaActivateOps() []opSpec {
 				}
 				code := currentTOTPCode(lg.fx.mfaEnrolleeTOTPSecret)
 				_, err := lg.c.ActivateMFA(ctx, p.userID, code, fxPassword, "")
-				return err
+				if err != nil {
+					if errors.Is(err, core.ErrPermissionDenied) {
+						return err
+					}
+					return errNotAuthzLayer
+				}
+				return nil
 			},
 			rest: func(fx *fixtures, _ tgt, _ byte) restReq {
 				// TOTP code is from the pending enrollment secret (mfaEnrolleeTOTPSecret).
@@ -127,11 +141,15 @@ func mfaDisableOps() []opSpec {
 			req: func(_ *fixtures, _ tgt, _ byte) requirement {
 				return requirement{mfaRequired: true}
 			},
-			// coreEnforced=false → excluded from Oracle 1.
-			// Core leg: DisableMFA(userID, codeOrPassword, "").
-			// - pkMFAUser: user.MFAEnabled=true → requireReauth(TOTP code) → ok → Allowed.
-			// - Others: user.MFAEnabled=false → "MFA is not enabled" → Denied.
+			// coreGateExcluded=true: core enforces only actor-activity, not the RBAC gate.
+			// Core leg pattern: success → nil (Allowed, coreGateExcluded keeps it out of
+			// Oracle 1/2); ErrPermissionDenied (suspended) → returned; other business-rule
+			// error (MFA not enabled) → errNotAuthzLayer.
+			// - pkMFAUser active: succeeds → nil (Allowed, ignored by Oracle 1/2).
+			// - Others active: "MFA is not enabled" → errNotAuthzLayer.
+			// - Suspended principal: requireActorActive → ErrPermissionDenied → returned.
 			// - Machines/system actor: errNotAuthzLayer.
+			coreGateExcluded: true,
 			core: func(ctx context.Context, lg *leg, p *principal, _ tgt, _ byte) error {
 				if p.isMachine() {
 					return errNotAuthzLayer
@@ -140,7 +158,14 @@ func mfaDisableOps() []opSpec {
 					return errNotAuthzLayer
 				}
 				code := currentTOTPCode(lg.fx.mfaUserTOTPSecret)
-				return lg.c.DisableMFA(ctx, p.userID, code, "")
+				err := lg.c.DisableMFA(ctx, p.userID, code, "")
+				if err != nil {
+					if errors.Is(err, core.ErrPermissionDenied) {
+						return err
+					}
+					return errNotAuthzLayer
+				}
+				return nil
 			},
 			rest: func(fx *fixtures, _ tgt, _ byte) restReq {
 				code := currentTOTPCode(fx.mfaUserTOTPSecret)
@@ -164,11 +189,15 @@ func mfaRegenerateOps() []opSpec {
 			req: func(_ *fixtures, _ tgt, _ byte) requirement {
 				return requirement{mfaRequired: true}
 			},
-			// coreEnforced=false → excluded from Oracle 1.
-			// Core leg: RegenerateMFARecoveryCodes(userID, codeOrPassword).
-			// - pkMFAUser: user.MFAEnabled=true → requireReauth(TOTP code) → ok → returns codes.
-			// - Others: user.MFAEnabled=false → "MFA is not enabled" → Denied.
+			// coreGateExcluded=true: core enforces only actor-activity, not the RBAC gate.
+			// Core leg pattern: success → nil (Allowed, coreGateExcluded keeps it out of
+			// Oracle 1/2); ErrPermissionDenied (suspended) → returned; other business-rule
+			// error (MFA not enabled) → errNotAuthzLayer.
+			// - pkMFAUser active: succeeds → nil (Allowed, ignored by Oracle 1/2).
+			// - Others active: "MFA is not enabled" → errNotAuthzLayer.
+			// - Suspended principal: requireActorActive → ErrPermissionDenied → returned.
 			// - Machines/system actor: errNotAuthzLayer.
+			coreGateExcluded: true,
 			core: func(ctx context.Context, lg *leg, p *principal, _ tgt, _ byte) error {
 				if p.isMachine() {
 					return errNotAuthzLayer
@@ -178,7 +207,13 @@ func mfaRegenerateOps() []opSpec {
 				}
 				code := currentTOTPCode(lg.fx.mfaUserTOTPSecret)
 				_, err := lg.c.RegenerateMFARecoveryCodes(ctx, p.userID, code)
-				return err
+				if err != nil {
+					if errors.Is(err, core.ErrPermissionDenied) {
+						return err
+					}
+					return errNotAuthzLayer
+				}
+				return nil
 			},
 			rest: func(fx *fixtures, _ tgt, _ byte) restReq {
 				code := currentTOTPCode(fx.mfaUserTOTPSecret)
