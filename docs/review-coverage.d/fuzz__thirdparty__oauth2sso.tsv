@@ -1,0 +1,1 @@
+fuzz/thirdparty/oauth2sso	none	-	test-only hostile token-endpoint fuzz harness for golang.org/x/oauth2 Exchange; not part of any shipped build	test-helper
