@@ -212,8 +212,14 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 	// cancellation mid-batch can't truncate later items' audit writes)
 	// guarantees the write is attempted, and any failure logged, before this
 	// function can return.
-	auditCtx := DetachedAuditContext(ctx)
-	c.LogSecretDeletedWithProject(auditCtx, actorID, id, secretProjectID, deletedBy, secretName, ip, ua)
+	//
+	// A context tagged with WithSecretMutationAudit (the HTTP handler's) already committed
+	// the secret.deleted row and its access-log row inside the delete's transaction, so
+	// the post-commit pair would be a second copy of the same event.
+	if _, tagged := secretMutationAuditFromContext(ctx); !tagged {
+		auditCtx := DetachedAuditContext(ctx)
+		c.LogSecretDeletedWithProject(auditCtx, actorID, id, secretProjectID, deletedBy, secretName, ip, ua)
+	}
 
 	result.Deleted = append(result.Deleted, id)
 }

@@ -61,6 +61,10 @@ func (c *KeyorixCore) ClassifySecret(ctx context.Context, actorID uint, username
 	}
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
+		// A read FAULT is a retry answer, not "secret not found" (ERRMAP-TAILS-NOV-4).
+		if fault := ReadFault(err); fault != nil {
+			return nil, fault
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
 	if secret.Classification == level {
