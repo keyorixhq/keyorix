@@ -104,6 +104,13 @@ func TestSuspendedActorRefusedAtEntryPoints(t *testing.T) {
 			_, err := c.ResumeProjectSecrets(context.Background(), 1, actor)
 			return err
 		},
+		"RequestProjectAccess": func(c *KeyorixCore) error {
+			_, err := c.RequestProjectAccess(context.Background(), 1, actor, "", "r")
+			return err
+		},
+		"GrantSecretACL": func(c *KeyorixCore) error {
+			return c.GrantSecretACL(context.Background(), actor, 1, 2, []string{"secrets.read"})
+		},
 		"BulkRotateSecrets": func(c *KeyorixCore) error {
 			_, err := c.BulkRotateSecrets(context.Background(), actor, BulkRotateRequest{ProjectID: 1, SecretIDs: []uint{1}})
 			return err
