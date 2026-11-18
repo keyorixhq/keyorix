@@ -24,9 +24,11 @@ import (
 //	(c) WRITE→READ ROUND-TRIP: for any plan successfully produced by ReadJSON,
 //	    WriteJSON followed by ReadJSON must yield the same number of items and
 //	    the same Kind/Outcome/SourceRef for each item, in the same order.
-//	(d) ITEM BOUNDS: the number of items returned is bounded by the number of
-//	    newlines in the input plus one (each line is at most one JSON object),
-//	    so the output size cannot exceed the input size.
+//	(d) ITEM BOUNDS: the number of items returned is at most len(input)/2.
+//	    ReadJSON reads a stream of JSON values with json.Decoder, not one per
+//	    line ("{}{}" on one line is two items), and the shortest value that
+//	    decodes into a Line is "{}" (two bytes; "null" is four), so the
+//	    output size cannot exceed the input size.
 //	(e) VALID OUTCOMES: every item whose Outcome field is non-empty must be
 //	    one of the four recognised values (Create, Skip, Conflict, Unmappable).
 //
@@ -46,6 +48,8 @@ func FuzzAccessReportReadJSON(f *testing.F) {
 	f.Add("\n\n\n")
 	f.Add("not json at all\n")
 	f.Add(`{}` + "\n")
+	f.Add(`{}{}`)      // two items on one line, no newline (stream decoder)
+	f.Add("null null") // null decodes into a Line as an empty item
 	f.Add(`{"kind":"","outcome":""}` + "\n")
 	f.Add(`{"kind":"secret","outcome":"create","source_ref":"a","provenance_key":"migrate.source-id: x"}` + "\n")
 	f.Add(strings.Repeat(`{"kind":"secret","outcome":"create","source_ref":"x"}`+"\n", 50))
@@ -89,10 +93,9 @@ func FuzzAccessReportReadJSON(f *testing.F) {
 			return // parse failure — no further oracles apply
 		}
 
-		// Oracle (d): item count bounded by newline count.
-		newlines := strings.Count(data, "\n")
-		if len(plan1.Items) > newlines+1 {
-			t.Fatalf("ReadJSON: %d items from %d newlines (impossible)", len(plan1.Items), newlines)
+		// Oracle (d): item count bounded by input length (each item is >= 2 bytes).
+		if 2*len(plan1.Items) > len(data) {
+			t.Fatalf("ReadJSON: %d items from %d input bytes (impossible)", len(plan1.Items), len(data))
 		}
 
 		// Oracle (e): known outcomes.

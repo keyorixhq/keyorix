@@ -24,18 +24,22 @@ import (
 // Oracles — all fatal (the code is in production and must hold today):
 //
 //	(a) NEVER-PANIC: none of the three functions panics on arbitrary input.
-//	(b) EMPTY-IS-ABSENT: an empty slice reports TagAbsent with nil payload
-//	    and no error.
+//	(b) EMPTY-IS-ABSENT: an empty or nil slice reports TagAbsent with nil
+//	    payload and no error. The stored value always carries the fuzzed tag
+//	    byte, so (b) is driven by unwrapping the bare payload when it is empty.
 //	(c) WRAP→UNWRAP ROUND-TRIP: for the two valid tags (Plaintext,
 //	    Encrypted) and any payload, Wrap then Unwrap recovers the same tag
 //	    and payload byte-for-byte.
 //	(d) UNKNOWN-TAG FAILS-CLOSED: a first byte that is neither 0x01 nor
 //	    0x02 must return a non-nil error from UnwrapNotificationChannelURL.
-//	(e) IsAADBound PARSES OR ERRORS: for a byte slice tagged as Encrypted,
-//	    IsAADBound either succeeds or returns an error; it never returns
-//	    (false, nil) when the JSON is malformed.
-//	(f) IsAADBound MATCHES FIELD: for well-formed JSON, the returned bool
-//	    equals whether the metadata.aad_version field is non-empty.
+//	(e) IsAADBound REJECTS INVALID JSON: for a payload tagged as Encrypted
+//	    that json.Valid rejects, IsAADBound returns an error; it never reports
+//	    (false, nil), which would send the row down the no-AAD decrypt path.
+//	(f) IsAADBound MATCHES A CONSTRUCTED ENVELOPE: an envelope built with
+//	    json.Marshal whose metadata.aad_version is the fuzzed payload (as a
+//	    string) is reported bound, with no error, exactly when that string is
+//	    non-empty. The envelope is built, not decoded, so the oracle does not
+//	    restate the production decode.
 //
 // What this does NOT verify: that the plaintext or ciphertext payload is a
 // valid URL, that the encryption envelope uses the correct algorithm, nor
@@ -69,12 +73,12 @@ func FuzzNotificationChannelURL(f *testing.F) {
 		})
 
 		// --- Oracle (b): empty → TagAbsent, nil, nil ---
-		if len(stored) == 0 {
-			if unwrappedTag != NotificationChannelURLTagAbsent || unwrappedPayload != nil || unwrapErr != nil {
-				t.Fatalf("UnwrapNotificationChannelURL(nil): got (%02x, %v, %v), want (0x00, nil, nil)",
-					unwrappedTag, unwrappedPayload, unwrapErr)
+		if len(payload) == 0 {
+			absentTag, absentPayload, absentErr := UnwrapNotificationChannelURL(payload)
+			if absentTag != NotificationChannelURLTagAbsent || absentPayload != nil || absentErr != nil {
+				t.Fatalf("UnwrapNotificationChannelURL(%#v): got (%02x, %v, %v), want (0x00, nil, nil)",
+					payload, absentTag, absentPayload, absentErr)
 			}
-			return
 		}
 
 		// --- Oracle (d): unknown tag fails closed ---
@@ -117,28 +121,29 @@ func FuzzNotificationChannelURL(f *testing.F) {
 			isAADBound, aadErr = NotificationChannelURLEnvelopeIsAADBound(unwrappedPayload)
 		})
 
-		// Oracle (e): malformed JSON must return an error, not (false, nil).
-		var envelope struct {
-			Metadata struct {
-				AADVersion string `json:"aad_version"`
-			} `json:"metadata"`
-		}
-		jsonErr := json.Unmarshal(unwrappedPayload, &envelope)
-		if jsonErr != nil {
-			if aadErr == nil {
-				t.Fatalf("NotificationChannelURLEnvelopeIsAADBound: malformed JSON but no error (got isAADBound=%v)", isAADBound)
-			}
-			return
+		// Oracle (e): invalid JSON must return an error, not (false, nil).
+		if !json.Valid(unwrappedPayload) && aadErr == nil {
+			t.Fatalf("NotificationChannelURLEnvelopeIsAADBound(%q): invalid JSON but no error (got isAADBound=%v)",
+				unwrappedPayload, isAADBound)
 		}
 
-		// Oracle (f): well-formed JSON — bool must match aad_version non-empty.
-		if aadErr != nil {
-			t.Fatalf("NotificationChannelURLEnvelopeIsAADBound: well-formed JSON returned error: %v", aadErr)
+		// Oracle (f): a constructed envelope carrying the payload as aad_version.
+		// json.Marshal replaces invalid UTF-8 with U+FFFD, so the encoded string is
+		// non-empty exactly when payload is.
+		aadVersion := string(payload)
+		built, err := json.Marshal(map[string]any{
+			"metadata":   map[string]any{"aad_version": aadVersion},
+			"ciphertext": "aGVsbG8=",
+		})
+		if err != nil {
+			t.Fatalf("json.Marshal of a constructed envelope: %v", err)
 		}
-		want := envelope.Metadata.AADVersion != ""
-		if isAADBound != want {
-			t.Fatalf("NotificationChannelURLEnvelopeIsAADBound(%q): got %v, want %v (aad_version=%q)",
-				unwrappedPayload, isAADBound, want, envelope.Metadata.AADVersion)
+		bound, err := NotificationChannelURLEnvelopeIsAADBound(built)
+		if err != nil {
+			t.Fatalf("NotificationChannelURLEnvelopeIsAADBound(%s): constructed envelope returned error: %v", built, err)
+		}
+		if want := aadVersion != ""; bound != want {
+			t.Fatalf("NotificationChannelURLEnvelopeIsAADBound(%s): got %v, want %v", built, bound, want)
 		}
 	})
 }
