@@ -51,7 +51,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `BulkRejectAccessRequests` | Y |  | none | Authorize | POST /api/v1/access-requests/bulk-reject | — | no gRPC |
 | `BulkRenameSecrets` | Y |  | typed | Authorize | POST /api/v1/projects/{id}/secrets/bulk-rename | — | no gRPC |
 | `BulkRevokeExpiredOwnPATs` | Y |  | none |  | DELETE /api/v1/auth/tokens/expired | — | no gRPC |
-| `BulkRotateSecrets` | Y | Y | untyped | Authorize | POST /api/v1/projects/{id}/secrets/bulk-rotate | — | no gRPC |
+| `BulkRotateSecrets` | Y | Y | typed+untyped | Authorize | POST /api/v1/projects/{id}/secrets/bulk-rotate | — | no gRPC |
 | `CancelMFAReset` | Y |  | none |  | POST /api/v1/mfa-reset-requests/{id}/cancel | — | no gRPC |
 | `ChangePassword` | Y |  | none |  | POST /api/v1/auth/change-password | — | no gRPC |
 | `CheckReadQuotas` | Y |  | none |  | POST /api/v1/admin/jobs/check-read-quotas | — | no gRPC |

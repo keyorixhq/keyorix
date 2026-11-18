@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -14,13 +15,19 @@ import (
 // # bulk.rotate (BulkRotateSecrets)
 //
 // POST /api/v1/projects/{id}/secrets/bulk-rotate:
-//   Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
-//   Core gate:   NONE — BulkRotateSecrets takes no actorID. It only checks
-//                s.AutoRotate and calls RotateSecretOnDemand per secret.
-//   Model:       secrets.write @ project.
-//   core:        errNotAuthzLayer for all principals (the function is not an
-//                authorization layer — it has no actor check at all).
-//   restOK:      pp.secretID appears in the "triggered" list.
+//
+//	Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
+//	Core gate:   requireActorActive only — BulkRotateSecrets takes the acting
+//	             user ID and refuses a suspended or deactivated account, but
+//	             does not check secrets.write (the router does). After that it
+//	             checks s.AutoRotate and calls RotateSecretOnDemand per secret.
+//	Model:       secrets.write @ project.
+//	core:        errNotAuthzLayer for every active principal and for machines
+//	             (core is not the permission layer); for a suspended principal
+//	             the call must be refused (ErrPermissionDenied) — if core lets
+//	             it through the leg reports Allowed, which the suspended-actor
+//	             guard (TestCoreRefusesSuspendedActor) fails.
+//	restOK:      pp.secretID appears in the "triggered" list.
 //
 // What this oracle does NOT verify:
 //   - Per-item business rejections (AutoRotate=false → "no rotation config").
@@ -30,13 +37,14 @@ import (
 // # mfa.stepup (VerifyMFAStepUp)
 //
 // POST /api/v1/auth/mfa/stepup:
-//   Route:    r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/stepup", ...)
-//   No RBAC gate: any authenticated user may call it.
-//   Core:     VerifyMFAStepUp checks user.MFAEnabled — "not enabled" for un-enrolled users.
-//   Model:    mfaRequired: true — only principals with mfa_enabled=true in the DB pass.
-//   core_refusal: "none" (matrix.json) → coreEnforced=false → core leg excluded from Oracle 1.
-//   REST:     blockWhenImpersonating + handler → VerifyMFAStepUp.
-//   No gRPC surface (ADR-105 partial surface; /auth endpoints have no gRPC equivalent).
+//
+//	Route:    r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/stepup", ...)
+//	No RBAC gate: any authenticated user may call it.
+//	Core:     VerifyMFAStepUp checks user.MFAEnabled — "not enabled" for un-enrolled users.
+//	Model:    mfaRequired: true — only principals with mfa_enabled=true in the DB pass.
+//	core_refusal: "none" (matrix.json) → coreEnforced=false → core leg excluded from Oracle 1.
+//	REST:     blockWhenImpersonating + handler → VerifyMFAStepUp.
+//	No gRPC surface (ADR-105 partial surface; /auth endpoints have no gRPC equivalent).
 //
 // Fixture: pkMFAUser is the only principal with MFA enrolled (world_test.go V5EXT4 seed).
 // controlAs: pkMFAUser is the positive control (admin does NOT have MFA enrolled).
@@ -64,10 +72,27 @@ func bulkRotateOps() []opSpec {
 			restOK: func(b []byte, fx *fixtures, t tgt) bool {
 				return jsonListHas(b, "triggered", fx.proj(byte(t)).secretID)
 			},
-			// Core has no authorization check at all — BulkRotateSecrets takes no
-			// actorID. All principals return errNotAuthzLayer.
-			core: func(_ context.Context, _ *leg, _ *principal, _ tgt, _ byte) error {
-				return errNotAuthzLayer
+			// Core checks only that the actor is active; secrets.write is enforced at
+			// the router. So the leg is a participant only for a principal core must
+			// refuse (a suspended account): refused -> Denied, let through -> Allowed.
+			// An active principal, permitted or not, is errNotAuthzLayer.
+			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
+				if p.isMachine() {
+					return errNotAuthzLayer
+				}
+				pp := lg.fx.proj(byte(t))
+				_, err := lg.c.BulkRotateSecrets(ctx, p.userID, core.BulkRotateRequest{
+					ProjectID: pp.projectID,
+					SecretIDs: []uint{pp.secretID},
+					RotatedBy: p.username,
+				})
+				if err != nil {
+					return err
+				}
+				if !p.suspended {
+					return errNotAuthzLayer
+				}
+				return nil
 			},
 			rest: func(fx *fixtures, t tgt, _ byte) restReq {
 				pp := fx.proj(byte(t))

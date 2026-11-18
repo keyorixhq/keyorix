@@ -8010,7 +8010,7 @@
       "guards": [
         "Authorize"
       ],
-      "core_refusal": "untyped"
+      "core_refusal": "typed+untyped"
     },
     {
       "core": "CancelMFAReset",

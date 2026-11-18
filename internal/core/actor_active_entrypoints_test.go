@@ -104,6 +104,10 @@ func TestSuspendedActorRefusedAtEntryPoints(t *testing.T) {
 			_, err := c.ResumeProjectSecrets(context.Background(), 1, actor)
 			return err
 		},
+		"BulkRotateSecrets": func(c *KeyorixCore) error {
+			_, err := c.BulkRotateSecrets(context.Background(), actor, BulkRotateRequest{ProjectID: 1, SecretIDs: []uint{1}})
+			return err
+		},
 	}
 	for name, call := range cases {
 		t.Run(name, func(t *testing.T) {

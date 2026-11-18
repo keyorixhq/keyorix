@@ -9,9 +9,20 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+// seedBulkRotateActor creates the active account withUserCtx authenticates as:
+// core refuses an acting account that is not active (#4159), and does so before
+// it validates the request.
+func seedBulkRotateActor(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "bulk-rotate-actor", UsernameFolded: "bulk-rotate-actor",
+		Email: "bulk-rotate-actor@example.com", EmailFolded: "bulk-rotate-actor@example.com", IsActive: true}).Error)
+}
 
 func TestBulkRotateSecrets_Unauthorized(t *testing.T) {
 	h, _ := newProjectHealthHandler(t)
@@ -43,7 +54,8 @@ func TestBulkRotateSecrets_BadJSON(t *testing.T) {
 // TestBulkRotateSecrets_BatchTooLarge exercises the "exceeds the maximum
 // batch size" -> 400 branch (core.maxBulkRotateBatchSize is 500).
 func TestBulkRotateSecrets_BatchTooLarge(t *testing.T) {
-	h, _ := newProjectHealthHandler(t)
+	h, db := newProjectHealthHandler(t)
+	seedBulkRotateActor(t, db)
 	ids := make([]uint, 501)
 	for i := range ids {
 		ids[i] = uint(i + 1)
@@ -61,7 +73,8 @@ func TestBulkRotateSecrets_BatchTooLarge(t *testing.T) {
 // secret_ids) is a legal project-wide rotation of zero secrets: 200 with an
 // empty Triggered/Failed result.
 func TestBulkRotateSecrets_Success(t *testing.T) {
-	h, _ := newProjectHealthHandler(t)
+	h, db := newProjectHealthHandler(t)
+	seedBulkRotateActor(t, db)
 	body, _ := json.Marshal(map[string]any{})
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/secrets/bulk-rotate",
 		bytes.NewReader(body)), "id", "1")

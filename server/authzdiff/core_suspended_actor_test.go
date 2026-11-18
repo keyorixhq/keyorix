@@ -14,9 +14,7 @@ import (
 // nothing to refuse), each with the reason. A new op lands here only with a
 // reason; an op missing from it with no checked case fails the guard.
 // Every other core-enforced op has a checked case.
-var suspendedUncheckableOps = map[string]string{
-	"bulk.rotate": "BulkRotateSecrets takes no acting-user ID (RotatedBy in BulkRotateRequest is only an audit label), so core cannot tell a suspended actor from any other caller; the REST transport authenticates and authorizes the call and refuses a suspended account at authentication",
-}
+var suspendedUncheckableOps = map[string]string{}
 
 // TestCoreRefusesSuspendedActor: for every bound op whose core method is an
 // authorization layer, a suspended human actor is refused by core itself
