@@ -411,6 +411,11 @@ func checkInventory(sites []site, rows []allowRow, classes map[string]bool) []st
 		files = append(files, f)
 	}
 	sort.Strings(files)
+	var classIDs []string
+	for id := range classes {
+		classIDs = append(classIDs, id)
+	}
+	sort.Strings(classIDs)
 	for _, f := range files {
 		covered := false
 		for _, r := range rows {
@@ -421,8 +426,10 @@ func checkInventory(sites []site, rows []allowRow, classes map[string]bool) []st
 		}
 		if !covered {
 			sort.Strings(forms[f])
-			msgs = append(msgs, fmt.Sprintf("%s:%d creates an outbound connection (%s) and has no row in %s: add the file with a class and a reason, and a row to %s if it is a new destination class",
-				f, first[f], strings.Join(forms[f], ", "), allowlistRel, inventoryRel))
+			msgs = append(msgs, fmt.Sprintf("%s:%d creates an outbound connection (%s) and has no row in %s.\n"+
+				"  Add this row (three TAB-separated columns; pick the class from the table in %s, one of %s, or add a new class there in the same PR; replace the reason):\n"+
+				"  %s\t<class>\t<why this file may open outbound connections>",
+				f, first[f], strings.Join(forms[f], ", "), allowlistRel, inventoryRel, strings.Join(classIDs, " "), f))
 		}
 	}
 	used := map[string]bool{}
@@ -765,6 +772,9 @@ func TestEgressCheck_RedOnPlantedSiteGreenWhenListed(t *testing.T) {
 	require.Len(t, msgs, 2, "the planted file and the unused class: %v", msgs)
 	assert.Contains(t, msgs[0], "srv/planted.go:9 creates an outbound connection")
 	assert.Contains(t, msgs[0], "net/http.Client{}")
+	// The message names the file and the exact row to add, and the classes to choose from.
+	assert.Contains(t, msgs[0], "\n  srv/planted.go\t<class>\t<why this file may open outbound connections>")
+	assert.Contains(t, msgs[0], "one of E01,")
 	assert.Contains(t, msgs[1], "class E01 is in the inventory table but no allowlist row names it")
 
 	// Green: the same tree with a row for the file and its class.
