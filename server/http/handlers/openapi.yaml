@@ -7446,7 +7446,9 @@ paths:
         separation-of-duties violations), rotation hygiene (covered secrets,
         overdue, due-soon), identity
         (active users, with-second-factor + percent), emergency access
-        (active/total break-glass activations), data classification (secret
+        (active/total break-glass activations, and degraded_activations: those
+        committed while the audit log refused their rows whose audit rows are
+        still owed, so their review is owed too), data classification (secret
         counts per sensitivity level + unclassified), anomalies (open /
         high-severity access-anomaly alerts), legal hold (active + reason), and
         data retention (configured per-record-type windows in days; 0 = keep
