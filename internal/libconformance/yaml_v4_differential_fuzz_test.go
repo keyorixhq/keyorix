@@ -488,7 +488,7 @@ func negZeroEq(a, b any) bool {
 		}
 		return true
 	default:
-		return reflect.DeepEqual(a, b)
+		return leafEq(a, b)
 	}
 }
 
@@ -592,7 +592,7 @@ func nonspecificTagEq(a, b any) bool {
 		}
 		return true
 	default:
-		return reflect.DeepEqual(a, b)
+		return leafEq(a, b)
 	}
 }
 
@@ -701,7 +701,7 @@ func nonspecificTagNonEmptyScalarOnly(a, b any) (int, bool) {
 		}
 		return total, true
 	default:
-		if reflect.DeepEqual(a, b) {
+		if leafEq(a, b) {
 			return 0, true
 		}
 		return 0, false
@@ -763,7 +763,7 @@ func negZeroIntVsFloatOnly(a, b any) (int, bool) {
 		}
 		return total, true
 	default:
-		if reflect.DeepEqual(a, b) {
+		if leafEq(a, b) {
 			return 0, true
 		}
 		return 0, false
@@ -836,7 +836,7 @@ func v3EmptyVsV4NonEmptyStringOnly(a, b any) (int, bool) {
 		}
 		return total, true
 	default:
-		if reflect.DeepEqual(a, b) {
+		if leafEq(a, b) {
 			return 0, true
 		}
 		return 0, false
@@ -898,11 +898,24 @@ func nilVsEmptyStringOnly(a, b any) (int, bool) {
 		}
 		return total, true
 	default:
-		if reflect.DeepEqual(a, b) {
+		if leafEq(a, b) {
 			return 0, true
 		}
 		return 0, false
 	}
+}
+
+// leafEq is reflect.DeepEqual for a scalar leaf, except that two NaN floats are
+// equal. reflect.DeepEqual(NaN, NaN) is false, so a document that carries `.nan`
+// anywhere (`0: .nan\n1: !`) made every structural walker above report "not the
+// known shape" and the known class fell through to "value-mismatch".
+func leafEq(a, b any) bool {
+	if af, ok := a.(float64); ok {
+		if bf, ok := b.(float64); ok && math.IsNaN(af) && math.IsNaN(bf) {
+			return true
+		}
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 const yamlV4BudgetPath = "testdata/resguard-yaml-v4.json"
