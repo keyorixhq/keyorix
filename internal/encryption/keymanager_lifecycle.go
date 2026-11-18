@@ -289,6 +289,10 @@ func NewKeyManager(baseDir, dekPath, saltPath string) *KeyManager {
 //     unchanged, with locks and pending files landing beside the keys where an
 //     operator expects them.
 //
+//   - Absolute dek_path, no salt_path (#4396; any provider that does not read
+//     a salt): reduced to the DEK's directory plus its base name, the same as
+//     the both-absolute case, so the lock and ".pending" files land beside it.
+//
 //   - Anything else (one absolute and one relative, or two absolute paths in
 //     different directories): refused with a clear error rather than guessed
 //     at. Supporting split directories would mean inventing a placement rule
@@ -308,8 +312,16 @@ func normalizeKeyPaths(baseDir, dekPath, saltPath string) (string, string, strin
 	dekAbs := filepath.IsAbs(dekPath)
 	saltAbs := filepath.IsAbs(saltPath)
 
-	if dekPath == "" || saltPath == "" || (!dekAbs && !saltAbs) {
+	if dekPath == "" || (!dekAbs && !saltAbs) {
 		return baseDir, dekPath, saltPath, nil
+	}
+
+	// #4396: an absolute dek_path with no salt (every non-password provider) is
+	// collapsed exactly like the both-absolute case. dekAbs is judged on its own:
+	// it used to be skipped whenever salt_path was empty, which left the DEK lock
+	// path absolute ("path .../dek.lock must be relative").
+	if saltPath == "" {
+		return filepath.Dir(filepath.Clean(dekPath)), filepath.Base(dekPath), "", nil
 	}
 
 	if dekAbs != saltAbs {
