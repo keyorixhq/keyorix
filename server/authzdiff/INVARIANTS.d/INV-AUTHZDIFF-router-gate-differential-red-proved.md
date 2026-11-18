@@ -11,7 +11,13 @@
   `RequirePermission(permSystemWrite)` at global scope; `core.CreateRiskException`
   enforces only human-only + a bounded sunset + a SoD-live-violation check when
   category=="sod" — the binding uses a non-sod category so only the router gate
-  varies by principal). Each is calibrated (admin positive control `Allowed`) and
+  varies by principal). `riskexception.approve`
+  (`POST /api/v1/risk-exceptions/{id}/approve`; router `RequirePermission(permSystemWrite)`
+  at global scope; `core.ApproveRiskException` enforces only the dual-control business
+  rules — pending-state, human-only, creator!=approver, SoD re-validation — none of
+  which vary by probed principal because the fixture's pending exception is created by a
+  dedicated non-probed user and machines are model-denied before human-only could matter)
+  is the same shape. Each is calibrated (admin positive control `Allowed`) and
   red-proved by REMOVING THE ROUTER GATE in a `-overlay` scratch copy (the working
   tree is never edited) and asserting the restricted strict sweep produces at least
   `minUnexplained` `unexplained` cases on that op alone (a present transport allowing
@@ -26,11 +32,13 @@
   deterministic strict sweep over the V8 bindings and fails on any uncalibrated or
   `unexplained` case; `TestEveryV8OpHasNoGRPCLeg` guards its no-gRPC fast path;
   `TestPlantsAreDetected` (CI job `authzdiff-plants`, opt-in `AUTHZDIFF_PLANTS=1`) runs
-  the `access-review-campaign-open-router-gate-removed` and
-  `riskexception-create-router-gate-removed` plants; the `uncalibrated`/`unexplained`
+  the `access-review-campaign-open-router-gate-removed`,
+  `riskexception-create-router-gate-removed` and
+  `riskexception-approve-router-gate-removed` plants; the `uncalibrated`/`unexplained`
   failure paths of `TestAuthzDiffSweep`/`FuzzAuthzDiff`. Does NOT verify the core-leg
   business rules these endpoints also run (campaign lifecycle, reviewer independence /
-  human-reviewer / grant-exists on attest/revoke/decide, dual-control and
-  SoD-live-violation on risk-exception approve, the creator-or-admin rule on delete);
-  those are excluded with the core leg (ID-2) and left analyzed-not-bound — see the
-  V8 report.
+  human-reviewer / grant-exists on attest/revoke/decide, the dual-control state machine
+  and SoD-live-violation re-validation behind risk-exception approve — only the
+  system.write@global GATE to reach it is bound — and the creator-or-admin-tier rule on
+  delete); those are excluded with the core leg (ID-2) and left analyzed-not-bound — see
+  the V8 report.
