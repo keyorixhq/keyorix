@@ -18,6 +18,8 @@ import (
 const (
 	maxRecBody  = 4 << 20
 	maxRespKeep = 4096
+	// maxRespRelay caps an upstream response the proxy relays and the body shimKeys decodes.
+	maxRespRelay = 32 << 20
 )
 
 // Proxy is a recording reverse proxy in front of one throwaway server. It
@@ -189,6 +191,9 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, up string, body 
 	if err != nil {
 		return 0, nil, err
 	}
+	if err := validateLoopbackHost(u.Host); err != nil {
+		return 0, nil, err
+	}
 	rawPath, rawQuery, _ := strings.Cut(r.RequestURI, "?")
 	if p.Shim && r.Method == http.MethodGet && rawPath == "/api/v1/secrets" {
 		// contract shim (amendment A1): the request was recorded as the SDK sent it;
@@ -222,7 +227,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, up string, body 
 		return 0, nil, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
-	rb, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	rb, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespRelay))
 	if p.Shim && resp.StatusCode/100 == 2 && strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
 		rb = shimKeys(rb)
 	}
@@ -259,7 +264,10 @@ var shimRename = map[string]string{"id": "ID", "name": "Name", "type": "Type", "
 // shimKeys renames the object keys of data.secrets[], data.projects[], data.environments[]
 // and of a bare data object (create project) to the PascalCase names the SDKs read.
 func shimKeys(body []byte) []byte {
-	dec := json.NewDecoder(bytes.NewReader(body))
+	if len(body) > maxRespRelay { // an over-cap body is relayed unshimmed, never decoded
+		return body
+	}
+	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(body), maxRespRelay))
 	dec.UseNumber()
 	var doc map[string]any
 	if dec.Decode(&doc) != nil {

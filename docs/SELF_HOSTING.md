@@ -555,6 +555,19 @@ same commands the other way round; this direction is exercised, at a few hundred
 rows, by `scripts/release-qa/scenario_restore_scale.sh`). Keep
 the SQLite file and the archive until you have run on PostgreSQL long enough to trust it.
 
+**Audit chain and host time zone.** The check also asserts that the head row of the
+audit chain keeps its id and entry hash through the move, and that the first event
+written on PostgreSQL (`admin.restore_completed`) carries the migrated head's entry hash
+as its `prev_hash`. It runs under a non-UTC host time zone (`TZ=Pacific/Auckland`), and
+`server/admin/backup_restore_tz_test.go` covers a zero-`EventTime` audit row 1 across
+four host zones (FIX-3088).
+
+**Not verified:** the container variants (Compose, Helm) are pending a run on the e2e VM;
+a PostgreSQL target that already holds data (restore refuses it); databases far larger
+than the seeded one; any key provider other than the key files
+the check uses; and any mixed fleet (several replicas, or a live server during the move:
+stop the SQLite server first).
+
 ### Version-skipping upgrades
 
 The same property makes skipping releases safe: `admin restore` always

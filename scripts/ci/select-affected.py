@@ -178,9 +178,17 @@ def full_reason(changed, base, head):
 
 
 def load_packages():
+    # go derives its working directory from $PWD when that names the current
+    # directory, so a checkout reached through a symlink (macOS: /tmp is
+    # /private/tmp) makes `go list` report Dir under the link while
+    # os.getcwd() below is the resolved path. No Dir is then inside the repo,
+    # no file has an owning package and every path counts as "outside
+    # packages" (rule 3 matches bare words like "internal" in code). Hand go
+    # the resolved path so both sides agree.
     out = subprocess.run(
         ["go", "list", "-e", "-json=ImportPath,Dir,Imports,Deps,TestImports,XTestImports,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,IgnoredGoFiles,EmbedPatterns", "./..."],
         capture_output=True, text=True, check=True,
+        env={**os.environ, "PWD": os.getcwd()},
     ).stdout
     packages, dec, i = {}, json.JSONDecoder(), 0
     while i < len(out):
@@ -378,6 +386,10 @@ def decide(base, head, changed=None):
         rel = os.path.relpath(obj.get("Dir", ""), repo)
         if rel != "." and not rel.startswith(".."):
             dir_to_pkg[rel] = imp
+    if not dir_to_pkg:
+        # Fail loudly: an empty map silently turns every file into an
+        # "outside packages" file and over-selects (the symlinked-cwd bug).
+        raise RuntimeError(f"no go list package Dir is under {repo}: cwd and go list disagree on the checkout path")
 
     def owning_package(path):
         if path.startswith(OTHER_MODULES):

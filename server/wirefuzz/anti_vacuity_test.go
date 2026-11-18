@@ -18,6 +18,8 @@ package wirefuzz
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -90,40 +92,170 @@ func joinText(rs []h1Resp) []byte {
 // TestAntiVacuity_HalfCloseCausesFailClosed pins the ROOT CAUSE of review finding F1,
 // so nobody reintroduces a half-close "to get a prompt EOF": a request that is
 // half-closed (FIN) right after the write is cancelled by net/http, the auth
-// middleware fails closed, and an authorized admin read returns 503 (or 500) instead of 200.
+// middleware fails closed, and an authorized admin read returns 503 (or 500, or 403 when
+// the RBAC lookup was the cancelled one) instead of 200, never carrying a secret value.
+// A response fully served before the FIN landed is a timing race in the premise and is
+// retried (requireHalfCloseFailsClosed).
 func TestAntiVacuity_HalfCloseCausesFailClosed(t *testing.T) {
 	w := buildWireWorld(t)
 	wire := []byte("GET /api/v1/secrets/value?ref=" + w.refA + " HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer " + w.adminTok + "\r\n\r\n")
 
-	conn, err := net.DialTimeout("tcp", w.addr, 3*time.Second)
-	if err != nil {
+	if err := requireHalfCloseFailsClosed(w.addr, wire, w.valA, w.valB, halfCloseAttempts); err != nil {
 		t.Fatal(err)
-	}
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
-	if _, err := conn.Write(wire); err != nil {
-		t.Fatal(err)
-	}
-	if tc, ok := conn.(*net.TCPConn); ok {
-		_ = tc.CloseWrite()
-	}
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(conn)
-	if bytes.Contains(buf.Bytes(), []byte(w.valA)) {
-		t.Fatal("the server now serves a half-closed authorized read: the premise of the no-half-close driver rule (oracles_test.go header) no longer holds; update that comment and this test")
-	}
-	// net/http cancels the request context on the FIN; where the cancellation lands decides
-	// the status: the auth middleware fails closed with 503, or (when auth already passed)
-	// the handler's storage read reports "context canceled" as 500 (seen in CI on #4201).
-	// Both are fail-closed with no secret value; only a 200 would break the premise.
-	if !bytes.HasPrefix(buf.Bytes(), []byte("HTTP/1.1 503")) && !bytes.HasPrefix(buf.Bytes(), []byte("HTTP/1.1 500")) {
-		t.Fatalf("expected a fail-closed 503 (or 500 from a cancelled handler read) for a half-closed authorized read, got %q", truncate(buf.Bytes(), 80))
 	}
 
 	// ...while exchange() (no half-close) gets the real answer.
 	resp, _ := exchange(w.addr, wire, []string{"GET"}, 1, 8*time.Second)
 	if !bytes.Contains(resp, []byte(w.valA)) {
 		t.Fatalf("exchange() must not half-close: authorized read should return valA, got %q", truncate(resp, 200))
+	}
+}
+
+// halfCloseAttempts bounds the "premise not established" retries below. A genuine race
+// (the FIN lands after the handler already wrote the value) was seen in ~2/40 runs, so ten
+// consecutive races are ~1e-13; a server that really serves half-closed reads serves on
+// every attempt and fails after exactly this many.
+const halfCloseAttempts = 10
+
+// halfCloseVerdict classifies one half-closed authorized read.
+type halfCloseVerdict int
+
+const (
+	// halfCloseFailClosed: a cancelled request answered 503 (auth lookup cancelled), 500
+	// (handler's storage read cancelled, seen in CI on #4201) or 403 (the RBAC lookup was
+	// cancelled and denied), with no secret value in it.
+	halfCloseFailClosed halfCloseVerdict = iota
+	// halfCloseServedBeforeFIN: a complete 200 carrying valA. Either the FIN landed after
+	// the handler had already written (a timing race in the test premise), or the server
+	// really serves half-closed reads; one attempt cannot tell, repetition does.
+	halfCloseServedBeforeFIN
+	// halfCloseBroken: anything else, including a secret value in a non-200 body.
+	halfCloseBroken
+)
+
+func classifyHalfClose(resp []byte, valA, valB string) (halfCloseVerdict, string) {
+	leaked := bytes.Contains(resp, []byte(valA)) || bytes.Contains(resp, []byte(valB))
+	switch {
+	case bytes.HasPrefix(resp, []byte("HTTP/1.1 200")) && bytes.Contains(resp, []byte(valA)):
+		return halfCloseServedBeforeFIN, ""
+	case leaked:
+		return halfCloseBroken, fmt.Sprintf("a secret value is in a non-200 response to a half-closed read: %q", truncate(resp, 120))
+	case bytes.HasPrefix(resp, []byte("HTTP/1.1 503")),
+		bytes.HasPrefix(resp, []byte("HTTP/1.1 500")),
+		bytes.HasPrefix(resp, []byte("HTTP/1.1 403")):
+		return halfCloseFailClosed, ""
+	}
+	return halfCloseBroken, fmt.Sprintf("expected a fail-closed 503, 500 or 403 for a half-closed authorized read, got %q", truncate(resp, 80))
+}
+
+// halfCloseOnce writes wire, sends FIN, and reads until the server closes.
+func halfCloseOnce(addr string, wire []byte) ([]byte, error) {
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(8 * time.Second))
+	if _, err := conn.Write(wire); err != nil {
+		return nil, err
+	}
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.CloseWrite()
+	}
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(conn)
+	return buf.Bytes(), nil
+}
+
+// requireHalfCloseFailsClosed returns nil once a half-closed authorized read is answered
+// fail-closed with no secret value. A response that was fully served before the FIN is
+// "premise not established" and is retried, up to attempts times; if every attempt is
+// served, the server really serves half-closed reads and the error says so.
+func requireHalfCloseFailsClosed(addr string, wire []byte, valA, valB string, attempts int) error {
+	for i := 1; i <= attempts; i++ {
+		resp, err := halfCloseOnce(addr, wire)
+		if err != nil {
+			return err
+		}
+		switch v, why := classifyHalfClose(resp, valA, valB); v {
+		case halfCloseFailClosed:
+			return nil
+		case halfCloseBroken:
+			return errors.New(why)
+		}
+	}
+	return fmt.Errorf("the server served the authorized read in all %d half-closed attempts: it now serves half-closed reads, so the premise of the no-half-close driver rule (oracles_test.go header) no longer holds; update that comment and this test", attempts)
+}
+
+// TestAntiVacuity_HalfCloseCalibration keeps the half-close test honest in both directions
+// against fixture servers: a server that really serves after the FIN, or leaks in a 403,
+// must go red; a one-off race followed by a cancelled answer, or a plain 403, stays green.
+func TestAntiVacuity_HalfCloseCalibration(t *testing.T) {
+	const valA, valB = "VALUE-A-SECRET", "VALUE-B-SECRET"
+	wire := []byte("GET /x HTTP/1.1\r\nHost: h\r\n\r\n")
+	respond := func(status, body string) []byte {
+		return []byte(fmt.Sprintf("HTTP/1.1 %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", status, len(body), body))
+	}
+	// fixture serves replies[i] to the i-th connection (the last one repeats), after
+	// reading the request head, whatever the client's FIN state is.
+	fixture := func(t *testing.T, replies ...[]byte) string {
+		t.Helper()
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		go func() {
+			for n := 0; ; n++ {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				reply := replies[min(n, len(replies)-1)]
+				go func() {
+					defer func() { _ = c.Close() }()
+					_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+					head := make([]byte, 0, 256)
+					one := make([]byte, 1)
+					for !bytes.HasSuffix(head, []byte("\r\n\r\n")) {
+						if _, err := c.Read(one); err != nil {
+							return
+						}
+						head = append(head, one...)
+					}
+					_, _ = c.Write(reply)
+				}()
+			}
+		}()
+		return ln.Addr().String()
+	}
+
+	served := respond("200 OK", valA)
+	failed := respond("503 Service Unavailable", "unavailable")
+
+	for _, tc := range []struct {
+		name    string
+		replies [][]byte
+		wantErr string // "" = green
+	}{
+		{"serves after FIN every time", [][]byte{served}, "serves half-closed reads"},
+		{"403 that leaks the value", [][]byte{respond("403 Forbidden", valA)}, "secret value"},
+		{"403 that leaks the other secret", [][]byte{respond("403 Forbidden", valB)}, "secret value"},
+		{"unexpected 200 without the value", [][]byte{respond("200 OK", "nothing")}, "expected a fail-closed"},
+		{"cancelled lookup answered 403", [][]byte{respond("403 Forbidden", "forbidden")}, ""},
+		{"cancelled lookup answered 503", [][]byte{failed}, ""},
+		{"cancelled handler read answered 500", [][]byte{respond("500 Internal Server Error", "context canceled")}, ""},
+		{"one race, then fail-closed", [][]byte{served, served, failed}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := requireHalfCloseFailsClosed(fixture(t, tc.replies...), wire, valA, valB, halfCloseAttempts)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("expected green, got %v", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("expected red containing %q, got %v", tc.wantErr, err)
+			}
+		})
 	}
 }
 

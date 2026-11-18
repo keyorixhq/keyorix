@@ -12,8 +12,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
 | secrets | 43 | 30 | 10 | 10 |
-| other | 128 | 22 | 22 | 10 |
-| **total** | **212** | **93** | **47** | **35** |
+| other | 128 | 23 | 22 | 10 |
+| **total** | **212** | **94** | **47** | **35** |
 
 ## groups
 
@@ -180,7 +180,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST DELETE /api/v1/legal-hold` — model: legal-hold rules are not in the reference model
 - [ ] `REST DELETE /api/v1/notification-channels/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST DELETE /api/v1/rejection-reason-templates/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
-- [ ] `REST DELETE /api/v1/risk-exceptions/{id}` — model: risk-exception approval rules are not in the reference model
+- [ ] `REST DELETE /api/v1/risk-exceptions/{id}` — model: revoke authority (creator-or-admin-tier) is a typed core gate beyond the system.write@global router gate; needs the owner-style model extension (analyzed-not-bound)
 - [x] `REST DELETE /api/v1/roles/{id}` — role.delete
 - [x] `REST DELETE /api/v1/roles/{id}/permissions/{permissionId}` — role.perm.remove
 - [ ] `REST DELETE /api/v1/rotation-policies/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
@@ -254,7 +254,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/projects/{id}/break-glass/{activationId}/revoke` — model: break-glass activation/approval semantics are not in the reference model (deferred to the not-yet list)
 - [ ] `REST POST /api/v1/rejection-reason-templates` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [x] `REST POST /api/v1/risk-exceptions` — riskexception.create
-- [ ] `REST POST /api/v1/risk-exceptions/{id}/approve` — model: risk-exception approval rules are not in the reference model
+- [x] `REST POST /api/v1/risk-exceptions/{id}/approve` — riskexception.approve
 - [x] `REST POST /api/v1/roles` — role.create
 - [x] `REST POST /api/v1/roles/{id}/permissions` — role.perm.add
 - [ ] `REST POST /api/v1/rotation-policies` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
