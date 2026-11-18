@@ -2,6 +2,7 @@ package keyfiles
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,7 +31,7 @@ func TestKeySetEnumerations_UnusedSaltPath(t *testing.T) {
 			}
 			required, err := RequiredKeyFilePaths(enc, dir)
 			require.NoError(t, err)
-			require.Equal(t, tc.wantSalt, contains(required, salt))
+			require.Equal(t, tc.wantSalt, slices.Contains(required, salt))
 
 			// Registry requires existence of a listed file, so an unused salt
 			// that was never created must not make it fail closed.
@@ -43,13 +44,4 @@ func TestKeySetEnumerations_UnusedSaltPath(t *testing.T) {
 			require.Equal(t, tc.wantSalt, found)
 		})
 	}
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
