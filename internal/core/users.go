@@ -443,6 +443,9 @@ func (c *KeyorixCore) userCreateLanded(ctx context.Context, site string, created
 		return nil
 	})
 	if landed {
+		// The create's audit rows committed with it: forward them now (a no-op
+		// unless the create ran through withAuditedMutation).
+		c.flushDeliveredAudit(writeErr)
 		return true, nil
 	}
 	return false, answer
