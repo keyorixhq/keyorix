@@ -1,6 +1,7 @@
 package libconformance
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -35,6 +36,105 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// differential.md and the DF2 report. Enforced structurally by
 	// classifyYAMLV4ValueSplit/nilVsEmptyStringOnly (null-vs-"" leaves only).
 	"nonspecific-tag-empty-scalar": true,
+
+	// The non-specific tag `!` applied to a NON-empty scalar. v3.0.5 ignores the
+	// `!` and resolves the scalar by its normal implicit schema ("! 00" -> int 0,
+	// "! true" -> bool true, "! null" -> nil, "! 1.5" -> float 1.5); v4.0.0 treats
+	// `!` as forcing the failsafe !!str resolution and keeps the RAW STRING ("00",
+	// "true", "null", "1.5"). "! abc" agrees (both "abc") because abc resolves to a
+	// string in v3 anyway. This is the SAME root cause as nonspecific-tag-empty-
+	// scalar (D1), generalised from the empty scalar to any non-empty one -- the
+	// D1 classifier left out of DF2 (df2 leftover #1). The live caller
+	// (gopkg.in/yaml.v3 v3.0.1) was verified to match go.yaml.in/yaml/v3 v3.0.5
+	// byte-for-byte on every case here, so the reachable behaviour is the v3 side.
+	// v4 has no live caller, so this is a forward-looking migration hazard: a
+	// config `key: ! 00` would flip from int 0 to the string "00" on a v3->v4 bump.
+	// Enforced structurally by classifyYAMLV4ValueSplit/nonspecificTagNonEmptyScalar
+	// Only -- recognised ONLY when every differing leaf is "v4 kept the raw string s
+	// and v3's value is exactly the v3 implicit resolution of s" AND the input
+	// carries a non-specific `!` tag, so an unrelated value mismatch (e.g. v3 int 5
+	// vs v4 string "6") still classes as value-mismatch and fails.
+	"nonspecific-tag-nonempty-scalar": true,
+
+	// The non-specific `!` tag re-resolution landing in a KEY position (`! : 00`,
+	// `! 00: x`), where v3 and v4 produce DIFFERENT map keys (v3 nil/typed vs v4 raw
+	// string) so the value-only walkers cannot pair the entries and fall through to
+	// value-mismatch. Same root cause as D1/D12 (v4 honours `!` as `!!str`, v3 does
+	// not), just at a key. Found by the DF3 struct fuzzer at `! : 00`. Recognised by
+	// nonspecificTagEq, which pairs map entries across the tag transformation at any
+	// position and requires every differing leaf to be "v4 string s, v3 = v3-resolve
+	// (s)"; a genuine value diff (v3 5 vs v4 "6") is never equated. Scoped to inputs
+	// carrying a `!` tag. v4 has no live caller — forward-looking migration hazard.
+	"nonspecific-tag-structural": true,
+
+	// A `:` inside an anchor NAME (`&a:b`, `&00:00000`, `k: &00:00000`). v3.0.5 ends
+	// the anchor name at the `:` (so `&a:b` → anchor `a`, content ":b"); v4.0.0
+	// absorbs the `:` into the name (anchor `a:b`, EMPTY node → nil). BOTH accept but
+	// the decoded values differ. Found by the DF3 struct fuzzer at `&00:00000`. Same
+	// anchor-name-character family as D9 (`&!0000`), but here both accept and
+	// disagree on the value rather than v3 rejecting. Recognised CAUSALLY by
+	// isAnchorColonBoundaryDivergence (stripping the anchor makes the two agree and
+	// leaves v3's value unchanged), so a genuine divergence that merely contains an
+	// anchor is never absorbed. v4 has no live caller — forward-looking.
+	"anchor-name-colon-boundary": true,
+
+	// The `-0` int-vs-float divergence (D10) in a KEY position (`-0:` → v3 key int 0
+	// / v4 key float negative zero), where the maps do not align by key and the
+	// value-only walker falls through to value-mismatch. Same root cause as D10, at a
+	// key. Found by the DF3 multi-doc fuzzer at `-0:`. Recognised by negZeroEq
+	// (pairs entries across the int-0/float-negzero transformation), scoped to inputs
+	// containing `-0`. v4 has no live caller — forward-looking.
+	"negative-zero-structural": true,
+
+	// A truncated / unterminated construct — e.g. a block scalar followed by a lone
+	// `"` at column 0 (`|\n"`), which v3 reads as an unterminated double-quoted
+	// scalar. v3.0.5 REJECTS ("found unexpected end of stream"); v4.0.0 is lenient
+	// and ACCEPTS. Found by the DF3 fuzz run at `|\n"`. v4 accepts what v3 rejects
+	// (the migration-hazard direction, like D2/D3) but on malformed/truncated input.
+	// Not a Keyorix defect (v4 has no live caller). Keyed on the v3 error "unexpected
+	// end of stream".
+	"v3-rejects:unexpected-eos": true,
+
+	// A `%`-introduced directive v3 rejects — e.g. under-indented block-scalar
+	// content `%0` (`|\n%0`) that v3 re-scans as a document directive ("found
+	// unknown directive name"). v3.0.5 REJECTS; v4.0.0 ACCEPTS. Found by the DF3 fuzz
+	// run at `|\n%0`. Same v4-lenient direction as D20. Not a Keyorix defect (v4 has
+	// no live caller). Keyed on the v3 error substring "directive".
+	"v3-rejects:directive": true,
+
+	// The doc-start error in the v3-rejecting direction (the mirror of D4's
+	// v4-rejects:doc-start). A folded/literal block scalar with under-indented
+	// content in a STREAM decode (`>\n0`) makes v3's Decoder loop reject with "did
+	// not find expected <document start>" while v4's Loader accepts it as one
+	// document. Found by the DF3 multi-doc fuzzer at `>\n0`. v4 accepts what v3
+	// rejects, benignly. Not a Keyorix defect (v4 has no live caller). Keyed on the
+	// "expected <document start>" error with the v3-rejecting side.
+	"v3-rejects:doc-start": true,
+
+	// The `<<` merge-key indicator used where it is not a valid map-merge (`<<`,
+	// `a: <<`, `- <<`, `k: <<`). v3.0.5 keeps the literal string "<<"; v4.0.0 treats
+	// it as a merge directive and SILENTLY DROPS the entry/element (empty container
+	// or nil) -- a v4 silent-data-loss footgun. Found by the DF3 struct fuzzer at
+	// `<<`. Recognised causally by isMergeKeyDivergence (single-quoting every `<<`
+	// makes the two agree and reproduces v3's value). Not a Keyorix defect (v4 has no
+	// live caller); a forward-looking v4 data-loss note. Scoped to inputs containing
+	// `<<`.
+	"merge-key-handling": true,
+
+	// A flow-mapping entry whose `:` is immediately followed by `}`/`,` with no space
+	// (`{0:}`, `0: {0:}`): v3 keeps the `:` in the key (`"0:"`), v4 treats it as the
+	// key/value separator (key `0`, null). Found by the DF3 fuzz run at `0: {0:}`.
+	// Recognised causally by isFlowColonNoSpaceDivergence (adding a space after the
+	// `:` makes v3 agree with v4, which is unchanged). Not a Keyorix defect (v4 has no
+	// live caller). Scoped to inputs containing `:}`/`:,`.
+	"flow-map-colon-nospace": true,
+
+	// A `?` complex-key indicator in a context v3 forbids — e.g. `&0?` (anchor then
+	// `?`). v3.0.5 REJECTS ("mapping keys are not allowed in this context"); v4.0.0
+	// ACCEPTS leniently. Found by the DF3 multi-doc fuzzer at `&0?`. v4 accepts what
+	// v3 rejects (migration-hazard direction). Not a Keyorix defect (v4 has no live
+	// caller). Keyed on the v3 error "mapping keys are not allowed".
+	"v3-rejects:mapping-key-context": true,
 
 	// A mapping entry with an EMPTY implicit key -- a line beginning with the value
 	// indicator `:` (":", ": ", ":\n", "- :", "a:\n:"). v3.0.5 REJECTS it ("did
@@ -144,6 +244,27 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// as D5/D9). Found by the DF2 fuzz run at "{!}". Not a Keyorix defect (v4 has no
 	// live caller). Keyed on the v3 flow-ws error alone.
 	"v3-rejects:flow-ws": true,
+
+	// A tag (`!`, `!local`) on an EMPTY node inside a FLOW SEQUENCE ("[!x]", "[0:
+	// !]", "[a: !x]", "[1: !]"). v3.0.5 REJECTS ("did not find expected ',' or ']'")
+	// -- its flow scanner cannot handle a tag with no node content before the
+	// separator; v4.0.0 ACCEPTS, resolving the tagged-empty node to "". A tag on a
+	// NON-empty flow scalar ("[0: !t 1]") is accepted by BOTH, so only the
+	// tagged-EMPTY-in-flow case splits. Found by the DF3 struct fuzzer at
+	// "0: [0: !0000000]". Same v4-lenient flow family as D11 ("{!}"), different
+	// container and error. v4 accepts what v3 rejects (the security-relevant
+	// direction) but benignly (empty-string value). Not a Keyorix defect (v4 has no
+	// live caller); a forward-looking flow-leniency migration note. Keyed on the v3
+	// error substring "',' or ']'" alone.
+	"v3-rejects:flow-seq-tagged-empty": true,
+
+	// An EMPTY key/node in FLOW context ("[: 1]"). v3.0.5 REJECTS ("did not find
+	// expected node content"); v4.0.0 ACCEPTS it as a null-keyed single-pair map
+	// element. The flow-context analogue of D2 (block empty-implicit-key). Found by
+	// the DF3 fuzz run. v4 accepts what v3 rejects (benign — a null key). Not a
+	// Keyorix defect (v4 has no live caller); a forward-looking flow-leniency
+	// migration note. Keyed on the v3 error "did not find expected node content".
+	"v3-rejects:flow-node-content": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -293,12 +414,14 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		if !yamlV4ExpectedDiff[class] {
 			t.Fatalf("empty-implicit-key class must be listed (tolerated)")
 		}
-		// RED: a DIFFERENT v3 syntax rejection must not be silenced by this class.
-		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected node content"}, nil)
+		// RED: a DIFFERENT v3 syntax rejection must not be silenced by this class and
+		// must stay the untolerated generic :syntax (use a directive error, which is
+		// not one of the specifically-classed flow/tag/key messages).
+		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected '-' indicator"}, nil)
 		if other == "v3-rejects:empty-implicit-key" {
 			t.Fatalf("an unrelated v3 syntax rejection was wrongly absorbed into empty-implicit-key")
 		}
-		if yamlV4ExpectedDiff[other] {
+		if other != "v3-rejects:syntax" || yamlV4ExpectedDiff[other] {
 			t.Fatalf("the generic syntax split (%q) must NOT be tolerated", other)
 		}
 		t.Logf("oracle-2 empty-implicit-key gating proven: ':' tolerated; other syntax splits still fail (%q)", other)
@@ -489,6 +612,255 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		t.Logf("oracle-3 negative-zero gating proven")
 	}
 
+	// ---- Oracle 3 class gating: non-specific `!` tag on a NON-empty scalar (D12) ----
+	// The DF2 leftover #1: generalise D1 from the empty scalar to a non-empty one.
+	{
+		for _, tc := range []struct {
+			in     string
+			wantV3 any
+			wantV4 any
+		}{
+			{"! 00", 0, "00"},
+			{"! true", true, "true"},
+			{"! null", nil, "null"},
+			{"! 1.5", 1.5, "1.5"},
+		} {
+			var v3v, v4v any
+			if err := v3yaml.Unmarshal([]byte(tc.in), &v3v); err != nil {
+				t.Fatalf("%q: v3 unmarshal: %v", tc.in, err)
+			}
+			if err := v4yaml.Unmarshal([]byte(tc.in), &v4v); err != nil {
+				t.Fatalf("%q: v4 unmarshal: %v", tc.in, err)
+			}
+			if !reflect.DeepEqual(v3v, tc.wantV3) || !reflect.DeepEqual(v4v, tc.wantV4) {
+				t.Fatalf("precondition %q: want v3=%#v v4=%#v, got v3=%#v v4=%#v", tc.in, tc.wantV3, tc.wantV4, v3v, v4v)
+			}
+			class := classifyYAMLV4ValueSplit([]byte(tc.in), v3v, v4v)
+			if class != "nonspecific-tag-nonempty-scalar" {
+				t.Fatalf("%q: want class nonspecific-tag-nonempty-scalar, got %q", tc.in, class)
+			}
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("nonspecific-tag-nonempty-scalar must be listed (tolerated)")
+			}
+		}
+		// RED #1: a genuine int-vs-string mismatch where the string does NOT resolve
+		// (in v3) to the int must stay value-mismatch (v3 int 5 vs v4 string "6").
+		bad := classifyYAMLV4ValueSplit([]byte("x: ! 5"), map[string]any{"x": 5}, map[string]any{"x": "6"})
+		if bad != "value-mismatch" {
+			t.Fatalf("a non-resolving int-vs-string diff must stay value-mismatch, got %q", bad)
+		}
+		// RED #2: the exact D12 shape but WITHOUT a non-specific `!` tag in the input
+		// must NOT be absorbed (scoping gate) -- stays value-mismatch.
+		noTag := classifyYAMLV4ValueSplit([]byte("x: 00"), map[string]any{"x": 0}, map[string]any{"x": "00"})
+		if noTag != "value-mismatch" {
+			t.Fatalf("the D12 value shape WITHOUT a `!` tag must stay value-mismatch, got %q", noTag)
+		}
+		// GREEN scoping: the same shape WITH a `!` tag is tolerated.
+		withTag := classifyYAMLV4ValueSplit([]byte("x: ! 00"), map[string]any{"x": 0}, map[string]any{"x": "00"})
+		if withTag != "nonspecific-tag-nonempty-scalar" {
+			t.Fatalf("the D12 shape WITH a `!` tag must be tolerated, got %q", withTag)
+		}
+		// The empty-scalar D1 case must still class as the ORIGINAL class, not D12.
+		empty := classifyYAMLV4ValueSplit([]byte("x: !"), map[string]any{"x": nil}, map[string]any{"x": ""})
+		if empty != "nonspecific-tag-empty-scalar" {
+			t.Fatalf("the empty `!` case must stay nonspecific-tag-empty-scalar, got %q", empty)
+		}
+		t.Logf("oracle-3 D12 gating proven: `! <scalar>` tolerated; non-resolving/untagged diffs still fail; D1 unchanged")
+	}
+
+	// ---- Oracle 3 class gating: nonspecific-tag in a KEY position (D17 structural) ----
+	{
+		for _, in := range []string{"! : 00", "! 00 : x"} {
+			var v3v, v4v any
+			if err := v3yaml.Unmarshal([]byte(in), &v3v); err != nil {
+				t.Fatalf("%q: v3 unmarshal: %v", in, err)
+			}
+			if err := v4yaml.Unmarshal([]byte(in), &v4v); err != nil {
+				t.Fatalf("%q: v4 unmarshal: %v", in, err)
+			}
+			class := classifyYAMLV4ValueSplit([]byte(in), v3v, v4v)
+			if class != "nonspecific-tag-structural" {
+				t.Fatalf("%q: want class nonspecific-tag-structural, got %q (v3=%#v v4=%#v)", in, class, v3v, v4v)
+			}
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("nonspecific-tag-structural must be tolerated")
+			}
+		}
+		// RED: a genuine key-set divergence must NOT be absorbed by nonspecificTagEq.
+		if nonspecificTagEq(map[string]any{"a": 1}, map[string]any{"b": 1}) {
+			t.Fatalf("different keys (a vs b, neither a tag reparse) must NOT be equated")
+		}
+		// RED: a value diff that is not a tag reparse must NOT be equated.
+		if nonspecificTagEq(map[string]any{"a": 5}, map[string]any{"a": "6"}) {
+			t.Fatalf("v3 5 vs v4 \"6\" (reparse 6 != 5) must NOT be equated")
+		}
+		// RED: the structural class must NOT fire without a `!` tag in the input.
+		noTag := classifyYAMLV4ValueSplit([]byte("a: 1"), map[any]any{nil: 0}, map[string]any{"": "00"})
+		if noTag == "nonspecific-tag-structural" {
+			t.Fatalf("the structural class must require a `!` tag in the input, got %q", noTag)
+		}
+		t.Logf("oracle-3 D17 structural gating proven: `!`-tag KEY divergence tolerated; genuine key/value diffs and untagged inputs still fail")
+	}
+
+	// ---- Oracle 3 class gating: flow-map colon-no-space (D23) ----
+	{
+		in := []byte("0: {0:} ")
+		var v3v, v4v any
+		if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+			t.Fatal(err)
+		}
+		if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+			t.Fatal(err)
+		}
+		cb3, _ := v3yaml.Marshal(v3v)
+		cb4, _ := v3yaml.Marshal(v4v)
+		if reflect.DeepEqual(cb3, cb4) {
+			t.Fatalf("precondition: `0: {0:}` v3/v4 must disagree (v3=%q v4=%q)", cb3, cb4)
+		}
+		if class := classifyYAMLV4ValueSplit(in, v3v, v4v); class != "flow-map-colon-nospace" || !yamlV4ExpectedDiff[class] {
+			t.Fatalf("`0: {0:}` must class as the tolerated flow-map-colon-nospace, got %q", class)
+		}
+		// RED: an input without a flow colon-no-space must not be recognised.
+		if isFlowColonNoSpaceDivergence([]byte("a: 1"), map[string]any{"a": 1}, map[string]any{"a": 2}) {
+			t.Fatalf("an input without `:}`/`:,` must not be recognised as flow-map-colon-nospace")
+		}
+		t.Logf("oracle-3 D23 flow-map-colon gating proven")
+	}
+
+	// ---- Oracle 3 class gating: `<<` merge-key handling (D22) ----
+	{
+		for _, in := range []string{"a: <<", "- <<", "k: <<"} {
+			var v3v, v4v any
+			if err := v3yaml.Unmarshal([]byte(in), &v3v); err != nil {
+				t.Fatalf("%q: v3 unmarshal: %v", in, err)
+			}
+			if err := v4yaml.Unmarshal([]byte(in), &v4v); err != nil {
+				t.Fatalf("%q: v4 unmarshal: %v", in, err)
+			}
+			cb3, _ := v3yaml.Marshal(v3v)
+			cb4, _ := v3yaml.Marshal(v4v)
+			if reflect.DeepEqual(cb3, cb4) {
+				t.Fatalf("precondition %q: v3/v4 must disagree (v3=%q v4=%q)", in, cb3, cb4)
+			}
+			class := classifyYAMLV4ValueSplit([]byte(in), v3v, v4v)
+			if class != "merge-key-handling" {
+				t.Fatalf("%q: want class merge-key-handling, got %q (v3=%#v v4=%#v)", in, class, v3v, v4v)
+			}
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("merge-key-handling must be tolerated")
+			}
+		}
+		// RED: a genuine divergence that merely contains `<<` inside a quoted string
+		// (so quoting does not change anything causal) must NOT be absorbed.
+		if isMergeKeyDivergence([]byte("x: 1"), map[string]any{"x": 1}) {
+			t.Fatalf("an input without a bare `<<` must not be recognised as merge-key")
+		}
+		t.Logf("oracle-3 D22 merge-key gating proven: `<<` drop tolerated causally; non-merge inputs still fail")
+	}
+
+	// ---- Oracle 2 class gating: v3 rejects a directive (D21) ----
+	{
+		in := []byte("|\n%0")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: `|\\n%%0` must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		if class := classifyYAMLV4Split(err3, err4); class != "v3-rejects:directive" || !yamlV4ExpectedDiff[class] {
+			t.Fatalf("`|\\n%%0` split must class as the tolerated v3-rejects:directive, got %q", class)
+		}
+		t.Logf("oracle-2 directive gating proven")
+	}
+
+	// ---- Oracle 2 class gating: truncated construct, v3 rejects EOS (D20) ----
+	{
+		in := []byte("|\n\"")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: `|\\n\"` must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:unexpected-eos" {
+			t.Fatalf("`|\\n\"` split must class as v3-rejects:unexpected-eos, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("unexpected-eos class must be tolerated")
+		}
+		t.Logf("oracle-2 unexpected-eos gating proven")
+	}
+
+	// ---- Oracle 3 class gating: -0 in a KEY position (D19 structural) ----
+	{
+		in := []byte("-0:")
+		var v3v, v4v any
+		if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+			t.Fatal(err)
+		}
+		if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+			t.Fatal(err)
+		}
+		cb3, _ := v3yaml.Marshal(v3v)
+		cb4, _ := v3yaml.Marshal(v4v)
+		if reflect.DeepEqual(cb3, cb4) {
+			t.Fatalf("precondition: `-0:` v3/v4 must disagree (v3=%q v4=%q)", cb3, cb4)
+		}
+		class := classifyYAMLV4ValueSplit(in, v3v, v4v)
+		if class != "negative-zero-structural" {
+			t.Fatalf("`-0:` must class as negative-zero-structural, got %q (v3=%#v v4=%#v)", class, v3v, v4v)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("negative-zero-structural must be tolerated")
+		}
+		// RED: a non-negzero key diff must NOT be absorbed; and without `-0` in input.
+		if negZeroEq(map[any]any{1: nil}, map[any]any{2: nil}) {
+			t.Fatalf("a genuine key diff (1 vs 2) must not be equated by negZeroEq")
+		}
+		notNeg := classifyYAMLV4ValueSplit([]byte("x: 1"), map[string]any{"x": 1}, map[string]any{"x": float64(1)})
+		if notNeg == "negative-zero-structural" {
+			t.Fatalf("a non-negzero int-vs-float diff must not class as negative-zero-structural, got %q", notNeg)
+		}
+		t.Logf("oracle-3 D19 negzero-structural gating proven: `-0:` key tolerated; genuine diffs still fail")
+	}
+
+	// ---- Oracle 3 class gating: colon inside an anchor name (D18) ----
+	{
+		for _, in := range []string{"&a:b", "&00:00000", "k: &00:00000"} {
+			var v3v, v4v any
+			if err := v3yaml.Unmarshal([]byte(in), &v3v); err != nil {
+				t.Fatalf("%q: v3 unmarshal: %v", in, err)
+			}
+			if err := v4yaml.Unmarshal([]byte(in), &v4v); err != nil {
+				t.Fatalf("%q: v4 unmarshal: %v", in, err)
+			}
+			cb3, _ := v3yaml.Marshal(v3v)
+			cb4, _ := v3yaml.Marshal(v4v)
+			if reflect.DeepEqual(cb3, cb4) {
+				t.Fatalf("precondition %q: v3 and v4 must DISAGREE (v3=%q v4=%q)", in, cb3, cb4)
+			}
+			class := classifyYAMLV4ValueSplit([]byte(in), v3v, v4v)
+			if class != "anchor-name-colon-boundary" {
+				t.Fatalf("%q: want class anchor-name-colon-boundary, got %q (v3=%#v v4=%#v)", in, class, v3v, v4v)
+			}
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("anchor-name-colon-boundary must be tolerated")
+			}
+		}
+		// RED: a genuine divergence that merely CONTAINS an anchor (no colon-in-name
+		// cause) must NOT be absorbed. `&a 1` vs a forced different value: stripping
+		// `&a` does not make them agree.
+		if isAnchorColonBoundaryDivergence([]byte("x: &a 1"), map[string]any{"x": 1}, map[string]any{"x": 2}) {
+			t.Fatalf("a genuine value diff that merely contains an anchor must NOT be recognised")
+		}
+		// RED: an input with no anchor cannot be this class.
+		if isAnchorColonBoundaryDivergence([]byte("a: 1"), map[string]any{"a": 1}, map[string]any{"a": 2}) {
+			t.Fatalf("an input with no anchor must not be recognised as anchor-colon")
+		}
+		t.Logf("oracle-3 D18 anchor-colon gating proven: `&a:b`-style tolerated causally; genuine/anchorless diffs still fail")
+	}
+
 	// ---- Oracle 2 class gating: flow-context whitespace leniency ----
 	{
 		in := []byte("{!}")
@@ -506,6 +878,55 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("flow-ws class must be listed (tolerated)")
 		}
 		t.Logf("oracle-2 flow-ws gating proven")
+	}
+
+	// ---- Oracle 2 class gating: tagged-empty node in a flow sequence (D15) ----
+	{
+		for _, in := range []string{"[!x]", "[0: !]", "[a: !x]", "[1: !]"} {
+			var v3v, v4v any
+			err3 := v3yaml.Unmarshal([]byte(in), &v3v)
+			err4 := v4yaml.Unmarshal([]byte(in), &v4v)
+			if err3 == nil || err4 != nil {
+				t.Fatalf("precondition %q: must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", in, err3, err4)
+			}
+			class := classifyYAMLV4Split(err3, err4)
+			if class != "v3-rejects:flow-seq-tagged-empty" {
+				t.Fatalf("%q split must class as v3-rejects:flow-seq-tagged-empty, got %q", in, class)
+			}
+			if !yamlV4ExpectedDiff[class] {
+				t.Fatalf("flow-seq-tagged-empty class must be listed (tolerated)")
+			}
+		}
+		// A tag on a NON-empty flow scalar is accepted by BOTH (no split).
+		var w1, w2 any
+		if v3yaml.Unmarshal([]byte("[0: !t 1]"), &w1) != nil || v4yaml.Unmarshal([]byte("[0: !t 1]"), &w2) != nil {
+			t.Fatalf("precondition: a tag on a NON-empty flow scalar must be accepted by BOTH")
+		}
+		t.Logf("oracle-2 flow-seq-tagged-empty gating proven: tagged-EMPTY-in-flow tolerated; tag-on-non-empty agrees")
+	}
+
+	// ---- Oracle 2 class gating: empty key in a flow sequence (D16) ----
+	{
+		in := []byte("[: 1]")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: '[: 1]' must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:flow-node-content" {
+			t.Fatalf("'[: 1]' split must class as v3-rejects:flow-node-content, got %q", class)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("flow-node-content class must be listed (tolerated)")
+		}
+		// RED: a generic v3 syntax rejection must still fall through to :syntax (untolerated).
+		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected directive"}, nil)
+		if other != "v3-rejects:syntax" || yamlV4ExpectedDiff[other] {
+			t.Fatalf("a generic v3 syntax error must stay the untolerated :syntax class, got %q", other)
+		}
+		t.Logf("oracle-2 flow-node-content gating proven: '[: 1]' tolerated; generic syntax still fails")
 	}
 }
 
