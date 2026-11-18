@@ -30,6 +30,11 @@ func TestSuspendedActorRefusedAtEntryPoints(t *testing.T) {
 		"SetUserRoles": func(c *KeyorixCore) error {
 			return c.SetUserRoles(context.Background(), actor, 2, []uint{7}, Scope{}, false)
 		},
+		// Refused before the grant-target lookup (ERRMAP-TAILS-NOV-4), so a suspended
+		// actor learns nothing about which user ids exist.
+		"AssignUserRole": func(c *KeyorixCore) error {
+			return c.AssignUserRole(context.Background(), actor, 2, 7, Scope{}, false)
+		},
 		"AssignPermissionToRole": func(c *KeyorixCore) error {
 			return c.AssignPermissionToRole(context.Background(), actor, 7, 3, false)
 		},
