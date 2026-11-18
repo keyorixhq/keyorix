@@ -458,11 +458,18 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	}
 	c.LogUserCreated(ctx, 0, user.ID, user.Username) // self-service: the invitee (not yet an account) is consuming their own invite link
 
+	// From here on the account exists, so every step runs through
+	// runInvitationAcceptStep (#4409): a panic in it comes back as that step's
+	// error and is undone like one. Recovered further up (completeValidSetupToken),
+	// it skipped abandonInvitationAccept and left a live account that could log in.
+
 	// Consume the token (single-use, atomic) now that the account exists. tok was
 	// already inspected by CompleteSetup, so consume it directly (no re-lookup).
 	// A failure here removes the account just created (#155's retry of the SAME link
 	// must not then hit the "account already exists" guard above).
-	if err := c.consumeInspectedToken(ctx, tok, SetupPurposeInvitationAccept); err != nil {
+	if err := runInvitationAcceptStep(invitationAcceptStepConsume, func() error {
+		return c.consumeInspectedToken(ctx, tok, SetupPurposeInvitationAccept)
+	}); err != nil {
 		return nil, c.abandonInvitationAccept(ctx, inv, user, invitationAcceptStepConsume, err)
 	}
 
@@ -474,7 +481,9 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	// invitation to accepted: if any grant fails, the invitation stays pending
 	// (resendable / revocable) rather than being falsely marked accepted with no
 	// grants behind it.
-	if err := c.applyInvitationGrants(ctx, inv, user.ID); err != nil {
+	if err := runInvitationAcceptStep(invitationAcceptStepGrant, func() error {
+		return c.applyInvitationGrants(ctx, inv, user.ID)
+	}); err != nil {
 		// Session O follow-up (2026-09-29, coordinator hand-found candidate): the
 		// setup token that led here is already spent (single-use, by design) --
 		// without reverting the account, the invitee is stuck permanently: the SAME
@@ -501,7 +510,11 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	now := c.now()
 	inv.State = InvitationAccepted
 	inv.AcceptedAt = &now
-	ok, uerr := c.storage.UpdateProjectInvitation(ctx, inv)
+	var ok bool
+	uerr := runInvitationAcceptStep(invitationAcceptStepAccept, func() (err error) {
+		ok, err = c.storage.UpdateProjectInvitation(ctx, inv)
+		return err
+	})
 	if uerr != nil {
 		// The grants are live but the invitation still reads pending: undo them and
 		// the account, like a failed grant, so a resend starts clean. If the write
@@ -516,7 +529,7 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		// membership/role(s) just granted so a revoked invitation can't leave a
 		// live grant behind, then fail closed — no session is minted below.
 		reverted := "reverted the grant(s) just made"
-		if !c.revokeInvitationGrants(ctx, inv, user.ID) {
+		if !c.revertInvitationAcceptGrants(ctx, inv, user.ID) {
 			reverted = "could NOT revert every grant just made (MANUAL CLEANUP REQUIRED, see invitation.accept_race_revoke_failed)"
 		}
 		// The account created for this accept goes too (AUDIT-503-MAP-1): with no grant,
@@ -555,6 +568,37 @@ const (
 	invitationAcceptStepAccept  = "marking the invitation accepted"
 )
 
+// runInvitationAcceptStep runs one step of completeInvitationAccept that comes
+// after the account was created and returns its error, or, when it panics, an
+// error naming the step (#4409), the way mintLoginSession answers a panic in the
+// session insert. The caller then undoes the accept as it does for the error.
+// Whatever the step wrote before the panic is what the same write's error leaves.
+func runInvitationAcceptStep(step string, fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: invitation accept: %s panicked after the account was created; undoing the accept: %v\n%s",
+				step, r, debug.Stack())
+			err = fmt.Errorf("%s: %s panicked: %v", i18n.T("ErrorStorageFailed", nil), step, r)
+		}
+	}()
+	return fn()
+}
+
+// revertInvitationAcceptGrants is revokeInvitationGrants for the undo paths of
+// completeInvitationAccept: a panic in it counts as a revert that did not
+// complete (reported MANUAL CLEANUP), so the account is still removed after it.
+func (c *KeyorixCore) revertInvitationAcceptGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) (complete bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: invitation %d: reverting the grants of user %d panicked: %v\n%s", inv.ID, userID, r, debug.Stack())
+			c.auditProjectScopedFailed(ctx, eventInvitationRaceRevokeFailed, userID, inv.ProjectID,
+				fmt.Sprintf("reverting the grants made to user %d by invitation %d panicked: %v — MANUAL CLEANUP REQUIRED", userID, inv.ID, r))
+			complete = false
+		}
+	}()
+	return c.revokeInvitationGrants(ctx, inv, userID)
+}
+
 // ErrInvitationAcceptAbandoned is returned (wrapped) by an invitation accept that
 // failed after it had created the account: the account was removed again and any
 // grant already made reverted (abandonInvitationAccept). The error text says what
@@ -572,7 +616,7 @@ var ErrInvitationAcceptAbandoned = errors.New("invitation accept failed after th
 func (c *KeyorixCore) abandonInvitationAccept(ctx context.Context, inv *models.ProjectInvitation, user *models.User, step string, cause error) error {
 	reverted := true
 	if step != invitationAcceptStepConsume { // nothing is granted before the token is spent
-		reverted = c.revokeInvitationGrants(ctx, inv, user.ID)
+		reverted = c.revertInvitationAcceptGrants(ctx, inv, user.ID)
 	}
 	removed := c.removeInvitationAcceptAccount(ctx, inv, user,
 		fmt.Sprintf("%s failed for %s (user %d): %s", step, inv.Email, user.ID, invitationAcceptCause(cause)))
@@ -604,9 +648,12 @@ func (c *KeyorixCore) abandonInvitationAccept(ctx context.Context, inv *models.P
 // for itself, once that accept can no longer succeed, and reports whether it could.
 // A failed removal leaves a live account that nothing grants and nothing will
 // complete, so it is reported loudly (invitation.accept_orphaned_account_cleanup_failed,
-// MANUAL CLEANUP REQUIRED) rather than swallowed. what says why the accept ended.
+// MANUAL CLEANUP REQUIRED) rather than swallowed, and so is a panic in it (#4409).
+// what says why the accept ended.
 func (c *KeyorixCore) removeInvitationAcceptAccount(ctx context.Context, inv *models.ProjectInvitation, user *models.User, what string) bool {
-	derr := c.storage.DeleteUser(ctx, user.ID)
+	derr := runInvitationAcceptStep("removing the account", func() error {
+		return c.storage.DeleteUser(ctx, user.ID)
+	})
 	if derr == nil {
 		return true
 	}
