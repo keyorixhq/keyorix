@@ -60,21 +60,23 @@ func v5ext3Ops() []opSpec {
 // ---- bulk-delete + bulk-rename ----
 //
 // POST /api/v1/projects/{id}/secrets/bulk-delete:
-//   Router gate: RequireScopedPermission(permSecretsDelete, projectScope)
-//   Core gate: BulkDeleteSecrets → bulkDeleteOneSecret → DeleteSecretWithPermissionCheck
-//     → EnforceSecretOwnerPermission → CheckSecretPermission(PermissionOwner) with
-//     RBAC fallback for secrets.delete.
-//   Model: secrets.delete @ project.
-//   restOK: the fixture secretID must appear in the "deleted" list.
-//   core: machine → errNotAuthzLayer; user → check Deleted list.
+//
+//	Router gate: RequireScopedPermission(permSecretsDelete, projectScope)
+//	Core gate: BulkDeleteSecrets → bulkDeleteOneSecret → DeleteSecretWithPermissionCheck
+//	  → EnforceSecretOwnerPermission → CheckSecretPermission(PermissionOwner) with
+//	  RBAC fallback for secrets.delete.
+//	Model: secrets.delete @ project.
+//	restOK: the fixture secretID must appear in the "deleted" list.
+//	core: machine → errNotAuthzLayer; user → check Deleted list.
 //
 // POST /api/v1/projects/{id}/secrets/bulk-rename:
-//   Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
-//   Core gate: BulkRenameSecrets → EnforceSecretWritePermission → CheckSecretPermission
-//     with RBAC fallback for secrets.write.
-//   Model: secrets.write @ project.
-//   restOK: jsonNumberPositive(b, "renamed") — renamed > 0.
-//   core: machine → errNotAuthzLayer; user → check Renamed > 0.
+//
+//	Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
+//	Core gate: BulkRenameSecrets → EnforceSecretWritePermission → CheckSecretPermission
+//	  with RBAC fallback for secrets.write.
+//	Model: secrets.write @ project.
+//	restOK: jsonNumberPositive(b, "renamed") — renamed > 0.
+//	core: machine → errNotAuthzLayer; user → check Renamed > 0.
 func bulkSecretDeleteRenameOps() []opSpec {
 	return []opSpec{
 		{
@@ -144,24 +146,26 @@ func bulkSecretDeleteRenameOps() []opSpec {
 // ---- bulk-suspend + resume-all ----
 //
 // POST /api/v1/projects/{id}/secrets/suspend-all:
-//   Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
-//   Core gate: SuspendProjectSecretsWithOptions → per-item EnforceSecretWritePermission
-//     with RBAC fallback for secrets.write.
-//   Model: secrets.write @ project.
-//   restOK: jsonNumberPositive(b, "suspended") — at least one secret was suspended.
-//   Positive control calibration: the fixture always has active secrets (pp.secretID
-//   and pp.secrets[1..3]), so an admin with secrets.write suspends n > 0.
-//   core: machine → errNotAuthzLayer; user → n==0 → errItemRefused.
+//
+//	Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
+//	Core gate: SuspendProjectSecretsWithOptions → per-item EnforceSecretWritePermission
+//	  with RBAC fallback for secrets.write.
+//	Model: secrets.write @ project.
+//	restOK: jsonNumberPositive(b, "suspended") — at least one secret was suspended.
+//	Positive control calibration: the fixture always has active secrets (pp.secretID
+//	and pp.secrets[1..3]), so an admin with secrets.write suspends n > 0.
+//	core: machine → errNotAuthzLayer; user → n==0 → errItemRefused.
 //
 // POST /api/v1/projects/{id}/secrets/resume-all:
-//   Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
-//   Core gate: ResumeProjectSecrets → per-item EnforceSecretWritePermission with
-//     RBAC fallback for secrets.write.
-//   Model: secrets.write @ project.
-//   restOK: jsonNumberPositive(b, "resumed") — at least one secret was resumed.
-//   Positive control calibration: pp.suspendedSecretID is pre-suspended in the
-//   V5EXT3 seed (world_test.go), so an admin with secrets.write resumes n ≥ 1.
-//   core: machine → errNotAuthzLayer; user → n==0 → errItemRefused.
+//
+//	Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
+//	Core gate: ResumeProjectSecrets → per-item EnforceSecretWritePermission with
+//	  RBAC fallback for secrets.write.
+//	Model: secrets.write @ project.
+//	restOK: jsonNumberPositive(b, "resumed") — at least one secret was resumed.
+//	Positive control calibration: pp.suspendedSecretID is pre-suspended in the
+//	V5EXT3 seed (world_test.go), so an admin with secrets.write resumes n ≥ 1.
+//	core: machine → errNotAuthzLayer; user → n==0 → errItemRefused.
 func bulkSecretSuspendResumeOps() []opSpec {
 	return []opSpec{
 		{

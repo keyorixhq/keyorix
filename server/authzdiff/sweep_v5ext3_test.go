@@ -129,11 +129,11 @@ func curatedV5ext3Variations(spec opSpec, t tgt) []struct {
 	have := maskOf(havePerms)
 
 	cvs := []pv{
-		{pkCustom, variation{Mask: have, Route: "user", Scope: here}},                           // holds perm(s)@here → allowed
-		{pkCustom, variation{Mask: allPerms &^ gatePerm, Route: "user", Scope: here}},           // lacks gate perm → denied
-		{pkCustom, variation{Mask: have, Route: "user", Scope: other}},                          // holds only at other → denied here
-		{pkCustom, variation{Mask: have, Route: "group", Scope: here}},                          // via live group → allowed
-		{pkMachine, variation{Mask: allPerms &^ gatePerm, Route: "machine", Scope: here}},       // machine lacks perm → denied (router 403)
+		{pkCustom, variation{Mask: have, Route: "user", Scope: here}},                     // holds perm(s)@here → allowed
+		{pkCustom, variation{Mask: allPerms &^ gatePerm, Route: "user", Scope: here}},     // lacks gate perm → denied
+		{pkCustom, variation{Mask: have, Route: "user", Scope: other}},                    // holds only at other → denied here
+		{pkCustom, variation{Mask: have, Route: "group", Scope: here}},                    // via live group → allowed
+		{pkMachine, variation{Mask: allPerms &^ gatePerm, Route: "machine", Scope: here}}, // machine lacks perm → denied (router 403)
 	}
 	// Machine+holds is only safe for bulk.delete (CLI bypass path, see note above).
 	if spec.name == "bulk.delete" {
