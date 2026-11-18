@@ -234,7 +234,6 @@ func ugLocalConfig(dbPath string) *config.Config {
 type ugHooks struct {
 	afterGenerate func(db *sql.DB) error
 	afterMigrate  func(db *sql.DB) error
-	beforeRerun   func(db *sql.DB) error
 	// bareInterrupt interrupts migrateSQLite outside withMigrationLock's
 	// BEGIN EXCLUSIVE, a shape no production boot has. Only the red-proof that
 	// documents the artefact sets it; the fuzz target never does.
