@@ -25,7 +25,7 @@ import (
 // (plants_test.go); an uncalibrated binding fails a strict run, so none can
 // silently empty the oracle.
 func v8Ops() []opSpec {
-	return append(v8AccessReviewOps(), v8RiskExceptionOps()...)
+	return append(append(v8AccessReviewOps(), v8RiskExceptionOps()...), v8RiskExceptionApproveOps()...)
 }
 
 // ---- family 1: access review (open recertification campaign) ----
@@ -110,6 +110,54 @@ func v8RiskExceptionOps() []opSpec {
 					"title": "synthetic-title", "category": "other", "reference": "synthetic-ref",
 					"justification": "synthetic-justification-text", "expires_at": riskExceptionExpiry().Format(time.RFC3339),
 				}}
+			},
+		},
+	}
+}
+
+// ---- family 2b: risk exceptions (approve a pending exception, dual control) ----
+//
+// POST /api/v1/risk-exceptions/{id}/approve approves a pending risk exception.
+// The router gates it with RequirePermission(permSystemWrite) at GLOBAL scope
+// (server/http/router.go:1265), the SAME gate as create. core.ApproveRiskException
+// performs no permission check (matrix row `core_refusal:"none"`); it enforces
+// only the dual-control business rules (break_glass of risk governance, #170/#1524):
+//   - the exception must be pending (not revoked / expired / already approved);
+//   - a MACHINE credential can never approve (human-only dual control);
+//   - the actor must NOT be the exception's creator (creator != approver);
+//   - for category=="sod" the reference must still be a LIVE SoD violation.
+//
+// The fixture (world_test.go) leaves ONE pending, category=="other" exception
+// created by a DEDICATED non-probed user (riskCreatorID), so for every principal
+// the binding probes the three business preconditions hold by construction (the
+// exception is pending in every fresh leg, no probed principal is the creator,
+// and a machine never holds system.write@global so it is model-denied before the
+// human-only rule could matter). The only authorization that varies by principal
+// is therefore the router's system.write@global gate — a clean global-scope
+// router-gate differential identical in shape to riskexception.create, core leg
+// excluded (ID-2). The global admin holds the install-wide admin role
+// (bypasses_permission_checks ⇒ system.write@global) and is a different human, so
+// the positive control approves. No gRPC surface (matrix grpc:null).
+//
+// Scope of this oracle: it checks the system.write@global GATE that decides who
+// may approve a risk exception. It does NOT model the dual-control state machine
+// (creator!=approver, human-only, pending/expired/revoked preconditions) nor the
+// SoD-live-violation re-validation — those are enforced identically on every
+// transport (core_refusal:"none" ⇒ the single core path both transports reach)
+// and are left analyzed-not-bound, exactly as the campaign/attestation state
+// machines are for access review.
+func v8RiskExceptionApproveOps() []opSpec {
+	return []opSpec{
+		{
+			name: "riskexception.approve", row: "ApproveRiskException", targets: []tgt{tGlobal},
+			req: func(*fixtures, tgt, byte) requirement {
+				return requirement{globalPerms: []string{"system.write"}}
+			},
+			core: func(ctx context.Context, lg *leg, p *principal, _ tgt, _ byte) error {
+				return lg.c.ApproveRiskException(ctx, p.userID, p.isMachine(), lg.fx.pendingRiskExceptionID)
+			},
+			rest: func(fx *fixtures, _ tgt, _ byte) restReq {
+				return restReq{http.MethodPost, fmt.Sprintf("/api/v1/risk-exceptions/%d/approve", fx.pendingRiskExceptionID), nil}
 			},
 		},
 	}
