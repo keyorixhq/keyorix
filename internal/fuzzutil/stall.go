@@ -79,7 +79,7 @@ func logStall(frozen time.Duration) {
 	if path == "" {
 		return
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // #nosec G304 G703 -- operator-set test-rig log path, never reachable from fuzz input
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 G703 -- operator-set test-rig log path, never reachable from fuzz input
 	if err != nil {
 		return
 	}
@@ -121,7 +121,7 @@ func frozenSince(start time.Time) time.Duration {
 	var total time.Duration
 	stallMu.Lock()
 	n := min(stallN, stallRing)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		total += overlap(stallGaps[i].from, stallGaps[i].to)
 	}
 	stallMu.Unlock()
