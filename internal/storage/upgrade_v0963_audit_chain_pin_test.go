@@ -34,7 +34,7 @@ func TestUpgradeV0963_AuditChainVerifiesAfterMigration_SQLite(t *testing.T) {
 		t.Fatalf("loading %s snapshot: %v", v0963, err)
 	}
 	dbPath := filepath.Join(t.TempDir(), "upgrade.db")
-	if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
+	if err := os.WriteFile(dbPath, tpl.image, 0o600); err != nil {
 		t.Fatalf("copying template: %v", err)
 	}
 	raw, _, closeRaw := ugOpenRaw(t, dbPath)
@@ -82,7 +82,7 @@ func TestUpgradeV0963_AuditChainVerifiesAfterMigration_SQLite_CalibrationTampere
 		t.Fatalf("loading %s snapshot: %v", v0963, err)
 	}
 	dbPath := filepath.Join(t.TempDir(), "upgrade.db")
-	if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
+	if err := os.WriteFile(dbPath, tpl.image, 0o600); err != nil {
 		t.Fatalf("copying template: %v", err)
 	}
 	raw, _, closeRaw := ugOpenRaw(t, dbPath)

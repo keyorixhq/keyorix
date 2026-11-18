@@ -44,6 +44,25 @@ class reaches the failing assertion.
 
 | D11 | `v3-rejects:flow-ws` | a tag/node in **flow context** lacking the whitespace v3 requires after it (`{!}` — a `!`-tagged empty node in a flow mapping) | **rejects** (`did not find expected whitespace or line break`) | **accepts** (lenient) | v4 accepts what v3 rejects — same flow/tag-leniency family as D5/D9, benign. **Not a Keyorix defect** (v4 has no live caller). | `classifyYAMLV4Split` — keyed on the v3 flow-ws error ALONE. |
 
+| D12 | `nonspecific-tag-nonempty-scalar` | the non-specific tag `!` applied to a **NON-empty** scalar (`! 00`, `! 123`, `! true`, `! null`, `! 1.5`, `a: ! 123`, `- ! 00`) | v3 **ignores** the `!` and applies its normal implicit schema (`! 00`→int `0`, `! true`→bool, `! null`→nil, `! 1.5`→float) | v4 treats `!` as forcing the failsafe **`!!str`** resolution and keeps the **raw string** (`"00"`, `"true"`, `"null"`, `"1.5"`) | The **generalisation of D1** from the empty scalar to any non-empty one (DF2 leftover #1). Same root cause: v4 honours the non-specific tag as `!!str`, v3 does not. `! abc` agrees (both `"abc"`) because `abc` resolves to a string in v3 anyway. The live caller (`gopkg.in/yaml.v3` v3.0.1) was verified byte-identical to v3.0.5 on every case here, so the v3 side is the reachable one. **Not a Keyorix defect** (v4 has no live caller); a forward-looking migration hazard (a config `key: ! 00` flips from int `0` to `"00"`). | `classifyYAMLV4ValueSplit` / `nonspecificTagNonEmptyScalarOnly` — recognised ONLY when every differing leaf is "v4 kept the raw string `s` and v3's value is exactly the v3 implicit resolution of `s`" AND the input carries a non-specific `!` tag; a non-resolving int-vs-string diff (v3 `5` vs v4 `"6"`) or the same shape WITHOUT a `!` tag stays `value-mismatch` and fails. |
+
+| D15 | `v3-rejects:flow-seq-tagged-empty` | a tag (`!`, `!local`) on an **empty** node inside a **flow sequence** (`[!x]`, `[0: !]`, `[a: !x]`, `[1: !]`) | **rejects** (`did not find expected ',' or ']'`) — v3's flow scanner cannot handle a tag with no node content before the separator | **accepts**, resolving the tagged-empty node to `""` | Found by the DF3 struct fuzzer at `0: [0: !0000000]`. A tag on a NON-empty flow scalar (`[0: !t 1]`) is accepted by BOTH, so only the tagged-EMPTY-in-flow case splits. Same v4-lenient flow family as D11 (`{!}`), different container/error. **v4 accepts what v3 rejects** (the security-relevant direction) but benignly. Not a Keyorix defect (v4 has no live caller); forward-looking flow-leniency migration note. | `classifyYAMLV4Split` — keyed on the v3 error substring `',' or ']'` alone. |
+| D16 | `v3-rejects:flow-node-content` | an **empty key/node** in **flow context** (`[: 1]`) | **rejects** (`did not find expected node content`) | **accepts** as a null-keyed single-pair map element | Found by the DF3 fuzz run. The flow-context analogue of D2 (block empty-implicit-key). **v4 accepts what v3 rejects** (benign — a null key). Not a Keyorix defect (v4 has no live caller); forward-looking flow-leniency migration note. | `classifyYAMLV4Split` — keyed on the v3 error `did not find expected node content`; a generic syntax error still falls through to the untolerated `:syntax`. |
+
+| D17 | `nonspecific-tag-structural` | the non-specific `!` tag re-resolution landing in a **KEY** position (`! : 00`, `! 00: x`) | produces a v3 key (nil / typed) — e.g. `{nil: 0}` | produces a v4 **raw-string** key — e.g. `{"": "00"}` | The **KEY-position generalisation of D1/D12**: same root cause (v4 honours `!` as `!!str`, v3 does not), but at a key, so v3 and v4 maps have different keys and the value-only walkers cannot pair entries (they would fall through to `value-mismatch`). Found by the DF3 struct fuzzer at `! : 00`. Recognised by `nonspecificTagEq`, which pairs map entries across the tag transformation at ANY position and still refuses a genuine diff (v3 `5` vs v4 `"6"`, or different keys neither of which is a tag reparse). Scoped to inputs with a `!` tag. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4ValueSplit`/`nonspecificTagEq` — red/green proves a genuine key/value diff and an untagged input both stay `value-mismatch`. |
+
+| D18 | `anchor-name-colon-boundary` | a `:` inside an **anchor name** (`&a:b`, `&00:00000`, `k: &00:00000`) | ends the anchor name at the `:` → `&a:b` decodes to the scalar `":b"` | absorbs the `:` into the name (anchor `a:b`) → the node is **empty (nil)** | Found by the DF3 struct fuzzer at `&00:00000`. BOTH accept but the decoded values differ. Same anchor-name-character family as D9 (`&!0000`), but here both accept and disagree on the value. Recognised **causally** by `isAnchorColonBoundaryDivergence`: stripping the anchor token makes the two libraries agree and leaves v3's value unchanged, proving the anchor-name extent is the sole cause — a genuine divergence that merely contains an anchor is never absorbed. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4ValueSplit`/`isAnchorColonBoundaryDivergence` — red/green proves a genuine value diff that contains an anchor, and an anchorless input, both stay `value-mismatch`. The flow-context combo (`[&a:b]`) is a compounded divergence left in the residual tail. |
+
+| D19 | `negative-zero-structural` | the `-0` int-vs-float divergence (D10) in a **KEY** position (`-0:`) | key is int `0` → `{0: null}` | key is float negative zero → `{-0.0: null}` | The KEY-position generalisation of D10, exactly as D17 generalises D1/D12: v3 and v4 resolve the key scalar to different types, so the maps do not align by key and the value-only walker falls through to `value-mismatch`. Found by the DF3 multi-doc fuzzer at `-0:`. Recognised by `negZeroEq` (pairs entries across the int-0/float-negzero transformation), scoped to inputs containing `-0`. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4ValueSplit`/`negZeroEq` — red/green proves a genuine key diff and a non-negzero int-vs-float both stay `value-mismatch`. |
+
+| D20 | `v3-rejects:unexpected-eos` | a truncated / unterminated construct — e.g. a block scalar followed by a lone `"` at column 0 (`|\n"`), read by v3 as an unterminated double-quoted scalar | **rejects** (`found unexpected end of stream`) | **accepts** (lenient on the truncated input) | Found by the DF3 fuzz run at `|\n"`. **v4 accepts what v3 rejects** (the migration-hazard direction, like D2/D3) but on malformed/truncated input. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4Split` — keyed on the v3 error `unexpected end of stream`. |
+
+| D21 | `v3-rejects:directive` | a `%`-introduced directive v3 rejects — e.g. under-indented block-scalar content `%0` (`|\n%0`) re-scanned by v3 as a document directive | **rejects** (`found unknown directive name`) | **accepts** (lenient) | Found by the DF3 fuzz run at `|\n%0`. Same v4-lenient direction as D20 (v3 re-scans under-indented block content as a doc-level token and rejects). Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4Split` — keyed on the v3 error substring `directive`. |
+
+| D22 | `merge-key-handling` | the `<<` merge-key indicator used where it is not a valid map-merge (`<<`, `a: <<`, `- <<`) | keeps the literal string `"<<"` | treats it as a merge directive and **silently drops** the entry/element (empty container / nil) | Found by the DF3 struct fuzzer at `<<`. A **v4 silent-data-loss** footgun (the reverse direction from the v3 data-loss of D4/D8). Recognised causally by `isMergeKeyDivergence` (single-quoting every `<<` makes the two agree and reproduces v3's value), so a genuine divergence merely containing `<<` is never absorbed. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4ValueSplit`/`isMergeKeyDivergence`. |
+
+| D23 | `flow-map-colon-nospace` | a flow-mapping entry whose `:` is immediately followed by `}`/`,` with no space (`{0:}`, `0: {0:}`) | keeps the `:` IN the key (key `"0:"`) | treats the `:` as the key/value separator (key `0`, null) | Found by the DF3 fuzz run at `0: {0:}`. Recognised causally by `isFlowColonNoSpaceDivergence` (adding a space after the `:` makes v3 agree with v4, which is unchanged). Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4ValueSplit`/`isFlowColonNoSpaceDivergence`. |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that
@@ -62,19 +81,53 @@ complex keys, excessive aliasing, the other syntax errors) was rejected by BOTH;
 re-worded the error text, which `classifyYAMLV4Split` normalises away. A further accept/reject
 split the fuzzer finds is a finding until triaged and listed here.
 
-## What this oracle does NOT verify (scope / "not verified")
+## Companion oracles (DF3): struct decode, multi-document streams, round-trip
 
-- **S1 — Struct decoding, `WithKnownFields`/strict mode, custom `Unmarshaler`s.** Only the
-  schemaless `Unmarshal(data, &any)` path is compared. v4's new `Load`/`Dump` + options API
-  (`WithKnownFields`, `WithIndent`, `WithAllDocuments`) is a distinct surface and is out of
-  scope. A config decoded into a *typed struct* could diverge where the `any` decode does not.
-- **S2 — Encoding (`Marshal`/`Dump`) parity.** Only decode is differentiated. The canonical
-  re-encoder is v3's `Marshal` applied to BOTH decoded values, so an encoding divergence in
-  v4's own `Marshal` is invisible here (by construction — it is used as a comparison oracle,
-  not a subject). Round-trip (`decode→encode→decode`) idempotence is not asserted.
-- **S3 — Multi-document streams.** `Unmarshal` decodes only the FIRST document; a divergence
-  in how v3 vs v4 split or decode the 2nd+ document of a `---`-separated stream is not seen.
-  The `Loader`/`Decoder` streaming API is out of scope.
+The three scope gaps S1/S2/S3 below are now **partially covered** by companion targets in
+`yaml_v4_struct_stream_fuzz_test.go` (red/green: `TestYAMLV4StructStreamRedGreen`). Each ties
+a typed/stream/round-trip divergence back to the single-doc `any`-path classes above, so it
+reuses this whole table rather than inventing a parallel one. The tie: a typed-struct or
+per-document divergence is a **finding unless the `any`-path for the same bytes also diverges
+by an already-tolerated class** (`structSplitVerdict`); a typed/stream split where the
+`any`-path AGREED is new and fails.
+
+- **`FuzzYAMLV4StructDifferential` (S1).** Decodes the same bytes into the real
+  `internal/config.Config` family (the server's live strict-load target) and a synthetic
+  struct, under v3 and v4 (lenient), plus v3 `KnownFields(true)` vs v4 `WithKnownFields()`
+  (strict). New finding surfaced and tolerated: `int: ! 00` → v3 resolves int `0`, v4 keeps
+  `"00"` and **cannot construct it into an `int` field, so v4 rejects where v3 accepts** —
+  invisible to the `any` path (both accept there), tied to the tolerated D12 class. Strict
+  mode also surfaced `v4-strict-rejects:empty-doc` (below).
+- **`FuzzYAMLV4MultiDocDifferential` (S3).** Decodes EVERY document of a `---` stream (v3
+  `Decoder` loop vs v4 `Loader` loop) and compares the sequence. A differing **document
+  count** is class `multidoc:count-mismatch` (NOT in the table → a finding until triaged);
+  per-document value splits reuse `classifyYAMLV4ValueSplit`.
+- **`FuzzYAMLV4RoundTrip` (S2).** Within EACH library, `decode→encode→decode` and assert the
+  re-decode canonicalises to the first decode (idempotence). A non-idempotent round-trip is a
+  genuine library footgun; the round-trip tolerance table `yamlV4RoundTripExpectedDiff` is
+  EMPTY on purpose.
+
+Strict-mode divergence tolerated by the struct oracle:
+
+| id | class key | what diverges | v3.0.5 (strict `Decoder`) | v4.0.0 (strict `Load`) | why tolerated | enforced by |
+|----|-----------|---------------|---------------------------|-------------------------|---------------|-------------|
+| D13 | `v4-strict-rejects:empty-doc` | an empty / document-less input decoded in strict mode | **accepts** — `Decoder.Decode` returns `io.EOF`, which `Config.Load` treats as a valid **all-default** config | **rejects** — one-shot `Load(..., WithKnownFields())` returns `yaml: no documents in stream` | A real **migration gotcha of v4's recommended strict `Load` API**, not a field-strictness divergence: an empty config file that loads fine today (all defaults) would be rejected if the loader naively switched to `yaml.Load(data, &cfg, WithKnownFields())`. Not a Keyorix defect (v4 has no live caller; and the equivalent v4 streaming `Loader` would behave like v3). | `classifyTypedSplit`/`yamlV4StructExpectedDiff` — v3-accepts + v4-rejects + the exact `no documents in stream` message; a real unknown-field rejection is NOT absorbed. |
+| D14 | `v4-strict-rejects:nonintegral-float-into-int` | a **non-integral float** value decoded into an **integer** struct field (`int: 0.1`, `v: 0.1`) | **accepts** — silently **coerces, truncating `0.1`→ int `0` (DATA LOSS)** | **rejects** — `cannot construct !!float `0.1` into int` | Found by the DF3 struct fuzzer. Integral floats (`5.0`, `1e3`) are accepted by BOTH, so only a NON-integral float splits. v3 is the reachable, lenient, **data-losing** side — the same silent-data-loss footgun family as D8 (block-scalar drop) and D4 (truncation); v4 is strict. Invisible to the `any`-path (both decode `0.1` to the float there). Not a Keyorix defect (v4 has no live caller; a config `int` field receiving a fractional float is exotic) but a genuine **v3 silent-coercion footgun**. | `classifyTypedSplit`/`yamlV4StructExpectedDiff` — keyed on a v4 rejection whose message contains `float` and `into int`; the `!`-tag-into-int rejection (no `float`) and integral floats (no split) are not absorbed. |
+
+## What the companion oracles STILL do NOT verify (residual scope)
+
+- **S1-residual.** `config.Config` typed VALUE equality is only canonical-marshal compared when
+  BOTH libraries accept; a nested type with a decode divergence that both still *accept* into
+  the same canonical bytes is invisible. Custom `UnmarshalYAML` is not exercised (there are
+  none in `internal/`). The synthetic struct covers a fixed field-type spread, not every Go
+  kind (no `*int`, `int8`, `uintptr`, embedded-struct-promotion, or `,inline` tag).
+- **S2-residual.** Round-trip uses v3's `Marshal` as the fixed canonical comparator, so a
+  divergence purely in v4's `Marshal` byte output (indent, quoting, flow style) that still
+  re-decodes to the same value is not seen — only value idempotence is asserted, not encoded-
+  byte parity between v3 and v4.
+- **S3-residual.** The multi-doc oracle compares document COUNT and per-document VALUE; it does
+  not assert anything about comments, document-boundary byte positions, or directives
+  (`%YAML`, `%TAG`) that do not change the decoded value.
 - **S4 — Inputs > 8 KiB.** Bounded to keep a pathological expansion in one library from
   masquerading as a disagreement and to keep the resource model meaningful. A divergence that
   only manifests on megabyte inputs is not covered.
