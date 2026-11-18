@@ -2,12 +2,12 @@
   "target": "pgx_ssl",
   "platform": "linux",
   "factor": 4,
-  "seeds": 6,
+  "seeds": 12,
   "meters": {
     "alloc_bytes": {
-      "floor": 19408,
-      "per_byte": 18816,
-      "abs_max": 77632,
+      "floor": 72528,
+      "per_byte": 72528,
+      "abs_max": 290112,
       "mode": "absolute"
     },
     "cpu_ns": {
