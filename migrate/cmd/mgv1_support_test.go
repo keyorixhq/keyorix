@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -304,8 +305,8 @@ func (m *vModel) immediateChildren(prefix string) []string {
 		if rest == "" {
 			continue
 		}
-		if i := strings.IndexByte(rest, '/'); i >= 0 {
-			set[rest[:i]+"/"] = true
+		if before, _, found := strings.Cut(rest, "/"); found {
+			set[before+"/"] = true
 		} else {
 			set[rest] = true
 		}
@@ -472,9 +473,7 @@ func (s *fakeStore) Metadata(_ context.Context, id int) (map[string]string, erro
 		return nil, fmt.Errorf("fakeStore: no secret id %d", id)
 	}
 	out := map[string]string{}
-	for k, v := range sec.meta {
-		out[k] = v
-	}
+	maps.Copy(out, sec.meta)
 	return out, nil
 }
 
@@ -501,9 +500,7 @@ func (s *fakeStore) Create(_ context.Context, name, value string, metadata map[s
 		return 0, fmt.Errorf("fakeStore: secret %q already exists (409-equivalent)", name)
 	}
 	meta := map[string]string{}
-	for k, v := range metadata {
-		meta[k] = v
-	}
+	maps.Copy(meta, metadata)
 	sec := &storedSecret{id: s.nextID, name: name, value: value, meta: meta}
 	s.byName[name] = sec
 	s.byID[sec.id] = sec
@@ -540,9 +537,7 @@ func (s *fakeStore) snapshot() map[string]storedSecret {
 	for name, sec := range s.byName {
 		cp := *sec
 		cp.meta = map[string]string{}
-		for k, v := range sec.meta {
-			cp.meta[k] = v
-		}
+		maps.Copy(cp.meta, sec.meta)
 		out[name] = cp
 	}
 	return out
