@@ -496,6 +496,15 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 			// nothing was written (AUTH-2 item 1). Charged and answered like a
 			// dead link, so the response never confirms the token.
 			goSafe(func() { h.coreService.LogSetupConsumeError(context.Background(), ip, err) }) // #nosec G118
+		case errors.Is(err, core.ErrInvitationAcceptedSignInFailed):
+			// #4409 shape 2: the invitation accept committed (account, grants,
+			// accepted invitation) and only the automatic sign-in failed. The
+			// dead-link answer would send the invitee back to the inviter for an
+			// accept that worked. No session was delivered, so the slot stays
+			// (INV-HTTP-login-budget-counts-failures-only).
+			goSafe(func() { h.coreService.LogSetupConsumeError(context.Background(), ip, err) }) // #nosec G118
+			sendError(w, "BadRequest", "Your account was created and the invitation accepted, but signing you in failed. Log in with your new password.", http.StatusBadRequest, nil)
+			return
 		default:
 			goSafe(func() { h.coreService.LogSetupConsumeFailure(context.Background(), ip, err) }) // #nosec G118
 		}

@@ -20,8 +20,11 @@ type stagingFile struct {
 // what a backup refuses is exactly what it would otherwise have archived.
 func rotationStaging(enc *config.EncryptionConfig) []stagingFile {
 	var files []stagingFile
-	if enc.SaltPath != "" {
-		files = append(files, stagingFile{label: "KEK salt rotation-staging", path: enc.SaltPath + ".pending", salt: true})
+	// EffectiveSaltPath: a non-password install has no salt rotation, so a
+	// kek.salt.pending left from its password days is not a rotation in
+	// progress (#4504 L1).
+	if salt := enc.EffectiveSaltPath(); salt != "" {
+		files = append(files, stagingFile{label: "KEK salt rotation-staging", path: salt + ".pending", salt: true})
 	}
 	if enc.DEKPath != "" {
 		files = append(files, stagingFile{label: "DEK rotation-staging", path: enc.DEKPath + ".pending"})
