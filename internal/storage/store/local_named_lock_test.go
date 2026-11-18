@@ -106,9 +106,9 @@ func TestWithNamedLock_NestedDifferentKey_StillSerializesAgainstOtherHolder(t *t
 	// the reentrancy guard were still skipping on "any lock held" rather than
 	// "this exact key held" -- it must NOT have finished yet.
 	select {
-	case <-nestedDone:
-		t.Fatal("nested WithNamedLock(key-B) returned before the other holder released it -- " +
-			"the different-key lock was skipped instead of actually acquired")
+	case err := <-nestedDone:
+		t.Fatalf("nested WithNamedLock(key-B) returned (err=%v) before the other holder released it -- "+
+			"the different-key lock was skipped instead of actually acquired", err)
 	case <-time.After(200 * time.Millisecond):
 	}
 
