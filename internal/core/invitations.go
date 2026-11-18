@@ -665,34 +665,42 @@ func (c *KeyorixCore) revokeInvitationGrants(ctx context.Context, inv *models.Pr
 // panicked, a create that committed then reported an error, or a grant that fully
 // succeeded before a later step failed all left an `active` membership with no
 // grant behind it, listed as a member of the project (#4409/#4410 sweep).
-// Conditional on the row's state (TransitionProjectMembershipState), like
-// revertFailedActivation. complete is false (audited, MANUAL CLEANUP REQUIRED)
-// when a live row could not be revoked.
+// Read and revert run under membershipLockKey, the lock every membership
+// transition takes, through revertFailedActivation (the fromState CAS that
+// inviteMemberWithMode's own revert uses), so a concurrent transition cannot
+// land between them. complete is false (audited, MANUAL CLEANUP REQUIRED) when a
+// live row could not be revoked.
 func (c *KeyorixCore) revokeInvitationMembershipRow(ctx context.Context, inv *models.ProjectInvitation, projectID, userID uint) (complete bool) {
 	fail := func(err error) bool {
 		c.auditProjectScopedFailed(ctx, eventInvitationRaceRevokeFailed, userID, projectID,
 			fmt.Sprintf("failed to revoke the membership of user %d in project %d made by invitation %d: %v — MANUAL CLEANUP REQUIRED", userID, projectID, inv.ID, err))
 		return false
 	}
-	m, err := c.storage.GetActiveProjectMembership(ctx, projectID, userID)
-	if err != nil {
-		if isPositiveNotFound(err) {
-			return true // never created, or already revoked
+	complete = true
+	err := c.storage.WithNamedLock(ctx, membershipLockKey(projectID, userID), func(ctx context.Context) error {
+		m, err := c.storage.GetActiveProjectMembership(ctx, projectID, userID)
+		if err != nil {
+			if isPositiveNotFound(err) {
+				return nil // never created, or already revoked
+			}
+			return err
 		}
-		return fail(err)
-	}
-	from := m.State
-	now := c.now()
-	m.State, m.UpdatedAt, m.RevokedAt = MembershipRevoked, now, &now
-	matched, err := c.storage.TransitionProjectMembershipState(ctx, m, from)
-	if err == nil && !matched {
-		err = ErrMembershipStateConflict
-	}
+		revokedAt := c.now()
+		// revertFailedActivation audits its own failure (MANUAL CLEANUP REQUIRED)
+		// and reports nothing, so the outcome is read back under the same lock.
+		c.revertFailedActivation(ctx, m, MembershipRevoked,
+			membershipStamps{ActivatedAt: m.ActivatedAt, RevokedAt: &revokedAt})
+		if _, err := c.storage.GetActiveProjectMembership(ctx, projectID, userID); err == nil {
+			complete = false // still live
+		} else if !isPositiveNotFound(err) {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		return fail(err)
 	}
-	c.logMembershipEvent(ctx, "membership.revoked", m, 0)
-	return true
+	return complete
 }
 
 func (c *KeyorixCore) revokeSystemRoleGrant(ctx context.Context, inv *models.ProjectInvitation, userID uint) bool {
