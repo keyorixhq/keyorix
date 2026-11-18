@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // ── oidc_jwks.go — parseJWK EC branches ─────────────────────────────────
@@ -143,6 +144,8 @@ func TestRevokeAssignmentGrants_ValidJSON_RemoveFails(t *testing.T) {
 	// With empty existing roles, RemoveProjectMember returns "user is not a member"
 	// which feeds the auditProjectScoped path.
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	// No membership row either (revokeInvitationMembershipRow).
+	ms.On("GetActiveProjectMembership", mock.Anything, mock.Anything, uint(5)).Return(nil, gorm.ErrRecordNotFound)
 	c := NewKeyorixCore(ms)
 	inv := &models.ProjectInvitation{
 		ID:              1,
