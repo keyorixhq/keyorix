@@ -384,6 +384,15 @@ killed with SIGKILL during the sweep, a lost new `dek.key` recovered by restorin
 the PostgreSQL-only rows (epoch, `--force` refusal, older admin binary) are covered by pg-gated
 tests, not by a drill.
 
+Capture check (RUNBOOK-CAPTURE-2, 2026-11-18, main `c60a499ff`, SQLite, native binaries): `admin
+backup`, `admin encryption status`, `admin encryption rotate --dry-run` (`✅ Dry run complete — no
+changes were made`), `admin encryption rotate-kek --confirm` (it printed the audit key transition
+lines and both key fingerprints) and, afterwards, `admin audit export-checkpoint-key` plus
+`admin verify-audit --checkpoint-key-file <new> --previous-checkpoint-key-file <old>` (`Verdict: VALID`,
+`Key transitions: 1 recorded, current epoch authenticated: true, old-key signatures checked: 1`) behaved as
+sections 2 to 5 describe. Not re-run: `migrate-provider`, the KMS, TPM and Shamir providers, containers
+and Kubernetes (pending e2e VM).
+
 Gaps in the product today:
 
 - No online rotation: the window is the servers being stopped.
@@ -396,4 +405,8 @@ Gaps in the product today:
 - `verify-audit` checks the latest checkpoint and the key transition records, not every older
   checkpoint: older-epoch checkpoints other than the one each transition names are not
   re-verified (section 5).
-- No command accepts a real audit loss (seal) yet: AUDIT-ACCEPT-LOSS-1.
+- Known limitation: a DEK rotation cannot be reversed with a command (see the second bullet above);
+  the product decision between roll-forward-or-restore and a reverse command is pending.
+- (Corrected by RUNBOOK-CAPTURE-2: an earlier version of this list said no command accepts an audit loss.
+  `keyorix-server admin audit accept-loss` exists; see
+  [audit-chain-break-runbook.md](audit-chain-break-runbook.md) section 7.)
