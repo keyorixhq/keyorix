@@ -34,9 +34,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
+	"github.com/keyorixhq/keyorix/internal/pgxlimits"
 )
 
 const (
@@ -59,9 +61,35 @@ func pgxResguardProbe(f *testing.F, budgetPath string) (*resguard.Probe, resguar
 	return probe, b, err == nil
 }
 
+// pgxWarmOnce charges pgx/pgtype/regexp one-time initialisation (a default type
+// map, compiled regexps, the first net.open) to an unmetered call. Without it the
+// FIRST metered input in a cold process, which is every fuzz worker, pays ~160 KB
+// the warm-calibrated budgets never saw: FuzzPgxSSLNegotiation failed on its
+// 1-byte seed at 241 KB against a 77 KB budget. Calibration warms the same way, so
+// the budget and the measurement agree on what "one input's cost" includes.
+var pgxWarmOnce sync.Once
+
+func pgxWarm(t *testing.T) {
+	pgxWarmOnce.Do(func() {
+		drivePgxSSL(t, pgxBenignSSL[0])
+		drivePgxHandshake(t, pgxBenignHandshake[0])
+	})
+}
+
+// pgxLengthPrefixedCeiling is the per-input alloc ceiling for the targets whose
+// allocation is set by a length the SERVER claims, not by how many bytes it sent:
+// pgx sizes a read buffer from a message header before the body arrives, bounded
+// by pgxlimits.MaxProtocolMessageBodyLen (the value production applies). A 9-byte
+// header can therefore legitimately cost one bounded buffer (the pool rounds to a
+// power of two, and a grow copies the old one), so a per-input-byte slope is the
+// wrong model: it flagged every such input (775 MB at the old ~1 GiB default).
+// Twice the bound plus 8 MiB of setup headroom still fires on anything beyond it.
+const pgxLengthPrefixedCeiling = 2*pgxlimits.MaxProtocolMessageBodyLen + 8<<20
+
 // measurePgx drives one input through the Probe, feeds the cost-guided engine, and
 // applies the budget. The pre-existing panic/hang oracles run INSIDE drive.
 func measurePgx(t *testing.T, probe *resguard.Probe, budget resguard.Budget, haveBudget bool, server []byte, drive func(*testing.T, []byte)) {
+	pgxWarm(t)
 	cost := probe.Measure(len(server), func() { drive(t, server) })
 	resguard.FeedCoverage(cost)
 	if haveBudget {
@@ -125,20 +153,27 @@ var (
 		{'W', 0, 0, 0, 7, 0, 0, 1, 0, 0, 'Z', 0, 0, 0, 5, 'I'},
 		{'G', 0, 0, 0, 7, 0, 0, 1, 0, 0, 'E', 0, 0, 0, 11, 'S', 'E', 'R', 'R', 0, 0},
 	}
+	// 'S' (server accepts SSL) starts a client TLS handshake against whatever
+	// follows, which allocates tls state a bare 'N'/'E' never does; a corpus
+	// without it calibrated the absolute ceiling too small (the fuzzer found
+	// "S\x16\x03\x00\x38." at 89 KB against 77 KB within seconds).
 	pgxBenignSSL = [][]byte{
 		{'N'},
 		{'E', 'x'},
+		{'S'},
+		{'S', 0x16, 0x03, 0x03, 0x00, 0x00}, // 'S' then a TLS record header with an empty body
 	}
 )
 
 // calibratePgx runs one target's benign corpus through a SampleEvery=1 probe (so
 // every seed gets an alloc sample), calibrates, keeps only the memory/CPU meters,
 // and optionally switches them to AbsMax. Returns the budget.
-func calibratePgx(t testing.TB, name string, corpus [][]byte, drive func(*testing.T, []byte), absolute bool) resguard.Budget {
+func calibratePgx(t testing.TB, name string, corpus [][]byte, drive func(*testing.T, []byte), absolute, lengthPrefixed bool) resguard.Budget {
 	t.Helper()
 	probe := resguard.New(t, resguard.Options{SampleEvery: 1})
 	var costs []resguard.Cost
 	tt := t.(*testing.T)
+	pgxWarm(tt)
 	for range 3 { // repeat to fold scheduling/GC noise into p99
 		for _, seed := range corpus {
 			costs = append(costs, probe.Measure(len(seed), func() { drive(tt, seed) }))
@@ -149,6 +184,12 @@ func calibratePgx(t testing.TB, name string, corpus [][]byte, drive func(*testin
 	if absolute {
 		b.UseAbsolute(pgxMemMeters...)
 	}
+	if lengthPrefixed {
+		mb := b.Meters["alloc_bytes"]
+		mb.AbsMax = max(mb.AbsMax, pgxLengthPrefixedCeiling)
+		mb.Mode = resguard.ModeAbsolute
+		b.Meters["alloc_bytes"] = mb
+	}
 	return b
 }
 
@@ -158,15 +199,18 @@ type pgxCalTarget struct {
 	corpus   [][]byte
 	drive    func(*testing.T, []byte)
 	absolute bool
+	// lengthPrefixed marks a target whose allocation is set by a server-claimed
+	// message length (see pgxLengthPrefixedCeiling).
+	lengthPrefixed bool
 }
 
 func pgxCalTargets() []pgxCalTarget {
 	return []pgxCalTarget{
-		{"pgx_handshake", pgxBudgetHandshake, pgxBenignHandshake, drivePgxHandshake, true},
-		{"pgx_simplequery", pgxBudgetSimpleQuery, pgxBenignSimpleQuery, drivePgxSimpleQuery, false},
-		{"pgx_extended", pgxBudgetExtended, pgxBenignExtended, drivePgxExtended, false},
-		{"pgx_copy", pgxBudgetCopy, pgxBenignCopy, drivePgxCopy, false},
-		{"pgx_ssl", pgxBudgetSSL, pgxBenignSSL, drivePgxSSL, true},
+		{"pgx_handshake", pgxBudgetHandshake, pgxBenignHandshake, drivePgxHandshake, true, true},
+		{"pgx_simplequery", pgxBudgetSimpleQuery, pgxBenignSimpleQuery, drivePgxSimpleQuery, false, true},
+		{"pgx_extended", pgxBudgetExtended, pgxBenignExtended, drivePgxExtended, false, true},
+		{"pgx_copy", pgxBudgetCopy, pgxBenignCopy, drivePgxCopy, false, true},
+		{"pgx_ssl", pgxBudgetSSL, pgxBenignSSL, drivePgxSSL, true, false},
 	}
 }
 
@@ -174,7 +218,7 @@ func pgxCalTargets() []pgxCalTarget {
 // RESGUARD_CALIBRATE=1; otherwise it asserts each target produced a memory budget.
 func TestResguardPgxCalibrate(t *testing.T) {
 	for _, tgt := range pgxCalTargets() {
-		b := calibratePgx(t, tgt.name, tgt.corpus, tgt.drive, tgt.absolute)
+		b := calibratePgx(t, tgt.name, tgt.corpus, tgt.drive, tgt.absolute, tgt.lengthPrefixed)
 		if len(b.Meters) == 0 {
 			t.Fatalf("%s: no memory meter calibrated; %s", tgt.name, b.Summary())
 		}
@@ -198,7 +242,7 @@ func TestResguardPgxCalibrate(t *testing.T) {
 // over-budget Cost that proves the port's oracle fires end-to-end; the fuzz run
 // additionally exercises real hostile inputs against the same budget.)
 func TestResguardPgxRedGreen(t *testing.T) {
-	b := calibratePgx(t, "pgx_simplequery", pgxBenignSimpleQuery, drivePgxSimpleQuery, false)
+	b := calibratePgx(t, "pgx_simplequery", pgxBenignSimpleQuery, drivePgxSimpleQuery, false, true)
 	if _, ok := b.Meters["alloc_bytes"]; !ok {
 		t.Fatalf("no alloc_bytes budget calibrated; %s", b.Summary())
 	}

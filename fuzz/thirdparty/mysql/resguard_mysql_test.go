@@ -103,8 +103,23 @@ func calibrateMySQL(t testing.TB, name string, corpus [][]byte, drive func(*test
 	if absolute {
 		b.UseAbsolute(mysqlMemMeters...)
 	}
+	// Every MySQL packet's allocation is set by the 3-byte length its header
+	// CLAIMS (up to 16 MiB-1 per packet, the protocol maximum), not by how many
+	// bytes the server sent: go-sql-driver sizes a read buffer before the body
+	// arrives. A 7-byte hostile reply therefore costs one bounded buffer (measured
+	// 16.8 MB for the maximum claim, with peak RSS flat at ~30 MB over 20 repeats,
+	// unlike pgx), so a per-input-byte slope flags every such input. Twice the
+	// per-packet maximum plus 8 MiB of setup headroom still fires on anything
+	// beyond it.
+	mb := b.Meters["alloc_bytes"]
+	mb.AbsMax = max(mb.AbsMax, mysqlLengthPrefixedCeiling)
+	mb.Mode = resguard.ModeAbsolute
+	b.Meters["alloc_bytes"] = mb
 	return b
 }
+
+// mysqlLengthPrefixedCeiling: see calibrateMySQL.
+const mysqlLengthPrefixedCeiling = 2*(16<<20) + 8<<20
 
 type mysqlCalTarget struct {
 	name     string

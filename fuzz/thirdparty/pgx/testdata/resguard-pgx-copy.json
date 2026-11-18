@@ -7,7 +7,8 @@
     "alloc_bytes": {
       "floor": 90680,
       "per_byte": 5652.5,
-      "abs_max": 362720
+      "abs_max": 41943040,
+      "mode": "absolute"
     },
     "cpu_ns": {
       "floor": 1049000,
