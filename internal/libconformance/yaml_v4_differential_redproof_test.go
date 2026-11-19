@@ -371,6 +371,16 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// looking migration hazard for YAML 1.1 binary number literals. Recognised by regex
 	// `^[-+]?0[bB][-+]?[0-1_]+$` on the whole input (bare scalar only).
 	"yaml11-binary-int": true,
+
+	// D34. v4-rejects:token-start in flow context (`{-}`): v3.0.5 (YAML 1.1) allows `-`
+	// as the start of a plain scalar key inside a flow mapping, decoding `{-}` as a map
+	// with key "-" and value nil; v4.0.0 (YAML 1.2) is stricter about which characters
+	// can start a token in flow context and rejects with "found character that cannot start
+	// any token". Same error message as D7 (v3-rejects:token-start for a bare tab), but
+	// in the opposite acceptance direction. Found by the DF3 fuzz run at `{-}`
+	// (testdata/fuzz/FuzzYAMLV4Differential/14a65f0e7238ec67). The reachable library (v3)
+	// accepts the input. Not a Keyorix defect (v4 has no live caller).
+	"v4-rejects:token-start": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -1360,6 +1370,35 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		}
 		t.Logf("oracle-3 D31 yaml11-binary-int gating proven: `0b+0` and `0: 0b+0` tolerated; genuine mismatches still fail")
 	}
+
+	// ---- Oracle 2 class gating: v4-rejects:token-start in flow context (D34) ----
+	// `{-}`: v3 accepts (map with key "-" value nil), v4 rejects with "found character that
+	// cannot start any token". Same error substring as D7 (tab, v3-rejects direction) but
+	// acceptance is reversed. The RED proof shows D7's v3-rejects:token-start is unaffected.
+	{
+		in34 := []byte("{-}")
+		var v3v34, v4v34 any
+		err3D34 := v3yaml.Unmarshal(in34, &v3v34)
+		err4D34 := v4yaml.Unmarshal(in34, &v4v34)
+		if err3D34 != nil || err4D34 == nil {
+			t.Fatalf("precondition: `{-}` must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3D34, err4D34)
+		}
+		class34 := classifyYAMLV4Split(err3D34, err4D34)
+		if class34 != "v4-rejects:token-start" {
+			t.Fatalf("`{-}` split must class as v4-rejects:token-start, got %q (v4err=%v)", class34, err4D34)
+		}
+		if !yamlV4ExpectedDiff[class34] {
+			t.Fatalf("v4-rejects:token-start must be listed (tolerated)")
+		}
+		// RED: D7 (bare tab, v3-rejects direction) must remain its own distinct class and direction.
+		var z3D34, z4D34 any
+		e3D7 := v3yaml.Unmarshal([]byte("\t"), &z3D34)
+		e4D7 := v4yaml.Unmarshal([]byte("\t"), &z4D34)
+		if classifyYAMLV4Split(e3D7, e4D7) != "v3-rejects:token-start" {
+			t.Fatalf("D7 bare-tab split must remain v3-rejects:token-start (D34 must not corrupt direction)")
+		}
+		t.Logf("oracle-2 D34 v4-rejects:token-start gating proven; D7 v3-rejects direction unchanged")
+	}
 }
 
 // TestYAMLV4AllowlistEntriesHitBySeed verifies that every entry in yamlV4ExpectedDiff
@@ -1468,6 +1507,8 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		"|\n\t",
 		// D31 yaml11-binary-int (testdata seeds 71de6c43bb10a32d, 70f8e3e01bc42e7e)
 		"0b+0", "0: 0b+0",
+		// D34 v4-rejects:token-start in flow context (testdata seed 14a65f0e7238ec67)
+		"{-}",
 	} {
 		runSingle([]byte(s))
 	}
