@@ -581,22 +581,34 @@ var v3AnchorTokenRe = regexp.MustCompile(`&[^\s:,\[\]{}]+`)
 // anchor-colon combo (`[&a:b]`) is a separate, compounded divergence left in the
 // residual tail.
 func isAnchorColonBoundaryDivergence(data []byte, v3val, v4val any) bool {
-	loc := v3AnchorTokenRe.FindIndex(data)
-	if loc == nil || loc[1] >= len(data) || data[loc[1]] != ':' {
-		return false
-	}
-	stripped := append(append([]byte{}, data[:loc[0]]...), data[loc[1]:]...)
-	var m3, m4 any
-	if v3yaml.Unmarshal(stripped, &m3) != nil || v4yaml.Unmarshal(stripped, &m4) != nil {
-		return false
-	}
-	c3m, err3 := v3yaml.Marshal(m3)
-	c4m, err4 := v3yaml.Marshal(m4)
-	if err3 != nil || err4 != nil || !reflect.DeepEqual(c3m, c4m) {
-		return false
-	}
+	// Try each anchor in the input: whichever one is immediately followed by `:` and
+	// whose removal makes v3 and v4 agree (with v3 unchanged) is the causal anchor.
+	// Originally only tried the first anchor; extended to try all because the
+	// colon-absorbing anchor may not be the first one in the input (e.g. `&0: &0:0`
+	// where the second anchor `&0:0` is the one causing the divergence).
 	co3, err := v3yaml.Marshal(v3val)
-	return err == nil && reflect.DeepEqual(co3, c3m)
+	if err != nil {
+		return false
+	}
+	for _, loc := range v3AnchorTokenRe.FindAllIndex(data, -1) {
+		if loc[1] >= len(data) || data[loc[1]] != ':' {
+			continue
+		}
+		stripped := append(append([]byte{}, data[:loc[0]]...), data[loc[1]:]...)
+		var m3, m4 any
+		if v3yaml.Unmarshal(stripped, &m3) != nil || v4yaml.Unmarshal(stripped, &m4) != nil {
+			continue
+		}
+		c3m, e3 := v3yaml.Marshal(m3)
+		c4m, e4 := v3yaml.Marshal(m4)
+		if e3 != nil || e4 != nil || !reflect.DeepEqual(c3m, c4m) {
+			continue
+		}
+		if reflect.DeepEqual(co3, c3m) {
+			return true
+		}
+	}
+	return false
 }
 
 // nonspecificTagEq reports whether a (v3) and b (v4) are identical up to the
