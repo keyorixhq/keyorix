@@ -675,13 +675,30 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		if !yamlV4ExpectedDiff[class] {
 			t.Fatalf("block-scalar-underindent must be listed (tolerated)")
 		}
+		// Extended coverage: ` |\r0` (indented block scalar with CR line terminator) must
+		// also classify as block-scalar-underindent. blockScalarHeaderRe uses ^[ \t]* to
+		// match `|` or `>` preceded by leading whitespace at start of line.
+		{
+			inCR := []byte(" |\r0")
+			var v3cr, v4cr any
+			if err := v3yaml.Unmarshal(inCR, &v3cr); err != nil {
+				t.Fatalf("v3 must accept ` |\\r0`: %v", err)
+			}
+			if err := v4yaml.Unmarshal(inCR, &v4cr); err != nil {
+				t.Fatalf("v4 must accept ` |\\r0`: %v", err)
+			}
+			classCR := classifyYAMLV4ValueSplit(inCR, v3cr, v4cr)
+			if classCR != "block-scalar-underindent" {
+				t.Fatalf("` |\\r0` split must class as block-scalar-underindent, got %q (v3=%#v v4=%#v)", classCR, v3cr, v4cr)
+			}
+		}
 		// RED: the SAME empty-vs-nonempty shape WITHOUT a block-scalar header must
 		// NOT be absorbed (stays value-mismatch -> fails).
 		noHeader := classifyYAMLV4ValueSplit([]byte("a: b"), map[string]any{"a": ""}, map[string]any{"a": "x"})
 		if noHeader != "value-mismatch" {
 			t.Fatalf("empty-vs-nonempty WITHOUT a block header must stay value-mismatch, got %q", noHeader)
 		}
-		t.Logf("oracle-3 block-scalar gating proven: v3 drops to \"\", v4 keeps \"00\"; non-block empty-vs-nonempty still fails")
+		t.Logf("oracle-3 block-scalar gating proven: v3 drops to \"\", v4 keeps \"00\"; non-block empty-vs-nonempty; ` |\\r0` indented-CR also covered")
 	}
 
 	// ---- Oracle 2 class gating: anchor-name character leniency ----

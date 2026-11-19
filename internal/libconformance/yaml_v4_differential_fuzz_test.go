@@ -879,12 +879,12 @@ func negZeroIntVsFloatOnly(a, b any) (int, bool) {
 
 // blockScalarHeaderRe matches a block-scalar header (`|` or `>`, optional indent
 // digit, optional chomping `+`/`-`) at the end of a line, optionally after a
-// `key:` or `- ` indicator — the shape that introduces literal/folded content.
+// `key:` or `- ` indicator or leading whitespace — the shape that introduces
+// literal/folded content. `^[ \t]*` covers indented block scalars (e.g. ` |\r0`).
 // `\r` (CR) is an alternative line terminator alongside `$` (which in Go's (?m)
-// mode matches before `\n` but not `\r`), so `|\r0` is correctly recognised as a
-// block-scalar header followed by CR-terminated content (and thus `block-scalar-
-// underindent`-eligible).
-var blockScalarHeaderRe = regexp.MustCompile(`(?m)(^|[:\-] *)[|>][0-9]*[+\-]?[ \t]*(\r|$)`)
+// mode matches before `\n` but not `\r`), so `|\r0` and ` |\r0` are both
+// correctly recognised as block-scalar headers followed by CR-terminated content.
+var blockScalarHeaderRe = regexp.MustCompile(`(?m)(^[ \t]*|[:\-][ \t]*)[|>][0-9]*[+\-]?[ \t]*(\r|$)`)
 
 // yaml11BinaryIntRe matches a YAML 1.1 binary integer literal: an optional leading
 // sign, `0b`/`0B` prefix, an optional sign after the prefix, then one or more
