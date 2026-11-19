@@ -312,6 +312,16 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// reasonable at end-of-stream. Guarded by: block-scalar header present AND input
 	// does not end with `\n`/`\r`.
 	"block-scalar-eos-clip": true,
+
+	// D28. D18 compound: anchor-colon absorption extends the anchor name past `:` into
+	// a non-ASCII character that v4's anchor scanner rejects with "did not find expected
+	// alphabetic or numeric character". v3 ends the anchor at `:` and never sees the
+	// non-ASCII character in anchor-name position. Found by the DF3 fuzz run at
+	// `&0:0ډ` (testdata/fuzz/FuzzYAMLV4Differential/a9fc9bb63e204a8b). v4 is the
+	// stricter side here (rejects). The reachable library (v3) accepts. Not a Keyorix
+	// defect (v4 has no live caller). Keyed on the v4 error "did not find expected
+	// alphabetic or numeric character" with side "v4-rejects".
+	"v4-rejects:anchor-char": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -969,7 +979,10 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("flow-node-content class must be listed (tolerated)")
 		}
 		// RED: a generic v3 syntax rejection must still fall through to :syntax (untolerated).
-		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected directive"}, nil)
+		// Use an error that contains "did not find expected" but NOT "directive", "key",
+		// "node content", or any other specifically-classified substring, so the generic
+		// :syntax case is what actually fires.
+		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected block entry"}, nil)
 		if other != "v3-rejects:syntax" || yamlV4ExpectedDiff[other] {
 			t.Fatalf("a generic v3 syntax error must stay the untolerated :syntax class, got %q", other)
 		}
@@ -1113,6 +1126,32 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		}
 		t.Logf("oracle-3 D27 block-scalar-eos-clip gating proven; trailing-newline inputs still fail")
 	}
+
+	// ---- Oracle 2 class gating: v4-rejects:anchor-char (D28) ----
+	{
+		in := []byte("&0:0ډ")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 != nil || err4 == nil {
+			t.Fatalf("precondition: `&0:0ډ` must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v4-rejects:anchor-char" {
+			t.Fatalf("`&0:0ډ` split must class as v4-rejects:anchor-char, got %q (v4err=%v)", class, err4)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v4-rejects:anchor-char must be listed (tolerated)")
+		}
+		// RED: the v3-rejects:anchor-char direction (D9) must remain distinct.
+		var z3, z4 any
+		e3D9 := v3yaml.Unmarshal([]byte("o: &!0000"), &z3)
+		e4D9 := v4yaml.Unmarshal([]byte("o: &!0000"), &z4)
+		if classifyYAMLV4Split(e3D9, e4D9) != "v3-rejects:anchor-char" {
+			t.Fatalf("D9 `o: &!0000` split must still class as v3-rejects:anchor-char (direction unchanged)")
+		}
+		t.Logf("oracle-2 D28 v4-rejects:anchor-char gating proven; D9 direction unchanged")
+	}
 }
 
 // TestYAMLV4AllowlistEntriesHitBySeed verifies that every entry in yamlV4ExpectedDiff
@@ -1209,6 +1248,8 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		"0: &0:0000000,",
 		// D27 block-scalar-eos-clip (testdata seed 597ac6ec0bae9ae4)
 		"|\n 000000\n  ",
+		// D28 v4-rejects:anchor-char (testdata seed a9fc9bb63e204a8b)
+		"&0:0ډ",
 	} {
 		runSingle([]byte(s))
 	}

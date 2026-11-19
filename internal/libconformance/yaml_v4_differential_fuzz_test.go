@@ -265,6 +265,16 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// element. The flow-context analogue of D2 (block empty-implicit-key). v4
 		// accepts what v3 rejects.
 		return side + ":flow-node-content"
+	case strings.Contains(msg, "directive"):
+		// Keep this case BEFORE the generic "could not find expected" / "did not find
+		// expected" catch below: "could not find expected directive name" (bare `%` in
+		// block-scalar context) contains BOTH substrings; the specific directive class
+		// must win over the generic :syntax class.
+		// A `%`-introduced directive v3 rejects — e.g. under-indented block-scalar
+		// content `%0` (`|\n%0`) that v3 re-scans as a document directive ("found
+		// unknown directive name"), or bare `%` ("could not find expected directive
+		// name"). v3 REJECTS; v4 is lenient and ACCEPTS.
+		return side + ":directive"
 	case strings.Contains(msg, "did not find expected") || strings.Contains(msg, "could not find expected"):
 		return side + ":syntax"
 	case strings.Contains(msg, "control characters are not allowed"):
@@ -283,12 +293,6 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// `&0?` (an anchor followed by `?`). v3 REJECTS ("mapping keys are not allowed
 		// in this context"); v4 is lenient and ACCEPTS. v4 accepts what v3 rejects.
 		return side + ":mapping-key-context"
-	case strings.Contains(msg, "directive"):
-		// A `%`-introduced directive v3 rejects — e.g. under-indented block-scalar
-		// content `%0` (`|\n%0`) that v3 re-scans as a document directive ("found
-		// unknown directive name"). v3 REJECTS; v4 is lenient and ACCEPTS. Same
-		// v4-lenient direction as D20; v4 accepts what v3 rejects on malformed input.
-		return side + ":directive"
 	case strings.Contains(msg, "unexpected end of stream"):
 		// A truncated / unterminated construct — e.g. a block scalar followed by a
 		// lone `"` at column 0 (`|\n"`), which v3 reads as an unterminated
