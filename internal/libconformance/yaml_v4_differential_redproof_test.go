@@ -341,6 +341,17 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// Keyorix defect (v4 has no live caller). Keyed on "comment or line break".
 	"v3-rejects:block-header": true,
 
+	// D33. D18 compound: anchor-colon absorption exposes a truncated double-quoted string
+	// to v4, which rejects with "unexpected end of stream" (`&0:0 "0`). v3 ends the anchor
+	// name at the first `:` (anchor=`0`), reads the remaining `:0 "0` and accepts; v4
+	// absorbs the `:` into anchor name `0:0`, leaving ` "0` as the node content — an
+	// unterminated double-quoted scalar. Found by the DF3 fuzz run at `&0:0 "0`
+	// (testdata/fuzz/FuzzYAMLV4Differential/763be458e6c85df9). v4 rejects; v3 accepts.
+	// Not a Keyorix defect (v4 has no live caller). Keyed on v4 error "unexpected end of
+	// stream" with side "v4-rejects"; the symmetric D20 class (v3-rejects:unexpected-eos)
+	// is already tolerated.
+	"v4-rejects:unexpected-eos": true,
+
 	// D32. Tab as block scalar indentation (`|\n\t`): a tab character used as the
 	// indentation of block scalar content. YAML spec requires spaces for indentation; v3.0.5
 	// enforces this ("found a tab character where an indentation space is expected"). v4.0.0
@@ -1249,6 +1260,32 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		t.Logf("oracle-2 D30 v3-rejects:block-header gating proven; generic syntax still fails")
 	}
 
+	// ---- Oracle 2 class gating: D18-compound v4 EOS rejection (D33) ----
+	{
+		in := []byte(`&0:0 "0`)
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 != nil || err4 == nil {
+			t.Fatalf("precondition: `&0:0 \"0` must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v4-rejects:unexpected-eos" {
+			t.Fatalf("`&0:0 \"0` split must class as v4-rejects:unexpected-eos, got %q (v4err=%v)", class, err4)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v4-rejects:unexpected-eos must be listed (tolerated)")
+		}
+		// RED: D20 (v3-rejects:unexpected-eos) must remain its own distinct class.
+		var z3, z4 any
+		e3D20 := v3yaml.Unmarshal([]byte("|\n\""), &z3)
+		e4D20 := v4yaml.Unmarshal([]byte("|\n\""), &z4)
+		if classifyYAMLV4Split(e3D20, e4D20) != "v3-rejects:unexpected-eos" {
+			t.Fatalf("D20 `|\\n\"` split must still class as v3-rejects:unexpected-eos")
+		}
+		t.Logf("oracle-2 D33 v4-rejects:unexpected-eos gating proven; D20 v3 direction unchanged")
+	}
+
 	// ---- Oracle 2 class gating: tab as block scalar indentation (D32) ----
 	{
 		in := []byte("|\n\t")
@@ -1425,6 +1462,8 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		"0: {<<:}",
 		// D30 v3-rejects:block-header (testdata seed 1dea1d27d66a943b)
 		"|\n|A",
+		// D33 v4-rejects:unexpected-eos (testdata seed 763be458e6c85df9)
+		"&0:0 \"0",
 		// D32 v3-rejects:tab-indent (testdata seed 3f946e2a7bf22579)
 		"|\n\t",
 		// D31 yaml11-binary-int (testdata seeds 71de6c43bb10a32d, 70f8e3e01bc42e7e)
