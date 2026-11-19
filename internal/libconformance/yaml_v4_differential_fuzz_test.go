@@ -244,6 +244,12 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// — an anchor name with `!`). v3 rejects the non-alphanumeric anchor char; v4
 		// is lenient and accepts it. v4 accepts what v3 rejects (benign — anchor name).
 		return side + ":anchor-char"
+	case strings.Contains(msg, "tab character"):
+		// A tab used as block scalar indentation (`|\n\t`). YAML spec requires spaces for
+		// indentation; v3 enforces this ("found a tab character where an indentation space
+		// is expected"). v4 is lenient and accepts it. Same family as D7 (token-start), but
+		// for block-scalar context. Distinct error message, distinct class.
+		return side + ":tab-indent"
 	case strings.Contains(msg, "cannot start any token"):
 		// A leading character v3's scanner refuses to start a token with — notably a
 		// bare TAB ("\t"), which v4 accepts as an empty document (nil). Other chars

@@ -341,6 +341,16 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// Keyorix defect (v4 has no live caller). Keyed on "comment or line break".
 	"v3-rejects:block-header": true,
 
+	// D32. Tab as block scalar indentation (`|\n\t`): a tab character used as the
+	// indentation of block scalar content. YAML spec requires spaces for indentation; v3.0.5
+	// enforces this ("found a tab character where an indentation space is expected"). v4.0.0
+	// is lenient and accepts it (decoded value: `"\t\n"`). Same v4-lenient direction as D7
+	// (token-start for a bare tab), but in a block-scalar context. Found by the DF3 fuzz run
+	// at `|\n\t` (testdata/fuzz/FuzzYAMLV4Differential/3f946e2a7bf22579). The reachable
+	// library (v3) rejects the input. Not a Keyorix defect (v4 has no live caller). Keyed on
+	// the v3 error substring "tab character".
+	"v3-rejects:tab-indent": true,
+
 	// D31. YAML 1.1 binary integer literal (`0b+0`, `0b1`, `0b101`): v3.0.5 (YAML 1.1)
 	// decodes the `0b` prefix (with optional sign) as a binary integer; v4.0.0 (YAML 1.2)
 	// dropped binary literals and treats the whole token as a string. Found by the DF3 fuzz
@@ -1239,6 +1249,33 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		t.Logf("oracle-2 D30 v3-rejects:block-header gating proven; generic syntax still fails")
 	}
 
+	// ---- Oracle 2 class gating: tab as block scalar indentation (D32) ----
+	{
+		in := []byte("|\n\t")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: `|\\n\\t` must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:tab-indent" {
+			t.Fatalf("`|\\n\\t` split must class as v3-rejects:tab-indent, got %q (v3err=%v)", class, err3)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v3-rejects:tab-indent must be listed (tolerated)")
+		}
+		// RED: v3-rejects:token-start (D7 — bare leading tab, NOT inside a block scalar)
+		// must remain its own distinct class.
+		var z3, z4 any
+		e3D7 := v3yaml.Unmarshal([]byte("\t"), &z3)
+		e4D7 := v4yaml.Unmarshal([]byte("\t"), &z4)
+		if classifyYAMLV4Split(e3D7, e4D7) != "v3-rejects:token-start" {
+			t.Fatalf("D7 bare-tab split must still class as v3-rejects:token-start (direction unchanged)")
+		}
+		t.Logf("oracle-2 D32 tab-indent gating proven; D7 token-start still distinct")
+	}
+
 	// ---- Oracle 3 class gating: YAML 1.1 binary integer literal (D31) ----
 	// v3 (YAML 1.1) decodes `0b+0` as binary integer 0; v4 (YAML 1.2) decodes it as string.
 	// Also covers the container case: `0: 0b+0` → v3 {0:0} vs v4 {0:"0b+0"}.
@@ -1388,6 +1425,8 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		"0: {<<:}",
 		// D30 v3-rejects:block-header (testdata seed 1dea1d27d66a943b)
 		"|\n|A",
+		// D32 v3-rejects:tab-indent (testdata seed 3f946e2a7bf22579)
+		"|\n\t",
 		// D31 yaml11-binary-int (testdata seeds 71de6c43bb10a32d, 70f8e3e01bc42e7e)
 		"0b+0", "0: 0b+0",
 	} {
