@@ -372,6 +372,17 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// `^[-+]?0[bB][-+]?[0-1_]+$` on the whole input (bare scalar only).
 	"yaml11-binary-int": true,
 
+	// D35. Multi-doc stream document-count mismatch (`|\n---`): v3.0.5 and v4.0.0 disagree
+	// on how to split a stream when a `---` document separator appears directly after a
+	// block scalar indicator. v3 ends the block scalar at the `---` marker and counts it
+	// as a second document (2 docs); v4 does not start a new document here (1 doc). This
+	// class is checked by the MultiDoc target's document-count oracle, not the per-doc
+	// value classifier. Found by FuzzYAMLV4MultiDocDifferential at `|\n---`
+	// (testdata/fuzz/FuzzYAMLV4MultiDocDifferential/5de76aef6d145bb6). The reachable
+	// library (v3) interprets `---` as a document separator. Not a Keyorix defect
+	// (v4 has no live caller).
+	"multidoc:count-mismatch": true,
+
 	// D34. v4-rejects:token-start in flow context (`{-}`): v3.0.5 (YAML 1.1) allows `-`
 	// as the start of a plain scalar key inside a flow mapping, decoding `{-}` as a map
 	// with key "-" and value nil; v4.0.0 (YAML 1.2) is stricter about which characters
@@ -1416,6 +1427,34 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		}
 		t.Logf("oracle-2 D34 v4-rejects:token-start gating proven; D7 v3-rejects direction unchanged")
 	}
+
+	// ---- MultiDoc oracle class gating: document-count mismatch (D35) ----
+	// `|\n---`: v3 ends the block scalar at the `---` marker (2 docs), v4 does not
+	// start a new document here (1 doc). The check mirrors the MultiDoc target's
+	// own document-count branch (yaml_v4_struct_stream_fuzz_test.go:332).
+	{
+		in35 := []byte("|\n---")
+		docs3D35, err3D35 := decodeStreamV3(in35)
+		docs4D35, err4D35 := decodeStreamV4(in35)
+		if err3D35 != nil || err4D35 != nil {
+			t.Fatalf("precondition: `|\\n---` must be accepted by both v3 and v4 (v3=%v v4=%v)", err3D35, err4D35)
+		}
+		if len(docs3D35) == len(docs4D35) {
+			t.Fatalf("precondition: `|\\n---` must yield different document counts (v3=%d v4=%d)", len(docs3D35), len(docs4D35))
+		}
+		if !yamlV4ExpectedDiff["multidoc:count-mismatch"] {
+			t.Fatalf("multidoc:count-mismatch must be listed (tolerated)")
+		}
+		// RED: a stream where both v3 and v4 agree on document count must NOT be
+		// absorbed (class must NOT be multidoc:count-mismatch — the guard only fires
+		// when len(docs3) != len(docs4); same-count inputs bypass it entirely).
+		docs3Same, errS3 := decodeStreamV3([]byte("0\n---\n1"))
+		docs4Same, errS4 := decodeStreamV4([]byte("0\n---\n1"))
+		if errS3 != nil || errS4 != nil || len(docs3Same) != len(docs4Same) {
+			t.Fatalf("RED check: `0\\n---\\n1` must be accepted with same doc count by both libraries")
+		}
+		t.Logf("multidoc D35 count-mismatch gating proven: `|\\n---` → v3 %d docs, v4 %d docs; same-count streams bypass guard", len(docs3D35), len(docs4D35))
+	}
 }
 
 // TestYAMLV4AllowlistEntriesHitBySeed verifies that every entry in yamlV4ExpectedDiff
@@ -1453,12 +1492,16 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		}
 	}
 
-	// Multi-doc oracle: classify stream-level accept/reject splits.
+	// Multi-doc oracle: classify stream-level accept/reject splits and count mismatches.
 	runMultiDoc := func(data []byte) {
-		_, err3 := decodeStreamV3(data)
-		_, err4 := decodeStreamV4(data)
+		docs3, err3 := decodeStreamV3(data)
+		docs4, err4 := decodeStreamV4(data)
 		if (err3 == nil) != (err4 == nil) {
 			hit[classifyYAMLV4Split(err3, err4)] = true
+			return
+		}
+		if err3 == nil && len(docs3) != len(docs4) {
+			hit["multidoc:count-mismatch"] = true
 		}
 	}
 
@@ -1538,6 +1581,8 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		">\n0",
 		// D26 v3-rejects:indentation-indicator (testdata seed 9a8b08fc667ea076)
 		">\n>0",
+		// D35 multidoc:count-mismatch (testdata seed 5de76aef6d145bb6)
+		"|\n---",
 	} {
 		runMultiDoc([]byte(s))
 	}
