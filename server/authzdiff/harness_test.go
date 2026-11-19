@@ -153,10 +153,11 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 			// own account. Strip the MFA flags and re-evaluate: allowed without
 			// them → the denial is the precondition, not a permission gap.
 			// Closes known-12 (#4525).
-			if req.mfaRequired || req.pendingMFARequired {
+			if req.mfaRequired || req.pendingMFARequired || req.noMFARequired {
 				noMFA := req
 				noMFA.mfaRequired = false
 				noMFA.pendingMFARequired = false
+				noMFA.noMFARequired = false
 				if (model{lg.db}).allowed(p, noMFA) && !patRefusesUngatedWrite(tb, lg.fx, spec, p) {
 					return PreconditionFailed
 				}

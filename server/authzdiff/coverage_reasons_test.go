@@ -125,9 +125,4 @@ var uncoveredReasons = map[string]string{
 	// extension, analyzed-not-bound in V8b — see the report's LEFTOVERS.
 	"REST DELETE /api/v1/risk-exceptions/{id}": "model: revoke authority (creator-or-admin-tier) is a typed core gate beyond the system.write@global router gate; needs the owner-style model extension (analyzed-not-bound)",
 
-	// mfa.enroll: BeginMFAEnrollment requires c.authEncryptor != nil, which is nil
-	// in test mode. Every principal receives an error before any authorization check.
-	// The authorization gate (BlockWhenImpersonating) is verified structurally by
-	// TestMFARouteGatesPresent (sweep_v5ext5_test.go).
-	"REST POST /api/v1/auth/mfa/enroll": "structural: BlockWhenImpersonating only; BeginMFAEnrollment requires authEncryptor (unavailable in test mode); covered by TestMFARouteGatesPresent",
 }

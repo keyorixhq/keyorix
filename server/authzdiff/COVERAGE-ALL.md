@@ -12,8 +12,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
 | secrets | 43 | 35 | 10 | 10 |
-| other | 128 | 34 | 22 | 11 |
-| **total** | **212** | **110** | **47** | **36** |
+| other | 128 | 35 | 22 | 11 |
+| **total** | **212** | **111** | **47** | **36** |
 
 ## groups
 
@@ -218,7 +218,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/auth/end-impersonation` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
 - [x] `REST POST /api/v1/auth/mfa/activate` — mfa.activate
 - [x] `REST POST /api/v1/auth/mfa/disable` — mfa.disable
-- [ ] `REST POST /api/v1/auth/mfa/enroll` — structural: BlockWhenImpersonating only; BeginMFAEnrollment requires authEncryptor (unavailable in test mode); covered by TestMFARouteGatesPresent
+- [x] `REST POST /api/v1/auth/mfa/enroll` — mfa.enroll
 - [x] `REST POST /api/v1/auth/mfa/recovery-codes/regenerate` — mfa.recovery-codes.regenerate
 - [x] `REST POST /api/v1/auth/mfa/stepup` — mfa.stepup
 - [ ] `REST POST /api/v1/auth/tokens` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound

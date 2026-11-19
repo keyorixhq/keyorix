@@ -21,6 +21,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -40,8 +42,11 @@ import (
 // Synthetic only: every name, email, password and secret value below is
 // made up for this harness; secret values are never printed.
 //
-// Encryption is not wired (core's dev/test plaintext mode), so a copied file
-// decrypts under any core instance. Authorization does not depend on it.
+// Encryption IS wired (core's real encryption mode): BeginMFAEnrollment and
+// the MFA fixture secrets require an enabled authEncryptor. All legs share the
+// same encryptor keys (stored in fixtures.enc), so a copied file decrypts under
+// any leg's core instance. Keys are held in memory after Initialize; the key
+// files in the template temp dir are removed after buildTemplate returns.
 
 const fxPassword = "Az9!synthetic-only-Q7"
 
@@ -216,21 +221,25 @@ type fixtures struct {
 	// pendingRiskExceptionID.
 	riskExceptionID uint
 
+	// enc is the encryption service used to encrypt MFA fixture secrets and to
+	// enable BeginMFAEnrollment (mfa.enroll). All legs share the same instance so
+	// that a copied template DB decrypts correctly under every leg's core instance.
+	// Keys are held in memory after Initialize; the on-disk key files in the template
+	// temp dir are removed after buildTemplate returns and do not need to persist.
+	enc *encryption.Service
+
 	// V5EXT4: MFA step-up fixture.
 	//
-	// mfaUserTOTPSecret is the base32 TOTP secret seeded directly in the template
-	// DB for pkMFAUser. BeginMFAEnrollment is not used (it requires authEncryptor
-	// which is nil in test mode); instead, models.MFASecret is written directly
-	// and users.mfa_enabled is set to true. decryptAuthSecret is a passthrough
-	// when encryption is off, so loadTOTPSecret reads the plaintext base32 back.
+	// mfaUserTOTPSecret is the TOTP secret for pkMFAUser. The MFASecret row is
+	// written with the secret encrypted under fixtures.enc so loadTOTPSecret can
+	// decrypt it on each leg, and users.mfa_enabled is set to true.
 	mfaUserTOTPSecret string
 
 	// V5EXT5: pending MFA enrollment fixture (mfa.activate).
 	//
-	// mfaEnrolleeTOTPSecret is the base32 TOTP secret for pkMFAEnrollee's pending
-	// enrollment. The MFASecret row is Activated=false; users.mfa_enabled stays false.
-	// decryptAuthSecret is a passthrough (no encryptor in test mode), so the TOTP
-	// code can be validated directly against the plaintext base32.
+	// mfaEnrolleeTOTPSecret is the TOTP secret for pkMFAEnrollee's pending enrollment.
+	// The MFASecret row is Activated=false and the secret is encrypted under
+	// fixtures.enc; users.mfa_enabled stays false (enrollment is pending, not complete).
 	mfaEnrolleeTOTPSecret string
 
 	// V5EXT4: SCIM fixture.
@@ -286,10 +295,25 @@ func buildTemplate(tb testing.TB) ([]byte, *fixtures, error) {
 		return nil, nil, err
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
+
+	// Create the encryption service. Keys are initialized into memory here;
+	// all legs will share this instance (via fixtures.enc) so their cores can
+	// decrypt the encrypted MFA secrets in the template DB. The key files live
+	// under dir and are removed with it after buildTemplate returns — that is
+	// fine because encryption.Service holds the DEK in memory after Initialize.
+	encKeyDir := filepath.Join(dir, "enckeys")
+	if err := os.MkdirAll(encKeyDir, 0o700); err != nil {
+		return nil, nil, fmt.Errorf("enc key dir: %w", err)
+	}
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, encKeyDir)
+	if err := enc.Initialize("authzdiff-test-passphrase"); err != nil {
+		return nil, nil, fmt.Errorf("enc.Initialize: %w", err)
+	}
+
 	path := filepath.Join(dir, "template.db")
 	db := fuzzworld.OpenSQLite(tb, path, 1)
 	fuzzworld.Bootstrap(tb, db)
-	fx, err := seed(context.Background(), db)
+	fx, err := seed(context.Background(), db, enc)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -308,19 +332,19 @@ func must[T any](v T, err error) T {
 	return v
 }
 
-func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
+func seed(ctx context.Context, db *gorm.DB, enc *encryption.Service) (fx *fixtures, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("seed: %v", r)
 		}
 	}()
 	ls := store.NewLocalStorage(db)
-	c := newCore(ls)
+	c := newCore(ls, enc)
 	c.SetBootstrapToken("authzdiff-bootstrap")
 	must(c.BootstrapSystem(ctx, &core.BootstrapRequest{
 		Username: "kxadmin", Email: "kxadmin@example.invalid", Password: fxPassword, DisplayName: "Admin", Token: "authzdiff-bootstrap",
 	}))
-	fx = &fixtures{roleIDs: map[string]uint{}, permIDs: map[string]uint{}, principals: map[principalKind]*principal{}}
+	fx = &fixtures{roleIDs: map[string]uint{}, permIDs: map[string]uint{}, principals: map[principalKind]*principal{}, enc: enc}
 	adminSess, admin := mustLogin(ctx, c, "kxadmin")
 	fx.adminID = admin.ID
 	fx.principals[pkGlobalAdmin] = &principal{kind: pkGlobalAdmin, userID: admin.ID, token: adminSess, username: "kxadmin"}
@@ -747,12 +771,9 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 
 	// mfa.stepup: seed an enrolled, activated TOTP device for pkMFAUser.
 	//
-	// BeginMFAEnrollment is not used because it checks c.authEncryptor != nil,
-	// which always fails in test mode (no encryptor configured). Instead:
 	//   1. Generate a standard TOTP secret key (issuer+account are cosmetic only).
-	//   2. Write models.MFASecret{Activated: true, SecretEnc: []byte(base32)} directly
-	//      to the DB — decryptAuthSecret is a passthrough when encryption is off, so
-	//      loadTOTPSecret reads the base32 back without change.
+	//   2. Encrypt the secret under enc (enabled since V5EXT6B) and write the
+	//      encrypted MFASecret row directly to the DB with Activated=true.
 	//   3. Set users.mfa_enabled = true so VerifyMFAStepUp's MFAEnabled guard passes.
 	mfaUser := mkUser("p-mfa-user")
 	mfaTok, _ := mustLogin(ctx, c, "p-mfa-user")
@@ -760,7 +781,11 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("seed: totp.Generate: %w", err)
 	}
-	if e := db.Create(&models.MFASecret{UserID: mfaUser.ID, SecretEnc: []byte(mfaKey.Secret()), Activated: true}).Error; e != nil {
+	mfaSecretEnc, _, err := enc.EncryptSecretWithAAD([]byte(mfaKey.Secret()), ports.MFASecretAAD(mfaUser.ID))
+	if err != nil {
+		return nil, fmt.Errorf("seed: encrypt mfa user secret: %w", err)
+	}
+	if e := db.Create(&models.MFASecret{UserID: mfaUser.ID, SecretEnc: mfaSecretEnc, Activated: true}).Error; e != nil {
 		return nil, fmt.Errorf("seed: create MFASecret: %w", e)
 	}
 	db.Exec("UPDATE users SET mfa_enabled = true WHERE id = ?", mfaUser.ID)
@@ -783,18 +808,22 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 
 	// ---- V5EXT5 fixtures (mfa.activate with pkMFAEnrollee) ----
 	//
-	// pkMFAEnrollee has a PENDING (not yet activated) MFA enrollment.
-	// BeginMFAEnrollment cannot be used in test mode (requires authEncryptor); the
-	// mfa_secrets row is written directly with Activated=false. users.mfa_enabled
-	// stays false (not yet activated), so mfaEnabled(pkMFAEnrollee)=false —
-	// only pendingMFAEnrollment(pkMFAEnrollee)=true (mfa.activate's model gate).
+	// pkMFAEnrollee has a PENDING (not yet activated) MFA enrollment. The
+	// mfa_secrets row is written directly with Activated=false and the secret
+	// encrypted under enc. users.mfa_enabled stays false (not yet activated),
+	// so mfaEnabled(pkMFAEnrollee)=false — only pendingMFAEnrollment(pkMFAEnrollee)=true
+	// (mfa.activate's model gate).
 	mfaEnrollee := mkUser("p-mfa-enrollee")
 	mfaEnrolleeTok, _ := mustLogin(ctx, c, "p-mfa-enrollee")
 	mfaEnrolleeKey, err := totp.Generate(totp.GenerateOpts{Issuer: "keyorix-authzdiff-test", AccountName: mfaEnrollee.Email})
 	if err != nil {
 		return nil, fmt.Errorf("seed: totp.Generate (enrollee): %w", err)
 	}
-	if e := db.Create(&models.MFASecret{UserID: mfaEnrollee.ID, SecretEnc: []byte(mfaEnrolleeKey.Secret()), Activated: false}).Error; e != nil {
+	mfaEnrolleeSecretEnc, _, err := enc.EncryptSecretWithAAD([]byte(mfaEnrolleeKey.Secret()), ports.MFASecretAAD(mfaEnrollee.ID))
+	if err != nil {
+		return nil, fmt.Errorf("seed: encrypt mfa enrollee secret: %w", err)
+	}
+	if e := db.Create(&models.MFASecret{UserID: mfaEnrollee.ID, SecretEnc: mfaEnrolleeSecretEnc, Activated: false}).Error; e != nil {
 		return nil, fmt.Errorf("seed: create pending MFASecret: %w", e)
 	}
 	// mfa_enabled stays false: enrollment is pending, not complete.
@@ -813,8 +842,11 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 // returned, never sent) and a synthetic base URL, which invitation and
 // setup-link creation require (server/wire_credential_delivery.go does this
 // at startup in production).
-func newCore(ls *store.LocalStorage) *core.KeyorixCore {
+func newCore(ls *store.LocalStorage, enc *encryption.Service) *core.KeyorixCore {
 	c := core.NewKeyorixCore(ls)
+	if enc != nil {
+		c.SetAuthEncryptor(enc)
+	}
 	c.SetCredentialDelivery(nil, "https://keyorix.example.invalid")
 	// Self-service emergency access, wired the way the server does from config
 	// (server start → SetBreakGlassPolicy). Enabled with a CONTAINED emergency
@@ -883,7 +915,7 @@ func newLeg(tb testing.TB, l layer) *leg {
 	// thousands of database copies accumulate at once.
 	db := fuzzworld.OpenSQLiteFromImage(tb, b)
 	ls := store.NewLocalStorage(db)
-	c := newCore(ls)
+	c := newCore(ls, fx.enc)
 	lg := &leg{db: db, ls: ls, c: c, fx: fx}
 	lg.closers = append(lg.closers, func() {
 		if s, e := db.DB(); e == nil {
