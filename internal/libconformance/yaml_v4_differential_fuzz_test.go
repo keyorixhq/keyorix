@@ -1,6 +1,7 @@
 package libconformance
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"os"
@@ -300,6 +301,13 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// YAML spec requires a comment to be preceded by whitespace; v4 enforces this
 		// and rejects, v3 is lenient. v4 is the more spec-correct side.
 		return side + ":comment-ws"
+	case strings.Contains(msg, "found an indentation indicator equal to 0"):
+		// A block scalar with an explicit indentation indicator of 0 (e.g. `>0` on the
+		// first content line). YAML spec §8.1 requires the indentation indicator to be
+		// 1–9 if present; zero is explicitly forbidden. v3 enforces this and rejects;
+		// v4 is lenient and accepts. Found by the DF3 multi-doc fuzzer at `>\n>0` (the
+		// second document). v3 is the stricter/safer side here.
+		return side + ":indentation-indicator"
 	default:
 		return side + ":other"
 	}
@@ -324,6 +332,16 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	// not absorbed.
 	if diffs, ok := v3EmptyVsV4NonEmptyStringOnly(v3val, v4val); ok && diffs > 0 && inputHasBlockScalarHeader(data) {
 		return "block-scalar-underindent"
+	}
+	// Block-scalar end-of-stream clip difference (D27): when the last content line of a
+	// block scalar is whitespace-only (above the indent level) and the input ends without a
+	// terminal newline, v3 omits the clip-chomping newline while v4 adds it. The shape is
+	// "every differing leaf has v4val == v3val + newline". Guarded by: (a) block-scalar
+	// header present, (b) input ends without `\n`/`\r`. Adding a trailing newline resolves
+	// the ambiguity (confirmed: `|\n 000000\n  \n` → both agree at `"000000\n \n"`).
+	if diffs, ok := v3StringVsV4StringPlusNewlineOnly(v3val, v4val); ok && diffs > 0 &&
+		inputHasBlockScalarHeader(data) && !bytes.HasSuffix(data, []byte{'\n'}) && !bytes.HasSuffix(data, []byte{'\r'}) {
+		return "block-scalar-eos-clip"
 	}
 	// The literal `-0`: v3 resolves it to int 0, v4 to float64 negative zero.
 	if diffs, ok := negZeroIntVsFloatOnly(v3val, v4val); ok && diffs > 0 {
@@ -363,6 +381,14 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if strings.Contains(string(data), "-0") && negZeroEq(v3val, v4val) {
 		return "negative-zero-structural"
 	}
+	// A flow-SEQUENCE entry whose `:` is immediately followed by `]` with no space
+	// (`[0:]`): v3 keeps the `:` IN the value (value `"0:"`), v4 treats the `:` as
+	// the key/value separator (key `0`, null value). The flow-SEQUENCE analogue of
+	// D23 (`{0:}`). Recognised causally: inserting a space before `]` makes v3 agree
+	// with v4 (and v4 is unchanged).
+	if isFlowSeqColonNoSpaceDivergence(data, v3val, v4val) {
+		return "flow-seq-colon-nospace"
+	}
 	// A colon inside an anchor NAME (`&a:b`, `&00:00000`). v3 ends the anchor name
 	// at the `:` (so `&a:b` → anchor `a`, content ":b"); v4 absorbs the `:` into the
 	// name (anchor `a:b`, EMPTY node → nil). Both accept, values differ.
@@ -389,6 +415,33 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 func isFlowColonNoSpaceDivergence(data []byte, v3val, v4val any) bool {
 	s := string(data)
 	mod := strings.ReplaceAll(strings.ReplaceAll(s, ":}", ": }"), ":,", ": ,")
+	if mod == s {
+		return false
+	}
+	var m3, m4 any
+	if v3yaml.Unmarshal([]byte(mod), &m3) != nil || v4yaml.Unmarshal([]byte(mod), &m4) != nil {
+		return false
+	}
+	cm3, e3 := v3yaml.Marshal(m3)
+	cm4, e4 := v3yaml.Marshal(m4)
+	co4, e4b := v3yaml.Marshal(v4val)
+	if e3 != nil || e4 != nil || e4b != nil {
+		return false
+	}
+	// v4 unchanged by the space, and v3 now matches v4.
+	return reflect.DeepEqual(cm4, co4) && reflect.DeepEqual(cm3, cm4)
+}
+
+// isFlowSeqColonNoSpaceDivergence causally confirms the flow-SEQUENCE `:`-no-space
+// divergence (`[0:]`): a `:` immediately followed by `]` acts as a key/value separator
+// in v4 but is kept inside the value string by v3. Inserting a space before `]` resolves
+// the ambiguity. If after that v4 is UNCHANGED (it already read the `:` as a separator)
+// and v3 now agrees with v4, then v3's keeping of the `:` in the value was the sole cause.
+// A genuine divergence that merely contains `:]` is not absorbed (v4 would change, or
+// v3 would not come to match). The flow-SEQUENCE counterpart of isFlowColonNoSpaceDivergence.
+func isFlowSeqColonNoSpaceDivergence(data []byte, v3val, v4val any) bool {
+	s := string(data)
+	mod := strings.ReplaceAll(s, ":]", ": ]")
 	if mod == s {
 		return false
 	}
@@ -626,10 +679,10 @@ func mapLookupByLogicalKey(m, k reflect.Value) (reflect.Value, bool) {
 // nonSpecificTagRe matches a standalone non-specific `!` tag: a `!` that is a
 // complete tag token (not the `!!x` explicit-tag form, not the `!<…>` verbatim
 // form, not a `!local` named tag), preceded by start-of-line or a
-// whitespace/flow/indicator character and followed by whitespace or end-of-line.
-// Those are exactly the positions where `!` applies the non-specific tag to the
-// following (or empty) scalar: `! 00`, `x: !`, `- ! v`, `{a: !}`.
-var nonSpecificTagRe = regexp.MustCompile(`(?m)(^|[ \t:\-\[\]{},])!([ \t]|$)`)
+// whitespace/flow/indicator character and followed by whitespace (including CR)
+// or end-of-line. CR (`\r`) is valid YAML whitespace (s-white) and is a legal
+// separator between `!` and its following scalar (`!\r0` ≡ `! 0` to both parsers).
+var nonSpecificTagRe = regexp.MustCompile(`(?m)(^|[ \t:\-\[\]{},])!([ \t\r]|$)`)
 
 func inputHasNonSpecificTag(data []byte) bool {
 	return nonSpecificTagRe.Match(data)
@@ -829,6 +882,72 @@ func v3EmptyVsV4NonEmptyStringOnly(a, b any) (int, bool) {
 		total := 0
 		for i := range ra.Len() {
 			n, ok := v3EmptyVsV4NonEmptyStringOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	default:
+		if leafEq(a, b) {
+			return 0, true
+		}
+		return 0, false
+	}
+}
+
+// v3StringVsV4StringPlusNewlineOnly reports whether a and b are structurally
+// identical except that wherever they differ, b is a string equal to a + "\n"
+// (v4 adds exactly one trailing newline that v3 did not). This matches the
+// block-scalar end-of-stream clip difference (D27): when a block scalar's last
+// content line is whitespace-only (above indent) and the input ends without a
+// terminal newline, v3 omits the clip-chomping newline and v4 adds it.
+func v3StringVsV4StringPlusNewlineOnly(a, b any) (int, bool) {
+	if as, ok := a.(string); ok {
+		bs, ok := b.(string)
+		if !ok {
+			return 0, false
+		}
+		if as == bs {
+			return 0, true
+		}
+		if bs == as+"\n" {
+			return 1, true
+		}
+		return 0, false
+	}
+	if a == nil || b == nil {
+		return 0, reflect.DeepEqual(a, b)
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return 0, false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for _, k := range ra.MapKeys() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
+				return 0, false
+			}
+			n, ok := v3StringVsV4StringPlusNewlineOnly(ra.MapIndex(k).Interface(), bval.Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for i := range ra.Len() {
+			n, ok := v3StringVsV4StringPlusNewlineOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
 			if !ok {
 				return 0, false
 			}
