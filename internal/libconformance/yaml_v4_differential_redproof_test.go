@@ -331,6 +331,15 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// (which covers the ACCEPT-but-silently-drop case). Not a Keyorix defect (v4 has no
 	// live caller). v4 is the stricter side. Keyed on "merge requires" / "map merge".
 	"v4-rejects:merge-value": true,
+
+	// D30. Block scalar header followed by non-whitespace content (`|\n|A`): v3 re-parses
+	// the second `|` as a new block scalar header and rejects with "did not find expected
+	// comment or line break"; v4 accepts and treats `|A` as block scalar content at
+	// column 0. Found by the DF3 fuzz run at `|\n|A` (testdata/fuzz/
+	// FuzzYAMLV4Differential/1dea1d27d66a943b). v3 is stricter: it validates block
+	// scalar headers strictly. The reachable library (v3) rejects the input. Not a
+	// Keyorix defect (v4 has no live caller). Keyed on "comment or line break".
+	"v3-rejects:block-header": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -1194,6 +1203,31 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		}
 		t.Logf("oracle-2 D29 v4-rejects:merge-value gating proven; D22 value split still fires")
 	}
+
+	// ---- Oracle 2 class gating: v3-rejects:block-header (D30) ----
+	{
+		in := []byte("|\n|A")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: `|\\n|A` must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:block-header" {
+			t.Fatalf("`|\\n|A` split must class as v3-rejects:block-header, got %q (v3err=%v)", class, err3)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v3-rejects:block-header must be listed (tolerated)")
+		}
+		// RED: a generic "did not find expected" error (not "comment or line break")
+		// must NOT be absorbed by this class.
+		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected block entry"}, nil)
+		if other == "v3-rejects:block-header" {
+			t.Fatalf("a generic 'did not find expected' error must not class as block-header")
+		}
+		t.Logf("oracle-2 D30 v3-rejects:block-header gating proven; generic syntax still fails")
+	}
 }
 
 // TestYAMLV4AllowlistEntriesHitBySeed verifies that every entry in yamlV4ExpectedDiff
@@ -1294,6 +1328,8 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		"&0:0ډ",
 		// D29 v4-rejects:merge-value (testdata seed 6abe4fb3590fbcb7)
 		"0: {<<:}",
+		// D30 v3-rejects:block-header (testdata seed 1dea1d27d66a943b)
+		"|\n|A",
 	} {
 		runSingle([]byte(s))
 	}

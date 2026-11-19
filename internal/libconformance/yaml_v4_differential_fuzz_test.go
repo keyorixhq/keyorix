@@ -265,6 +265,14 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// element. The flow-context analogue of D2 (block empty-implicit-key). v4
 		// accepts what v3 rejects.
 		return side + ":flow-node-content"
+	case strings.Contains(msg, "comment or line break"):
+		// A block scalar header (`|`/`>`) followed immediately by a non-whitespace,
+		// non-modifier character (e.g. `|\n|A`). v3 re-scans the second `|` as a new
+		// block scalar header and rejects because `A` is not a valid modifier or line
+		// break. v4 treats `|A` as block scalar content at column 0. The error is
+		// "did not find expected comment or line break"; must be placed BEFORE the
+		// generic "did not find expected" / "could not find expected" :syntax catch.
+		return side + ":block-header"
 	case strings.Contains(msg, "merge requires") || strings.Contains(msg, "map merge"):
 		// The `<<` merge-key with an INVALID merge value (`{<<:}`, `{<<: null}`). v4
 		// enforces merge-key semantics and rejects when the value is not a map or

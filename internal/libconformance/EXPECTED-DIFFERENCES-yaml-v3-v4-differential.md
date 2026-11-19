@@ -75,6 +75,8 @@ class reaches the failing assertion.
 
 | D29 | `v4-rejects:merge-value` | `<<` merge key with an invalid merge value (nil/non-map, e.g. `{<<:}`) | accepts: treats `<<` as a plain key with nil value | rejects: "map merge requires map or sequence of maps as the value" | Found by the DF3 fuzz run at `00000: 00\n0: {<<:}` (testdata/fuzz/FuzzYAMLV4Differential/6abe4fb3590fbcb7). The REJECT direction of D22 (which covers the ACCEPT-but-silently-drop case). v4 enforces merge-key semantics; v3 is lenient. The reachable library (v3) accepts. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4Split` via "merge requires" / "map merge" case with side "v4-rejects". |
 
+| D30 | `v3-rejects:block-header` | block scalar content starting with `\|` or `>` at column 0 (e.g. `\|\n\|A`): v3 re-parses the second `\|` as a new block scalar header with invalid syntax, v4 accepts it as block scalar content | rejects: "did not find expected comment or line break" | accepts: `\|A` as block scalar content (value `"\|A"`) | Found by the DF3 fuzz run at `\|\n\|A` (testdata/fuzz/FuzzYAMLV4Differential/1dea1d27d66a943b). v3 is stricter: validates block scalar headers. The reachable library (v3) rejects. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4Split` via "comment or line break" case; must precede the generic `:syntax` catch. |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that
