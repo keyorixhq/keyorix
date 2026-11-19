@@ -565,8 +565,11 @@ func negZeroEq(a, b any) bool {
 }
 
 // v3AnchorTokenRe matches the anchor token as v3 scans it: `&` plus the
-// anchor-name characters up to (but not including) a flow/`:`/whitespace boundary.
-var v3AnchorTokenRe = regexp.MustCompile(`&[^\s:,\[\]{}]+`)
+// anchor-name characters up to (but not including) a flow/`:`/`?`/whitespace boundary.
+// `?` is included because v3 stops the anchor name before the YAML complex-key indicator
+// `?` (e.g. `&0?0` → v3 reads anchor `0`, content `?0`), while v4 is more liberal
+// and absorbs `?` into the anchor name.
+var v3AnchorTokenRe = regexp.MustCompile(`&[^\s:,\[\]{}?]+`)
 
 // isAnchorColonBoundaryDivergence reports whether a v3/v4 value divergence is
 // caused solely by a `:` inside an anchor name — v3 ends the name at the colon,
@@ -591,7 +594,13 @@ func isAnchorColonBoundaryDivergence(data []byte, v3val, v4val any) bool {
 		return false
 	}
 	for _, loc := range v3AnchorTokenRe.FindAllIndex(data, -1) {
-		if loc[1] >= len(data) || data[loc[1]] != ':' {
+		if loc[1] >= len(data) {
+			continue
+		}
+		b := data[loc[1]]
+		// Try `:` (D18/colon-boundary) and `?` (v4 also absorbs `?` into anchor names,
+		// e.g. `&0?0` where v3 ends at `?` and v4 makes the anchor name `0?0`).
+		if b != ':' && b != '?' {
 			continue
 		}
 		stripped := append(append([]byte{}, data[:loc[0]]...), data[loc[1]:]...)
