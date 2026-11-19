@@ -77,6 +77,8 @@ class reaches the failing assertion.
 
 | D30 | `v3-rejects:block-header` | block scalar content starting with `\|` or `>` at column 0 (e.g. `\|\n\|A`): v3 re-parses the second `\|` as a new block scalar header with invalid syntax, v4 accepts it as block scalar content | rejects: "did not find expected comment or line break" | accepts: `\|A` as block scalar content (value `"\|A"`) | Found by the DF3 fuzz run at `\|\n\|A` (testdata/fuzz/FuzzYAMLV4Differential/1dea1d27d66a943b). v3 is stricter: validates block scalar headers. The reachable library (v3) rejects. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4Split` via "comment or line break" case; must precede the generic `:syntax` catch. |
 
+| D31 | `yaml11-binary-int` | a **YAML 1.1 binary integer literal** (`0b+0`, `0b1`, `0b101`): `0b`/`0B` prefix with optional sign | decodes as an integer (YAML 1.1 supports `0b[0-1_]+`; v3 also allows a sign after the prefix, e.g. `0b+0` → int `0`) | decodes as a **string** `"0b+0"` (YAML 1.2 core schema dropped binary number literals) | Found by the DF3 fuzz run at `0b+0` (testdata/fuzz/FuzzYAMLV4Differential/71de6c43bb10a32d). v4 is the more spec-correct side (YAML 1.2 core schema dropped `0b`); the reachable library (v3) silently converts `0b+0` to integer `0`. Not a Keyorix defect (v4 has no live caller); a forward-looking migration hazard for any YAML 1.1 binary number literal in a config file. | `classifyYAMLV4ValueSplit` — regex `^[-+]?0[bB][-+]?[0-1_]+$` on the whole input (bare scalar only); a mapping with a binary-int key falls through to `value-mismatch`. |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that

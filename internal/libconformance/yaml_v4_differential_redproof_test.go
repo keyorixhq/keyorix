@@ -340,6 +340,16 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// scalar headers strictly. The reachable library (v3) rejects the input. Not a
 	// Keyorix defect (v4 has no live caller). Keyed on "comment or line break".
 	"v3-rejects:block-header": true,
+
+	// D31. YAML 1.1 binary integer literal (`0b+0`, `0b1`, `0b101`): v3.0.5 (YAML 1.1)
+	// decodes the `0b` prefix (with optional sign) as a binary integer; v4.0.0 (YAML 1.2)
+	// dropped binary literals and treats the whole token as a string. Found by the DF3 fuzz
+	// run at `0b+0` (testdata/fuzz/FuzzYAMLV4Differential/71de6c43bb10a32d). v4 is the more
+	// spec-correct side (YAML 1.2 core schema dropped 0b); the reachable library (v3) silently
+	// converts `0b+0` to integer 0. Not a Keyorix defect (v4 has no live caller); forward-
+	// looking migration hazard for YAML 1.1 binary number literals. Recognised by regex
+	// `^[-+]?0[bB][-+]?[0-1_]+$` on the whole input (bare scalar only).
+	"yaml11-binary-int": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -1228,6 +1238,40 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		}
 		t.Logf("oracle-2 D30 v3-rejects:block-header gating proven; generic syntax still fails")
 	}
+
+	// ---- Oracle 3 class gating: YAML 1.1 binary integer literal (D31) ----
+	// v3 (YAML 1.1) decodes `0b+0` as binary integer 0; v4 (YAML 1.2) decodes it as string.
+	{
+		in := []byte("0b+0")
+		var v3v, v4v any
+		if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+			t.Fatalf("D31: v3 unmarshal error: %v", err)
+		}
+		if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+			t.Fatalf("D31: v4 unmarshal error: %v", err)
+		}
+		cb3, _ := v3yaml.Marshal(v3v)
+		cb4, _ := v3yaml.Marshal(v4v)
+		if reflect.DeepEqual(cb3, cb4) {
+			t.Fatalf("precondition: `0b+0` v3/v4 must disagree (v3=%q v4=%q)", cb3, cb4)
+		}
+		if class := classifyYAMLV4ValueSplit(in, v3v, v4v); class != "yaml11-binary-int" || !yamlV4ExpectedDiff[class] {
+			t.Fatalf("`0b+0` must class as the tolerated yaml11-binary-int, got %q (v3=%#v v4=%#v)", class, v3v, v4v)
+		}
+		// RED: a standard decimal integer must not match the regex.
+		if yaml11BinaryIntRe.MatchString("42") {
+			t.Fatalf("a standard decimal integer must not match yaml11BinaryIntRe")
+		}
+		// RED: a byte string starting with 0b but with an invalid binary digit (2) must not match.
+		if yaml11BinaryIntRe.MatchString("0b2") {
+			t.Fatalf("0b2 (digit 2 not in binary set) must not match yaml11BinaryIntRe")
+		}
+		// RED: a bare 0b with no digits must not match.
+		if yaml11BinaryIntRe.MatchString("0b") {
+			t.Fatalf("0b with no digits must not match yaml11BinaryIntRe")
+		}
+		t.Logf("oracle-3 D31 yaml11-binary-int gating proven: `0b+0` tolerated; non-binary-int inputs still fail")
+	}
 }
 
 // TestYAMLV4AllowlistEntriesHitBySeed verifies that every entry in yamlV4ExpectedDiff
@@ -1330,6 +1374,8 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		"0: {<<:}",
 		// D30 v3-rejects:block-header (testdata seed 1dea1d27d66a943b)
 		"|\n|A",
+		// D31 yaml11-binary-int (testdata seed 71de6c43bb10a32d)
+		"0b+0",
 	} {
 		runSingle([]byte(s))
 	}

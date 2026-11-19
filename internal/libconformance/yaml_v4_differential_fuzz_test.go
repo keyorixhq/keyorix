@@ -422,6 +422,13 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if inputHasNonSpecificTag(data) && nonspecificTagEq(v3val, v4val) {
 		return "nonspecific-tag-structural"
 	}
+	// YAML 1.1 binary integer literal (`0b+0`, `0b1`, `0b101`): v3 (YAML 1.1) decodes
+	// the `0b` prefix as a binary integer; v4 (YAML 1.2) has no binary number form and
+	// keeps the token as a string. Scoped to bare scalars (the whole input must be a
+	// binary-int token) so a mapping with a binary-int key falls through to value-mismatch.
+	if yaml11BinaryIntRe.MatchString(strings.TrimSpace(string(data))) {
+		return "yaml11-binary-int"
+	}
 	return "value-mismatch"
 }
 
@@ -867,6 +874,13 @@ func negZeroIntVsFloatOnly(a, b any) (int, bool) {
 // digit, optional chomping `+`/`-`) at the end of a line, optionally after a
 // `key:` or `- ` indicator — the shape that introduces literal/folded content.
 var blockScalarHeaderRe = regexp.MustCompile(`(?m)(^|[:\-] *)[|>][0-9]*[+\-]?[ \t]*$`)
+
+// yaml11BinaryIntRe matches a YAML 1.1 binary integer literal: an optional leading
+// sign, `0b`/`0B` prefix, an optional sign after the prefix, then one or more
+// binary digits or underscores. YAML 1.1 supports `0b[0-1_]+`; some implementations
+// (v3 included) also allow a sign between the prefix and the digits (e.g. `0b+0`).
+// YAML 1.2 (v4) dropped binary literals; v3 decodes these as integers, v4 as strings.
+var yaml11BinaryIntRe = regexp.MustCompile(`^[-+]?0[bB][-+]?[0-1_]+$`)
 
 func inputHasBlockScalarHeader(data []byte) bool {
 	return blockScalarHeaderRe.Match(data)
