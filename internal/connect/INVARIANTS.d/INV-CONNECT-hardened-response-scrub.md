@@ -9,11 +9,16 @@
   accepts a string iff it matches that same regexp; (c) `cappedBodyReader` delivers exactly
   `body[:min(len,cap)]`, returns `errResponseTooLarge` iff `len > cap`, never exceeds the
   cap, and holds a sticky terminal error — so a size cap bounds work post-decompression;
-  (d) `errorBodyScrubRoundTripper` passes a `<300` response through unchanged but, for a
-  `>=300` error status, replaces the body with a scrubbed one, forces
+  (d) `errorBodyScrubRoundTripper` passes a `200 OK` response through unchanged but, for
+  any other status (whether `>=300` error status or `2xx` non-200 unexpected-success that
+  azcore treats as an error), replaces the body with a scrubbed one, forces
   `Content-Type: application/json`, sets `Content-Length` to the new body length, clears
   `TransferEncoding` / sets `Uncompressed`, deletes `Content-Encoding`/`Content-Range`/
-  `Content-Md5`, and preserves the status code and retry/auth headers. Why: GP1 cloud-identity
+  `Content-Md5`, and preserves the status code and retry/auth headers. The 2xx non-200
+  case matters because `azsecrets.GetSecret` only expects 200; azcore parses any other
+  response body through `NewResponseError` → `extractErrorCodeJSON` → `encoding/json.Unmarshal`,
+  and a hostile server can amplify a ~40 KB deeply-nested body to hundreds of MB via
+  recursive JSON processing (confirmed with the saved corpus file, 20000-level nesting). Why: GP1 cloud-identity
   hostile-response campaign (report `/mnt/data/wave4/out/gp1-REPORT.md`); this is the "HTTP
   client layer that parses redirects, content-length and content-type" shared by the Azure
   Key Vault (Azure-identity-authenticated) and Vault/AWS Secrets Manager connectors, and
