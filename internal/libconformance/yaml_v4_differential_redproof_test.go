@@ -322,6 +322,15 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// defect (v4 has no live caller). Keyed on the v4 error "did not find expected
 	// alphabetic or numeric character" with side "v4-rejects".
 	"v4-rejects:anchor-char": true,
+
+	// D29. `<<` merge-key with INVALID merge value: v4 enforces merge-key semantics and
+	// rejects when the merge value is not a map or sequence of maps ("map merge requires
+	// map or sequence of maps as the value"). v3 treats `<<` as a plain key with nil
+	// value and accepts. Found by the DF3 fuzz run at `00000: 00\n0: {<<:}` (testdata/
+	// fuzz/FuzzYAMLV4Differential/6abe4fb3590fbcb7). This is the REJECT direction of D22
+	// (which covers the ACCEPT-but-silently-drop case). Not a Keyorix defect (v4 has no
+	// live caller). v4 is the stricter side. Keyed on "merge requires" / "map merge".
+	"v4-rejects:merge-value": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -1152,6 +1161,39 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		}
 		t.Logf("oracle-2 D28 v4-rejects:anchor-char gating proven; D9 direction unchanged")
 	}
+
+	// ---- Oracle 2 class gating: v4-rejects:merge-value (D29) ----
+	{
+		in := []byte("0: {<<:}")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 != nil || err4 == nil {
+			t.Fatalf("precondition: `0: {<<:}` must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v4-rejects:merge-value" {
+			t.Fatalf("`0: {<<:}` split must class as v4-rejects:merge-value, got %q (v4err=%v)", class, err4)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v4-rejects:merge-value must be listed (tolerated)")
+		}
+		// RED: D22 (merge-key value divergence, both accept) must remain distinct.
+		var z3, z4 any
+		e3D22 := v3yaml.Unmarshal([]byte("<<"), &z3)
+		e4D22 := v4yaml.Unmarshal([]byte("<<"), &z4)
+		if e3D22 != nil || e4D22 != nil {
+			t.Fatalf("precondition: `<<` must be accepted by both (v3=%v v4=%v)", e3D22, e4D22)
+		}
+		// D22 is a value split, not an accept/reject split — classifyYAMLV4Split is not
+		// called for it. Verify v3val != v4val (the value split still fires).
+		cb3, _ := v3yaml.Marshal(z3)
+		cb4, _ := v3yaml.Marshal(z4)
+		if reflect.DeepEqual(cb3, cb4) {
+			t.Fatalf("D22 `<<` must still produce a value split (v3=%q v4=%q)", cb3, cb4)
+		}
+		t.Logf("oracle-2 D29 v4-rejects:merge-value gating proven; D22 value split still fires")
+	}
 }
 
 // TestYAMLV4AllowlistEntriesHitBySeed verifies that every entry in yamlV4ExpectedDiff
@@ -1250,6 +1292,8 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		"|\n 000000\n  ",
 		// D28 v4-rejects:anchor-char (testdata seed a9fc9bb63e204a8b)
 		"&0:0ډ",
+		// D29 v4-rejects:merge-value (testdata seed 6abe4fb3590fbcb7)
+		"0: {<<:}",
 	} {
 		runSingle([]byte(s))
 	}

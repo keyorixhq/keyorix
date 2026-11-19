@@ -265,6 +265,13 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// element. The flow-context analogue of D2 (block empty-implicit-key). v4
 		// accepts what v3 rejects.
 		return side + ":flow-node-content"
+	case strings.Contains(msg, "merge requires") || strings.Contains(msg, "map merge"):
+		// The `<<` merge-key with an INVALID merge value (`{<<:}`, `{<<: null}`). v4
+		// enforces merge-key semantics and rejects when the value is not a map or
+		// sequence of maps ("map merge requires map or sequence of maps as the value").
+		// v3 treats `<<` as a plain key (null value) and accepts. This is the REJECT
+		// direction of D22 (which covers the ACCEPT case where v4 silently drops data).
+		return side + ":merge-value"
 	case strings.Contains(msg, "directive"):
 		// Keep this case BEFORE the generic "could not find expected" / "did not find
 		// expected" catch below: "could not find expected directive name" (bare `%` in

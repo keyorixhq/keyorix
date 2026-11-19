@@ -73,6 +73,8 @@ class reaches the failing assertion.
 
 | D28 | `v4-rejects:anchor-char` | D18 compound: anchor-colon absorption extends anchor name past `:` into a non-ASCII character (`ډ` U+0689), which v4's anchor scanner rejects with "did not find expected alphabetic or numeric character". v3 ends anchor at `:`, never sees the non-ASCII in anchor-name position. | accepts (anchor ends at `:`) | rejects ("did not find expected alphabetic or numeric character") | Found by the DF3 fuzz run at `&0:0ډ` (testdata/fuzz/FuzzYAMLV4Differential/a9fc9bb63e204a8b). v4 is strictly more restrictive about anchor name characters in this position. The reachable library (v3) accepts. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4Split` via "expected alphabetic or numeric character" case with side "v4-rejects". |
 
+| D29 | `v4-rejects:merge-value` | `<<` merge key with an invalid merge value (nil/non-map, e.g. `{<<:}`) | accepts: treats `<<` as a plain key with nil value | rejects: "map merge requires map or sequence of maps as the value" | Found by the DF3 fuzz run at `00000: 00\n0: {<<:}` (testdata/fuzz/FuzzYAMLV4Differential/6abe4fb3590fbcb7). The REJECT direction of D22 (which covers the ACCEPT-but-silently-drop case). v4 enforces merge-key semantics; v3 is lenient. The reachable library (v3) accepts. Not a Keyorix defect (v4 has no live caller). | `classifyYAMLV4Split` via "merge requires" / "map merge" case with side "v4-rejects". |
+
 ## Pattern observed across D4–D6 (and likely a longer tail)
 
 D4, D5 and D6 are all the SAME shape: **v4.0.0 enforces a YAML-spec strictness rule that
