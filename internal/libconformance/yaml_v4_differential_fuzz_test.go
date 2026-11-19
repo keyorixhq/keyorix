@@ -424,9 +424,10 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	}
 	// YAML 1.1 binary integer literal (`0b+0`, `0b1`, `0b101`): v3 (YAML 1.1) decodes
 	// the `0b` prefix as a binary integer; v4 (YAML 1.2) has no binary number form and
-	// keeps the token as a string. Scoped to bare scalars (the whole input must be a
-	// binary-int token) so a mapping with a binary-int key falls through to value-mismatch.
-	if yaml11BinaryIntRe.MatchString(strings.TrimSpace(string(data))) {
+	// keeps the token as a string. The structural check handles both top-level (bare
+	// scalar) and nested (value inside a map or sequence) positions; a re-parse
+	// confirmation in yaml11BinaryIntVsStringOnly prevents absorbing a genuine mismatch.
+	if diffs, ok := yaml11BinaryIntVsStringOnly(v3val, v4val); ok && diffs > 0 {
 		return "yaml11-binary-int"
 	}
 	return "value-mismatch"
@@ -884,6 +885,82 @@ var yaml11BinaryIntRe = regexp.MustCompile(`^[-+]?0[bB][-+]?[0-1_]+$`)
 
 func inputHasBlockScalarHeader(data []byte) bool {
 	return blockScalarHeaderRe.Match(data)
+}
+
+// yaml11BinaryIntVsStringOnly reports whether a (v3) and b (v4) are structurally
+// identical except that wherever they differ, a is an integer and b is a string
+// matching yaml11BinaryIntRe — the YAML 1.1 binary int that v3 decoded as an integer
+// but v4 kept as a string. A re-parse confirmation (v3-decode of b equals a) prevents
+// a genuine int-vs-binary-string mismatch from being absorbed. Handles both top-level
+// and nested (map value / sequence element) positions.
+func yaml11BinaryIntVsStringOnly(a, b any) (int, bool) {
+	if ai, ok := a.(int); ok {
+		if bs, ok2 := b.(string); ok2 {
+			if !yaml11BinaryIntRe.MatchString(bs) {
+				return 0, false
+			}
+			var reparsed any
+			if err := v3yaml.Unmarshal([]byte(bs), &reparsed); err != nil {
+				return 0, false
+			}
+			ri, ok3 := reparsed.(int)
+			if !ok3 || ri != ai {
+				return 0, false
+			}
+			return 1, true
+		}
+		if bi, ok2 := b.(int); ok2 && ai == bi {
+			return 0, true
+		}
+		return 0, false
+	}
+	if reflect.DeepEqual(a, b) {
+		return 0, true
+	}
+	if a == nil || b == nil {
+		return 0, false
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return 0, false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for _, k := range ra.MapKeys() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
+				return 0, false
+			}
+			n, ok := yaml11BinaryIntVsStringOnly(ra.MapIndex(k).Interface(), bval.Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for i := range ra.Len() {
+			n, ok := yaml11BinaryIntVsStringOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	default:
+		if leafEq(a, b) {
+			return 0, true
+		}
+		return 0, false
+	}
 }
 
 // v3EmptyVsV4NonEmptyStringOnly reports whether a and b are structurally identical
