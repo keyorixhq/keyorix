@@ -30,7 +30,7 @@ func findGoMods(root string) ([]string, error) {
 		if d.IsDir() {
 			name := d.Name()
 			switch name {
-			case ".git", "node_modules", "vendor", "testdata", "dist", "build":
+			case ".git", ".claude", ".scratch", "node_modules", "vendor", "testdata", "dist", "build":
 				return fs.SkipDir
 			}
 			return nil
