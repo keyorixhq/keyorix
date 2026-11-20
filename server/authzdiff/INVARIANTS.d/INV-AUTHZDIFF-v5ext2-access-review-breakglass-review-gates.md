@@ -1,0 +1,27 @@
+- **INV-AUTHZDIFF-v5ext2-access-review-breakglass-review-gates** The authorization
+gate of `accessreview.attest`, `accessreview.revoke`, `campaign.decide`,
+`campaign.close` and `breakglass.review` is bound into the differential and
+checked against the independent reference model. `accessreview.attest`:
+roles.read@project router gate; core does NOT re-check the router's permission
+(coreGateExcluded); model adds humanOnly (core's requireHumanReviewer refuses
+actorID==0 — machines). `accessreview.revoke`: roles.assign@project router gate;
+same coreGateExcluded + humanOnly shape. `campaign.decide`:
+roles.assign@campaignProjectID router gate; coreGateExcluded + humanOnly;
+uses a dedicated minimal campaign project (only u-target) so reviewer-independence
+never fires for probed principals. `campaign.close`: roles.assign@campaignProjectID
+router gate; core_refusal:"none" (ID-2: core enforces no permission gate);
+uses a pre-decided campaign so force=false closes unconditionally for any
+roles.assign holder. `breakglass.review`: roles.assign@project router gate plus
+BlockWhenImpersonating (not modelled — no impersonation token in fixture);
+coreGateExcluded + humanOnly; uses a separate REVOKED activation (u-bg2,
+non-probed) so self-review never fires for probed principals. Why: V5EXT2 binds
+the operations V5EXT deferred because their core_refusal is "typed" yet core does
+NOT re-check the router's scoped permission; a new coreGateExcluded flag on opSpec
+excludes the core leg from both Oracle 1 and Oracle 2 when this condition holds,
+leaving REST as the authoritative signal. Guard: TestV5ext2StrictSweep (always-on,
+server/authzdiff/sweep_v5ext2_test.go) plus five plants (server/authzdiff/
+plants_test.go, AUTHZDIFF_PLANTS=1): accessreview-attest-router-gate-removed
+(181 unexplained), accessreview-revoke-router-gate-removed (181 unexplained),
+campaign-decide-router-gate-removed (246 unexplained), campaign-close-router-gate-
+removed (246 unexplained) and breakglass-review-router-gate-removed (181
+unexplained), each red when its gate is dropped and green on a clean tree.

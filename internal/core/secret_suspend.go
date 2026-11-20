@@ -183,6 +183,9 @@ func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, proj
 	if err := refuseMachineActor(ctx, actorID); err != nil { // #4514
 		return 0, err
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return 0, err
+	}
 	if projectID == 0 || actorID == 0 {
 		return 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required"))
 	}
@@ -297,6 +300,9 @@ func (e *BulkSuspendPartialError) Unwrap() error {
 // returns how many it resumed. See SuspendProjectSecrets for semantics.
 func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actorID uint) (int, error) {
 	if err := refuseMachineActor(ctx, actorID); err != nil { // #4514
+		return 0, err
+	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return 0, err
 	}
 	if projectID == 0 || actorID == 0 {

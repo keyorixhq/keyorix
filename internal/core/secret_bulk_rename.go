@@ -71,6 +71,9 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 	if err := refuseMachineActor(ctx, actorID); err != nil { // #4514
 		return nil, err
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	if projectID == 0 || actorID == 0 {
 		return nil, fmt.Errorf("project ID and actor ID are required")
 	}

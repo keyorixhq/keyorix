@@ -1,6 +1,7 @@
 package libconformance
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"os"
@@ -120,6 +121,10 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"<<",                                    // bare merge key: v3 "<<" / v4 drops to nil (D22)
 		"a: <<",                                 // merge key w/o map value: v3 keeps / v4 drops entry (D22)
 		"0: {0:} ",                              // flow-map colon no space: v3 key "0:" / v4 key 0 (D23)
+		"{0\n:}",                                // key continued onto the `:` line (v3 key "0 :" / v4 key 0, D23)
+		"0: {0\n:}",                             // same, nested: v3 accepts / v4 rejects (D36)
+		"|\n%0Ʒ",                                // directive name starting with a non-letter (D21)
+		"\r! 0",                                 // ! after a bare CR line break (D12)
 		"{!}",                                   // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
 		"[!x]",                                  // tagged empty node in flow seq (v3 rejects / v4 "")
 		"[0: !]",                                // tagged empty value in flow seq (v3 rejects / v4 "")
@@ -166,6 +171,9 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		// Oracle 2: accept/reject parity.
 		if accept3 != accept4 {
 			class := classifyYAMLV4Split(err3, err4)
+			if class == "v4-rejects:mapping-context" && accept3 && isFlowMultilineKeySplit(data) {
+				class = "v4-rejects:flow-multiline-key"
+			}
 			if !yamlV4ExpectedDiff[class] {
 				t.Fatalf("accept/reject disagreement [class=%q]\n  input=%q\n  v3 accept=%v err=%v\n  v4 accept=%v err=%v",
 					class, data, accept3, err3, accept4, err4)
@@ -243,6 +251,12 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// — an anchor name with `!`). v3 rejects the non-alphanumeric anchor char; v4
 		// is lenient and accepts it. v4 accepts what v3 rejects (benign — anchor name).
 		return side + ":anchor-char"
+	case strings.Contains(msg, "tab character"):
+		// A tab used as block scalar indentation (`|\n\t`). YAML spec requires spaces for
+		// indentation; v3 enforces this ("found a tab character where an indentation space
+		// is expected"). v4 is lenient and accepts it. Same family as D7 (token-start), but
+		// for block-scalar context. Distinct error message, distinct class.
+		return side + ":tab-indent"
 	case strings.Contains(msg, "cannot start any token"):
 		// A leading character v3's scanner refuses to start a token with — notably a
 		// bare TAB ("\t"), which v4 accepts as an empty document (nil). Other chars
@@ -264,6 +278,33 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// element. The flow-context analogue of D2 (block empty-implicit-key). v4
 		// accepts what v3 rejects.
 		return side + ":flow-node-content"
+	case strings.Contains(msg, "comment or line break"):
+		// A block scalar header (`|`/`>`) followed immediately by a non-whitespace,
+		// non-modifier character (e.g. `|\n|A`). v3 re-scans the second `|` as a new
+		// block scalar header and rejects because `A` is not a valid modifier or line
+		// break. v4 treats `|A` as block scalar content at column 0. The error is
+		// "did not find expected comment or line break"; must be placed BEFORE the
+		// generic "did not find expected" / "could not find expected" :syntax catch.
+		return side + ":block-header"
+	case strings.Contains(msg, "merge requires") || strings.Contains(msg, "map merge"):
+		// The `<<` merge-key with an INVALID merge value (`{<<:}`, `{<<: null}`). v4
+		// enforces merge-key semantics and rejects when the value is not a map or
+		// sequence of maps ("map merge requires map or sequence of maps as the value").
+		// v3 treats `<<` as a plain key (null value) and accepts. This is the REJECT
+		// direction of D22 (which covers the ACCEPT case where v4 silently drops data).
+		return side + ":merge-value"
+	case strings.Contains(msg, "directive") || strings.Contains(msg, "non-alphabetical character"):
+		// "found unexpected non-alphabetical character" is the scanner's directive-NAME
+		// error (`|\n%0Ʒ`: the name after `%` starts with a non-letter); same D21 cause.
+		// Keep this case BEFORE the generic "could not find expected" / "did not find
+		// expected" catch below: "could not find expected directive name" (bare `%` in
+		// block-scalar context) contains BOTH substrings; the specific directive class
+		// must win over the generic :syntax class.
+		// A `%`-introduced directive v3 rejects — e.g. under-indented block-scalar
+		// content `%0` (`|\n%0`) that v3 re-scans as a document directive ("found
+		// unknown directive name"), or bare `%` ("could not find expected directive
+		// name"). v3 REJECTS; v4 is lenient and ACCEPTS.
+		return side + ":directive"
 	case strings.Contains(msg, "did not find expected") || strings.Contains(msg, "could not find expected"):
 		return side + ":syntax"
 	case strings.Contains(msg, "control characters are not allowed"):
@@ -282,12 +323,6 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// `&0?` (an anchor followed by `?`). v3 REJECTS ("mapping keys are not allowed
 		// in this context"); v4 is lenient and ACCEPTS. v4 accepts what v3 rejects.
 		return side + ":mapping-key-context"
-	case strings.Contains(msg, "directive"):
-		// A `%`-introduced directive v3 rejects — e.g. under-indented block-scalar
-		// content `%0` (`|\n%0`) that v3 re-scans as a document directive ("found
-		// unknown directive name"). v3 REJECTS; v4 is lenient and ACCEPTS. Same
-		// v4-lenient direction as D20; v4 accepts what v3 rejects on malformed input.
-		return side + ":directive"
 	case strings.Contains(msg, "unexpected end of stream"):
 		// A truncated / unterminated construct — e.g. a block scalar followed by a
 		// lone `"` at column 0 (`|\n"`), which v3 reads as an unterminated
@@ -300,6 +335,13 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// YAML spec requires a comment to be preceded by whitespace; v4 enforces this
 		// and rejects, v3 is lenient. v4 is the more spec-correct side.
 		return side + ":comment-ws"
+	case strings.Contains(msg, "found an indentation indicator equal to 0"):
+		// A block scalar with an explicit indentation indicator of 0 (e.g. `>0` on the
+		// first content line). YAML spec §8.1 requires the indentation indicator to be
+		// 1–9 if present; zero is explicitly forbidden. v3 enforces this and rejects;
+		// v4 is lenient and accepts. Found by the DF3 multi-doc fuzzer at `>\n>0` (the
+		// second document). v3 is the stricter/safer side here.
+		return side + ":indentation-indicator"
 	default:
 		return side + ":other"
 	}
@@ -324,6 +366,16 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	// not absorbed.
 	if diffs, ok := v3EmptyVsV4NonEmptyStringOnly(v3val, v4val); ok && diffs > 0 && inputHasBlockScalarHeader(data) {
 		return "block-scalar-underindent"
+	}
+	// Block-scalar end-of-stream clip difference (D27): when the last content line of a
+	// block scalar is whitespace-only (above the indent level) and the input ends without a
+	// terminal newline, v3 omits the clip-chomping newline while v4 adds it. The shape is
+	// "every differing leaf has v4val == v3val + newline". Guarded by: (a) block-scalar
+	// header present, (b) input ends without `\n`/`\r`. Adding a trailing newline resolves
+	// the ambiguity (confirmed: `|\n 000000\n  \n` → both agree at `"000000\n \n"`).
+	if diffs, ok := v3StringVsV4StringPlusNewlineOnly(v3val, v4val); ok && diffs > 0 &&
+		inputHasBlockScalarHeader(data) && !bytes.HasSuffix(data, []byte{'\n'}) && !bytes.HasSuffix(data, []byte{'\r'}) {
+		return "block-scalar-eos-clip"
 	}
 	// The literal `-0`: v3 resolves it to int 0, v4 to float64 negative zero.
 	if diffs, ok := negZeroIntVsFloatOnly(v3val, v4val); ok && diffs > 0 {
@@ -363,6 +415,14 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if strings.Contains(string(data), "-0") && negZeroEq(v3val, v4val) {
 		return "negative-zero-structural"
 	}
+	// A flow-SEQUENCE entry whose `:` is immediately followed by `]` with no space
+	// (`[0:]`): v3 keeps the `:` IN the value (value `"0:"`), v4 treats the `:` as
+	// the key/value separator (key `0`, null value). The flow-SEQUENCE analogue of
+	// D23 (`{0:}`). Recognised causally: inserting a space before `]` makes v3 agree
+	// with v4 (and v4 is unchanged).
+	if isFlowSeqColonNoSpaceDivergence(data, v3val, v4val) {
+		return "flow-seq-colon-nospace"
+	}
 	// A colon inside an anchor NAME (`&a:b`, `&00:00000`). v3 ends the anchor name
 	// at the `:` (so `&a:b` → anchor `a`, content ":b"); v4 absorbs the `:` into the
 	// name (anchor `a:b`, EMPTY node → nil). Both accept, values differ.
@@ -377,6 +437,14 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if inputHasNonSpecificTag(data) && nonspecificTagEq(v3val, v4val) {
 		return "nonspecific-tag-structural"
 	}
+	// YAML 1.1 binary integer literal (`0b+0`, `0b1`, `0b101`): v3 (YAML 1.1) decodes
+	// the `0b` prefix as a binary integer; v4 (YAML 1.2) has no binary number form and
+	// keeps the token as a string. The structural check handles both top-level (bare
+	// scalar) and nested (value inside a map or sequence) positions; a re-parse
+	// confirmation in yaml11BinaryIntVsStringOnly prevents absorbing a genuine mismatch.
+	if diffs, ok := yaml11BinaryIntVsStringOnly(v3val, v4val); ok && diffs > 0 {
+		return "yaml11-binary-int"
+	}
 	return "value-mismatch"
 }
 
@@ -388,7 +456,75 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 // absorbed (v4 would change, or v3 would not come to match).
 func isFlowColonNoSpaceDivergence(data []byte, v3val, v4val any) bool {
 	s := string(data)
-	mod := strings.ReplaceAll(strings.ReplaceAll(s, ":}", ": }"), ":,", ": ,")
+	spaced := strings.ReplaceAll(strings.ReplaceAll(s, ":}", ": }"), ":,", ": ,")
+	if spaced == s {
+		return false
+	}
+	if flowColonRepairAgrees(spaced, v3val, v4val) {
+		return true
+	}
+	// The key may be a plain scalar continued onto the line holding the `:` (`{0\n:}`):
+	// v3 folds the break into the key (`"0 :"`), and also rejects `{0\n: }`, so the
+	// space-only repair cannot agree. Join the break before the `:` as well.
+	joined := flowColonBreakRe.ReplaceAllString(s, " : $1")
+	if joined == s {
+		return false
+	}
+	return flowColonRepairAgrees(flowColonSpaceRe.ReplaceAllString(joined, ": $1"), v3val, v4val)
+}
+
+var (
+	flowColonBreakRe = regexp.MustCompile(`[ \t]*\r?\n[ \t]*:([},])`)
+	flowColonSpaceRe = regexp.MustCompile(`:([},])`)
+)
+
+// isFlowMultilineKeySplit causally confirms the accept/reject form of the D23 break
+// variant (`0: {0\n:}`): v3 accepts, v4 rejects. Joining the break before the `:` and
+// spacing it makes BOTH libraries accept and decode identically, so the line break in
+// the key was the sole cause. A rejection from any other cause is not absorbed.
+func isFlowMultilineKeySplit(data []byte) bool {
+	s := string(data)
+	joined := flowColonBreakRe.ReplaceAllString(s, " : $1")
+	if joined == s {
+		return false
+	}
+	joined = flowColonSpaceRe.ReplaceAllString(joined, ": $1")
+	var m3, m4 any
+	if v3yaml.Unmarshal([]byte(joined), &m3) != nil || v4yaml.Unmarshal([]byte(joined), &m4) != nil {
+		return false
+	}
+	c3, e3 := v3yaml.Marshal(m3)
+	c4, e4 := v3yaml.Marshal(m4)
+	return e3 == nil && e4 == nil && reflect.DeepEqual(c3, c4)
+}
+
+// flowColonRepairAgrees reports whether the repaired input mod decodes identically in
+// v3 and v4 and v4's decoding is unchanged from the original v4val.
+func flowColonRepairAgrees(mod string, v3val, v4val any) bool {
+	var m3, m4 any
+	if v3yaml.Unmarshal([]byte(mod), &m3) != nil || v4yaml.Unmarshal([]byte(mod), &m4) != nil {
+		return false
+	}
+	cm3, e3 := v3yaml.Marshal(m3)
+	cm4, e4 := v3yaml.Marshal(m4)
+	co4, e4b := v3yaml.Marshal(v4val)
+	if e3 != nil || e4 != nil || e4b != nil {
+		return false
+	}
+	// v4 unchanged by the space, and v3 now matches v4.
+	return reflect.DeepEqual(cm4, co4) && reflect.DeepEqual(cm3, cm4)
+}
+
+// isFlowSeqColonNoSpaceDivergence causally confirms the flow-SEQUENCE `:`-no-space
+// divergence (`[0:]`): a `:` immediately followed by `]` acts as a key/value separator
+// in v4 but is kept inside the value string by v3. Inserting a space before `]` resolves
+// the ambiguity. If after that v4 is UNCHANGED (it already read the `:` as a separator)
+// and v3 now agrees with v4, then v3's keeping of the `:` in the value was the sole cause.
+// A genuine divergence that merely contains `:]` is not absorbed (v4 would change, or
+// v3 would not come to match). The flow-SEQUENCE counterpart of isFlowColonNoSpaceDivergence.
+func isFlowSeqColonNoSpaceDivergence(data []byte, v3val, v4val any) bool {
+	s := string(data)
+	mod := strings.ReplaceAll(s, ":]", ": ]")
 	if mod == s {
 		return false
 	}
@@ -493,8 +629,11 @@ func negZeroEq(a, b any) bool {
 }
 
 // v3AnchorTokenRe matches the anchor token as v3 scans it: `&` plus the
-// anchor-name characters up to (but not including) a flow/`:`/whitespace boundary.
-var v3AnchorTokenRe = regexp.MustCompile(`&[^\s:,\[\]{}]+`)
+// anchor-name characters up to (but not including) a flow/`:`/`?`/whitespace boundary.
+// `?` is included because v3 stops the anchor name before the YAML complex-key indicator
+// `?` (e.g. `&0?0` → v3 reads anchor `0`, content `?0`), while v4 is more liberal
+// and absorbs `?` into the anchor name.
+var v3AnchorTokenRe = regexp.MustCompile(`&[^\s:,\[\]{}?]+`)
 
 // isAnchorColonBoundaryDivergence reports whether a v3/v4 value divergence is
 // caused solely by a `:` inside an anchor name — v3 ends the name at the colon,
@@ -509,22 +648,40 @@ var v3AnchorTokenRe = regexp.MustCompile(`&[^\s:,\[\]{}]+`)
 // anchor-colon combo (`[&a:b]`) is a separate, compounded divergence left in the
 // residual tail.
 func isAnchorColonBoundaryDivergence(data []byte, v3val, v4val any) bool {
-	loc := v3AnchorTokenRe.FindIndex(data)
-	if loc == nil || loc[1] >= len(data) || data[loc[1]] != ':' {
-		return false
-	}
-	stripped := append(append([]byte{}, data[:loc[0]]...), data[loc[1]:]...)
-	var m3, m4 any
-	if v3yaml.Unmarshal(stripped, &m3) != nil || v4yaml.Unmarshal(stripped, &m4) != nil {
-		return false
-	}
-	c3m, err3 := v3yaml.Marshal(m3)
-	c4m, err4 := v3yaml.Marshal(m4)
-	if err3 != nil || err4 != nil || !reflect.DeepEqual(c3m, c4m) {
-		return false
-	}
+	// Try each anchor in the input: whichever one is immediately followed by `:` and
+	// whose removal makes v3 and v4 agree (with v3 unchanged) is the causal anchor.
+	// Originally only tried the first anchor; extended to try all because the
+	// colon-absorbing anchor may not be the first one in the input (e.g. `&0: &0:0`
+	// where the second anchor `&0:0` is the one causing the divergence).
 	co3, err := v3yaml.Marshal(v3val)
-	return err == nil && reflect.DeepEqual(co3, c3m)
+	if err != nil {
+		return false
+	}
+	for _, loc := range v3AnchorTokenRe.FindAllIndex(data, -1) {
+		if loc[1] >= len(data) {
+			continue
+		}
+		b := data[loc[1]]
+		// Try `:` (D18/colon-boundary) and `?` (v4 also absorbs `?` into anchor names,
+		// e.g. `&0?0` where v3 ends at `?` and v4 makes the anchor name `0?0`).
+		if b != ':' && b != '?' {
+			continue
+		}
+		stripped := append(append([]byte{}, data[:loc[0]]...), data[loc[1]:]...)
+		var m3, m4 any
+		if v3yaml.Unmarshal(stripped, &m3) != nil || v4yaml.Unmarshal(stripped, &m4) != nil {
+			continue
+		}
+		c3m, e3 := v3yaml.Marshal(m3)
+		c4m, e4 := v3yaml.Marshal(m4)
+		if e3 != nil || e4 != nil || !reflect.DeepEqual(c3m, c4m) {
+			continue
+		}
+		if reflect.DeepEqual(co3, c3m) {
+			return true
+		}
+	}
+	return false
 }
 
 // nonspecificTagEq reports whether a (v3) and b (v4) are identical up to the
@@ -626,10 +783,10 @@ func mapLookupByLogicalKey(m, k reflect.Value) (reflect.Value, bool) {
 // nonSpecificTagRe matches a standalone non-specific `!` tag: a `!` that is a
 // complete tag token (not the `!!x` explicit-tag form, not the `!<…>` verbatim
 // form, not a `!local` named tag), preceded by start-of-line or a
-// whitespace/flow/indicator character and followed by whitespace or end-of-line.
-// Those are exactly the positions where `!` applies the non-specific tag to the
-// following (or empty) scalar: `! 00`, `x: !`, `- ! v`, `{a: !}`.
-var nonSpecificTagRe = regexp.MustCompile(`(?m)(^|[ \t:\-\[\]{},])!([ \t]|$)`)
+// whitespace/flow/indicator character and followed by whitespace (including CR)
+// or end-of-line. CR (`\r`) is valid YAML whitespace (s-white) and is a legal
+// separator between `!` and its following scalar (`!\r0` ≡ `! 0` to both parsers).
+var nonSpecificTagRe = regexp.MustCompile(`(?m)(^|[ \t\r:\-\[\]{},])!([ \t\r]|$)`)
 
 func inputHasNonSpecificTag(data []byte) bool {
 	return nonSpecificTagRe.Match(data)
@@ -772,11 +929,98 @@ func negZeroIntVsFloatOnly(a, b any) (int, bool) {
 
 // blockScalarHeaderRe matches a block-scalar header (`|` or `>`, optional indent
 // digit, optional chomping `+`/`-`) at the end of a line, optionally after a
-// `key:` or `- ` indicator — the shape that introduces literal/folded content.
-var blockScalarHeaderRe = regexp.MustCompile(`(?m)(^|[:\-] *)[|>][0-9]*[+\-]?[ \t]*$`)
+// `key:` or `- ` indicator or leading whitespace — the shape that introduces
+// literal/folded content. `^[ \t]*` covers indented block scalars (e.g. ` |\r0`).
+// `\r` (CR) is an alternative line terminator alongside `$` (which in Go's (?m)
+// mode matches before `\n` but not `\r`), so `|\r0` and ` |\r0` are both
+// correctly recognised as block-scalar headers followed by CR-terminated content.
+var blockScalarHeaderRe = regexp.MustCompile(`(?m)(^[ \t]*|[:\-][ \t]*)[|>][0-9]*[+\-]?[ \t]*(\r|$)`)
+
+// yaml11BinaryIntRe matches a YAML 1.1 binary integer literal: an optional leading
+// sign, `0b`/`0B` prefix, an optional sign after the prefix, then one or more
+// binary digits or underscores. YAML 1.1 supports `0b[0-1_]+`; some implementations
+// (v3 included) also allow a sign between the prefix and the digits (e.g. `0b+0`).
+// YAML 1.2 (v4) dropped binary literals; v3 decodes these as integers, v4 as strings.
+var yaml11BinaryIntRe = regexp.MustCompile(`^[-+]?0[bB][-+]?[0-1_]+$`)
 
 func inputHasBlockScalarHeader(data []byte) bool {
 	return blockScalarHeaderRe.Match(data)
+}
+
+// yaml11BinaryIntVsStringOnly reports whether a (v3) and b (v4) are structurally
+// identical except that wherever they differ, a is an integer and b is a string
+// matching yaml11BinaryIntRe — the YAML 1.1 binary int that v3 decoded as an integer
+// but v4 kept as a string. A re-parse confirmation (v3-decode of b equals a) prevents
+// a genuine int-vs-binary-string mismatch from being absorbed. Handles both top-level
+// and nested (map value / sequence element) positions.
+func yaml11BinaryIntVsStringOnly(a, b any) (int, bool) {
+	if ai, ok := a.(int); ok {
+		if bs, ok2 := b.(string); ok2 {
+			if !yaml11BinaryIntRe.MatchString(bs) {
+				return 0, false
+			}
+			var reparsed any
+			if err := v3yaml.Unmarshal([]byte(bs), &reparsed); err != nil {
+				return 0, false
+			}
+			ri, ok3 := reparsed.(int)
+			if !ok3 || ri != ai {
+				return 0, false
+			}
+			return 1, true
+		}
+		if bi, ok2 := b.(int); ok2 && ai == bi {
+			return 0, true
+		}
+		return 0, false
+	}
+	if reflect.DeepEqual(a, b) {
+		return 0, true
+	}
+	if a == nil || b == nil {
+		return 0, false
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return 0, false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for _, k := range ra.MapKeys() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
+				return 0, false
+			}
+			n, ok := yaml11BinaryIntVsStringOnly(ra.MapIndex(k).Interface(), bval.Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for i := range ra.Len() {
+			n, ok := yaml11BinaryIntVsStringOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	default:
+		if leafEq(a, b) {
+			return 0, true
+		}
+		return 0, false
+	}
 }
 
 // v3EmptyVsV4NonEmptyStringOnly reports whether a and b are structurally identical
@@ -829,6 +1073,72 @@ func v3EmptyVsV4NonEmptyStringOnly(a, b any) (int, bool) {
 		total := 0
 		for i := range ra.Len() {
 			n, ok := v3EmptyVsV4NonEmptyStringOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	default:
+		if leafEq(a, b) {
+			return 0, true
+		}
+		return 0, false
+	}
+}
+
+// v3StringVsV4StringPlusNewlineOnly reports whether a and b are structurally
+// identical except that wherever they differ, b is a string equal to a + "\n"
+// (v4 adds exactly one trailing newline that v3 did not). This matches the
+// block-scalar end-of-stream clip difference (D27): when a block scalar's last
+// content line is whitespace-only (above indent) and the input ends without a
+// terminal newline, v3 omits the clip-chomping newline and v4 adds it.
+func v3StringVsV4StringPlusNewlineOnly(a, b any) (int, bool) {
+	if as, ok := a.(string); ok {
+		bs, ok := b.(string)
+		if !ok {
+			return 0, false
+		}
+		if as == bs {
+			return 0, true
+		}
+		if bs == as+"\n" {
+			return 1, true
+		}
+		return 0, false
+	}
+	if a == nil || b == nil {
+		return 0, reflect.DeepEqual(a, b)
+	}
+	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if ra.Kind() != rb.Kind() {
+		return 0, false
+	}
+	switch ra.Kind() {
+	case reflect.Map:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for _, k := range ra.MapKeys() {
+			bval, bok := mapLookupByLogicalKey(rb, k)
+			if !bok {
+				return 0, false
+			}
+			n, ok := v3StringVsV4StringPlusNewlineOnly(ra.MapIndex(k).Interface(), bval.Interface())
+			if !ok {
+				return 0, false
+			}
+			total += n
+		}
+		return total, true
+	case reflect.Slice, reflect.Array:
+		if ra.Len() != rb.Len() {
+			return 0, false
+		}
+		total := 0
+		for i := range ra.Len() {
+			n, ok := v3StringVsV4StringPlusNewlineOnly(ra.Index(i).Interface(), rb.Index(i).Interface())
 			if !ok {
 				return 0, false
 			}

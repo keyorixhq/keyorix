@@ -49,6 +49,10 @@ import (
 // role_read_skip_exception_*_test.go.
 var roleReadSkipExceptions = map[string]string{}
 
+// No file registers an exception today (the last, ReconcileRBACPermissions, became a retried
+// grant); the hook stays for the next one.
+var _ = registerRoleReadSkipException
+
 func registerRoleReadSkipException(key, reason string) {
 	if _, dup := roleReadSkipExceptions[key]; dup {
 		panic("duplicate role-read-skip exception " + key)
@@ -143,6 +147,22 @@ func scanRoleReadSkips(fset *token.FileSet, f *ast.File, file string) []roleRead
 		})
 	}
 	return out
+}
+
+// countRoleReads counts the statements roleReadErrVar recognises (an error
+// assigned from one GetRole* call) anywhere in f: the population the skip scan
+// inspects, hit or not.
+func countRoleReads(f *ast.File) int {
+	n := 0
+	ast.Inspect(f, func(node ast.Node) bool {
+		if stmt, ok := node.(ast.Stmt); ok {
+			if name, _ := roleReadErrVar(stmt); name != "" {
+				n++
+			}
+		}
+		return true
+	})
+	return n
 }
 
 func scanRoleReadSkipsInSource(t testing.TB, file, src string) []roleReadSkip {
@@ -245,19 +265,26 @@ func f() {
 func TestNoRoleReadErrorSkippedAsGone(t *testing.T) {
 	g := guardrules.Rollout(t)
 	var hits []roleReadSkip
+	reads := 0
 	for _, path := range coreFamilySources(t) {
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
+		reads += countRoleReads(f)
 		hits = append(hits, scanRoleReadSkips(fset, f, srcpath.CoreFamilyRel(path))...)
 	}
-	// A floor, so a matcher that silently stops matching fails loudly instead of staying green:
-	// ReconcileRBACPermissions' two skips are registered exceptions and must still be seen.
-	if len(hits) < 2 {
-		t.Fatalf("scanner found only %d role-read skips in the core family; it has stopped matching", len(hits))
+	// A floor, so a matcher that silently stops matching fails loudly instead of staying green.
+	// It is on the population the scan inspects (role reads whose error is checked), not on the
+	// hits: the live tree has no hit since ReconcileRBACPermissions' two skips became retried
+	// grants, and a floor on hits would then fail on a clean tree forever. That the matcher
+	// still recognises the bad shape is TestRoleReadSkipScanner_Calibration's job.
+	const minRoleReads = 20
+	if reads < minRoleReads {
+		t.Fatalf("scanner recognised only %d GetRole* error assignments in the core family (want >= %d); it has stopped matching", reads, minRoleReads)
 	}
+	t.Logf("inspected %d GetRole* error assignments, %d skip hit(s)", reads, len(hits))
 
 	used := map[string]bool{}
 	var msgs []string
