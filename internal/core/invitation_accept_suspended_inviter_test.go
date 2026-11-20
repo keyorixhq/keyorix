@@ -79,6 +79,76 @@ func TestCompleteInvitationAccept_SuspendedInviterGrantsNothing(t *testing.T) {
 	}
 }
 
+// TestCompleteInvitationAccept_InviterSuspendedAfterPreCheckGrantsNothing pins
+// applyInvitationGrants' own re-check (#4507): the inviter is suspended after the
+// pre-account check passed and the invitee's account exists, so only the second
+// check can refuse. No membership may come from the suspended inviter's authority,
+// and the accept is undone (account removed, invitation still pending).
+func TestCompleteInvitationAccept_InviterSuspendedAfterPreCheckGrantsNothing(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const email = "late-suspended-inviter-invitee@example.com"
+	const rawToken = setupPrefix + "invite-accept-late-suspended-inviter-1"
+	const inviterID = 1 // the bootstrap administrator
+
+	project, err := st.CreateProject(ctx, &models.Project{Name: "late-suspended-inviter-project"})
+	require.NoError(t, err)
+	now := c.now()
+	future := now.Add(24 * time.Hour)
+	inv, err := st.CreateProjectInvitation(ctx, &models.ProjectInvitation{
+		ProjectID: project.ID, Email: email, Role: "project_developer", State: InvitationPending,
+		InvitedBy: inviterID, ValidationModeAtInvite: ValidationModeOpen, ExpiresAt: &future, CreatedAt: now,
+	})
+	require.NoError(t, err)
+	_, err = st.CreateSetupToken(ctx, &models.SetupToken{
+		TokenHash: sha256Hex(rawToken), Purpose: SetupPurposeInvitationAccept, SubjectEmail: email,
+		InvitationID: &inv.ID, State: SetupTokenActive, ExpiresAt: future, CreatedBy: inviterID,
+	})
+	require.NoError(t, err)
+
+	wrapped := &suspendInviterOnceAccountExists{
+		FaultyStorage: faultstorage.NewFaultyStorage(c.storage, nil),
+		inviterID:     inviterID,
+		suspend: func() bool {
+			if _, err := st.GetUserByEmail(ctx, email); err != nil {
+				return false // the pre-account check: not yet
+			}
+			require.NoError(t, st.SetAccountState(ctx, inviterID, AccountSuspended, now))
+			return true
+		},
+	}
+	c.storage = wrapped
+	_, err = c.CompleteSetup(ctx, rawToken, strongPw, "ua", "1.2.3.4")
+	require.True(t, wrapped.suspended, "the inviter must be suspended after the account was created")
+	require.Error(t, err)
+
+	members, merr := st.ListProjectMemberships(ctx, project.ID)
+	require.NoError(t, merr)
+	assert.Empty(t, members, "no membership may come from a suspended inviter's authority")
+	_, uerr := st.GetUserByEmail(ctx, email)
+	assert.Error(t, uerr, "the accept is undone: no live account is left")
+	reloaded, ierr := st.GetProjectInvitation(ctx, inv.ID)
+	require.NoError(t, ierr)
+	assert.Equal(t, InvitationPending, reloaded.State)
+}
+
+// suspendInviterOnceAccountExists suspends the inviter, once, on the first read of
+// the inviter's account for which suspend reports the window has been reached.
+type suspendInviterOnceAccountExists struct {
+	*faultstorage.FaultyStorage
+	inviterID uint
+	suspend   func() bool
+	suspended bool
+}
+
+func (s *suspendInviterOnceAccountExists) GetUser(ctx context.Context, id uint) (*models.User, error) {
+	if id == s.inviterID && !s.suspended {
+		s.suspended = s.suspend()
+	}
+	return s.FaultyStorage.GetUser(ctx, id)
+}
+
 // TestCompleteInvitationAccept_InviterReadFaultIsPostVerdict: a storage fault
 // reading the inviter's account (#4507's check) comes after the token's verdict, so
 // it is typed ErrSetupPostVerdict and audited as an outage, not as a dead link
