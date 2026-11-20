@@ -77,7 +77,8 @@ func Run(ctx context.Context, self string, spec RunSpec) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, self, "-test.run=TestOsairgapNSInitDispatch") // #nosec G204 // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- self is the caller's own test binary (os.Args[0]); fuzz tooling, never shipped or fed attacker input
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- self is the caller's own test binary (os.Args[0]); fuzz tooling, never shipped or fed attacker input
+	cmd := exec.CommandContext(ctx, self, "-test.run=TestOsairgapNSInitDispatch") // #nosec G204 -- self is the caller's own test binary // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Env = append(os.Environ(), envRole+"="+roleNS, envSpec+"="+string(specJSON))
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWNET, // root with CAP_NET_ADMIN: net ns only
@@ -159,7 +160,8 @@ func RunNSInit() {
 
 	// Build target command. Proxy + resolver env point at the canary so any
 	// proxy-respecting egress intent lands on loopback and is recorded.
-	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...) // #nosec G204 // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- Argv is the parent test's own RunSpec, handed over by the re-exec above; the target is the program under test, run inside a network-less netns
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- Argv is the parent test's own RunSpec, handed over by the re-exec above; the target is the program under test, run inside a network-less netns
+	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...) // #nosec G204 -- Argv is the parent test's own RunSpec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	base := sanitisedEnv()
 	proxy := "http://" + canary.addr
 	base = append(base,
@@ -182,6 +184,7 @@ func RunNSInit() {
 	// Sample /proc/<pid>/net/{tcp,tcp6,udp,udp6} until the target exits.
 	peers := map[string]Endpoint{}
 	sampleDone := make(chan struct{})
+	waited := make(chan struct{}) // closed after cmd.Wait returns; ProcessState is only safe to read then
 	go func() {
 		defer close(sampleDone)
 		t := time.NewTicker(spec.SampleInterval)
@@ -197,14 +200,17 @@ func RunNSInit() {
 						peers[p.String()] = p
 					}
 				}
-				if cmd.ProcessState != nil {
+				select {
+				case <-waited:
 					return
+				default:
 				}
 			}
 		}
 	}()
 
 	werr := cmd.Wait()
+	close(waited)
 	cancel()
 	<-sampleDone
 

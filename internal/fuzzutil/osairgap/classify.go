@@ -140,10 +140,9 @@ func parseHexAddr(s string, v6 bool) (net.IP, int, bool) {
 				b[i] = byte(v)
 			}
 			// little-endian word: byte order within the word is reversed.
-			ip[w*4+0] = b[0]
-			ip[w*4+1] = b[1]
-			ip[w*4+2] = b[2]
-			ip[w*4+3] = b[3]
+			for i := range 4 {
+				ip[w*4+i] = b[3-i]
+			}
 		}
 		return ip, int(port64), true
 	}
