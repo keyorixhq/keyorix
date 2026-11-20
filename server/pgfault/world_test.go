@@ -171,8 +171,11 @@ func pcEvent(i int) *models.AuditEvent {
 
 // commitRange runs LogAuditEvent commits for indices [start, start+n) serially
 // through ls, returning the indices whose commit was ACKNOWLEDGED (returned
-// nil). The context carries a per-commit deadline so a stall fault cannot hang
-// the burst unboundedly.
+// nil). The per-commit deadline does NOT bound a commit: LocalStorage's
+// LogAuditEvent detaches from the caller's context (auditWriteContext:
+// context.WithoutCancel plus its own 10 s timeout, internal/storage/store). A
+// stall is bounded by the proxy instead, which cuts the connection after
+// spec.stallFor (shorter than that 10 s timeout in every caller here).
 func commitRange(ctx context.Context, ls corestorage.Storage, start, n int, perCommit time.Duration) []int {
 	acked := make([]int, 0, n)
 	for k := range n {

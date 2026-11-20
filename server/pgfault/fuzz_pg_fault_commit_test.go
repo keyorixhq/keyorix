@@ -5,9 +5,11 @@
 // every input.
 //
 // Per-input resource bounds (FS-PG RULES — bounded time and allocations):
-//   - time: every commit carries a short context deadline (perCommitFuzz), the
+//   - time: a stall is bounded by the proxy, which cuts after stallForFuzz; the
 //     burst length is bounded (<= maxBurst), and the whole input is asserted to
 //     finish within maxInputWall. A stall fault therefore cannot hang an input.
+//     The per-commit context deadline (perCommitFuzz) does not bound a commit:
+//     LogAuditEvent detaches from it (auditWriteContext in internal/storage/store).
 //   - allocations: the per-message read is capped at maxPGMessage (proxy_test.go)
 //     so a corrupt length never drives an unbounded allocation, and the input's
 //     own TotalAlloc delta is asserted under maxInputAlloc.

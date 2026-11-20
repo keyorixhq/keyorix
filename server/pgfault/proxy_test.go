@@ -190,8 +190,9 @@ func (p *proxy) pump(pr *connPair, src, dst net.Conn, dir int, startup bool) {
 					// Reached the armed point: do NOT forward this message.
 					p.tripped.Store(true)
 					if spec.mode == faultStall {
-						// Hold the stream, then cut, so the client's own
-						// per-op deadline fires first (an ambiguous stall).
+						// Hold the stream, then cut (an ambiguous stall). The
+						// cut, not a client deadline, ends the commit: the
+						// audit write path detaches from the caller's context.
 						select {
 						case <-time.After(spec.stallFor):
 						case <-p.done:

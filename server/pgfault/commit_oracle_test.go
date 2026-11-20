@@ -19,7 +19,9 @@
 //	  acknowledged (server committed, the ack was lost in the cut) is the
 //	  legitimate ambiguous-commit window and is allowed — the client correctly
 //	  saw an error, not a false success. What must never happen is the reverse:
-//	  the client sees success while the row is gone.
+//	  the client sees success while the row is gone. ORACLE 3 is checked by the
+//	  same assertion as ORACLE 1 (acknowledged implies present); it is listed
+//	  separately because it names the ambiguous quadrant that stays allowed.
 //
 // What this does NOT verify: disk-full / read-only-filesystem errors, and
 // crash-recovery of the server itself (classes b and c) — both need a cluster
@@ -134,10 +136,13 @@ func TestPGFault_ConnectionCut(t *testing.T) {
 	}
 }
 
-// TestPGFault_StallThenCut arms a stall that holds the stream past the client's
-// per-commit deadline, then cuts — the ambiguous stall shape. The oracles must
-// still hold: a commit that times out on the client is either absent or a
-// legitimate present-but-unacked row, never an acknowledged-but-absent one.
+// TestPGFault_StallThenCut arms a stall that holds the stream for stallFor, then
+// cuts — the ambiguous stall shape. The client's per-commit deadline does not
+// fire first: LogAuditEvent detaches from it (auditWriteContext, a 10 s timeout
+// of its own, longer than stallFor), so the commit fails on the cut. The oracles
+// must still hold: a commit failed by the cut is either absent or a legitimate
+// present-but-unacked row, never an acknowledged-but-absent one. This does NOT
+// drive the detached 10 s audit timeout itself.
 func TestPGFault_StallThenCut(t *testing.T) {
 	w := newPGWorld(t)
 	anyTripped := false

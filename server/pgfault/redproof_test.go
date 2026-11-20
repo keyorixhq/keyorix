@@ -8,6 +8,7 @@ package pgfault
 
 import (
 	"context"
+	"strconv"
 	"testing"
 )
 
@@ -102,5 +103,9 @@ func TestPGFault_RedProof_OracleDetectsBrokenChain(t *testing.T) {
 	if res2 == nil || res2.Valid {
 		t.Fatalf("ORACLE 2 red-proof: expected chain INVALID after tamper, got %+v", res2)
 	}
-	t.Logf("ORACLE 2 red-proof ok: chain reported invalid after planted tamper (firstBroken=%v)", res2.FirstBrokenID)
+	firstBroken := "none"
+	if res2.FirstBrokenID != nil {
+		firstBroken = strconv.FormatUint(uint64(*res2.FirstBrokenID), 10)
+	}
+	t.Logf("ORACLE 2 red-proof ok: chain reported invalid after planted tamper (firstBroken=%s)", firstBroken)
 }
