@@ -121,6 +121,10 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"<<",                                    // bare merge key: v3 "<<" / v4 drops to nil (D22)
 		"a: <<",                                 // merge key w/o map value: v3 keeps / v4 drops entry (D22)
 		"0: {0:} ",                              // flow-map colon no space: v3 key "0:" / v4 key 0 (D23)
+		"{0\n:}",                                // key continued onto the `:` line (v3 key "0 :" / v4 key 0, D23)
+		"0: {0\n:}",                             // same, nested: v3 accepts / v4 rejects (D36)
+		"|\n%0Ʒ",                                // directive name starting with a non-letter (D21)
+		"\r! 0",                                 // ! after a bare CR line break (D12)
 		"{!}",                                   // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
 		"[!x]",                                  // tagged empty node in flow seq (v3 rejects / v4 "")
 		"[0: !]",                                // tagged empty value in flow seq (v3 rejects / v4 "")
@@ -167,6 +171,9 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		// Oracle 2: accept/reject parity.
 		if accept3 != accept4 {
 			class := classifyYAMLV4Split(err3, err4)
+			if class == "v4-rejects:mapping-context" && accept3 && isFlowMultilineKeySplit(data) {
+				class = "v4-rejects:flow-multiline-key"
+			}
 			if !yamlV4ExpectedDiff[class] {
 				t.Fatalf("accept/reject disagreement [class=%q]\n  input=%q\n  v3 accept=%v err=%v\n  v4 accept=%v err=%v",
 					class, data, accept3, err3, accept4, err4)
@@ -286,7 +293,9 @@ func classifyYAMLV4Split(err3, err4 error) string {
 		// v3 treats `<<` as a plain key (null value) and accepts. This is the REJECT
 		// direction of D22 (which covers the ACCEPT case where v4 silently drops data).
 		return side + ":merge-value"
-	case strings.Contains(msg, "directive"):
+	case strings.Contains(msg, "directive") || strings.Contains(msg, "non-alphabetical character"):
+		// "found unexpected non-alphabetical character" is the scanner's directive-NAME
+		// error (`|\n%0Ʒ`: the name after `%` starts with a non-letter); same D21 cause.
 		// Keep this case BEFORE the generic "could not find expected" / "did not find
 		// expected" catch below: "could not find expected directive name" (bare `%` in
 		// block-scalar context) contains BOTH substrings; the specific directive class
@@ -447,10 +456,51 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 // absorbed (v4 would change, or v3 would not come to match).
 func isFlowColonNoSpaceDivergence(data []byte, v3val, v4val any) bool {
 	s := string(data)
-	mod := strings.ReplaceAll(strings.ReplaceAll(s, ":}", ": }"), ":,", ": ,")
-	if mod == s {
+	spaced := strings.ReplaceAll(strings.ReplaceAll(s, ":}", ": }"), ":,", ": ,")
+	if spaced == s {
 		return false
 	}
+	if flowColonRepairAgrees(spaced, v3val, v4val) {
+		return true
+	}
+	// The key may be a plain scalar continued onto the line holding the `:` (`{0\n:}`):
+	// v3 folds the break into the key (`"0 :"`), and also rejects `{0\n: }`, so the
+	// space-only repair cannot agree. Join the break before the `:` as well.
+	joined := flowColonBreakRe.ReplaceAllString(s, " : $1")
+	if joined == s {
+		return false
+	}
+	return flowColonRepairAgrees(flowColonSpaceRe.ReplaceAllString(joined, ": $1"), v3val, v4val)
+}
+
+var (
+	flowColonBreakRe = regexp.MustCompile(`[ \t]*\r?\n[ \t]*:([},])`)
+	flowColonSpaceRe = regexp.MustCompile(`:([},])`)
+)
+
+// isFlowMultilineKeySplit causally confirms the accept/reject form of the D23 break
+// variant (`0: {0\n:}`): v3 accepts, v4 rejects. Joining the break before the `:` and
+// spacing it makes BOTH libraries accept and decode identically, so the line break in
+// the key was the sole cause. A rejection from any other cause is not absorbed.
+func isFlowMultilineKeySplit(data []byte) bool {
+	s := string(data)
+	joined := flowColonBreakRe.ReplaceAllString(s, " : $1")
+	if joined == s {
+		return false
+	}
+	joined = flowColonSpaceRe.ReplaceAllString(joined, ": $1")
+	var m3, m4 any
+	if v3yaml.Unmarshal([]byte(joined), &m3) != nil || v4yaml.Unmarshal([]byte(joined), &m4) != nil {
+		return false
+	}
+	c3, e3 := v3yaml.Marshal(m3)
+	c4, e4 := v3yaml.Marshal(m4)
+	return e3 == nil && e4 == nil && reflect.DeepEqual(c3, c4)
+}
+
+// flowColonRepairAgrees reports whether the repaired input mod decodes identically in
+// v3 and v4 and v4's decoding is unchanged from the original v4val.
+func flowColonRepairAgrees(mod string, v3val, v4val any) bool {
 	var m3, m4 any
 	if v3yaml.Unmarshal([]byte(mod), &m3) != nil || v4yaml.Unmarshal([]byte(mod), &m4) != nil {
 		return false
@@ -736,7 +786,7 @@ func mapLookupByLogicalKey(m, k reflect.Value) (reflect.Value, bool) {
 // whitespace/flow/indicator character and followed by whitespace (including CR)
 // or end-of-line. CR (`\r`) is valid YAML whitespace (s-white) and is a legal
 // separator between `!` and its following scalar (`!\r0` ≡ `! 0` to both parsers).
-var nonSpecificTagRe = regexp.MustCompile(`(?m)(^|[ \t:\-\[\]{},])!([ \t\r]|$)`)
+var nonSpecificTagRe = regexp.MustCompile(`(?m)(^|[ \t\r:\-\[\]{},])!([ \t\r]|$)`)
 
 func inputHasNonSpecificTag(data []byte) bool {
 	return nonSpecificTagRe.Match(data)

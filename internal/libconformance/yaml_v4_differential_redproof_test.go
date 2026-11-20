@@ -129,6 +129,12 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// live caller). Scoped to inputs containing `:}`/`:,`.
 	"flow-map-colon-nospace": true,
 
+	// The D23 root cause with a line break before the `:` (`0: {0\n:}`): v3 folds the
+	// break into the key and accepts; v4 rejects ("mapping values are not allowed in
+	// this context"). Recognised causally by isFlowMultilineKeySplit. Not a Keyorix
+	// defect (v4 has no live caller).
+	"v4-rejects:flow-multiline-key": true,
+
 	// A `?` complex-key indicator in a context v3 forbids — e.g. `&0?` (anchor then
 	// `?`). v3.0.5 REJECTS ("mapping keys are not allowed in this context"); v4.0.0
 	// ACCEPTS leniently. Found by the DF3 multi-doc fuzzer at `&0?`. v4 accepts what
@@ -1476,7 +1482,11 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		err4 := v4yaml.Unmarshal(data, &v4v)
 		a3, a4 := err3 == nil, err4 == nil
 		if a3 != a4 {
-			hit[classifyYAMLV4Split(err3, err4)] = true
+			class := classifyYAMLV4Split(err3, err4)
+			if class == "v4-rejects:mapping-context" && a3 && isFlowMultilineKeySplit(data) {
+				class = "v4-rejects:flow-multiline-key"
+			}
+			hit[class] = true
 			return
 		}
 		if !a3 {
@@ -1526,7 +1536,9 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		// D22 merge-key-handling
 		"<<", "a: <<", "- <<",
 		// D23 flow-map-colon-nospace
-		"0: {0:} ",
+		"0: {0:} ", "{0\n:}",
+		// D36 v4-rejects:flow-multiline-key
+		"0: {0\n:}",
 		// D2 v3-rejects:empty-implicit-key
 		":", "- :\n",
 		// D3 v3-rejects:control-char
