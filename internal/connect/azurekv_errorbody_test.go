@@ -61,7 +61,7 @@ func TestAzureKV_NestedErrorBodyDoesNotAmplifyMemory(t *testing.T) {
 	if len(body) > 50<<10 {
 		t.Fatalf("test body too large: %d", len(body))
 	}
-	for _, status := range []int{400, 404, 500, 502, 503} {
+	for _, status := range []int{202, 400, 404, 500, 502, 503} {
 		cl := azureClientAgainst(t, status, nil, body)
 		var before, after runtime.MemStats
 		runtime.GC()
@@ -152,12 +152,36 @@ func TestErrorBodyScrub_SuccessAndTransportErrorsPassThrough(t *testing.T) {
 		t.Fatal(err)
 	}
 	if b, _ := io.ReadAll(resp.Body); string(b) != ok {
-		t.Fatalf("2xx body modified: %q", b)
+		t.Fatalf("200 body modified: %q", b)
 	}
 	boom := errors.New("boom")
 	rt = errorBodyScrubRoundTripper{Transport: stubRT(func(*http.Request) (*http.Response, error) { return nil, boom })}
 	if _, err := rt.RoundTrip(httptest.NewRequest("GET", "https://v.example/x", nil)); !errors.Is(err, boom) {
 		t.Fatalf("transport error not passed through: %v", err)
+	}
+}
+
+func TestErrorBodyScrub_Non200TwoxxIsScrubbedNotPassedThrough(t *testing.T) {
+	// 2xx non-200 statuses (201, 202, …) are unexpected success codes for
+	// azsecrets.GetSecret. azcore treats them as errors and parses their bodies
+	// through NewResponseError → extractErrorCodeJSON → encoding/json.Unmarshal,
+	// which amplifies a small deeply-nested body into hundreds of MB. The scrub
+	// must intercept these bodies before the SDK sees them.
+	for _, status := range []int{201, 202, 204} {
+		rt := errorBodyScrubRoundTripper{Transport: stubRT(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(nestedBody()))}, nil
+		})}
+		resp, err := rt.RoundTrip(httptest.NewRequest("GET", "https://v.example/x", nil))
+		if err != nil {
+			t.Fatalf("status %d: %v", status, err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		if string(b) == nestedBody() {
+			t.Fatalf("status %d: nested body was not scrubbed", status)
+		}
+		if resp.StatusCode != status {
+			t.Fatalf("status %d: status changed to %d", status, resp.StatusCode)
+		}
 	}
 }
 
