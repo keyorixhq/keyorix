@@ -1,25 +1,30 @@
-- **INV-FUZZCLOUD-webauthn-cose-reencode-determinism** The COSE credential
-  public key re-encoding in go-webauthn@v0.18.2's
-  `unmarshalCredentialPublicKey` (protocol/authenticator.go:384-396) is
-  byte-stable: for the same COSE key bytes, 20 consecutive calls to
-  `protocol.AuthenticatorData.Unmarshal` must return identical
-  `CredentialPublicKey` bytes, those bytes must re-decode under
-  `DupMapKeyEnforcedAPF` without error, and their sha256 must be stable.
-  Reachable pre-auth via
-  `server/http/handlers/webauthn.go:68 →
-  protocol.ParseCredentialCreationResponseBytes → AuthenticatorData.Unmarshal →
-  unmarshalCredentialPublicKey` on attacker-controlled COSE key bytes; the
-  re-encoded bytes are stored as `Credential.PublicKey` in the database and
-  later decoded by `ParsePublicKey` for signature verification.  The specific
-  KFZ-2026-153 non-determinism vector (tag-based key collision) is blocked by
-  `webauthncbor`'s `TagsForbidden` decode option; the float32/float64 collision
-  is blocked by `DupMapKeyEnforcedAPF` (all CBOR floats decode to `float64`
-  in `any` context).  This invariant is a regression tripwire: if either guard
-  is relaxed, the oracle would catch non-determinism.  Does NOT assert
-  cryptographic validity of the key, acceptance by the ceremony, or the
-  `bytes.Equal` path in `credential.Verify` (Keyorix does not call that
-  method).  Why: KFZ-2026-153 (private disclosure), wa1-REPORT.md finding F1.
-  Guard: `FuzzCOSEKeyReencodeIsDeterministic`
+- **INV-FUZZCLOUD-webauthn-cose-reencode-determinism** Every COSE credential
+  public key that Keyorix's WebAuthn registration would store re-encodes to
+  the same bytes on every call. go-webauthn@v0.18.2's
+  `unmarshalCredentialPublicKey` (protocol/authenticator.go:384-396) stores a
+  CTAP2 re-encoding of the attacker-controlled key, not the bytes sent, reached
+  pre-auth via `server/http/handlers/webauthn.go:68 →
+  protocol.ParseCredentialCreationResponseBytes → AuthenticatorData.Unmarshal`,
+  then stored by `core.FinishWebAuthnRegistration` after
+  `webauthn.CreateCredential` accepts it. For the same key bytes, 20
+  consecutive `AuthenticatorData.Unmarshal` calls must all succeed or all
+  fail; if their `CredentialPublicKey` bytes differ, the real registration
+  ceremony (`CreateCredential`, "none" attestation, 20 runs) must refuse the
+  key every time; stable bytes must re-decode under `DupMapKeyEnforcedAPF`.
+  The re-encoding is NOT byte-stable for every input: `TagsForbidden` blocks
+  the KFZ-2026-153 tag vector, but some untagged inputs still re-encode
+  differently from call to call (private KFZ-2026-153 notes). The ceremony
+  refuses every such input found so far, and the oracle checks that refusal on
+  each diverging input instead of assuming it. Detection is probabilistic: one
+  divergence needs map iteration order to differ within 20 calls. Does NOT
+  assert cryptographic validity of a stored key, acceptance by attestation
+  formats other than "none", or the `bytes.Equal` path in `credential.Verify`
+  (Keyorix does not call that method). Why: KFZ-2026-153 (private
+  disclosure), wa1-REPORT.md finding F1, review of 2c481769. Guard:
+  `FuzzCOSEKeyReencodeIsDeterministic`
   (`server/http/handlers/webauthnparse/cose_reencode_determinism_fuzz_test.go`),
-  red-proofed with `TestCOSEReencodeOracle_ByteStabilityRedProof` and
-  `TestCOSEReencodeOracle_DupMapKeyRedProof`.
+  red-proofed through the same `checkCOSEReencode` with
+  `TestCOSEReencodeOracle_DeterminismRedProof`,
+  `TestCOSEReencodeOracle_AcceptanceRedProof` and
+  `TestCOSEReencodeOracle_DupMapKeyRedProof`; the ceremony gate is checked in
+  both directions by `TestCOSEReencodeOracle_LiveProbeGreenAndGate`.
