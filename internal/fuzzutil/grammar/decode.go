@@ -291,3 +291,149 @@ func xmlName(b byte) string {
 	const alpha = "abcdefghijklmnopqrstuvwxyz"
 	return string(alpha[int(b)%len(alpha)])
 }
+
+// ---------------------------------------------------------------------------
+// Protobuf
+// ---------------------------------------------------------------------------
+
+// DecodeProto turns the fuzzer's bytes into a protobuf ProtoMsg. The first
+// control byte selects the top-level shape:
+//   - mode 1: deep nesting chain (depth from next two bytes), the structural
+//     lever that byte-level mutation of a protobuf blob cannot pull in one
+//     choice — a linear chain of N nested messages each wrapping the next
+//   - mode 2: wide packed message (many varint values in a single packed
+//     repeated field), the other shape raw mutation rarely reaches
+//   - default: random tree built recursively with field-level mutation choices
+func DecodeProto(data []byte) *ProtoMsg {
+	r := &reader{data: data}
+
+	mode := r.byte()
+	var msg *ProtoMsg
+	switch mode & 0x03 {
+	case 1:
+		depth := r.intn(maxChainDepth) + 1
+		msg = protoDeepChain(depth)
+	case 2:
+		n := r.intn(maxSiblings) + 1
+		packed := make([]uint64, n)
+		for i := range packed {
+			packed[i] = uint64(r.u16())
+		}
+		msg = &ProtoMsg{Fields: []*ProtoField{{
+			Num:    1,
+			Kind:   ProtoLenDel,
+			Packed: packed,
+		}}}
+	default:
+		msg = &ProtoMsg{}
+		count := int(r.byte()) % (maxChildren + 1)
+		for range count {
+			if r.nodes >= maxNodes {
+				break
+			}
+			msg.Fields = append(msg.Fields, r.protoField(0))
+		}
+	}
+
+	// Apply mutations to the first field (mirrors DecodeDER's applyDERMut on root).
+	if len(msg.Fields) > 0 {
+		applyProtoFieldMut(&msg.Fields[0].Mut, r)
+	}
+
+	if r.bool() {
+		msg.Trailing = r.take(16)
+	}
+	return msg
+}
+
+func (r *reader) protoField(depth int) *ProtoField {
+	r.nodes++
+	num := uint32(r.byte()%127) + 1 // field numbers 1..127
+
+	// Map byte mod 5 to one of the five wire kinds.
+	kindIdx := r.byte() % 5
+	kinds := [5]ProtoWireKind{ProtoVarint, ProtoI64, ProtoLenDel, ProtoGroup, ProtoI32}
+	kind := kinds[kindIdx]
+
+	f := &ProtoField{Num: num, Kind: kind}
+
+	switch kind {
+	case ProtoVarint:
+		f.Varint = uint64(r.u16())<<32 | uint64(r.u16())
+	case ProtoI64:
+		f.I64 = uint64(r.u16())<<48 | uint64(r.u16())<<32 |
+			uint64(r.u16())<<16 | uint64(r.u16())
+	case ProtoLenDel:
+		if depth < maxRecurseDepth && r.nodes < maxNodes && r.bool() {
+			// Nested message.
+			inner := &ProtoMsg{}
+			count := int(r.byte()) % (maxChildren + 1)
+			for range count {
+				if r.nodes >= maxNodes {
+					break
+				}
+				inner.Fields = append(inner.Fields, r.protoField(depth+1))
+			}
+			f.Nested = inner
+		} else if r.bool() {
+			// Packed repeated varints.
+			n := int(r.byte())%16 + 1
+			f.Packed = make([]uint64, n)
+			for i := range f.Packed {
+				f.Packed[i] = uint64(r.u16())
+			}
+		} else {
+			f.Payload = r.take(maxContentLen)
+		}
+	case ProtoGroup:
+		if depth < maxRecurseDepth && r.nodes < maxNodes {
+			group := &ProtoMsg{}
+			count := int(r.byte()) % (maxChildren + 1)
+			for range count {
+				if r.nodes >= maxNodes {
+					break
+				}
+				group.Fields = append(group.Fields, r.protoField(depth+1))
+			}
+			f.Group = group
+		}
+	case ProtoI32:
+		f.I32 = uint32(r.u16())<<16 | uint32(r.u16())
+	}
+
+	applyProtoFieldMut(&f.Mut, r)
+	return f
+}
+
+// applyProtoFieldMut reads mutation-choice bytes and sets the field's mutation
+// flags. Each bit maps to one structural malformation.
+func applyProtoFieldMut(m *ProtoFieldMut, r *reader) {
+	c := r.byte()
+	m.WrongWireType = c&0x01 != 0
+	m.OverlongVarint = c&0x02 != 0
+	if c&0x04 != 0 {
+		m.NonMinimalVarint = (r.byte() % 7) + 2 // 2..8 extra bytes
+	}
+	if c&0x08 != 0 {
+		if c&0x10 != 0 {
+			m.LenDelta = 1 + int(r.byte()) // declared length > payload: over-read
+		} else {
+			m.LenDelta = -(1 + int(r.byte())) // declared length < payload: under-read
+		}
+	}
+}
+
+// protoDeepChain builds a linear chain of `depth` messages each containing one
+// LenDel field wrapping the next. Iterative (not recursive) so building the chain
+// itself cannot overflow the builder's own stack.
+func protoDeepChain(depth int) *ProtoMsg {
+	inner := &ProtoMsg{
+		Fields: []*ProtoField{{Num: 1, Kind: ProtoVarint, Varint: 1}},
+	}
+	for range depth {
+		inner = &ProtoMsg{
+			Fields: []*ProtoField{{Num: 1, Kind: ProtoLenDel, Nested: inner}},
+		}
+	}
+	return inner
+}
