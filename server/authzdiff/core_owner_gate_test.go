@@ -11,13 +11,16 @@ import (
 // and delete at the per-secret gate; core's UpdateSecretWithPermissionCheck /
 // DeleteSecretWithPermissionCheck must refuse them too, typed
 // (ErrPermissionDenied), instead of letting ownership alone authorize the
-// mutation (#4160, former waiver known-03).
+// mutation (#4160, former waiver known-03). The same holds for the tag,
+// description and move ops, which REST gates on secrets.write and core used to
+// let an owner through (#4508); they have no gRPC leg, so only REST is the
+// precondition there.
 //
 // Not covered here: an owner who does hold the permission (the admin positive
 // control of every sweep covers allow), and other ops' owner rules.
 func TestCoreOwnerWithoutPermissionIsRefused(t *testing.T) {
 	specs := withDerived(t, ops())
-	for _, name := range []string{"secret.update", "secret.delete"} {
+	for _, name := range []string{"secret.update", "secret.delete", "secret.tags", "secret.description", "secret.move"} {
 		i := slices.IndexFunc(specs, func(s opSpec) bool { return s.name == name })
 		if i < 0 {
 			t.Fatalf("op %s not defined", name)
@@ -27,8 +30,8 @@ func TestCoreOwnerWithoutPermissionIsRefused(t *testing.T) {
 			t.Parallel()
 			r := runCase(t, spec, caseKey{Op: name, Principal: pkViewer, Target: tA.String(), Arg: 1, variation: defaultVariation}, tA)
 			rest, grpc := r.Legs[layerREST], r.Legs[layerGRPC]
-			if rest == nil || rest.NA != "" || rest.Outcome != Denied || grpc == nil || grpc.NA != "" || grpc.Outcome != Denied {
-				t.Fatalf("precondition: REST and gRPC must refuse the viewer-owner: %s", r.line())
+			if rest == nil || rest.NA != "" || rest.Outcome != Denied || (spec.grpc != nil && (grpc == nil || grpc.NA != "" || grpc.Outcome != Denied)) {
+				t.Fatalf("precondition: REST (and gRPC, where bound) must refuse the viewer-owner: %s", r.line())
 			}
 			if core := r.Legs[layerCore]; core == nil || core.NA != "" || core.Outcome != Denied || core.Detail != "ErrPermissionDenied" {
 				t.Errorf("core must refuse the viewer-owner with ErrPermissionDenied, as the transports do: %s", r.line())
