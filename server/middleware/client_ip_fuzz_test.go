@@ -25,10 +25,8 @@ import (
 //	    entries rather than propagating errors.
 //	(b) parseCIDRs COVERAGE: a bare IPv4 "d.d.d.d" accepted by net.ParseIP
 //	    is treated as /32 and covers exactly that host.  A bare IPv6 address
-//	    is treated as /128 and covers exactly that host.  KNOWN-OPEN #4520:
-//	    an IPv4-mapped entry in IPv6 text form ("::ffff:1.2.3.4") becomes
-//	    ::/32 instead of 1.2.3.4/32, so that one input class is skipped;
-//	    remove the skip when #4520 is fixed.
+//	    is treated as /128 and covers exactly that host. An IPv4-mapped entry
+//	    in IPv6 text form ("::ffff:1.2.3.4") covers exactly 1.2.3.4 (#4520).
 //	(c) parseCIDRs DETERMINISM: same input → same number of parsed nets.
 //	(d) clientIPFromRequest NEVER-PANIC: does not panic on arbitrary
 //	    RemoteAddr, X-Forwarded-For, or X-Real-IP values.
@@ -42,10 +40,8 @@ import (
 //	    IP address via net.ParseIP.
 //	(h) RESULT NOT TRUSTED: a non-empty return value taken from X-Forwarded-For
 //	    is never itself in the trusted set (a trusted proxy's own address cannot
-//	    appear as the "real" client). KNOWN-OPEN #4520 (INV-MW-18, ask
-//	    4391-clientip-xrealip-trusted-hop): the X-Real-IP fallback returns its
-//	    value without a trust check, so (h) covers the XFF path only until
-//	    #4520 is fixed; that is a gap, not intended behaviour.
+//	    appear as the "real" client). Holds for both the XFF walk and the
+//	    X-Real-IP fallback (#4520, INV-MW-18).
 //
 // What this does NOT verify: that ClientIP correctly rewrites r.RemoteAddr
 // (HTTP middleware layer), the X-Forwarded-Proto / ForwardedHTTPS path, the
@@ -85,7 +81,7 @@ func FuzzClientIPParsing(f *testing.F) {
 		// X-Real-IP fallback returning an address inside the trusted set (found by
 		// the fuzzer; oracle (h) covers the XFF walk only).
 		{"0.0.0.0/0", "1.2.3.4:50000", "", "0.0.0.0"},
-		// IPv4-mapped trusted entry in IPv6 text form (KNOWN-OPEN #4520: parses as ::/32).
+		// IPv4-mapped trusted entry in IPv6 text form (#4520: once parsed as ::/32).
 		{"::ffff:10.0.0.1", "[::1]:50000", "1.2.3.4", ""},
 	}
 	for _, s := range seeds {
@@ -123,9 +119,6 @@ func FuzzClientIPParsing(f *testing.F) {
 			ip := net.ParseIP(e)
 			if ip == nil {
 				continue // garbage — expected to be dropped
-			}
-			if ip.To4() != nil && strings.Contains(e, ":") {
-				continue // KNOWN-OPEN #4520: "::ffff:a.b.c.d" parses as ::/32; remove when fixed
 			}
 			found := false
 			for _, n := range nets {
@@ -187,12 +180,9 @@ func FuzzClientIPParsing(f *testing.F) {
 			t.Fatalf("clientIPFromRequest: returned non-empty %q that net.ParseIP rejects", got)
 		}
 
-		// Oracle (h): an X-Forwarded-For result must not be in the trusted set. The
-		// X-Real-IP fallback (XFF absent or blank) is skipped: KNOWN-OPEN #4520, it is
-		// returned without a trust check (INV-MW-18 gap). Remove the xffUsed scoping
-		// when #4520 is fixed.
-		xffUsed := strings.TrimSpace(xffHeader) != ""
-		if xffUsed && ipInAny(got, nets) {
+		// Oracle (h): the result, from X-Forwarded-For or the X-Real-IP fallback,
+		// must not be in the trusted set (#4520).
+		if ipInAny(got, nets) {
 			t.Fatalf("clientIPFromRequest: returned %q which is itself a trusted proxy", got)
 		}
 	})
