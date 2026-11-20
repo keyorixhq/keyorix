@@ -76,8 +76,21 @@ func Fuzz_lib_encoding_json_RoundTrip(f *testing.F) {
 		if err != nil {
 			return
 		}
+		// A one-round normalisation (b1≠b2 but b2 stable) is allowed: some codecs settle
+		// on round 2, not round 1. Only a codec that never reaches a fixed point (b2≠b3) is
+		// a real finding. See bwgen/main.go emitRoundTrip.
 		if !bytes.Equal(b1, b2) {
-			t.Fatalf("ROUND-TRIP: decode∘encode not stable (b1=%d b2=%d bytes)", len(b1), len(b2))
+			var v3 any
+			if lib_encoding_json.Unmarshal(b2, &v3) != nil {
+				return
+			}
+			b3, err := lib_encoding_json.Marshal(v3)
+			if err != nil {
+				return
+			}
+			if !bytes.Equal(b2, b3) {
+				t.Fatalf("ROUND-TRIP: decode∘encode not stable (b1=%d b2=%d bytes)", len(b1), len(b2))
+			}
 		}
 	})
 }

@@ -35,6 +35,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgproto3"
+	"github.com/keyorixhq/keyorix/internal/pgxlimits"
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/canary"
@@ -239,6 +240,8 @@ func newConfigPW(tb testing.TB, addr, pw string) *pgx.ConnConfig {
 	if err != nil {
 		tb.Fatalf("parse config: %v", err)
 	}
+	// Fuzz the configuration that ships: the same per-message bound the production dial path sets.
+	pgxlimits.Apply(cfg)
 	cfg.Password = pw
 	// Drive the SIMPLE query protocol so conn.Query emits a 'Q' and expects the
 	// RowDescription/DataRow/CommandComplete/ReadyForQuery sequence this harness generates

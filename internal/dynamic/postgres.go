@@ -17,6 +17,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/netutil"
+	"github.com/keyorixhq/keyorix/internal/pgxlimits"
 )
 
 // PostgresEngine mints short-lived LOGIN roles on a target PostgreSQL database
@@ -71,6 +72,9 @@ func dialPostgresForRevoke(ctx context.Context, adminDSN string, allowPrivateNet
 }
 
 func connectPostgres(ctx context.Context, cfg *pgx.ConnConfig, allowPrivateNetwork bool) (*pgx.Conn, error) {
+	// admin_dsn is project-admin input, so the server it names is not trusted: bound
+	// the length it may claim for one message (see pgxlimits.MaxProtocolMessageBodyLen).
+	pgxlimits.Apply(cfg)
 	if !allowPrivateNetwork {
 		cfg.LookupFunc = func(ctx context.Context, host string) ([]string, error) {
 			addrs, err := dialResolve(ctx, host)

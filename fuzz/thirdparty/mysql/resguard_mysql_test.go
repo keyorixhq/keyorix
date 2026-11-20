@@ -103,8 +103,19 @@ func calibrateMySQL(t testing.TB, name string, corpus [][]byte, drive func(*test
 	if absolute {
 		b.UseAbsolute(mysqlMemMeters...)
 	}
+	// Every MySQL packet's allocation is set by the 3-byte length its header
+	// CLAIMS, not by how many bytes the server sent: go-sql-driver sizes a read
+	// buffer before the body arrives, bounded by the protocol's per-packet
+	// maximum. Measured for the maximum claim: 16.8 MB per attempt, peak RSS flat
+	// at ~30 MB over 20 repeats (unlike pgx). See
+	// INV-RES-bounded-absolute-from-product-cap.
+	b.UseBoundedAbsolute("alloc_bytes", mysqlMaxPacket)
 	return b
 }
+
+// mysqlMaxPacket is the MySQL protocol's per-packet payload maximum (a 3-byte
+// length, 2^24-1), the ceiling the protocol itself puts on one claimed packet.
+const mysqlMaxPacket = 1<<24 - 1
 
 type mysqlCalTarget struct {
 	name     string
@@ -155,6 +166,25 @@ func TestResguardMySQLRedGreen(t *testing.T) {
 	if b.Check(func(string, ...any) {}, green) {
 		t.Fatalf("GREEN: benign result set (alloc=%d) must pass the budget", green.AllocBytes)
 	}
+	// BOUNDARY: the ceiling is the calibrated value plus the product-enforced
+	// bound, so it must sit exactly between "at the bound" (passes) and one byte
+	// over it (fires), and a ~775 MB claimed-length allocation must fire.
+	ceiling := b.Meters["alloc_bytes"].AbsMax
+	at, over := green, green
+	at.Sampled, over.Sampled = true, true
+	at.AllocBytes, over.AllocBytes = uint64(ceiling), uint64(ceiling)+1
+	if b.Check(func(string, ...any) {}, at) {
+		t.Fatalf("BOUNDARY: alloc exactly at the ceiling (%d) must pass", at.AllocBytes)
+	}
+	if !b.Check(func(string, ...any) {}, over) {
+		t.Fatalf("BOUNDARY: alloc one byte over the ceiling (%d) must fire", over.AllocBytes)
+	}
+	huge := at
+	huge.AllocBytes = 775 << 20
+	if !b.Check(func(string, ...any) {}, huge) {
+		t.Fatalf("BOUNDARY: a ~775 MB claimed-length allocation must fire")
+	}
+
 	red := green
 	red.Sampled = true
 	red.AllocBytes = green.AllocBytes*1000 + 1<<30
