@@ -204,6 +204,29 @@ func (b Budget) UseAbsolute(meters ...string) {
 	}
 }
 
+// UseBoundedAbsolute switches the named meter to ModeAbsolute and RAISES its
+// AbsMax by bound: AbsMax = calibrated AbsMax + bound. Use it for a target whose
+// per-input cost is set by a size the INPUT CLAIMS rather than by how many bytes
+// it carries (a length prefix a parser sizes a buffer from before the body
+// arrives), where the product itself enforces a ceiling on that size: bound is
+// that enforced ceiling, a named constant the production code applies
+// (pgxlimits.MaxProtocolMessageBodyLen, the MySQL 16 MiB per-packet maximum), not
+// a number picked to make a failing target pass. The per-input-byte slope is the
+// wrong model there (a 9-byte header legitimately costs one bounded buffer), and
+// the calibrated part still covers everything the benign corpus costs, so an
+// input that allocates beyond one bounded buffer plus the corpus ceiling still
+// fires. Unknown meter names and a non-positive bound are ignored/no-ops, so a
+// target can call it unconditionally. See INV-RES-bounded-absolute-from-product-cap.
+func (b Budget) UseBoundedAbsolute(meter string, bound float64) {
+	mb, ok := b.Meters[meter]
+	if !ok || bound <= 0 {
+		return
+	}
+	mb.AbsMax += bound
+	mb.Mode = ModeAbsolute
+	b.Meters[meter] = mb
+}
+
 // p99 returns the 99th-percentile value (nearest-rank). Empty -> 0.
 func p99(xs []float64) float64 {
 	if len(xs) == 0 {

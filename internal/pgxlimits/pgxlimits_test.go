@@ -19,4 +19,10 @@ func TestApplySetsTheBoundAndOverridesAnyLooserValue(t *testing.T) {
 	if MaxProtocolMessageBodyLen <= 0 || MaxProtocolMessageBodyLen >= 1<<30 {
 		t.Fatalf("bound %d must be positive and tighter than pgx's ~1 GiB default", MaxProtocolMessageBodyLen)
 	}
+	// The fuzz alloc ceilings for the length-prefixed pgx targets are derived from
+	// this constant (INV-RES-bounded-absolute-from-product-cap), so raising it
+	// loosens that oracle in step. Make that a deliberate edit of this test.
+	if MaxProtocolMessageBodyLen > 1<<20 {
+		t.Fatalf("bound %d > 1 MiB: also the per-connection allocation a rogue server can force and the pgx fuzz ceiling; raise only deliberately", MaxProtocolMessageBodyLen)
+	}
 }
