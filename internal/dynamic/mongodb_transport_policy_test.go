@@ -156,3 +156,17 @@ func TestMongoTLSEnabled_ReadsOptionsLikeTheDriver(t *testing.T) {
 		assert.Equal(t, want, mongoTLSEnabled(u), d)
 	}
 }
+
+// With the operator's opt-in a plaintext admin_dsn is logged once, not once per TLS
+// check (the text check and the parsed-options check both ran RequireTLS).
+func TestConnectMongo_PlaintextWarningLoggedOnce(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	defer log.SetOutput(os.Stderr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := connectMongo(ctx, mongoInsecureBase+"?serverSelectionTimeoutMS=300", true, true)
+	require.Error(t, err) // nothing listens
+	assert.Equal(t, 1, strings.Count(logs.String(), "plaintext (non-TLS) connection"), "logs: %s", logs.String())
+}

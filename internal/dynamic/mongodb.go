@@ -250,8 +250,13 @@ func connectMongo(ctx context.Context, adminDSN string, allowPrivateNetwork, all
 		}
 	}
 
-	if err := guard.RequireTLS(mongoTLSEnabled(u), "mongodb admin_dsn", u.Hostname()); err != nil {
-		return nil, err
+	// Refuse before the driver parses the URI (for mongodb+srv that resolves DNS).
+	// With insecure transport allowed, the WARNING comes from the check on the
+	// parsed options below, so it is logged once.
+	if !guard.AllowInsecureTransport {
+		if err := guard.RequireTLS(mongoTLSEnabled(u), "mongodb admin_dsn", u.Hostname()); err != nil {
+			return nil, err
+		}
 	}
 
 	opts := options.Client().ApplyURI(adminDSN)
