@@ -76,16 +76,6 @@ func pgxWarm(t *testing.T) {
 	})
 }
 
-// pgxLengthPrefixedCeiling is the per-input alloc ceiling for the targets whose
-// allocation is set by a length the SERVER claims, not by how many bytes it sent:
-// pgx sizes a read buffer from a message header before the body arrives, bounded
-// by pgxlimits.MaxProtocolMessageBodyLen (the value production applies). A 9-byte
-// header can therefore legitimately cost one bounded buffer (the pool rounds to a
-// power of two, and a grow copies the old one), so a per-input-byte slope is the
-// wrong model: it flagged every such input (775 MB at the old ~1 GiB default).
-// Twice the bound plus 8 MiB of setup headroom still fires on anything beyond it.
-const pgxLengthPrefixedCeiling = 2*pgxlimits.MaxProtocolMessageBodyLen + 8<<20
-
 // measurePgx drives one input through the Probe, feeds the cost-guided engine, and
 // applies the budget. The pre-existing panic/hang oracles run INSIDE drive.
 func measurePgx(t *testing.T, probe *resguard.Probe, budget resguard.Budget, haveBudget bool, server []byte, drive func(*testing.T, []byte)) {
@@ -185,10 +175,11 @@ func calibratePgx(t testing.TB, name string, corpus [][]byte, drive func(*testin
 		b.UseAbsolute(pgxMemMeters...)
 	}
 	if lengthPrefixed {
-		mb := b.Meters["alloc_bytes"]
-		mb.AbsMax = max(mb.AbsMax, pgxLengthPrefixedCeiling)
-		mb.Mode = resguard.ModeAbsolute
-		b.Meters["alloc_bytes"] = mb
+		// A server-claimed message length sizes one read buffer before the body
+		// arrives, bounded by what production enforces (pgxlimits). The per-byte
+		// slope is the wrong model for that; see
+		// INV-RES-bounded-absolute-from-product-cap.
+		b.UseBoundedAbsolute("alloc_bytes", pgxlimits.MaxProtocolMessageBodyLen)
 	}
 	return b
 }
@@ -200,7 +191,7 @@ type pgxCalTarget struct {
 	drive    func(*testing.T, []byte)
 	absolute bool
 	// lengthPrefixed marks a target whose allocation is set by a server-claimed
-	// message length (see pgxLengthPrefixedCeiling).
+	// message length (see INV-RES-bounded-absolute-from-product-cap).
 	lengthPrefixed bool
 }
 
@@ -253,6 +244,25 @@ func TestResguardPgxRedGreen(t *testing.T) {
 	// GREEN: the benign reply must pass.
 	if b.Check(func(string, ...any) {}, green) {
 		t.Fatalf("GREEN: benign simple-query reply (alloc=%d) must pass the budget", green.AllocBytes)
+	}
+
+	// BOUNDARY: the ceiling is the calibrated value plus the product-enforced
+	// bound, so it must sit exactly between "at the bound" (passes) and one byte
+	// over it (fires), and a ~775 MB claimed-length allocation must fire.
+	ceiling := b.Meters["alloc_bytes"].AbsMax
+	at, over := green, green
+	at.Sampled, over.Sampled = true, true
+	at.AllocBytes, over.AllocBytes = uint64(ceiling), uint64(ceiling)+1
+	if b.Check(func(string, ...any) {}, at) {
+		t.Fatalf("BOUNDARY: alloc exactly at the ceiling (%d) must pass", at.AllocBytes)
+	}
+	if !b.Check(func(string, ...any) {}, over) {
+		t.Fatalf("BOUNDARY: alloc one byte over the ceiling (%d) must fire", over.AllocBytes)
+	}
+	huge := at
+	huge.AllocBytes = 775 << 20
+	if !b.Check(func(string, ...any) {}, huge) {
+		t.Fatalf("BOUNDARY: a ~775 MB claimed-length allocation must fire")
 	}
 
 	// RED: the same input, but a 1000x alloc amplification (the shape of a
