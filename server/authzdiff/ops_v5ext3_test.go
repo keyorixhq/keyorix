@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 )
@@ -95,10 +96,8 @@ func bulkSecretDeleteRenameOps() []opSpec {
 				if err != nil {
 					return err
 				}
-				for _, id := range result.Deleted {
-					if id == pp.secretID {
-						return nil
-					}
+				if slices.Contains(result.Deleted, pp.secretID) {
+					return nil
 				}
 				return errItemRefused
 			},

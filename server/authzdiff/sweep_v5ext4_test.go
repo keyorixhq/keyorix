@@ -272,7 +272,6 @@ func TestSCIMStrictSweep(t *testing.T) {
 	var fails []result
 
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			// Build a fresh SCIM-enabled leg for each case. Each leg gets its own
 			// copy of the template DB (byte copy). routerMu serialises router
