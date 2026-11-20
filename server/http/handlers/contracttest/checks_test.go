@@ -94,6 +94,7 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		"authLogin":                     true,
 		"authRefresh":                   true,
 		"healthCheck":                   true,
+		"getCompliancePosture":          true,
 		"getVersion":                    true,
 		"listSecretACLs":                true,
 		"systemInit":                    true,
