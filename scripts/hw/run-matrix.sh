@@ -36,8 +36,14 @@
 #   On abort: kill the workload copies, stop the sampler, write ABORTED to the
 #   cell .events, and exit non-zero. Nothing is left running.
 #
-#   Independently, a soft thermal brake pauses (does not abort) new work while
-#   CPU temp is above CPU_PAUSE_C (default 92) as the shared-host rules require.
+#   Independently, a soft thermal brake pauses (does not abort) the workload
+#   copies (SIGSTOP, resumed with SIGCONT) while CPU temp is above CPU_PAUSE_C
+#   (default 92), as the shared-host rules require. The brake never skips a
+#   check: every guard tick runs the CPU, disk-temp and SMART checks first, and
+#   an abort always wins over the brake. With the defaults the brake (92, at
+#   once) and the abort (90, after the hold) overlap on purpose: above 92 the
+#   copies stop immediately, and the cell still aborts once the CPU has stayed
+#   above 90 for CPU_ABORT_HOLD_S.
 #
 # PRE-FLIGHT
 #   If ACTIVE_SESSIONS_DIR is set, refuses to start while another session looks
@@ -48,6 +54,8 @@
 # USAGE
 #   scripts/hw/run-matrix.sh [RESULTS_DIR]
 #     RESULTS_DIR default: .scratch/hw1-matrix-<epoch>
+#   MATRIX_STORAGES / MATRIX_NS override the storage letters and concurrency
+#   levels (default "A B C" and "1 2 4"; an empty value runs the baseline only).
 #
 # This script starts/stops the sampler and the workload, reads temps to enforce
 # aborts, and writes only under RESULTS_DIR and the per-cell clone roots it owns.
@@ -88,8 +96,8 @@ GUARD_INTERVAL_S="${GUARD_INTERVAL_S:-15}"
 ACTIVE_SESSIONS_DIR="${ACTIVE_SESSIONS_DIR:-}"
 
 # Concurrency levels and storages for the main matrix.
-NS=(1 2 4)
-STORAGES=(A B C)
+read -r -a NS <<<"${MATRIX_NS-1 2 4}"
+read -r -a STORAGES <<<"${MATRIX_STORAGES-A B C}"
 
 mkdir -p "$RESULTS_DIR"
 RUNLOG="$RESULTS_DIR/run.log"
@@ -98,10 +106,20 @@ log() { echo "[$(date -Is 2>/dev/null || date)] $*" | tee -a "$RUNLOG" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # Recursively terminate a PID and all of its descendants (go build/test included).
+# SIGCONT after SIGTERM so a copy stopped by the thermal brake really exits.
 kill_tree() {
   local pid="$1" child
   for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child"; done
   kill "$pid" 2>/dev/null
+  kill -CONT "$pid" 2>/dev/null
+}
+
+# Send a signal (STOP or CONT) to a PID and all of its descendants. The parent
+# is signalled first so a stopped copy cannot start new children meanwhile.
+signal_tree() {
+  local sig="$1" pid="$2" child
+  kill -"$sig" "$pid" 2>/dev/null
+  for child in $(pgrep -P "$pid" 2>/dev/null); do signal_tree "$sig" "$child"; done
 }
 
 # Globals tracking the currently-running cell, cleaned up on any exit/interrupt
@@ -137,6 +155,7 @@ preflight() {
   fi
   [[ "$active" -eq 1 ]] && log "WARNING: overriding active-session check (FORCE=1)."
   log "pre-flight OK. results=$RESULTS_DIR go=$(go version 2>/dev/null)"
+  log "guard: abort CPU>${CPU_ABORT_C}C for ${CPU_ABORT_HOLD_S}s, disk>${HDD_ABORT_C}C, SMART realloc up; brake CPU>${CPU_PAUSE_C}C; every ${GUARD_INTERVAL_S}s"
 }
 
 # ------------------------- temperature helpers ------------------------------
@@ -268,12 +287,13 @@ run_cell() {
   CURRENT_PIDS=("${pids[@]}")
 
   # Guard loop until the load deadline, then into cooldown.
-  local over_since=0 aborted=0 phase="load" cool_deadline=0
+  local over_since=0 aborted=0 paused=0 phase="load" cool_deadline=0
   while :; do
     local now; now="$(date +%s)"
     if [[ "$phase" == "load" && "$now" -ge "$deadline" ]]; then
       # Load window done: stop any still-running copies, begin cooldown.
       local p; for p in "${pids[@]}"; do kill_tree "$p"; done
+      paused=0
       echo "LOAD_END=$(date +%s)" >>"$events"
       log "CELL $tag: load window complete, entering cooldown"
       phase="cooldown"; cool_deadline=$((now + COOLDOWN_S))
@@ -282,7 +302,7 @@ run_cell() {
       break
     fi
 
-    # --- abort checks ---
+    # --- abort checks (all of them, every tick, before the brake) ---
     local ct; ct="$(cpu_temp_c)"
     if [[ "$ct" != "NA" ]]; then
       if (( ct > CPU_ABORT_C )); then
@@ -292,11 +312,6 @@ run_cell() {
         fi
       else
         over_since=0
-      fi
-      if (( ct > CPU_PAUSE_C )); then
-        log "thermal brake: CPU ${ct}C > ${CPU_PAUSE_C}C — pausing new work 60s"
-        # Pausing here throttles the guard; copies keep their own nice priority.
-        sleep 60; continue
       fi
     fi
     local dev
@@ -321,6 +336,24 @@ run_cell() {
       echo "ABORTED=$(date +%s)" >>"$events"
       log "CELL $tag ABORTED — stopping matrix"
       return 42
+    fi
+
+    # --- soft thermal brake: stop the copies while hot, resume when cooler ---
+    if [[ "$phase" == "load" ]]; then
+      local p
+      if [[ "$ct" != "NA" ]] && (( ct > CPU_PAUSE_C )); then
+        if [[ "$paused" -eq 0 ]]; then
+          for p in "${pids[@]}"; do signal_tree STOP "$p"; done
+          paused=1
+          echo "PAUSED=$(date +%s)" >>"$events"
+          log "thermal brake: CPU ${ct}C > ${CPU_PAUSE_C}C — workload paused (${#pids[@]} copies)"
+        fi
+      elif [[ "$paused" -eq 1 ]]; then
+        for p in "${pids[@]}"; do signal_tree CONT "$p"; done
+        paused=0
+        echo "RESUMED=$(date +%s)" >>"$events"
+        log "thermal brake released: CPU ${ct}C — workload resumed"
+      fi
     fi
     sleep "$GUARD_INTERVAL_S"
   done
