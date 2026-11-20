@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -45,6 +46,15 @@ func (m *MockStorage) GetPersonalAccessTokenByHash(ctx context.Context, hash str
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.PersonalAccessToken), args.Error(1)
+}
+
+func (m *MockStorage) GetPersonalAccessTokenWithOwnerByHash(ctx context.Context, hash string) (*models.PersonalAccessToken, storage.PATOwnerState, error) {
+	args := m.Called(ctx, hash)
+	owner, _ := args.Get(1).(storage.PATOwnerState)
+	if args.Get(0) == nil {
+		return nil, owner, args.Error(2)
+	}
+	return args.Get(0).(*models.PersonalAccessToken), owner, args.Error(2)
 }
 
 func (m *MockStorage) RevokePersonalAccessToken(ctx context.Context, id uint) error {
