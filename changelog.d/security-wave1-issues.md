@@ -14,7 +14,9 @@
   `X-Real-IP` value that is itself a trusted proxy is no longer taken as the client IP. The same
   `::ffff:a.b.c.d` parsing bug made a PAT or machine-token network allowlist entry mean `::/32`
   (admitting `::1`, refusing the intended host); new entries are stored as the IPv4 host, and
-  entries already stored in that shape are read as the IPv4 host they were meant to be.
+  entries already stored in that exact shape (`::ffff:a.b.c.d/32`) are read as that host. Any
+  other stored `::ffff:` entry with a prefix below 96 no longer matches anything (it matched no
+  IPv4 client before); re-issue such a token with plain IPv4 CIDRs.
 - **Core refuses an owner without `secrets.write` on tags, description and move (#4508).** Defence
   in depth: REST already refused these.
 
