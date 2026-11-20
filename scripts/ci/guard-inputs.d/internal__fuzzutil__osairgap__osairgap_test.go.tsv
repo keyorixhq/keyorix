@@ -1,0 +1,1 @@
+internal/fuzzutil/osairgap/osairgap_test.go	operator/**/*.go	TestOsairgapImportedOnlyFromTests walks every non-test .go file in the repo for an import of osairgap (skips .git, vendor, node_modules), including operator/

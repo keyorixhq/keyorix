@@ -191,14 +191,30 @@ func (t *gatedSQLiteTx) done() {
 // production SQLite open goes through here (createLocalStorage, OpenGormDB), so one
 // process-local gate covers each *sql.DB.
 func openSQLiteGorm(dsn string) (*gorm.DB, error) {
+	return openSQLiteGormWithGate(dsn, newSQLiteWriteGate())
+}
+
+// openSQLiteGormWithGate is openSQLiteGorm behind an existing gate: the SQLite
+// read-audit connection (factory_sqlite_read_audit.go) shares the shared pool's
+// gate, so this process's writers on both handles queue in one FIFO order.
+func openSQLiteGormWithGate(dsn string, gate *sqliteWriteGate) (*gorm.DB, error) {
 	sqlDB, err := sql.Open(sqlite.DriverName, dsn)
 	if err != nil {
 		return nil, err
 	}
-	db, err := gorm.Open(sqlite.New(sqlite.Config{Conn: &gatedSQLitePool{DB: sqlDB, gate: newSQLiteWriteGate()}}), gormConfig())
+	db, err := gorm.Open(sqlite.New(sqlite.Config{Conn: &gatedSQLitePool{DB: sqlDB, gate: gate}}), gormConfig())
 	if err != nil {
 		_ = sqlDB.Close()
 		return nil, err
 	}
 	return db, nil
+}
+
+// sqliteWriteGateOf returns the write gate behind db, which openSQLiteGorm opened.
+func sqliteWriteGateOf(db *gorm.DB) (*sqliteWriteGate, error) {
+	pool, ok := db.ConnPool.(*gatedSQLitePool)
+	if !ok {
+		return nil, fmt.Errorf("sqlite write gate: connection pool is %T, not the gated pool openSQLiteGorm opens", db.ConnPool)
+	}
+	return pool.gate, nil
 }
