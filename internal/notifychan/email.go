@@ -144,7 +144,7 @@ func (s *EmailSink) send(ctx context.Context, ev core.NotificationEvent) (retrya
 // selection: smtpauth offers only CRAM-MD5 and NTLM on an unencrypted connection (no
 // password on the wire, no relay-chosen CPU cost), so a relay offering only PLAIN,
 // LOGIN or SCRAM has no mechanism left.
-const emailPlainLoginNoTLSCause = "server offers no AUTH mechanism usable without TLS (notify email tls=none): PLAIN, LOGIN and SCRAM are only used over TLS; use starttls or implicit TLS, or a relay that offers CRAM-MD5"
+const emailPlainLoginNoTLSCause = "server offers no AUTH mechanism usable without TLS (notify email tls=none): PLAIN, LOGIN and SCRAM are only used over TLS; use starttls or implicit TLS, or a relay that offers CRAM-MD5 or NTLM"
 
 // plainLoginOnlyWithoutTLS reports whether a send error is the no-usable-mechanism
 // failure under tls=none with auth configured — the one case the generic error

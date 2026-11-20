@@ -115,7 +115,7 @@ func (d *SMTPDelivery) DeliverSetupLink(ctx context.Context, req SetupLinkReques
 // selection: smtpauth offers only CRAM-MD5 and NTLM on an unencrypted connection (no
 // password on the wire, no relay-chosen CPU cost), so a relay offering only PLAIN,
 // LOGIN or SCRAM has no mechanism left.
-const smtpPlainLoginNoTLSCause = "server offers no AUTH mechanism usable without TLS (smtp.tls=none): PLAIN, LOGIN and SCRAM are only used over TLS; use starttls or implicit TLS, or a relay that offers CRAM-MD5"
+const smtpPlainLoginNoTLSCause = "server offers no AUTH mechanism usable without TLS (smtp.tls=none): PLAIN, LOGIN and SCRAM are only used over TLS; use starttls or implicit TLS, or a relay that offers CRAM-MD5 or NTLM"
 
 // plainLoginOnlyWithoutTLS reports whether a send error is the no-usable-mechanism
 // failure under tls=none with auth configured — the one case the generic error
@@ -126,8 +126,8 @@ func (d *SMTPDelivery) plainLoginOnlyWithoutTLS(err error) bool {
 }
 
 // newClient builds a go-mail client from the SMTP settings, selecting the TLS policy
-// and auth mechanism. Auth is auto-discovered when credentials are present and
-// disabled otherwise (e.g. an internal relay that authenticates by network).
+// and auth. When credentials are present internal/smtpauth picks the mechanism; auth
+// is disabled otherwise (e.g. an internal relay that authenticates by network).
 func (d *SMTPDelivery) newClient() (*mail.Client, error) {
 	opts := []mail.Option{
 		mail.WithTimeout(smtpDialTimeout),
