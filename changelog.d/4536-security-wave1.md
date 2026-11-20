@@ -10,7 +10,10 @@
   It now answers like a wrong code, as login, MFA verify, step-up and WebAuthn already did.
 - **Trusted-proxy parsing (#4520).** A bare IPv4-mapped trusted proxy (`::ffff:1.2.3.4`) was
   parsed as the IPv6 network `::/32`, trusting `::1` and every other `::/32` peer to set
-  forwarding headers; it now covers exactly that host. With `X-Forwarded-For` absent, an
+  forwarding headers; it now covers exactly that host. The same holds for an explicit prefix:
+  `::ffff:1.2.3.4/32` and `::ffff:10.0.0.0/8` (once `::/32` and `::/8`) now mean the IPv4 host
+  and network, and a mapped prefix from /33 to /95, which has no IPv4 meaning, trusts nothing.
+  With `X-Forwarded-For` absent, an
   `X-Real-IP` value that is itself a trusted proxy is no longer taken as the client IP. The same
   `::ffff:a.b.c.d` parsing bug made a PAT or machine-token network allowlist entry mean `::/32`
   (admitting `::1`, refusing the intended host); new entries are stored as the IPv4 host, and
@@ -25,7 +28,7 @@
   `https://*.example.com` were accepted and treated as patterns by the CORS layer, giving every
   matching origin a credentialed grant. The same applies to a `*` in `server.http.domain`, the
   default origin when `allowed_origins` is empty. List each origin explicitly. A configuration
-  that used such a value now fails to start, naming the setting (see UPGRADING.md 6zb).
+  that used such a value now fails to start, naming the setting (see the upgrade note in `docs/upgrading.d/cors-origin-wildcard-refused.md`).
 
 ### Fixed
 - **The audit page's failed-attempts filter includes failed second factors (#3363).** The
