@@ -5,7 +5,7 @@ package connect
 // awssm_errorbody_test.go — measures allocations when AWSSecretsManagerConnector.GetSecret
 // receives hostile response bodies (deeply nested, large, or on unexpected status codes).
 // Mirrors azurekv_errorbody_test.go's approach and verifies the O4 bounded-work oracle
-// (256 MiB + 16 × bytes-on-wire) holds for all tested shapes. This protects against a
+// (16 MiB + 2 × bytes-on-wire here, see awssmO4Budget) holds for all tested shapes. This protects against a
 // regression to the Azure-class amplification: a hostile ~40 KB deeply-nested body
 // allocated ~574 MiB before errorBodyScrubRoundTripper was added for Azure.
 //
@@ -43,10 +43,13 @@ func awssmNestedObjBody(depth int) string {
 	return strings.Repeat(`{"Code":`, depth) + `1` + strings.Repeat(`}`, depth)
 }
 
-// awssmO4Budget is the O4 oracle limit: 256 MiB + 16 × bytes-written.
-// For a body of n bytes: limit = 256<<20 + 16*n.
+// awssmO4Budget is this test's bounded-work limit: 16 MiB + 2 × bytes-written.
+// Measured worst case is ~5.4 MB for a 1 MiB body (5.1×) and well under 1 MiB for
+// the 20 KB nested bodies, so the limit is tight enough to catch an Azure-class
+// regression (574 MiB for ~40 KB) and a several-fold drop in the 1 MiB cap path.
+// The fuzz oracle's looser 256 MiB + 16×wire budget is deliberately not reused.
 func awssmO4Budget(bodyBytes int) uint64 {
-	return uint64(256<<20) + 16*uint64(bodyBytes) // #nosec G115
+	return uint64(16<<20) + 2*uint64(bodyBytes) // #nosec G115
 }
 
 // awssmHardenedClient builds the real secretsmanager.Client with the SAME
@@ -65,7 +68,7 @@ func awssmHardenedClient(srv *httptest.Server) *secretsmanager.Client {
 }
 
 // TestAWSSM_NestedErrorBodyDoesNotAmplifyMemory measures allocations for a range of
-// hostile response bodies and asserts the O4 oracle (256 MiB + 16 × wire-bytes).
+// hostile response bodies and asserts the O4 oracle (16 MiB + 2 × wire-bytes).
 // It also records a measurement table (printed on -v) so a human can inspect the
 // actual amplification factors.
 func TestAWSSM_NestedErrorBodyDoesNotAmplifyMemory(t *testing.T) {
@@ -157,7 +160,7 @@ func TestAWSSM_NestedErrorBodyDoesNotAmplifyMemory(t *testing.T) {
 				tc.name, wireBytes, allocBytes, ampFactor, passO4)
 
 			if !passO4 {
-				t.Errorf("O4 BOUNDED-WORK: status %d, body %d bytes: allocated %d bytes, budget %d (256 MiB + 16×wire)",
+				t.Errorf("O4 BOUNDED-WORK: status %d, body %d bytes: allocated %d bytes, budget %d (16 MiB + 2×wire)",
 					tc.status, wireBytes, allocBytes, budget)
 			}
 		})
