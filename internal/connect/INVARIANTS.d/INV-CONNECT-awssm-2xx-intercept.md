@@ -16,5 +16,8 @@
   Guard: `TestAWSSM_NestedErrorBodyDoesNotAmplifyMemory` (bounded-work budget, 13 cases) and
   `TestAWSSM_Non200TwoxxBodyIsNotParsedBySDK` (2xx intercept, 5 status codes) in
   `awssm_errorbody_test.go`. **Not covered**: the success (200) path's allocation
-  beyond the 1 MiB cap (covered by `FuzzAWSSMHostileEndpoint` O4 oracle), and
-  `FuzzAWSSMConnectorResponse`'s un-capped client (UNGUARDED, #4531).
+  beyond the 1 MiB cap (covered by `FuzzAWSSMHostileEndpoint` O4 oracle).
+  `FuzzAWSSMConnectorResponse` (`awssm_response_fuzz_test.go`) builds its client with
+  the production `newConnectHardenedTransport` and applies the same O4 budget
+  (`awssmO4Budget`); `TestAWSSMResponseFuzzO4RedProof` shows the oracle fails on an
+  unbounded 64 MiB body through the un-hardened client (guarded, #4531).
