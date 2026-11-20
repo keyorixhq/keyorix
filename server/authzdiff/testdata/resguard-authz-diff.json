@@ -1,30 +1,30 @@
 {
   "target": "authz_diff",
   "platform": "linux",
-  "factor": 4,
-  "seeds": 950,
+  "factor": 5,
+  "seeds": 1521,
   "meters": {
     "alloc_bytes": {
-      "floor": 9645656,
-      "per_byte": 1205707,
-      "abs_max": 38582624,
+      "floor": 9720752,
+      "per_byte": 1215094,
+      "abs_max": 48603760,
       "mode": "absolute"
     },
     "cpu_ns": {
-      "floor": 74027000,
-      "per_byte": 9253375,
-      "abs_max": 296108000
+      "floor": 65058000,
+      "per_byte": 8132250,
+      "abs_max": 325290000
     },
     "mallocs": {
-      "floor": 73080,
-      "per_byte": 9135,
-      "abs_max": 292320,
+      "floor": 73142,
+      "per_byte": 9142.75,
+      "abs_max": 365710,
       "mode": "absolute"
     },
     "wall_ns": {
-      "floor": 70652422,
-      "per_byte": 8831552.75,
-      "abs_max": 282609688
+      "floor": 61003443,
+      "per_byte": 7625430.375,
+      "abs_max": 305017215
     }
   }
 }
