@@ -58,15 +58,12 @@ const (
 // audit-commit path, and the ONLY implementation of the standard level anywhere.
 //
 // POSTGRES ONLY. Callers must already have established that tx's dialect is
-// postgres. There is NO SQLite counterpart, and deliberately never was in a
-// shipped build: standard is PostgreSQL-only (Andrei's decision, 2026-10-05)
-// and config validation REFUSES TO START a SQLite backend set to standard
-// (internal/config's auditDurabilityStandardSQLiteUnsupportedError), so a
-// SQLite-backed LocalStorage can never reach this function with skip == true.
-// SQLite's own DSN says `_synchronous=FULL` unconditionally and has no other
-// branch. See config.DatabaseConfig.AuditDurability for the
-// reasons SQLite was rejected (a per-connection pragma would relax every
-// table, not just audit; and the measured p99 got worse under concurrency).
+// postgres. SQLite's standard level is a different mechanism with a narrower
+// scope (ADR-112 Amendment 7): batches of successful read audits only, on a
+// separate synchronous=NORMAL connection (auditBatchDB,
+// local_audit_chain_sqlite_read_audit.go); the shared SQLite pool's DSN says
+// `_synchronous=FULL` unconditionally, and a SQLite-backed LocalStorage never
+// reaches this function with skip == true.
 //
 // skip == false (the strict level) is a strict NO-OP: no
 // statement is issued at all, so the strict path is byte-identical to what it
@@ -782,8 +779,15 @@ func (ls *LocalStorage) commitBatchAttempt(ctx context.Context, batch []*auditBa
 // round trip per statement: SQLite's path (in-process, so a statement costs no
 // network flight), and Postgres' only when the pool is not a pgx one (see
 // commitBatchAttemptPipelined).
+//
+// On SQLite at audit_durability standard, a batch made up only of successful
+// read audits commits on the read-audit connection (auditBatchDB, ADR-112
+// Amendment 7). The head read below runs inside the write transaction on
+// whichever handle commits, so the chain links onto the last row either
+// handle committed.
 func (ls *LocalStorage) commitBatchAttemptTx(ctx context.Context, batch []*auditBatchItem) error {
-	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	db, normal := ls.auditBatchDB(batch)
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if tx.Dialector.Name() == "postgres" {
 			if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
 				return err
@@ -799,6 +803,9 @@ func (ls *LocalStorage) commitBatchAttemptTx(ctx context.Context, batch []*audit
 			Limit(1).
 			Scan(&head).Error; err != nil {
 			return err
+		}
+		if auditBatchTxHook != nil {
+			auditBatchTxHook(tx, normal)
 		}
 		events, accessLogs := chainAuditBatch(batch, head.EntryHash)
 		if err := createAuditRowsMultiRow(tx, events); err != nil {
