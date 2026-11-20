@@ -8,7 +8,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 )
 
-
 // TestCanaryAsTopLevelKeyIsNotALeak drives the real loader with the canary as an unknown
 // top-level key, the shape CI run 43424626656 (shard 5) flagged. TestLeaksCanary covers the
 // oracle on hand-written texts; this one proves the loader's real message is tolerated.
