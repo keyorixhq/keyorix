@@ -329,7 +329,8 @@ func checkTPMAccepted(fx *tpmFixture, st tpmStatement, requireRoot bool) error {
 	}
 	// 1. the AIK signed certInfo. The harness AIK is a P-256 key.
 	// -7 (ES256) and -9 (ESP256) are both ECDSA P-256 + SHA-256: correct.
-	// algES256K (-47) is accepted by the library as a known leniency (see constant).
+	// algES256K (-47) is a tolerated library deviation (#4545, see the constant);
+	// it skips only this label check, the signature is still verified below.
 	// Every other alg is flagged.
 	pub, ok := cert.PublicKey.(*ecdsa.PublicKey)
 	if !ok {
@@ -339,8 +340,7 @@ func checkTPMAccepted(fx *tpmFixture, st tpmStatement, requireRoot bool) error {
 	case -7, -9:
 		// ES256 / ESP256 — both specify ECDSA P-256 + SHA-256; correct.
 	case algES256K:
-		// Known library leniency — label does not match P-256 key curve, but
-		// the library verifies using ECDSA/SHA-256 and the signature is genuine.
+		// tolerated until #4545; remove when the verifier rejects -47 with a P-256 AIK.
 	default:
 		return fmt.Errorf("accepted alg %d with a P-256 AIK key", st.alg)
 	}
@@ -515,7 +515,7 @@ func tpmName(pubArea []byte) ([]byte, error) {
 	var h hash.Hash
 	switch alg := binary.BigEndian.Uint16(pubArea[2:]); alg {
 	case 0x0004:
-		h = sha1.New() //nolint:gosec // see import
+		h = sha1.New() //nolint:gosec // see import // nosemgrep: go.lang.security.audit.crypto.use_of_weak_crypto.use-of-sha1 -- TPM Name for nameAlg SHA-1 (TPM 2.0 Part 1, 16), test oracle only
 	case 0x000b:
 		h = sha256.New()
 	case 0x000c:
@@ -529,10 +529,12 @@ func tpmName(pubArea []byte) ([]byte, error) {
 	return append(append([]byte{}, pubArea[2:4]...), h.Sum(nil)...), nil
 }
 
-// algES256K is COSE algorithm -47 (ES256K). go-webauthn v0.18.2 accepts it
-// for a P-256 AIK when the signature over certInfo verifies under ECDSA/SHA-256.
-// Known library leniency: the label does not match the key curve; the signature
-// is genuine and there is no security impact.
+// algES256K is COSE algorithm -47 (ES256K, secp256k1). go-webauthn v0.18.2 maps
+// it to x509.ECDSAWithSHA256, so it accepts a TPM statement labelled -47 whose
+// P-256 AIK signature over certInfo verifies. That deviates from WebAuthn §8.3
+// ("using the algorithm specified in alg"); the signature itself is genuine.
+// Tolerated until #4545; remove when the verifier rejects -47 with a P-256 AIK.
+// TestTPMLibrary_ES256KLeniencyPinned fails as soon as it does.
 const algES256K = int64(-47)
 
 // ---- tests and fuzz targets --------------------------------------------------
@@ -558,27 +560,60 @@ func TestTPMSeed_AcceptedByBothModes(t *testing.T) {
 }
 
 // TestTPMOracle_AlgVariants verifies the oracle's alg handling: -9 (ESP256,
-// legitimate alias for ES256) must pass; -35 (ES384) and -257 (RS256) must fail.
+// legitimate alias for ES256) and -47 (tolerated, #4545) pass with a genuine
+// signature; -35 (ES384) and -257 (RS256) fail; -47 with a forged signature
+// fails, so the tolerance skips only the label check.
 func TestTPMOracle_AlgVariants(t *testing.T) {
 	fx := newTPMFixture(t)
 	base := fx.seedStatement() // alg -7, real signature
-	// -9 (ESP256): same cryptographic algorithm as -7, accepted by the library.
-	neg9 := base
-	neg9.alg = -9
-	if err := checkTPMAccepted(fx, neg9, false); err != nil {
-		t.Errorf("oracle rejected alg -9 (ESP256), want accepted: %v", err)
+	for _, alg := range []int64{-9, algES256K} {
+		st := base
+		st.alg = alg
+		if err := checkTPMAccepted(fx, st, true); err != nil {
+			t.Errorf("oracle rejected alg %d with a genuine signature, want accepted: %v", alg, err)
+		}
 	}
-	// -35 (ES384): wrong algorithm family.
-	neg35 := base
-	neg35.alg = -35
-	if err := checkTPMAccepted(fx, neg35, false); err == nil {
-		t.Error("oracle accepted alg -35 (ES384), want rejected")
+	for _, alg := range []int64{-35, -257} {
+		st := base
+		st.alg = alg
+		if err := checkTPMAccepted(fx, st, false); err == nil {
+			t.Errorf("oracle accepted alg %d, want rejected", alg)
+		}
 	}
-	// -257 (RS256): completely different key type.
-	neg257 := base
-	neg257.alg = -257
-	if err := checkTPMAccepted(fx, neg257, false); err == nil {
-		t.Error("oracle accepted alg -257 (RS256), want rejected")
+	forged := base
+	forged.alg = algES256K
+	forged.sig = flipLastByte(forged.sig)
+	if err := checkTPMAccepted(fx, forged, false); err == nil {
+		t.Error("oracle accepted alg -47 with a forged signature, want rejected")
+	}
+}
+
+// flipLastByte returns a copy of b with one bit of its last byte flipped.
+func flipLastByte(b []byte) []byte {
+	c := append([]byte{}, b...)
+	c[len(c)-1] ^= 0x01
+	return c
+}
+
+// TestTPMLibrary_ES256KLeniencyPinned pins the library behaviour the algES256K
+// tolerance exists for (#4545), in both RP modes: -9 and -47 with the genuine
+// P-256 signature are accepted, -47 with a forged signature is rejected. When the
+// verifier starts rejecting -47, this fails: remove the algES256K case from
+// checkTPMAccepted and require rejection here.
+func TestTPMLibrary_ES256KLeniencyPinned(t *testing.T) {
+	fx := newTPMFixture(t)
+	st := fx.seedStatement()
+	forgedSig := flipLastByte(st.sig)
+	for name, rp := range map[string]ports.WebAuthnRelyingParty{"keyorix": newKeyorixRP(t), "root": newRootRP(t, fx)} {
+		if _, err := finish(rp, fx.response(t, st.ver, -9, st.certInfo, st.pubArea, st.sig, st.aik)); err != nil {
+			t.Errorf("%s: alg -9 (ESP256) rejected: %v", name, err)
+		}
+		if _, err := finish(rp, fx.response(t, st.ver, algES256K, st.certInfo, st.pubArea, st.sig, st.aik)); err != nil {
+			t.Errorf("%s: alg -47 with a P-256 AIK is now rejected (%v): #4545 is fixed, remove the algES256K tolerance", name, err)
+		}
+		if _, err := finish(rp, fx.response(t, st.ver, algES256K, st.certInfo, st.pubArea, forgedSig, st.aik)); err == nil {
+			t.Errorf("%s: alg -47 with a forged signature accepted", name)
+		}
 	}
 }
 
@@ -683,7 +718,10 @@ func fuzzTPM(f *testing.F, requireRoot bool) {
 		rp = newKeyorixRP(f)
 	}
 	s := fx.seedStatement()
-	f.Add(s.ver, s.alg, s.certInfo, s.pubArea, s.sig, s.aik)
+	// -9 and -47 with the genuine signature: the KFZ-2026-165/166 reproducers.
+	for _, alg := range []int64{s.alg, -9, algES256K} {
+		f.Add(s.ver, alg, s.certInfo, s.pubArea, s.sig, s.aik)
+	}
 	f.Fuzz(func(t *testing.T, ver string, alg int64, certInfo, pubArea, sig, aik []byte) {
 		st := tpmStatement{ver, alg, certInfo, pubArea, sig, aik}
 		resp := fx.response(t, ver, alg, certInfo, pubArea, sig, aik)
