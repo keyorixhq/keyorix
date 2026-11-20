@@ -280,7 +280,7 @@ run_all_drills() {
   if pg_files_ok 1; then
     run_drill upgrade.postgres upgrade.sh postgres "DRILL_PG_DSN_FILE=$d/dsn1.txt"
   else
-    emit upgrade.postgres SKIP "postgres SKIP: RC_GATE_PG_DSN_DIR unset or $d/dsn1.txt not readable (needs an EMPTY database)"
+    emit upgrade.postgres SKIP "postgres SKIP: RC_GATE_PG_DSN_DIR unset, or dsn1.txt in it not readable (needs an EMPTY database)"
   fi
   run_drill backup-restore.sqlite backup-restore.sh sqlite
   if pg_files_ok 2 3; then
