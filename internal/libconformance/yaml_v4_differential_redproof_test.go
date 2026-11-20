@@ -1356,8 +1356,8 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 	// Also covers the container case: `0: 0b+0` → v3 {0:0} vs v4 {0:"0b+0"}.
 	{
 		for _, in := range [][]byte{
-			[]byte("0b+0"),      // bare scalar (testdata seed 71de6c43bb10a32d)
-			[]byte("0: 0b+0"),   // value inside a map (testdata seed 70f8e3e01bc42e7e)
+			[]byte("0b+0"),    // bare scalar (testdata seed 71de6c43bb10a32d)
+			[]byte("0: 0b+0"), // value inside a map (testdata seed 70f8e3e01bc42e7e)
 		} {
 			var v3v, v4v any
 			if err := v3yaml.Unmarshal(in, &v3v); err != nil {
