@@ -12,7 +12,7 @@
   measured ~775 MB before the product bound existed), which turned `fuzz-changed`
   red on unrelated PRs, and a flat hand-picked ceiling would have been 115x looser
   than needed. Limits: the oracle no longer sees an amplification below `bound`
-  for these targets, and loosening the product constant loosens the oracle in step
-  (the product constant has its own test). Guard: `TestBudgetUseBoundedAbsolute`
+  for these targets, and the committed JSON is a snapshot, so a changed product constant is only
+  picked up by recalibrating (`TestCommittedBudgetsCarryTheCurrentProductBound` and its MySQL twin fail until then). Guard: `TestBudgetUseBoundedAbsolute`
   in `internal/fuzzutil/resguard/resguard_test.go` (a tiny input costing one
   bounded buffer passes; the boundary is exact; just above fires and names the meter).

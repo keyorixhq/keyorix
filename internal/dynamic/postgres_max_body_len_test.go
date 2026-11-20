@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgproto3"
+
+	"github.com/keyorixhq/keyorix/internal/pgxlimits"
 )
 
 // hostileClaimedLen is the claimed body length the rogue server announces:
@@ -135,8 +137,14 @@ func TestPostgresEngineBoundsServerClaimedMessageLength(t *testing.T) {
 			// design. The allocation bound above is the property under test.
 			switch tc.name {
 			case "issue/handshake":
-				if _, ok := errors.AsType[*pgproto3.ExceededMaxBodyLenErr](err); !ok {
+				ex, ok := errors.AsType[*pgproto3.ExceededMaxBodyLenErr](err)
+				if !ok {
 					t.Errorf("want *pgproto3.ExceededMaxBodyLenErr in the error chain, got %v", err)
+				} else if ex.MaxExpectedBodyLen != pgxlimits.MaxProtocolMessageBodyLen {
+					// The 64 MiB allocation ceiling above would also pass a much looser
+					// effective bound; this pins what pgx was actually configured with.
+					t.Errorf("effective MaxExpectedBodyLen = %d, want pgxlimits.MaxProtocolMessageBodyLen (%d)",
+						ex.MaxExpectedBodyLen, pgxlimits.MaxProtocolMessageBodyLen)
 				}
 			case "renew/query-reply":
 				if err == nil {
