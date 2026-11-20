@@ -102,10 +102,10 @@ const lockOrderNamedFamilies = "<storage.NamedLockOrder>"
 // file it); do not move a row to make it legal — the row's other edges then
 // break, exactly as with NamedLockOrder.
 var lockOrderTable = []lockOrderEntry{
-	{"core.KeyorixCore.auditPostureMu", "COMPLIANCE-TILE-NOV-1: held across the posture's bounded audit tail walk so concurrent page loads share one refresh; taken only from the posture snapshot build, with no other lock held, and the walk takes the audit seal/watermark/verify-state mutexes inside it"},
 	{"core.KeyorixCore.auditVerifyJobMu", "TryLock only (never waited on): one incremental audit verification at a time; the job then takes the scheduler/checkpoint locks and transactions"},
 	{"core.KeyorixCore.accessReviewDecisionMu", "in-process fast path held for all of DecideAccessReviewItem, whose revoke path takes the removal-guard named locks; no lock is ever held when it is taken"},
 	{"WithSchedulerLock", "server/main.go's scheduler jobs run under it and call into core (which may take named locks inside it: SetNamedLockDB's doc)"},
+	{"core.KeyorixCore.auditPostureMu", "COMPLIANCE-TILE-NOV-1: held across the posture's bounded audit tail walk so concurrent page loads share one refresh; taken from the posture snapshot build, also inside scheduler jobs under WithSchedulerLock (evidence delivery, compliance digest), and the walk takes the audit seal/watermark/verify-state mutexes inside it"},
 	{"WithBootstrapLock", "one-time install seeding; wraps its own transactions"},
 	{"WithAuditCheckpointLock", "checkpoint writer; takes the audit watermark mutex and transactions inside"},
 	{lockOrderNamedFamilies, "cross-replica named locks, in storage.NamedLockOrder's order: taken before any in-process guard mutex and before the transaction they guard (INV-CORE-41: named lock OUTSIDE, transaction INSIDE)"},
