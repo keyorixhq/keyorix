@@ -25,8 +25,23 @@ import (
 //	  Core: RemoveSelfFromShare checks membership. REST only. Target: tA only.
 //	  Positive control: pkViewer.
 //
+// V5EXT7 step 2 — phase5 env-copy ops (already bound; coreEnforced and
+// strict sweep added here):
+//
+//	env.clone: secrets.write + secrets.read (both perms). Core: CloneEnvironment
+//	  calls requireActorActive. REST only.
+//	  Positive control: pkAdmin.
+//	  Curated: write-only → denied; read-only → denied.
+//
+//	env.copy.secrets: same gates as env.clone. Core: CopyEnvironmentSecrets
+//	  calls requireActorActive. REST only.
+//	  Curated: same as env.clone.
+//
 // What this oracle does NOT verify:
 //   - share.self.remove: RBAC gate (there is none; the only gate is recipient membership).
+//   - env.clone / env.copy.secrets: dual-scope check (secrets.write at project +
+//     secrets.read at env — the reference model uses project scope for both, so a
+//     write-at-project / read-at-env split actor is not modelled here).
 //   - WebAuthn or MFA-step-up gate on any of these ops.
 //
 // Strict rule: zero uncalibrated cases and zero "unexplained" cases.
@@ -84,6 +99,7 @@ func TestV5ext7StrictSweep(t *testing.T) {
 //   - share.update: holds write but not owner (denied at core); via group not owner
 //     (denied); machine holds write (denied — machine cannot be ownerUserID).
 //   - share.self.remove: no curated RBAC cases (no RBAC gate; boundary is recipient).
+//   - env.clone / env.copy.secrets: write-only → denied; read-only → denied.
 func curatedV5ext7Variations(spec opSpec, t tgt) []struct {
 	pk principalKind
 	v  variation
@@ -124,6 +140,17 @@ func curatedV5ext7Variations(spec opSpec, t tgt) []struct {
 	case "share.self.remove":
 		// No RBAC gate; authorization is entirely by recipient membership.
 		return nil
+	case "env.clone", "env.copy.secrets":
+		// Route gates: secrets.write (project) AND secrets.read (env scope).
+		// Reference model requires both. Test the two one-perm-short cases.
+		writeRead := maskOf([]string{"secrets.write", "secrets.read"})
+		writeOnly := maskOf([]string{"secrets.write"})
+		readOnly := maskOf([]string{"secrets.read"})
+		return []pv{
+			{pkCustom, variation{Mask: writeRead, Route: "user", Scope: here}},  // both perms → allowed
+			{pkCustom, variation{Mask: writeOnly, Route: "user", Scope: here}},  // write-only → denied (no read)
+			{pkCustom, variation{Mask: readOnly, Route: "user", Scope: here}},   // read-only → denied (no write)
+		}
 	}
 	return nil
 }
@@ -134,7 +161,9 @@ func isV5ext7Op(name string) bool {
 	switch name {
 	case
 		// V5EXT7 step 1: phase5 share write ops
-		"share.revoke", "share.update", "share.self.remove":
+		"share.revoke", "share.update", "share.self.remove",
+		// V5EXT7 step 2: phase5 env-copy ops
+		"env.clone", "env.copy.secrets":
 		return true
 	}
 	return false

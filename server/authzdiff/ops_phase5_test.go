@@ -320,7 +320,7 @@ func secretPhase5Ops() []opSpec {
 		},
 		{
 			// copies every prod secret into staging2.
-			name: "env.clone", row: "CloneEnvironment", targets: projTargets,
+			name: "env.clone", row: "CloneEnvironment", targets: projTargets, coreEnforced: true,
 			req: func(fx *fixtures, t tgt, _ byte) requirement {
 				return requirement{perms: []string{"secrets.write", "secrets.read"}, scope: pid(fx, t)}
 			},
@@ -335,7 +335,7 @@ func secretPhase5Ops() []opSpec {
 			},
 		},
 		{
-			name: "env.copy.secrets", row: "CopyEnvironmentSecrets", targets: projTargets,
+			name: "env.copy.secrets", row: "CopyEnvironmentSecrets", targets: projTargets, coreEnforced: true,
 			req: func(fx *fixtures, t tgt, _ byte) requirement {
 				return requirement{perms: []string{"secrets.write", "secrets.read"}, scope: pid(fx, t)}
 			},

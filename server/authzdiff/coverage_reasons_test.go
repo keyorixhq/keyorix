@@ -79,8 +79,6 @@ var reasonRules = []struct{ match, reason string }{
 // Secrets family: requested, but Phase 2 bound only an initial set of
 // secret operations. Each remaining one is listed with what binding it needs.
 var uncoveredReasons = map[string]string{
-	"REST POST /api/v1/projects/{id}/environments/{envId}/clone":                 "fixture: bulk secret copy into a second environment; needs a clean target environment per case (not bound)",
-	"REST POST /api/v1/projects/{id}/environments/{envId}/copy-secrets":          "fixture: bulk secret copy into a second environment; needs a clean target environment per case (not bound)",
 	"GRPC keyorix.v1.SecretService.CreateSecret":                                 "design: secret create was not in the initially bound secret set; not bound (model rule exists: secrets.write)",
 	"REST POST /api/v1/secrets":                                                  "design: secret create was not in the initially bound secret set; not bound (model rule exists: secrets.write)",
 	"REST DELETE /api/v1/secrets/{id}/dependencies/{depId}":                      "fixture: needs a secret-dependency row",
