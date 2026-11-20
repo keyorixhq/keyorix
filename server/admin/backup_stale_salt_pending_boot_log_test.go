@@ -45,11 +45,8 @@ func TestBootLeavesStaleSaltPending_WarnsThatBackupsRefuseUntilMoved(t *testing.
 	recoverLikeBoot(t)
 
 	require.FileExists(t, testSaltPending, "boot keeps the file: only the log line changed")
-	var lines []string
-	require.Eventually(t, func() bool {
-		lines = logs.Lines(testSaltPending)
-		return len(lines) > 0
-	}, 5*time.Second, 10*time.Millisecond, "the boot WARN naming the staging salt never appeared; log:\n%s", logs.String())
+	// recoverLikeBoot is synchronous: the WARN is in the capture when it returns.
+	lines := logs.Lines(testSaltPending)
 	require.Len(t, lines, 1, "exactly one WARN line names the staging salt; log:\n%s", logs.String())
 	require.Contains(t, lines[0], "[WARN] key set:")
 	require.Contains(t, lines[0], "admin backup` will refuse until "+testSaltPending+" is moved away")
