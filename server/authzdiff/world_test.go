@@ -113,7 +113,48 @@ type perProject struct {
 	oidcBindingID    uint   // OIDC binding on machineID (oidc.delete target)
 	migrateUsername  string // a user migrate-from-user may convert (keep_user=true)
 	machineRoleID    uint   // role held by machineID at this project (role.remove target)
-	sx               secretFixtures
+	// breakGlassActivationID is an ACTIVE break-glass activation in this project
+	// (activated by u-bg, a dedicated member), the breakglass.revoke target (V5EXT).
+	breakGlassActivationID uint
+
+	// V5EXT2: access-review and break-glass review fixtures.
+	//
+	// accessReviewDecision is a decision for u-target's project_viewer grant at
+	// this project, used by accessreview.attest and accessreview.revoke. The
+	// reviewer (any probed principal) is never u-target, so reviewer-independence
+	// always passes.
+	accessReviewDecision core.AccessReviewDecision
+
+	// campaignProjectID is a minimal project (only u-target, project_viewer) for
+	// campaign.decide and campaign.close. Using A/B directly brings in many
+	// principals, complicating the fully-decided state for closeCampaignID.
+	campaignProjectID uint
+
+	// decideCampaignID is an open campaign on campaignProjectID with one pending
+	// item (u-target's project_viewer grant). The reviewer (any probed principal)
+	// is never u-target → reviewer-independence always passes.
+	decideCampaignID     uint
+	decideCampaignItemID uint
+
+	// closeCampaignID is an open campaign on campaignProjectID with 0 pending
+	// items (u-target's item was pre-decided by admin). Close with force=false
+	// succeeds for any roles.assign@campaignProjectID holder.
+	closeCampaignID uint
+
+	// reviewBGActivationID is a REVOKED break-glass activation (activated by u-bg,
+	// then revoked by admin in the seed). Different from breakGlassActivationID
+	// (which is ACTIVE). ReviewBreakGlass requires the activation to be concluded
+	// and the reviewer to be independent of the activator (u-bg).
+	reviewBGActivationID uint
+
+	// V5EXT3: a dedicated secret created then immediately suspended in the seed
+	// (via SuspendSecret, not SuspendProjectSecrets, to avoid affecting other ops).
+	// resume.all calls ResumeProjectSecrets, which resumes all suspended secrets in
+	// the project; without at least one suspended secret the positive control returns
+	// n=0 and the oracle reads it as "denied" for every principal.
+	suspendedSecretID uint
+
+	sx secretFixtures
 }
 
 // fixtureSecret is one of the four per-project secrets selected by an op arg
@@ -151,6 +192,11 @@ type fixtures struct {
 	// gate. See v8RiskExceptionApproveOps.
 	pendingRiskExceptionID uint
 	riskCreatorID          uint
+	// riskExceptionID is a governed risk acceptance created by the NON-probed
+	// u-risk-creator, left un-approved and un-revoked: the riskexception.delete
+	// target (V5EXT). riskexception.approve is bound by V8b on
+	// pendingRiskExceptionID.
+	riskExceptionID uint
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -525,6 +571,121 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	}
 	if e := seedUserFixtures(ctx, c, fx); e != nil {
 		return nil, e
+	}
+
+	// ---- V5EXT fixtures (risk-exception approve/delete, break-glass revoke) ----
+	//
+	// A risk exception created by a NON-probed user (u-risk-creator), left
+	// un-approved and un-revoked. riskexception.approve is gated system.write@global
+	// at the router and refuses the creator (dual control, core); keeping the
+	// creator out of the probed set makes the self-approval rule never fire for a
+	// probed principal, so the oracle sees only the router gate. riskexception.delete
+	// is gated system.write@global at the router, but core independently enforces
+	// creator-OR-admin-tier (core_refusal:"typed"); with a non-probed creator the
+	// effective gate for every probed principal is an admin role at global scope,
+	// which the model's globalAdminRole requirement expresses.
+	reDel := must(c.CreateRiskException(ctx, riskCreator.ID, false,
+		"synthetic-fixture-exception", "other", "synthetic-ref", "synthetic-justification-text",
+		riskExceptionExpiry()))
+	fx.riskExceptionID = reDel.ID
+
+	// An ACTIVE break-glass activation per project, activated by a dedicated
+	// member (u-bg: project_viewer@A and @B). The emergency-role grant the
+	// activation creates lands on u-bg, which no probed principal is, so it
+	// perturbs no other fixture. breakglass.revoke (roles.assign@project at the
+	// REST router AND the gRPC interceptor; core_refusal:"none") acts on it.
+	bgUser := mkUser("u-bg")
+	grant(bgUser.ID, fx.roleIDs["project_viewer"], fx.A.projectID, nil)
+	grant(bgUser.ID, fx.roleIDs["project_viewer"], fx.B.projectID, nil)
+	for _, pp := range []*perProject{&fx.A, &fx.B} {
+		act := must(c.ActivateBreakGlass(ctx, pp.projectID, bgUser.ID, "emergency-access-justification-fixture", ""))
+		pp.breakGlassActivationID = act.ID
+	}
+
+	// ---- V5EXT2 fixtures (access-review attest/revoke, campaign decide/close, break-glass review) ----
+	//
+	// accessReviewDecision: u-target has project_viewer@A and @B (seeded above).
+	// The decision body references u-target's role grant — not a probed principal,
+	// so reviewer-independence always passes for any probed reviewer.
+	for _, pp := range []*perProject{&fx.A, &fx.B} {
+		pp.accessReviewDecision = core.AccessReviewDecision{
+			Source:        "role",
+			PrincipalType: "user",
+			PrincipalID:   fx.targetUserID,
+			RoleID:        fx.roleIDs["project_viewer"],
+		}
+	}
+
+	// Campaign projects: a minimal project per A/B with only u-target as
+	// project_viewer. Using A/B directly brings in many principals (including the
+	// admin), complicating the fully-decided state for closeCampaignID. The
+	// campaign project allows the admin to decide u-target's one item without any
+	// self-certification issue, leaving the close campaign with 0 pending items.
+	for i, pp := range []*perProject{&fx.A, &fx.B} {
+		campProj := must(ls.CreateProject(ctx, &models.Project{Name: fmt.Sprintf("projcamp-%d", i)}))
+		must(ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: campProj.ID}))
+		grant(fx.targetUserID, fx.roleIDs["project_viewer"], campProj.ID, nil)
+		pp.campaignProjectID = campProj.ID
+
+		// decide-campaign: open with one pending item (u-target's project_viewer@campProj).
+		decideCamp := must(c.OpenAccessReviewCampaign(ctx, admin.ID, 0, campProj.ID, "decide-campaign"))
+		pp.decideCampaignID = decideCamp.Campaign.ID
+		decideDetail := must(c.GetAccessReviewCampaign(ctx, campProj.ID, decideCamp.Campaign.ID))
+		for _, item := range decideDetail.Items {
+			if item.PrincipalID == fx.targetUserID {
+				pp.decideCampaignItemID = item.ID
+				break
+			}
+		}
+		if pp.decideCampaignItemID == 0 {
+			return nil, fmt.Errorf("seed: no pending item for u-target in decide-campaign for proj %d", campProj.ID)
+		}
+
+		// close-campaign: open with one pending item, then admin decides it (attest).
+		// With force=false, close succeeds for any roles.assign@campaignProjectID holder.
+		closeCamp := must(c.OpenAccessReviewCampaign(ctx, admin.ID, 0, campProj.ID, "close-campaign"))
+		pp.closeCampaignID = closeCamp.Campaign.ID
+		closeDetail := must(c.GetAccessReviewCampaign(ctx, campProj.ID, closeCamp.Campaign.ID))
+		for _, item := range closeDetail.Items {
+			if err := c.DecideAccessReviewItem(ctx, admin.ID, campProj.ID, closeCamp.Campaign.ID, item.ID, "attest", ""); err != nil {
+				return nil, fmt.Errorf("seed: pre-decide close-campaign item: %w", err)
+			}
+		}
+	}
+
+	// break-glass review: a REVOKED activation per project. ReviewBreakGlass
+	// refuses a still-active activation (and bgUser already has one via
+	// breakGlassActivationID above), so we use a second dedicated member u-bg2.
+	// Activated then immediately revoked by admin — leaves a REVOKED state. Every
+	// probed principal passes reviewer-independence (none is u-bg2).
+	bg2User := mkUser("u-bg2")
+	grant(bg2User.ID, fx.roleIDs["project_viewer"], fx.A.projectID, nil)
+	grant(bg2User.ID, fx.roleIDs["project_viewer"], fx.B.projectID, nil)
+	for _, pp := range []*perProject{&fx.A, &fx.B} {
+		reviewAct := must(c.ActivateBreakGlass(ctx, pp.projectID, bg2User.ID, "emergency-access-justification-review-fixture-seed", ""))
+		if err := c.RevokeBreakGlass(ctx, admin.ID, 0, pp.projectID, reviewAct.ID); err != nil {
+			return nil, fmt.Errorf("seed: revoke break-glass review fixture: %w", err)
+		}
+		pp.reviewBGActivationID = reviewAct.ID
+	}
+
+	// ---- V5EXT3 fixtures (bulk-secret ops: resume.all pre-suspended secret) ----
+	//
+	// resume.all calls ResumeProjectSecrets, which resumes every SUSPENDED secret in
+	// the project. Without at least one suspended secret the admin's positive control
+	// returns n=0, which the core leg maps to errItemRefused ("denied") — miscalibrated.
+	// SuspendSecret (single-secret) is used here instead of SuspendProjectSecrets so
+	// that only this dedicated secret is suspended; the main fixture secrets (secretID,
+	// secrets[0..3]) remain ACTIVE and other ops are unaffected.
+	for _, pp := range []*perProject{&fx.A, &fx.B} {
+		suspSec := must(c.CreateSecret(ctx, &core.CreateSecretRequest{
+			Name: "s-resume-fixture", Value: []byte("synthetic-suspend"), ProjectID: pp.projectID,
+			EnvironmentID: pp.envID, Type: "password", CreatedBy: "kxadmin", OwnerID: admin.ID,
+		}))
+		if _, err := c.SuspendSecret(ctx, suspSec.ID, admin.ID, "fixture-suspend-for-resume-all"); err != nil {
+			return nil, fmt.Errorf("seed: suspend resume-all fixture secret: %w", err)
+		}
+		pp.suspendedSecretID = suspSec.ID
 	}
 
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the

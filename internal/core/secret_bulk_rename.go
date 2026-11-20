@@ -68,6 +68,9 @@ type BulkRenameReport struct {
 // ops). With dryRun the checks run but nothing is persisted. Each applied rename is
 // audited as secret.updated with a name before/after diff. Never reads a secret value.
 func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, renames []SecretRename, dryRun bool, actor string, actorID uint, ip, ua string) (*BulkRenameReport, error) { // NOSONAR -- domain-driven parameter count; cognitive complexity 28, suppress go:S3776
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	if projectID == 0 || actorID == 0 {
 		return nil, fmt.Errorf("project ID and actor ID are required")
 	}

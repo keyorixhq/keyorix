@@ -25,9 +25,10 @@ func TestSuspendResumeProjectSecrets(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{},
 		&models.SecretAccessLog{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
-		&models.GroupRole{}, &models.SecretACL{},
+		&models.GroupRole{}, &models.SecretACL{}, &models.User{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	ensureActiveActor(t, c.storage, 1) // the acting user must be an active account (#4159)
 	ctx := context.Background()
 
 	// Two projects, each with an environment (the secret list query joins environments).
