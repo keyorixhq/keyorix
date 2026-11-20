@@ -33,6 +33,14 @@ being unrecorded"): when the audit log refuses an activation's rows, the
 activation commits degraded, together with owed-audit records of those rows, with
 a short lifetime, a loud alert and a mandatory review. See "Amendment 6" below.
 
+Amendment 7 (2026-10-18, **decided by Andrei**, R1.8 / PERF-LOWCONC-1 option c):
+on SQLite, `audit_durability: standard` becomes valid. Secret mutations and the
+audit rows of mutations keep `synchronous=FULL`; only batches made up entirely
+of successful secret-value read audits may commit on one dedicated connection
+opened with `synchronous=NORMAL`. `strict` stays the SQLite default. See
+"Amendment 7" below; it replaces the "SQLite" rejection in Amendment 1 and the
+SQLite row of Amendment 3's table.
+
 Amendment 2 (2026-10-10, **proposed, pending Andrei's OK**, #2908): the
 `enable_file_permission_check` upgrade grace period is a reported state:
 a start-up warning, a settings-diff value and a posture deviation.
@@ -94,7 +102,7 @@ Each item is a default that holds unless an `insecure_` setting says otherwise.
 - A secret value is never returned before its audit record is committed (audit-before-disclosure, group commit). If the audit write fails, the read fails. `storage.database.audit_durability` chooses whether that commit also waits for the disk sync: `strict` waits, `standard` (the PostgreSQL default) skips only the *wait for the disk sync*, not the write and not the fail-closed behaviour — see Amendments 1 and 3.
 - Secret values never appear in logs, error messages, URLs or metrics. Enforced by a test oracle over all operations, not by review alone.
 - The audit log is hash-chained with signed checkpoints and offline verification (exists).
-- SQLite runs `synchronous=FULL`, **unconditionally — no setting relaxes it**; Postgres runs with `fsync`, `synchronous_commit` and `full_page_writes` on (#2403). `storage.database.audit_durability: standard` (**PostgreSQL only**, the PostgreSQL default) is the only setting that relaxes any of this, and only `synchronous_commit`, only on the audit transaction, as described in Amendments 1 and 3. A SQLite backend set to `standard` refuses to start.
+- SQLite runs `synchronous=FULL` for every mutation and for every audit row of a mutation, **unconditionally — no setting relaxes it**; Postgres runs with `fsync`, `synchronous_commit` and `full_page_writes` on (#2403). `storage.database.audit_durability: standard` is the only setting that relaxes any of this. On PostgreSQL (its default there) it relaxes only `synchronous_commit`, only on the audit transaction (Amendments 1 and 3). On SQLite (opt-in; the default stays `strict`) it lets batches made up entirely of successful secret-value read audits commit on one dedicated `synchronous=NORMAL` connection, and nothing else (Amendment 7).
 
 **Keys**
 - Scheduled KEK rotation on by default, with a configurable interval.
@@ -200,7 +208,10 @@ Changed, and stated plainly rather than minimised:
 Rejected, with the reasons recorded so the decision does not have to be
 re-litigated:
 
-- **SQLite.** `PRAGMA synchronous` is per-connection and the pool is shared, so
+- **SQLite** (superseded by Amendment 7 for read audits only; both reasons
+  below still hold for everything else, and Amendment 7 is built around them:
+  a dedicated connection rather than the shared pool, and a pragma fixed in
+  that connection's DSN rather than flipped per transaction). `PRAGMA synchronous` is per-connection and the pool is shared, so
   the relaxation would be database-wide, not audit-only — a power loss could
   undo a just-committed secret rotation or revocation. And it was not a clean
   latency win: p99 got worse at 10 and 50 clients. The narrower alternative
@@ -278,7 +289,7 @@ at both levels.
 | `storage.type` | Default | Allowed |
 |---|---|---|
 | `postgres` / `postgresql` | `standard` | `standard`, `strict` |
-| `local` / `sqlite` | `strict` | `strict` only; `standard` refuses to start with a named error |
+| `local` / `sqlite` | `strict` | `strict`, `standard` (Amendment 7: read-audit batches only; until Amendment 7, `standard` refused to start) |
 
 ### Reporting
 
@@ -608,6 +619,150 @@ the revoke lock, the degraded path is reachable only from there) and
 `internal/auditverify/owed_break_glass_test.go`. Operators:
 `docs/operator/break-glass-runbook.md`.
 
+## Amendment 7 (2026-10-18): SQLite `standard`, read audits on a dedicated `synchronous=NORMAL` connection
+
+Decided by Andrei, 2026-10-18 (R1.8, PERF-LOWCONC-1 option c). Narrows
+Amendment 1's rejection of SQLite and replaces Amendment 3's SQLite row.
+Option (a), a single-writer SQLite mode, is not the default and is not part of
+this amendment.
+
+### The rule
+
+On SQLite, `storage.database.audit_durability` accepts `standard`. The default
+stays `strict`: an install that does not set the key runs exactly as before,
+with no second connection opened.
+
+At `standard` the server opens **one dedicated connection** to the same
+database file, with `_synchronous=NORMAL` in its DSN. It is a separate
+connection pool of size one, never the shared pool, and its pragma is fixed when
+it opens; it is never flipped per transaction. The audit flusher commits a batch
+on it **only when every row in the batch is a successful secret-value read
+audit**: `Success=true` and an event type in the set Amendment 4 skips
+(`secret.read`, `connect.secret_read`). Every other transaction stays on the
+shared `synchronous=FULL` pool:
+
+- every secret mutation, revocation, rotation, role, share or policy change,
+  and every other non-audit write;
+- every audit row of a mutation, including the audit-before-disclosure row of a
+  mutation that returns a value;
+- denied and failed reads (`Success=false`), metadata reads, version listings;
+- a batch that mixes read audits with any other row: the whole batch commits
+  on FULL. Rows are never reordered or split out to reach the NORMAL
+  connection, because chain order is batch order;
+- audit rows written inside a caller's transaction (the direct path), signed
+  checkpoints, retention purges and re-anchors, the encoding migration.
+
+Audit-before-disclosure is unchanged for reads too: the read's audit row is
+INSERTed and COMMITted, and the commit has returned, before the value is
+returned; a failed audit write still fails the read. Only the wait for the
+disk sync is skipped, as on PostgreSQL.
+
+### Why the chain stays contiguous: one WAL, one write lock
+
+The argument is the WAL-prefix argument Amendment 1 uses for PostgreSQL,
+applied to SQLite's WAL:
+
+1. **One writer, one order.** Every audit append reads the chain head
+   (`id DESC`) and inserts its rows inside one `BEGIN IMMEDIATE` transaction
+   (`commitBatchAttemptTx`, `logAuditEventDirect`). SQLite has one write lock
+   per database, not per connection, so at most one of the two connections can
+   be inside a write transaction at a time, and a write transaction in WAL mode
+   always reads the latest committed state. Both connections also pass the same
+   in-process FIFO write gate. So the head a batch reads is the last row
+   committed by either connection, and chain order equals commit order. SQLite
+   has no client-side head cache (the one-flight cache is PostgreSQL-only).
+2. **One log, appended in commit order.** Both connections write to the same
+   `-wal` file. A commit appends its frames after those of every earlier
+   commit, whichever connection made it. NORMAL writes the frames and returns
+   without an fsync; FULL fsyncs the WAL file before returning. An fsync acts on
+   the file, so a FULL commit makes every byte before its own frames durable,
+   including the frames of every NORMAL batch committed before it. A checkpoint
+   also syncs the WAL first.
+3. **Recovery accepts only a prefix.** WAL frames carry cumulative checksums
+   and the header's salt. After a crash, recovery replays frames up to the last
+   valid commit frame and discards everything after it, so the recovered
+   database is the state after some prefix of the commits. SQLite documents that
+   WAL with `synchronous=NORMAL` stays consistent across a power loss and only
+   loses recent commits.
+
+From 1 to 3: a surviving row's `prev_hash` always points at a row that also
+survived, because that row was committed earlier, so its frames come earlier
+in the same log.
+
+**The failing cases this rule prevents**, each of which would break
+`verify-audit`:
+
+- *Gap (the inversion).* NORMAL batch N commits read rows r1..r3 and a FULL
+  batch M then commits m1 with `prev_hash = r3`. If r3 could be lost while m1
+  survives, m1's link would name a missing row. It cannot happen: m1's fsync
+  covers r3's frames, which come earlier in the same `-wal` file. It would
+  happen if read audits went to a different file (a second database or an
+  attached one) with its own log. That is why the dedicated connection opens
+  the same file, and why a separate audit database is not an alternative.
+- *Fork.* N and M both read head h and both insert a row with
+  `prev_hash = h`. That needs a head read outside the write lock: a head
+  cached across connections, or read in a DEFERRED transaction that upgrades
+  later. Neither exists on SQLite: the head read is the first statement after
+  `BEGIN IMMEDIATE` on whichever connection commits.
+- *A lost mutation.* A revocation committed on a NORMAL connection could be
+  undone by a power loss (Amendment 1's first reason). The classifier sends
+  only batches of successful read audits to that connection, the shared pool
+  stays FULL, and a test checks `PRAGMA synchronous` per connection for both.
+- *A weakened pooled connection.* Amendment 1's second reason (a per-transaction
+  pragma flip whose restore is skipped). There is no flip: each connection's
+  pragma is fixed in its DSN for its whole life.
+
+### What a crash can lose
+
+| Event | `strict` | SQLite `standard` |
+|---|---|---|
+| Keyorix process crash (`kill -9`, panic, OOM kill) | nothing | **nothing**: a NORMAL commit has written its frames into the OS page cache before it returns, and the next open recovers them from the WAL |
+| OS crash or power loss | nothing | a **tail** of read-audit rows (and their `secret_access_logs` rows) committed on the NORMAL connection after the last WAL sync; never a gap or a fork in the chain, never a committed mutation, never a mutation's audit row |
+
+The last WAL sync is the most recent FULL commit on the database (any write,
+any non-read audit batch) or checkpoint. Unlike PostgreSQL's WAL writer
+(Amendment 3's ~600 ms), **SQLite has no background flush, so no timer bounds
+the window**. On a read-only workload it lasts until the next write or
+checkpoint, or until the OS writes the dirty pages back on its own, which has
+no timing guarantee. The start-up INFO line and `admin validate` state this for
+SQLite rather than repeating PostgreSQL's figure.
+
+An external monitor that recorded a head from `verify-audit` inside a lost tail
+sees the recovered chain end before that head. That is tail truncation, and it
+is reported as such: the loss is visible, not silent. A signed checkpoint is
+committed on FULL, so it can only certify rows that its own fsync made durable.
+
+**Proof status.** The process-crash row and the chain argument are machine
+checked (below). The OS-crash and power-loss rows rest on the WAL-prefix
+argument above and SQLite's documented guarantee. They are **pending e2e VM
+(dm-flakey)**: no test on this repository's development host can cut power
+under the database, and nothing here claims more than that argument supports.
+
+### Reporting
+
+The same as Amendment 3 for PostgreSQL: `standard` is a baseline level, not a
+posture deviation, and not an `insecure_` registry entry. A level change is
+audited by the settings diff. The start-up INFO line, `admin validate` and
+`GET /system/info` report the effective level, with the SQLite meaning when the
+backend is SQLite.
+
+### Enforcement
+
+- `TestSQLiteReadAuditConn_PragmaPerConnection`: the shared pool reports
+  `PRAGMA synchronous` = 2 (FULL) on every connection and the dedicated
+  connection 1 (NORMAL); at `strict` no dedicated connection exists.
+- `TestSQLiteReadAuditConn_OnlyReadBatchesUseNormal`: a mutation, a mutation's
+  audit row, a denied read and a mixed batch commit on FULL; a batch of
+  successful read audits commits on NORMAL.
+- `TestSQLiteReadAuditConn_InterleavedChainVerifies`: concurrent read audits
+  (NORMAL) and mutations with their audit rows (FULL) interleave and the chain
+  verifies.
+- The kill -9 drill (`scripts/drills`, native, SQLite, `standard`): nothing
+  acknowledged is lost and `verify-audit` is VALID.
+- Config: SQLite accepts `standard`, the default stays `strict`
+  (`internal/config/audit_durability_test.go`).
+- Invariant: `internal/storage/INVARIANTS.d/INV-STORAGE-sqlite-normal-conn-read-audit-only.md`.
+
 ## Decisions recorded (2026-10-15)
 
 - Audit durability is two baseline levels, `storage.database.audit_durability:
@@ -630,6 +785,14 @@ the revoke lock, the degraded path is reachable only from there) and
 - The `require_mfa` upgrade grace period ends at the first administrator MFA
   enrolment or 30 days after the upgrade, whichever comes first; its start is
   stored durably and a backward clock step cannot extend it. See Amendment 5.
+
+## Decisions recorded (2026-10-18)
+
+- SQLite `standard` (Amendment 7, option c of R1.8 / PERF-LOWCONC-1): one
+  dedicated `synchronous=NORMAL` connection, used only for batches of
+  successful secret-value read audits. Mutations and mutation audits stay
+  FULL. `strict` stays the SQLite default. A single-writer SQLite mode
+  (option a) is not the default.
 
 ## Definition of done
 
