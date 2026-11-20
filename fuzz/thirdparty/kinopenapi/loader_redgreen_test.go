@@ -99,6 +99,43 @@ func TestLoaderExternalRef_RedGreen(t *testing.T) {
 	}
 }
 
+// TestLoaderNestedExternalRef_RedGreen proves oracle (d) of
+// FuzzOpenAPILoaderNoExternalRead sees an external ref nested inside the
+// spliced "Fuzz" schema, which the named-ref check (c) does not look at.
+func TestLoaderNestedExternalRef_RedGreen(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "canary.json")
+	if err := os.WriteFile(fp, hostileSchemaBody(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc := []byte(fmt.Sprintf(
+		`{"openapi":"3.0.0","info":{"title":"ko3","version":"1"},"paths":{},"components":{"schemas":{"Leaf":{"type":"string"},"Fuzz":{"type":"object","properties":{"deep":{"type":"array","items":{"$ref":%q}}}}}}}`,
+		"file://"+fp))
+
+	// GREEN: flag false (Keyorix default). Nothing in the graph is resolved.
+	lg := openapi3.NewLoader()
+	lg.IsExternalRefsAllowed = false
+	dg, errg := lg.LoadFromData(doc)
+	if leaked, detail := externalReadInGraph(dg, doc); leaked {
+		t.Fatalf("GREEN failed: nested external ref resolved with flag=false: %s (err=%v)", detail, errg)
+	}
+
+	// RED: flag true. The nested file:// ref is read; (d) must report it while
+	// the named-ref check (c) stays blind to it.
+	lr := openapi3.NewLoader()
+	lr.IsExternalRefsAllowed = true
+	dr, errr := lr.LoadFromData(doc)
+	if errr != nil {
+		t.Fatalf("RED setup: flag=true load failed, the nested ref was not read: %v", errr)
+	}
+	if ok, _ := externalRefsUnresolved(dr); !ok {
+		t.Fatal("RED setup: the named-ref check already sees the nested ref; this test no longer shows the gap")
+	}
+	if leaked, _ := externalReadInGraph(dr, doc); !leaked {
+		t.Fatal("RED failed: oracle (d) missed an external ref nested in the Fuzz schema")
+	}
+}
+
 // benignLoaderCosts measures the full load pipeline over the benign loader seeds
 // (the valid, non-pathological documents) for calibration. Excludes the external
 // refs (they get refused) and the degenerate shapes.

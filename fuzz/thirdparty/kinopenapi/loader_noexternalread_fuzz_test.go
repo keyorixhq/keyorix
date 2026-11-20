@@ -118,6 +118,61 @@ func externalRefsUnresolved(doc *openapi3.T) (ok bool, detail string) {
 	return true, ""
 }
 
+// externalReadInGraph walks every schema reachable from doc.Components.Schemas,
+// including refs the fuzzer nests inside the spliced "Fuzz" schema, and reports
+// an external read: a SchemaRef whose Ref is not document-internal ("#...") but
+// whose Value is set, or a resolved schema carrying canaryMarker as a property
+// (when the input itself does not contain the marker). externalRefsUnresolved
+// checks only the three named refs; marshalling the document would not help,
+// because kin-openapi marshals a resolved ref back as {"$ref": ...}. doc may be
+// nil.
+func externalReadInGraph(doc *openapi3.T, input []byte) (leaked bool, detail string) {
+	if doc == nil || doc.Components == nil {
+		return false, ""
+	}
+	markerInInput := strings.Contains(string(input), canaryMarker)
+	seen := map[*openapi3.SchemaRef]bool{}
+	var walk func(path string, ref *openapi3.SchemaRef) bool
+	walk = func(path string, ref *openapi3.SchemaRef) bool {
+		if ref == nil || seen[ref] {
+			return false
+		}
+		seen[ref] = true
+		if ref.Value == nil {
+			return false
+		}
+		if ref.Ref != "" && !strings.HasPrefix(ref.Ref, "#") {
+			detail = fmt.Sprintf("%s: external ref %q resolved", path, ref.Ref)
+			return true
+		}
+		v := ref.Value
+		if _, ok := v.Properties[canaryMarker]; ok && !markerInInput {
+			detail = fmt.Sprintf("%s: canary content %q present", path, canaryMarker)
+			return true
+		}
+		for name, child := range v.Properties {
+			if walk(path+".properties."+name, child) {
+				return true
+			}
+		}
+		for kind, list := range map[string]openapi3.SchemaRefs{"allOf": v.AllOf, "oneOf": v.OneOf, "anyOf": v.AnyOf} {
+			for i, child := range list {
+				if walk(fmt.Sprintf("%s.%s[%d]", path, kind, i), child) {
+					return true
+				}
+			}
+		}
+		return walk(path+".items", v.Items) || walk(path+".not", v.Not) ||
+			walk(path+".additionalProperties", v.AdditionalProperties.Schema)
+	}
+	for name, ref := range doc.Components.Schemas {
+		if walk(name, ref) {
+			return true, detail
+		}
+	}
+	return false, ""
+}
+
 func FuzzOpenAPILoaderNoExternalRead(f *testing.F) {
 	fx := newAirgapFixture(f)
 	p := resguard.New(f, resguard.Options{SampleEvery: 8, Net: fx.net})
@@ -167,6 +222,11 @@ func FuzzOpenAPILoaderNoExternalRead(f *testing.F) {
 		}
 		// (c) the injected external refs were left unresolved / no canary content leaked.
 		if ok, detail := externalRefsUnresolved(doc); !ok {
+			t.Fatalf("O-LOAD-4: external ref resolved under IsExternalRefsAllowed=false: %s\n  err=%v", detail, loadErr)
+		}
+		// (d) no external ref anywhere in the schema graph was resolved, including
+		// refs the fuzzer nested inside the "Fuzz" schema.
+		if leaked, detail := externalReadInGraph(doc, data); leaked {
 			t.Fatalf("O-LOAD-4: external ref resolved under IsExternalRefsAllowed=false: %s\n  err=%v", detail, loadErr)
 		}
 		// O-LOAD-2b superlinear wall.
