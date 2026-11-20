@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/keyorixhq/keyorix/internal/pgxlimits"
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
 )
@@ -128,6 +129,8 @@ func newTLSConfig(tb testing.TB, addr string) *pgx.ConnConfig {
 	if err != nil {
 		tb.Fatalf("parse tls config: %v", err)
 	}
+	// Fuzz the configuration that ships: the same per-message bound the production dial path sets.
+	pgxlimits.Apply(cfg)
 	return cfg
 }
 
