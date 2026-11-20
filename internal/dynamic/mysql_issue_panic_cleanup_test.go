@@ -57,13 +57,23 @@ func (c *recConn) ExecContext(_ context.Context, query string, _ []driver.NamedV
 	panicOn, dropPanics := c.r.panicOn, c.r.dropPanics
 	c.r.mu.Unlock()
 	if strings.HasPrefix(query, "DROP USER") && dropPanics {
-		panic("drop also failed")
+		zero := len(strings.TrimPrefix(query, "DROP USER")) - len(query) + len("DROP USER")
+		_ = 1 / zero // panics: integer divide by zero
 	}
 	if panicOn != "" && strings.Contains(query, panicOn) {
-		panic("malformed OK packet from " + mysqlPanicDSN)
+		// What a client parser does with a short reply. The log keeps the text of a
+		// runtime error (indices and lengths) and withholds any other panic value
+		// (see panicSummary), so the original panic is recognised by this text.
+		reply := []byte{0}
+		_ = reply[len(query)] // panics: index out of range
 	}
 	return driver.RowsAffected(0), nil
 }
+
+const (
+	originalPanicLog = "index out of range"
+	cleanupPanicLog  = "integer divide by zero"
+)
 
 // useRecorder points Issue's admin connection at rec. Not parallel-safe (package var).
 func useRecorder(t *testing.T, rec *execRecorder) {
@@ -144,7 +154,7 @@ func TestMySQLIssue_PanicInGrantDropsCreatedUser(t *testing.T) {
 	assertDropped(t, rec.statements())
 
 	out := logs.String()
-	if !strings.Contains(out, "malformed OK packet") {
+	if !strings.Contains(out, originalPanicLog) {
 		t.Errorf("the original panic must still be logged by Contain:\n%s", out)
 	}
 	if strings.Contains(out, "hunter2") {
@@ -171,7 +181,7 @@ func TestMySQLIssue_PanicInCleanupKeepsOriginalPanic(t *testing.T) {
 
 	assertTypedPanicError(t, issueContained(t, "GRANT SELECT ON app.* TO {{name}}"))
 	out := logs.String()
-	if !strings.Contains(out, "malformed OK packet") || strings.Contains(out, "drop also failed") {
+	if !strings.Contains(out, originalPanicLog) || strings.Contains(out, cleanupPanicLog) {
 		t.Errorf("want the original panic logged, not the cleanup's:\n%s", out)
 	}
 }

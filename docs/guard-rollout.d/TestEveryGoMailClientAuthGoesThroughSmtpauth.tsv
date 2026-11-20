@@ -1,0 +1,1 @@
+TestEveryGoMailClientAuthGoesThroughSmtpauth	internal/smtpauth	#4544	new guard: every production go-mail client must take its AUTH mechanism from smtpauth.New (#4383); green on main and on the open PRs
