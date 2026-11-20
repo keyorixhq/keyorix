@@ -121,6 +121,7 @@ func FuzzYAMLV4Differential(f *testing.F) {
 		"<<",                                    // bare merge key: v3 "<<" / v4 drops to nil (D22)
 		"a: <<",                                 // merge key w/o map value: v3 keeps / v4 drops entry (D22)
 		"0: {0:} ",                              // flow-map colon no space: v3 key "0:" / v4 key 0 (D23)
+		"{0\n:}",                                // flow-map plain key, newline, then colon: v3 key "0 :" / v4 key 0 (D36)
 		"{!}",                                   // flow-context tag w/o whitespace (v3 rejects / v4 accepts)
 		"[!x]",                                  // tagged empty node in flow seq (v3 rejects / v4 "")
 		"[0: !]",                                // tagged empty value in flow seq (v3 rejects / v4 "")
@@ -420,6 +421,13 @@ func classifyYAMLV4ValueSplit(data []byte, v3val, v4val any) string {
 	if isAnchorColonBoundaryDivergence(data, v3val, v4val) {
 		return "anchor-name-colon-boundary"
 	}
+	// A flow-mapping plain-scalar key broken from its `:` by a line break (`{0\n:}`): v3
+	// folds the `:` into the plain scalar (key `"0 :"`), v4 reads it as the key/value
+	// separator (key `0`, null value). Recognised causally, see
+	// isFlowPlainKeyNewlineColonDivergence.
+	if isFlowPlainKeyNewlineColonDivergence(data, v3val, v4val) {
+		return "flow-map-key-newline-colon"
+	}
 	// Structural nonspecific-tag divergence that the value-only walkers above miss:
 	// the `!`-tag re-resolution landing in a KEY position (`! : 00`, `! 00: x`),
 	// where v3 and v4 produce DIFFERENT map keys (v3 nil / typed vs v4 raw string)
@@ -490,6 +498,41 @@ func isFlowSeqColonNoSpaceDivergence(data []byte, v3val, v4val any) bool {
 	}
 	// v4 unchanged by the space, and v3 now matches v4.
 	return reflect.DeepEqual(cm4, co4) && reflect.DeepEqual(cm3, cm4)
+}
+
+// flowKeyNewlineColonRE matches a line break (with surrounding blanks) followed by a
+// `:` that is immediately closed by `}` or `,` — the shape where v3 folds the `:`
+// into the preceding plain scalar.
+var flowKeyNewlineColonRE = regexp.MustCompile(`[ \t]*\r?\n[ \t]*:([},])`)
+
+// isFlowPlainKeyNewlineColonDivergence causally confirms the flow-mapping
+// plain-key-before-newline-then-colon divergence (`{0\n:}`): rewriting each
+// `<newline>:}` / `<newline>:,` to ` : }` / ` : ,` (same-line, space-separated colon)
+// removes the ambiguity. If after that v4 is UNCHANGED (it already read the `:` as a
+// separator) and v3 now equals v4, then v3's folding of the `:` into the key was the
+// sole cause. The input must also contain a flow-mapping opener `{`. A genuine
+// divergence that merely contains a newline and a colon is not absorbed (v4 would
+// change, v3 would still disagree, or a side would reject the rewritten input).
+func isFlowPlainKeyNewlineColonDivergence(data []byte, v3val, v4val any) bool {
+	if !bytes.Contains(data, []byte("{")) || !flowKeyNewlineColonRE.Match(data) {
+		return false
+	}
+	mod := flowKeyNewlineColonRE.ReplaceAll(data, []byte(" : $1"))
+	// Re-insert the space after the colon so `:}`/`:,` is not itself the no-space shape.
+	mod = bytes.ReplaceAll(mod, []byte(" :}"), []byte(" : }"))
+	mod = bytes.ReplaceAll(mod, []byte(" :,"), []byte(" : ,"))
+	var m3, m4 any
+	if v3yaml.Unmarshal(mod, &m3) != nil || v4yaml.Unmarshal(mod, &m4) != nil {
+		return false
+	}
+	cm3, e3 := v3yaml.Marshal(m3)
+	cm4, e4 := v3yaml.Marshal(m4)
+	co4, e4b := v3yaml.Marshal(v4val)
+	if e3 != nil || e4 != nil || e4b != nil {
+		return false
+	}
+	// v4 unchanged by the rewrite, and v3 now matches v4.
+	return bytes.Equal(cm4, co4) && bytes.Equal(cm3, cm4)
 }
 
 // isMergeKeyDivergence causally confirms a `<<` merge-key divergence: single-quote

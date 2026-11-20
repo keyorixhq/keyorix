@@ -278,6 +278,15 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// Scoped to inputs containing `:]`.
 	"flow-seq-colon-nospace": true,
 
+	// D36. A flow-mapping plain-scalar key separated from its `:` by a line break
+	// (`{0\n:}`). v3.0.5 folds the `:` into the plain scalar (key `"0 :"`), v4.0.0 reads
+	// the `:` as the key/value separator (key `0`, null value). Found by the fuzz run at
+	// `{0\n:}` (testdata/fuzz/FuzzYAMLV4Differential/4e2ab8f5dfe29b19). Recognised
+	// causally by isFlowPlainKeyNewlineColonDivergence (rewriting `<newline>:}` to
+	// ` : }` makes v3 agree with v4, which is unchanged). Not a Keyorix defect (v4 has
+	// no live caller). Scoped to inputs with a `{` and a newline-then-`:`+`}`/`,`.
+	"flow-map-key-newline-colon": true,
+
 	// D25. A mapping entry whose v4-side errors with "did not find expected key" while
 	// v3 accepts — the INVERSE direction of D2 (v3-rejects:empty-implicit-key). Found
 	// by the DF3 struct fuzzer at `0: &0:0000000,` (FuzzYAMLV4StructDifferential/
@@ -1105,6 +1114,40 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		t.Logf("oracle-3 D24 flow-seq-colon gating proven: `[0:]` tolerated causally")
 	}
 
+	// ---- Oracle 3 class gating: flow-map key newline colon (D36) ----
+	{
+		in := []byte("{0\n:}")
+		var v3v, v4v any
+		if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+			t.Fatal(err)
+		}
+		if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+			t.Fatal(err)
+		}
+		cb3, _ := v3yaml.Marshal(v3v)
+		cb4, _ := v3yaml.Marshal(v4v)
+		if reflect.DeepEqual(cb3, cb4) {
+			t.Fatalf("precondition: `{0\\n:}` v3/v4 must disagree (v3=%q v4=%q)", cb3, cb4)
+		}
+		if class := classifyYAMLV4ValueSplit(in, v3v, v4v); class != "flow-map-key-newline-colon" || !yamlV4ExpectedDiff[class] {
+			t.Fatalf("`{0\\n:}` must class as the tolerated flow-map-key-newline-colon, got %q (v3=%#v v4=%#v)", class, v3v, v4v)
+		}
+		// RED: no newline-then-colon shape, not recognised.
+		if isFlowPlainKeyNewlineColonDivergence([]byte("{0: 1}"), map[string]any{"0": 1}, map[string]any{"0": 2}) {
+			t.Fatalf("an input without newline-colon must not be recognised")
+		}
+		// RED: shape present but v4's value differs from v4's value on the rewritten
+		// input (not caused by the colon folding), so it must NOT be absorbed.
+		if isFlowPlainKeyNewlineColonDivergence(in, v3v, map[string]any{"0": "other"}) {
+			t.Fatalf("a divergence not explained by the colon folding must not be absorbed")
+		}
+		// RED: an input without a flow mapping is never absorbed.
+		if isFlowPlainKeyNewlineColonDivergence([]byte("0\n:,"), v3v, v4v) {
+			t.Fatalf("an input without a flow mapping must not be recognised")
+		}
+		t.Logf("oracle-3 D36 flow-map newline-colon gating proven: `{0\\n:}` tolerated causally")
+	}
+
 	// ---- Oracle 2 class gating: v4-rejects:empty-implicit-key (D25) ----
 	// The INVERSE direction of D2: v4 rejects where v3 accepts, with the same
 	// "did not find expected key" error message on the v4 side.
@@ -1551,6 +1594,8 @@ func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
 		"[: 1]",
 		// D24 flow-seq-colon-nospace (testdata seed 28731c901e37d1c2)
 		"[0:]",
+		// D36 flow-map-key-newline-colon (testdata seed 4e2ab8f5dfe29b19)
+		"{0\n:}",
 		// D25 v4-rejects:empty-implicit-key (testdata seed 05ca5f53b4ce7568)
 		"0: &0:0000000,",
 		// D27 block-scalar-eos-clip (testdata seed 597ac6ec0bae9ae4)
