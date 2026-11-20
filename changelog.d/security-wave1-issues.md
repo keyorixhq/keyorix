@@ -30,3 +30,9 @@
 ### Fixed
 - **The audit page's failed-attempts filter includes failed second factors (#3363).** The
   dashboard's "Failed Second Factors" card now lands on a list that shows them.
+
+### Testing
+- **The authzdiff model knows the bulk-op actor rules (#4514, #4515).** `bulk.rename`,
+  `bulk.suspend` and `resume.all` are human-only in the model (a machine actor is refused 403), and
+  `bulk.delete` requires `secrets.read` as well as `secrets.delete` for a user actor, because each
+  item is read before it is deleted. Waivers known-10 and known-11 are removed.

@@ -42,10 +42,12 @@ Guard:
      absent or misnamed.
 
 Waivers:
-  - `known-10` (partition_test.go): machine+holds for bulk.rename/suspend/resume.all
-    → REST 400/500 (actorID=0 rejection, not authorization gate). Issue #4165.
-  - `known-11` (partition_test.go): bulk.delete with secrets.delete-only principal
-    → per-item GET fails (needs secrets.read not in router model). Issue #4166.
+  - The former `known-10` (machine+holds for bulk.rename/suspend/resume.all →
+    REST 400/500) is gone: those ops refuse a machine actor typed (403) and the
+    model marks them human-only (#4514).
+  - The former `known-11` (bulk.delete with a secrets.delete-only user → per-item
+    GET refused) is gone: the model requires secrets.read for a user actor
+    (`requirement.userPerms`, #4515).
 
 What these guards do NOT verify:
   - Per-item ownership grants (no RBAC secrets.delete/write, but owner of the

@@ -105,6 +105,9 @@ var humanOnlyOps = map[string]bool{
 	"secret.acl.grant": true, "secret.share": true, "accessrequest.create": true, "secret.certificate": true,
 	"secret.tags": true, "secret.description": true, "secret.move": true, "secret.copy": true,
 	"secret.extend.expiring": true,
+	// #4514: the three project-scope bulk ops refuse a machine actor typed
+	// (refuseMachineActor), REST answers 403. Formerly waiver known-10.
+	"bulk.rename": true, "bulk.suspend": true, "resume.all": true,
 }
 
 // ---------- legs ----------
