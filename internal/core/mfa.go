@@ -1059,6 +1059,20 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 		c.recordFailedLogin(ctx, user) // count the failed re-auth attempt toward the lockout
 		return &reauthRejectedError{msg: "invalid code or password"}
 	}
+	// The loginLocked check at the top read the caller's snapshot of user; a
+	// concurrent burst of wrong guesses may have locked the account since. Re-read
+	// it now that the credential matched, as login, MFA verify, step-up and
+	// WebAuthn do (#2888): otherwise a correct guess here would clear the counter
+	// of an account that is locked. Both outcomes answer like a wrong code.
+	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
+		if errors.Is(err, ErrLoginPostVerdict) {
+			// Counted already; audited distinctly, like postVerdictErr above.
+			c.auditMFAError(ctx, user.ID, phase, err)
+		} else {
+			c.auditMFAFailed(ctx, user.ID, phase)
+		}
+		return &reauthRejectedError{msg: "invalid code or password"}
+	}
 	c.clearLoginFailures(ctx, user)
 	uid := user.ID
 	c.writeAuditEventFull(ctx, "mfa.reauth_verified", &uid, nil, nil, "",
