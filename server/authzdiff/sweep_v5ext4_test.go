@@ -2,6 +2,7 @@ package authzdiff
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,12 +10,14 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
 	httpserver "github.com/keyorixhq/keyorix/server/http"
 	"github.com/keyorixhq/keyorix/server/middleware"
+	"github.com/pquerna/otp/totp"
 )
 
 // TestV5ext4StrictSweep is a deterministic, env-free strict check over the
@@ -22,8 +25,9 @@ import (
 //
 // bulk.rotate:
 //
-//	Router gate: secrets.write @ project. Core: no auth check at all
-//	(errNotAuthzLayer for all principals). No gRPC surface.
+//	Router gate: secrets.write @ project. Core: no permission check; it refuses
+//	only an inactive acting account (requireActorActive, #4159), so the core leg
+//	is errNotAuthzLayer for every active principal. No gRPC surface.
 //	Positive control: admin → 200+triggered=[secretID] (AutoRotate=true in fixture).
 //
 // mfa.stepup:
@@ -119,9 +123,9 @@ func curatedV5ext4Variations(spec opSpec, t tgt) []struct {
 // registered in server/http/router.go exactly as the authzdiff harness expects.
 //
 // Differential plants cannot reliably detect gate removal for bulk-rotate: the
-// core function has no authorization check (errNotAuthzLayer for all actors), so
-// an unauthorized caller reaching core directly would succeed. The router gate is
-// the ONLY authorization layer. This structural check ensures it cannot be removed
+// core function has no permission check (it refuses only an inactive acting
+// account), so an active but unauthorized caller reaching core directly would
+// succeed. The router gate is the ONLY permission layer. This structural check ensures it cannot be removed
 // without an immediate test failure.
 //
 // Red/green proof:
@@ -145,14 +149,19 @@ func TestBulkRotateRouterGatePresent(t *testing.T) {
 // cfg.SCIM.Enabled=true. Each case gets its own fresh SCIM-enabled router leg
 // (cloned from the template DB, same pattern as newLeg but with SCIM config).
 //
-// Two principals are probed:
-//   - pkSCIM: the configured SCIM bearer token → allowed (2xx).
-//   - pkNone (no Authorization header): 401 → denied.
+// Probes, the denied ones first so a wrongly accepted mutation lands on the
+// pristine target:
+//   - none (no Authorization header) → 401.
+//   - a wrong bearer of the same length as the SCIM token → 401.
+//   - the global admin's session token → 401 (a user credential is not a SCIM credential).
+//   - pkPATFull's personal access token → 401.
+//   - pkMachine's machine token → 401.
+//   - the configured SCIM bearer token → allowed (2xx).
 //
-// Rate-limiter note: each pkNone probe burns one token from the process-global
-// per-IP token-auth failure budget (burst=10). The budget is reset before the sweep
-// to avoid accumulation from earlier tests in the binary. With 8 ops × 1 pkNone
-// probe each = 8 burns; well within the burst.
+// Rate-limiter note: each denied probe burns one token from the process-global
+// per-IP token-auth failure budget (burst=10). The budget is reset at the start of
+// every case, so its 5 burns stay within the burst and a denial must be exactly
+// 401; a 429 would hide whether the token was refused or merely throttled.
 //
 // What this oracle does NOT verify:
 //   - IdP-managed-user guard: ReplaceUser/PatchUser/DeleteUser refuse a user
@@ -165,13 +174,23 @@ func TestSCIMStrictSweep(t *testing.T) {
 	if testing.Short() {
 		t.Skip("SCIM strict sweep drives real REST legs; skipped under -short")
 	}
-	// Reset the global per-IP invalid-token limiter so accumulated failures from
-	// other tests don't exhaust our budget (8 pkNone probes, burst=10).
-	middleware.ResetTokenAuthFailureLimiterForTest()
-
 	const scimTok = "test-scim-bearer-token-32ch-sweep" // ≥20 chars (MinSCIMTokenLength)
 
 	b, fx := template(t)
+	// Denied probes: name → bearer. Every credential is non-empty and differs
+	// from scimTok, so a probe can only pass if the SCIM gate accepts it.
+	denied := []struct{ name, tok string }{
+		{"none", ""},
+		{"wrong-token", strings.Repeat("x", len(scimTok))},
+		{"admin-session", fx.principals[pkGlobalAdmin].token},
+		{"pat", fx.principals[pkPATFull].token},
+		{"machine-token", fx.principals[pkMachine].token},
+	}
+	for _, d := range denied[1:] {
+		if d.tok == "" || d.tok == scimTok {
+			t.Fatalf("denied probe %s has an unusable token", d.name)
+		}
+	}
 
 	type scimCase struct {
 		name   string
@@ -293,7 +312,11 @@ func TestSCIMStrictSweep(t *testing.T) {
 				}
 			}()
 
-			doRequest := func(tok string, expectOK bool) {
+			// Reset the global per-IP invalid-token limiter so failures from earlier
+			// cases and tests cannot turn this case's denials into 429s.
+			middleware.ResetTokenAuthFailureLimiterForTest()
+
+			doRequest := func(principal, tok string, expectOK bool) {
 				var bodyBuf bytes.Buffer
 				if c.body != nil {
 					_ = json.NewEncoder(&bodyBuf).Encode(c.body())
@@ -309,24 +332,20 @@ func TestSCIMStrictSweep(t *testing.T) {
 				r.ServeHTTP(rec, req)
 				status := rec.Code
 
+				want := http.StatusUnauthorized
 				if expectOK {
-					if status != c.okCode {
-						fails = append(fails, result{c.name, "pkSCIM", status, rec.Body.String()})
-						t.Errorf("%s pkSCIM: want %d got %d body=%s", c.name, c.okCode, status, rec.Body.String())
-					}
-				} else {
-					// No/wrong token → 401 (rate allowed) or 429 (rate exhausted).
-					if status != http.StatusUnauthorized && status != http.StatusTooManyRequests {
-						fails = append(fails, result{c.name, "pkNone", status, rec.Body.String()})
-						t.Errorf("%s pkNone: want 401 or 429 got %d body=%s", c.name, status, rec.Body.String())
-					}
+					want = c.okCode
+				}
+				if status != want {
+					fails = append(fails, result{c.name, principal, status, rec.Body.String()})
+					t.Errorf("%s %s: want %d got %d body=%s", c.name, principal, want, status, rec.Body.String())
 				}
 			}
 
-			// Valid SCIM token → allowed.
-			doRequest(scimTok, true)
-			// No token → denied (401).
-			doRequest("", false)
+			for _, d := range denied {
+				doRequest(d.name, d.tok, false)
+			}
+			doRequest("scim-token", scimTok, true)
 		})
 	}
 
@@ -353,5 +372,25 @@ func TestSCIMRouterGatePresent(t *testing.T) {
 	anchor := `r.Use(customMiddleware.SCIMToken(cfg.SCIM.GetToken()))`
 	if n := strings.Count(string(src), anchor); n != 1 {
 		t.Errorf("SCIM token middleware anchor found %d times (want 1): %q", n, anchor)
+	}
+}
+
+// TestMFAStepUpCodeAcceptedAcrossStepEdge pins why mfa.stepup cannot flake at a
+// 30s TOTP boundary: a code generated in the last second of one step is still
+// accepted when core checks it in the first second of the next one, because
+// core accepts the adjacent steps. The core clock is pinned on this one leg
+// only; the sweep itself runs on the real clock.
+func TestMFAStepUpCodeAcceptedAcrossStepEdge(t *testing.T) {
+	lg := newLeg(t, layerCore)
+	defer lg.close()
+	p := lg.fx.principals[pkMFAUser]
+	edge := time.Unix((time.Now().Unix()/30+1)*30, 0)
+	code, err := totp.GenerateCode(lg.fx.mfaUserTOTPSecret, edge.Add(-time.Second))
+	if err != nil {
+		t.Fatalf("generate code: %v", err)
+	}
+	lg.c.SetClockForTesting(func() time.Time { return edge.Add(time.Second) })
+	if err := lg.c.VerifyMFAStepUp(context.Background(), p.userID, code); err != nil {
+		t.Fatalf("code from the previous step refused after the step edge: %v", err)
 	}
 }

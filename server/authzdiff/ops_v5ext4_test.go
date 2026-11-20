@@ -57,7 +57,7 @@ import (
 //   - Recovery-code path (the fixture uses TOTP only).
 //   - Lockout behaviour (too few invalid-code attempts to trigger).
 //   - MFA-gated secret reads (the step-up grant enabling restricted secret access).
-//   - Code correctness (whether the generated code is accepted depends on clock agreement).
+//   - Code correctness beyond one step of clock drift (see currentTOTPCode).
 func v5ext4Ops() []opSpec {
 	return append(bulkRotateOps(), mfaStepUpOps()...)
 }
@@ -107,7 +107,11 @@ func bulkRotateOps() []opSpec {
 // ---- mfa.stepup ----
 
 // currentTOTPCode returns the current 6-digit TOTP code for secret. Called at
-// the moment each leg runs so the code is within the current 30s window.
+// the moment each leg runs. A 30s step boundary between generating the code and
+// core checking it does not refuse it: core accepts the previous and next step
+// too (validateTOTPStep), and every leg is a fresh DB copy, so the anti-replay
+// mark never sees the same step twice. TestMFAStepUpCodeAcceptedAcrossStepEdge
+// pins that.
 func currentTOTPCode(secret string) string {
 	code, _ := totp.GenerateCode(secret, time.Now())
 	return code
