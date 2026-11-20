@@ -328,7 +328,7 @@ server	TestAdminRecoverAdmin_KeylessMode_SQLite	3.2
 server	TestServerStartup_RefusedWhileAdminHoldsExclusiveLock_Postgres	3.1
 server	TestEdgeUnattended_StaleLockFilesDoNotBlockRestart	3.1
 server	TestKeyDirLock_Database_ConcurrentStartOwnEmptyDirsSeedsEpochUnderLock	3.0
-server	TestAuditDurability_SQLiteRefusesStandardEndToEnd	3.0
+server	TestAuditDurability_SQLiteStandardBootsEndToEnd	3.0
 server	TestStartSchedulers_ShortLive	3.0
 server/admin	*	0.4505
 server/admin	TestKeyLifecycleProcessReplay_Postgres	281.7
