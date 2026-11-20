@@ -66,7 +66,14 @@ func raceFromBarrier(offset time.Duration, a, b func()) {
 // won every round against A's reads-then-write (measured: 50 of 50), so the
 // barrier alone never reached the window around A's write.
 func raceOffset(i int, soloA time.Duration) time.Duration {
-	lo := -soloA / 4
+	return raceOffsetFrom(i, soloA, soloA/4)
+}
+
+// raceOffsetFrom is raceOffset with B leading A by up to lead in the first rounds.
+// IssueLease uses soloA/2: with soloA/4 its refused count was only 5 to 10 of 50
+// across five -race runs, too thin a margin for requireBothOutcomes on a slow runner.
+func raceOffsetFrom(i int, soloA, lead time.Duration) time.Duration {
+	lo := -lead
 	return lo + time.Duration(i)*(soloA-lo)/time.Duration(livenessRaceRounds)
 }
 
@@ -270,7 +277,7 @@ func TestLivenessRace_IssueLease_vs_DeleteProject_Postgres(t *testing.T) {
 	for i := range livenessRaceRounds {
 		pid, cfgID := config(i, "lease")
 		var errA, errB error
-		raceFromBarrier(raceOffset(i, solo),
+		raceFromBarrier(raceOffsetFrom(i, solo, solo/2),
 			func() { _, errA = f.coreA.IssueLease(f.ctx, cfgID, 0, f.adminID) },
 			func() { errB = f.coreB.DeleteProject(f.ctx, 0, pid, true) },
 		)
