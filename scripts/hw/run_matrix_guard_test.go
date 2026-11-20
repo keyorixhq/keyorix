@@ -72,8 +72,7 @@ func runMatrix(t *testing.T, tempMilliC string, extra ...string) (string, string
 		t.Fatalf("run-matrix.sh did not finish within 45s (guard stuck?); output:\n%s", out)
 	}
 	code := 0
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 		code = ee.ExitCode()
 	} else if err != nil {
 		t.Fatal(err)
