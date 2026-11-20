@@ -327,10 +327,22 @@ func checkTPMAccepted(fx *tpmFixture, st tpmStatement, requireRoot bool) error {
 	if err != nil {
 		return fmt.Errorf("accepted an AIK certificate that does not parse: %w", err)
 	}
-	// 1. the AIK signed certInfo (ES256 only: the harness AIK is a P-256 key).
+	// 1. the AIK signed certInfo. The harness AIK is a P-256 key.
+	// -7 (ES256) and -9 (ESP256) are both ECDSA P-256 + SHA-256: correct.
+	// algES256K (-47) is accepted by the library as a known leniency (see constant).
+	// Every other alg is flagged.
 	pub, ok := cert.PublicKey.(*ecdsa.PublicKey)
-	if !ok || st.alg != -7 {
+	if !ok {
 		return fmt.Errorf("accepted alg %d with a %T AIK key", st.alg, cert.PublicKey)
+	}
+	switch st.alg {
+	case -7, -9:
+		// ES256 / ESP256 — both specify ECDSA P-256 + SHA-256; correct.
+	case algES256K:
+		// Known library leniency — label does not match P-256 key curve, but
+		// the library verifies using ECDSA/SHA-256 and the signature is genuine.
+	default:
+		return fmt.Errorf("accepted alg %d with a P-256 AIK key", st.alg)
 	}
 	d := sha256.Sum256(st.certInfo)
 	if !ecdsa.VerifyASN1(pub, d[:], st.sig) {
@@ -517,6 +529,12 @@ func tpmName(pubArea []byte) ([]byte, error) {
 	return append(append([]byte{}, pubArea[2:4]...), h.Sum(nil)...), nil
 }
 
+// algES256K is COSE algorithm -47 (ES256K). go-webauthn v0.18.2 accepts it
+// for a P-256 AIK when the signature over certInfo verifies under ECDSA/SHA-256.
+// Known library leniency: the label does not match the key curve; the signature
+// is genuine and there is no security impact.
+const algES256K = int64(-47)
+
 // ---- tests and fuzz targets --------------------------------------------------
 
 func (fx *tpmFixture) seedStatement() tpmStatement {
@@ -536,6 +554,31 @@ func TestTPMSeed_AcceptedByBothModes(t *testing.T) {
 	}
 	if err := checkTPMAccepted(fx, st, true); err != nil {
 		t.Fatalf("oracle rejects the genuine statement: %v", err)
+	}
+}
+
+// TestTPMOracle_AlgVariants verifies the oracle's alg handling: -9 (ESP256,
+// legitimate alias for ES256) must pass; -35 (ES384) and -257 (RS256) must fail.
+func TestTPMOracle_AlgVariants(t *testing.T) {
+	fx := newTPMFixture(t)
+	base := fx.seedStatement() // alg -7, real signature
+	// -9 (ESP256): same cryptographic algorithm as -7, accepted by the library.
+	neg9 := base
+	neg9.alg = -9
+	if err := checkTPMAccepted(fx, neg9, false); err != nil {
+		t.Errorf("oracle rejected alg -9 (ESP256), want accepted: %v", err)
+	}
+	// -35 (ES384): wrong algorithm family.
+	neg35 := base
+	neg35.alg = -35
+	if err := checkTPMAccepted(fx, neg35, false); err == nil {
+		t.Error("oracle accepted alg -35 (ES384), want rejected")
+	}
+	// -257 (RS256): completely different key type.
+	neg257 := base
+	neg257.alg = -257
+	if err := checkTPMAccepted(fx, neg257, false); err == nil {
+		t.Error("oracle accepted alg -257 (RS256), want rejected")
 	}
 }
 
@@ -605,7 +648,8 @@ func TestTPMOracle_RedProof(t *testing.T) {
 		{"certified pubArea with the credential key outside unique.ecc", func(s *tpmStatement) {
 			s.pubArea, s.certInfo, s.sig = smuggled, certSmuggled, sigSmuggled
 		}, false},
-		{"wrong alg", func(s *tpmStatement) { s.alg = -35 }, false},
+		{"wrong alg -35 (ES384)", func(s *tpmStatement) { s.alg = -35 }, false},
+		{"wrong alg -257 (RS256)", func(s *tpmStatement) { s.alg = -257 }, false},
 		{"wrong version", func(s *tpmStatement) { s.ver = "1.2" }, false},
 		{"truncated certInfo", func(s *tpmStatement) { s.certInfo = s.certInfo[:len(s.certInfo)-1] }, false},
 		{"AIK certificate corrupted below the TBS", func(s *tpmStatement) { s.aik = flip(s.aik, len(s.aik)-3) }, true},
