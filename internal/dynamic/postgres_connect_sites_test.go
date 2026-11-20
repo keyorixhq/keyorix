@@ -17,7 +17,12 @@ package dynamic
 // wrap an already-dialled connection; a reviewer should extend it when pgx grows
 // another.
 //
-// What this does NOT cover: other packages (internal/storage, internal/auditverify,
+// sql.OpenDB is only judged in files that import pgx: openMySQLConfig legitimately
+// calls it with a MySQL connector, and a pgx connector built in another file and
+// passed in is not visible here.
+//
+// What this does NOT cover: a pgx connect inside a helper in another package that
+// internal/dynamic calls (none exists today), other packages (internal/storage, internal/auditverify,
 // internal/rotation and server/admin open their own connections against
 // operator-trusted databases and are out of scope here), subpackages of
 // internal/dynamic, whether Apply runs BEFORE the connect on the same config or is
@@ -68,11 +73,13 @@ func pgxConnectSites(t testing.TB, src map[string]string) (sites []pgxSite, sets
 			t.Fatalf("parse %s: %v", name, err)
 		}
 		local := map[string]string{}
+		importsPgx := false
 		for _, imp := range f.Imports {
 			path, _ := strconv.Unquote(imp.Path.Value)
 			if !pgxImportPaths[path] && path != "database/sql" && path != pgxlimitsPath {
 				continue
 			}
+			importsPgx = importsPgx || pgxImportPaths[path]
 			n := path[strings.LastIndex(path, "/")+1:]
 			if n == "v5" { // github.com/jackc/pgx/v5 declares package pgx
 				n = "pgx"
@@ -90,7 +97,11 @@ func pgxConnectSites(t testing.TB, src map[string]string) (sites []pgxSite, sets
 			fn := "<package-level>"
 			if fd, ok := d.(*ast.FuncDecl); ok {
 				fn = fd.Name.Name
+				if fd.Recv != nil { // a method named connectPostgres is not THE connectPostgres
+					fn = "(method)." + fn
+				}
 			}
+			called := map[*ast.SelectorExpr]bool{} // selectors that are the callee of a call
 			ast.Inspect(d, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.SelectorExpr:
@@ -99,19 +110,31 @@ func pgxConnectSites(t testing.TB, src map[string]string) (sites []pgxSite, sets
 						return true
 					}
 					path := local[id.Name]
-					if path == pgxlimitsPath && x.Sel.Name == "Apply" && fn == "connectPostgres" {
-						setsBound = true
-					}
 					if pgxImportPaths[path] && pgxConnectFuncs[x.Sel.Name] {
 						sites = append(sites, pgxSite{fn, id.Name + "." + x.Sel.Name})
 					}
+					if path == "database/sql" && !called[x] && (x.Sel.Name == "Open" || (x.Sel.Name == "OpenDB" && importsPgx)) {
+						// sql.OpenDB(connector) dials through a connector built elsewhere, and
+						// `open := sql.Open` hides the driver name: neither can be judged, so both are sites.
+						sites = append(sites, pgxSite{fn, "sql." + x.Sel.Name + " (not a direct call)"})
+					}
 				case *ast.CallExpr:
 					se, ok := x.Fun.(*ast.SelectorExpr)
-					if !ok || len(x.Args) == 0 {
+					if !ok {
 						return true
 					}
+					called[se] = true
 					id, ok := se.X.(*ast.Ident)
-					if !ok || local[id.Name] != "database/sql" || se.Sel.Name != "Open" {
+					if !ok {
+						return true
+					}
+					if local[id.Name] == pgxlimitsPath && se.Sel.Name == "Apply" && fn == "connectPostgres" {
+						setsBound = true // a real call, not a bare mention of the function
+					}
+					if local[id.Name] == "database/sql" && se.Sel.Name == "OpenDB" && importsPgx {
+						sites = append(sites, pgxSite{fn, "sql.OpenDB"})
+					}
+					if len(x.Args) == 0 || local[id.Name] != "database/sql" || se.Sel.Name != "Open" {
 						return true
 					}
 					lit, isLit := x.Args[0].(*ast.BasicLit)
@@ -177,6 +200,12 @@ func connectPostgres(cfg *pgx.ConnConfig) { pgxlimits.Apply(cfg); pgx.ConnectCon
 		t.Fatalf("GREEN: bounded connectPostgres must be accepted, got sites=%v bound=%v", sites, bound)
 	}
 
+	if got, _ := pgxConnectSites(t, map[string]string{"mysql.go": `package dynamic
+import "database/sql"
+func openMySQL() { sql.OpenDB(nil) }`}); len(got) != 0 {
+		t.Fatalf("GREEN: sql.OpenDB in a file that does not import pgx must be accepted, got %v", got)
+	}
+
 	// Each planted violation sits in its own function so the expectation is exact.
 	red := map[string]string{
 		"direct.go": `package dynamic
@@ -206,6 +235,19 @@ func viaConnector() { stdlib.GetConnector(nil) }`,
 		"frontend.go": `package dynamic
 import "github.com/jackc/pgx/v5/pgproto3"
 func rawFrontend() { pgproto3.NewFrontend(nil, nil) }`,
+		"openvalue.go": `package dynamic
+import "database/sql"
+func openValue() { open := sql.Open; _ = open }`,
+		"opendb.go": `package dynamic
+import (
+	"database/sql"
+	_ "github.com/jackc/pgx/v5/stdlib"
+)
+func viaOpenDB() { sql.OpenDB(nil) }`,
+		"method.go": `package dynamic
+import "github.com/jackc/pgx/v5"
+type T struct{}
+func (T) connectPostgres() { pgx.Connect(nil, "") }`,
 		"dot.go": `package dynamic
 import . "github.com/jackc/pgx/v5/pgconn"
 func dotted() { _ = Connect }`,
@@ -215,6 +257,8 @@ func dotted() { _ = Connect }`,
 		"viaSQL": "sql.Open(pgx)", "viaSQLv5": "sql.Open(pgx/v5)", "viaVar": "sql.Open(non-literal driver)",
 		"asValue": "pgx.ConnectConfig", "viaConnector": "stdlib.GetConnector", "rawFrontend": "pgproto3.NewFrontend",
 		"<imports>": ". import of github.com/jackc/pgx/v5/pgconn",
+		"openValue": "sql.Open (not a direct call)", "viaOpenDB": "sql.OpenDB",
+		"(method).connectPostgres": "pgx.Connect",
 	}
 	got, _ := pgxConnectSites(t, red)
 	if len(got) != len(want) {
@@ -224,6 +268,16 @@ func dotted() { _ = Connect }`,
 		if want[s.Fn] != s.Call {
 			t.Errorf("RED: unexpected site %v (want %q)", s, want[s.Fn])
 		}
+	}
+
+	_, bound = pgxConnectSites(t, map[string]string{"mention.go": `package dynamic
+import (
+	"github.com/jackc/pgx/v5"
+	"github.com/keyorixhq/keyorix/internal/pgxlimits"
+)
+func connectPostgres(cfg *pgx.ConnConfig) { _ = pgxlimits.Apply; pgx.ConnectConfig(nil, cfg) }`})
+	if bound {
+		t.Error("RED: a bare mention of pgxlimits.Apply (not a call) must not count as applying the bound")
 	}
 
 	_, bound = pgxConnectSites(t, map[string]string{"nobound.go": `package dynamic
