@@ -56,6 +56,7 @@ internal/rotation/mysql.go	E12	MySQL password rotation backend
 internal/rotation/postgres.go	E12	PostgreSQL password rotation backend
 internal/rotation/redis.go	E12	Redis password rotation backend
 internal/serverguard/serverguard.go	E01	Opens the operator's database to detect a live server process attached to it
+internal/smtpauth/smtpauth.go	E07	SMTP AUTH mechanism selection for the operator's relay, shared by internal/delivery (E07) and internal/notifychan (E02); dials nothing itself
 internal/solewriter/solewriter.go	E01	storage.database.single_writer: connects to the operator's PostgreSQL database
 internal/storage/postgres_open.go	E01	Opens the PostgreSQL database named by storage.postgres
 internal/storage/sqlite_write_gate.go	E01	Opens the local SQLite file (no network)
