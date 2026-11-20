@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/core/rules"
 )
 
 // The forwarding headers a trusted proxy may set, in order of preference, are
@@ -170,7 +172,15 @@ func parseCIDRs(entries []string) []*net.IPNet {
 				}
 			}
 		}
-		if _, n, err := net.ParseCIDR(e); err == nil {
+		// An explicit IPv4-mapped prefix has the same trap: "::ffff:1.2.3.4/32" and
+		// "::ffff:10.0.0.0/8" parse as ::/32 and ::/8, which trust ::1 and not the
+		// intended proxy (#4520). Mapped /N with N <= 32 becomes the IPv4 network;
+		// 33..95 has no IPv4 meaning and is dropped (fail closed: untrusted).
+		canon, err := rules.NormalizeIPv4MappedCIDR(e)
+		if err != nil {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(canon); err == nil {
 			nets = append(nets, n)
 		}
 	}

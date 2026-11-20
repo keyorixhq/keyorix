@@ -27,6 +27,8 @@ import (
 //	    is treated as /32 and covers exactly that host.  A bare IPv6 address
 //	    is treated as /128 and covers exactly that host. An IPv4-mapped entry
 //	    in IPv6 text form ("::ffff:1.2.3.4") covers exactly 1.2.3.4 (#4520).
+//	    A prefixed mapped entry "::ffff:a.b.c.d/N" with N <= 32 covers a.b.c.d
+//	    and not ::1; with 33 <= N <= 95 it trusts nothing (#4520).
 //	(c) parseCIDRs DETERMINISM: same input → same number of parsed nets.
 //	(d) clientIPFromRequest NEVER-PANIC: does not panic on arbitrary
 //	    RemoteAddr, X-Forwarded-For, or X-Real-IP values.
@@ -83,6 +85,9 @@ func FuzzClientIPParsing(f *testing.F) {
 		{"0.0.0.0/0", "1.2.3.4:50000", "", "0.0.0.0"},
 		// IPv4-mapped trusted entry in IPv6 text form (#4520: once parsed as ::/32).
 		{"::ffff:10.0.0.1", "[::1]:50000", "1.2.3.4", ""},
+		// Prefixed IPv4-mapped entries (#4520: once parsed as ::/32 and ::/8).
+		{"::ffff:1.2.3.4/32", "[::1]:50000", "6.6.6.6", ""},
+		{"::ffff:10.0.0.0/8\n::ffff:1.2.3.4/64", "10.0.0.1:50000", "6.6.6.6", ""},
 	}
 	for _, s := range seeds {
 		f.Add(s.trusted, s.remote, s.xff, s.xrip)
@@ -129,6 +134,33 @@ func FuzzClientIPParsing(f *testing.F) {
 			}
 			if !found {
 				t.Fatalf("parseCIDRs(%q): bare IP %q parsed OK but no net covers it (got %v)", trustedRaw, e, nets)
+			}
+		}
+
+		// Oracle (b), prefixed IPv4-mapped entries: "::ffff:a.b.c.d/N" with N <= 32
+		// covers a.b.c.d and never ::1 (not ::/N); 33..95 trusts nothing (#4520).
+		// Checked per entry, since another entry may legitimately cover ::1.
+		for _, e := range entries {
+			e = strings.TrimSpace(e)
+			addr, _, hasPrefix := strings.Cut(e, "/")
+			if !hasPrefix || !strings.Contains(addr, ":") {
+				continue
+			}
+			ip, n, err := net.ParseCIDR(e)
+			if err != nil || ip.To4() == nil {
+				continue
+			}
+			ones, _ := n.Mask.Size()
+			single := parseCIDRs([]string{e})
+			switch {
+			case ones <= 32:
+				if !ipInAny(ip.To4().String(), single) || ipInAny("::1", single) {
+					t.Fatalf("parseCIDRs(%q) = %v: want the IPv4 network holding %s, not ::/%d", e, single, ip.To4(), ones)
+				}
+			case ones < 96:
+				if len(single) != 0 {
+					t.Fatalf("parseCIDRs(%q) = %v: mapped /%d has no IPv4 meaning, want nothing trusted", e, single, ones)
+				}
 			}
 		}
 

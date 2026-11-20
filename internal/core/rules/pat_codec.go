@@ -110,7 +110,7 @@ func EncodePATCIDRs(cidrs []string) (string, error) { // NOSONAR -- cognitive co
 				}
 			}
 		}
-		canon, err := normalizeAllowlistCIDRForStorage(c)
+		canon, err := NormalizeIPv4MappedCIDR(c)
 		if err != nil {
 			return "", fmt.Errorf("invalid CIDR %q", c)
 		}
@@ -183,11 +183,14 @@ func ParseAllowlistCIDR(c string) (*net.IPNet, error) {
 	return nil, fmt.Errorf("IPv4-mapped CIDR %q with prefix /%d is ambiguous", strings.TrimSpace(c), ones)
 }
 
-// normalizeAllowlistCIDRForStorage is the encoder's form of an entry: an
-// IPv4-mapped entry with a prefix of 32 or less is stored as the IPv4 network it
-// names (a new entry, so nothing stored is reinterpreted), a mapped prefix from
-// 33 to 95 is refused, and every other entry is kept as written.
-func normalizeAllowlistCIDRForStorage(c string) (string, error) {
+// NormalizeIPv4MappedCIDR is the form of a NEW (not stored) CIDR entry: an
+// IPv4-mapped entry with a prefix of 32 or less becomes the IPv4 network it
+// names, a mapped prefix from 33 to 95 is refused, and every other entry is
+// kept as written. Used by the token encoder (a new entry, so nothing stored is
+// reinterpreted) and by server/middleware's trusted-proxy parser (operator
+// config re-read at every boot), so "::ffff:1.2.3.4/32" means the IPv4 host on
+// both sides rather than the IPv6 network ::/32 (#4520).
+func NormalizeIPv4MappedCIDR(c string) (string, error) {
 	ip, _, ones, mapped, err := parseAllowlistEntry(c)
 	if err != nil {
 		return "", err
