@@ -161,23 +161,31 @@ func TestOpenSQLiteReadOnly_UncheckpointedWALRowIsVerified(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The copy an operator ships: the main file and its -wal, taken while the
-	// writer still has the database open (so the -wal is not checkpointed).
-	evidence := t.TempDir()
-	for _, name := range []string{"audit.db", "audit.db-wal"} {
-		b, err := os.ReadFile(filepath.Join(src, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(evidence, name), b, 0o600); err != nil {
-			t.Fatal(err)
+	// The copy an operator ships: the main file and its -wal (the runbook also
+	// ships the -shm), taken while the writer still has the database open (so
+	// the -wal is not checkpointed).
+	shipped := map[string][]string{
+		"db and -wal":       {"audit.db", "audit.db-wal"},
+		"db, -wal and -shm": {"audit.db", "audit.db-wal", "audit.db-shm"},
+	}
+	evidence := map[string]string{}
+	for set, names := range shipped {
+		evidence[set] = t.TempDir()
+		for _, name := range names {
+			b, err := os.ReadFile(filepath.Join(src, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(evidence[set], name), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	_ = w.Close()
 
 	// Premise: the main file alone holds only 5 rows; the 6th is in the -wal.
 	mainOnly := t.TempDir()
-	b, err := os.ReadFile(filepath.Join(evidence, "audit.db"))
+	b, err := os.ReadFile(filepath.Join(evidence["db and -wal"], "audit.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,14 +202,16 @@ func TestOpenSQLiteReadOnly_UncheckpointedWALRowIsVerified(t *testing.T) {
 	}
 	_ = im.Close()
 
-	before := dirSnapshot(t, evidence)
-	readOnlyDir(t, evidence)
-	res := verifySQLiteFile(t, filepath.Join(evidence, "audit.db"))
-	if res.Verdict != VerdictValid || res.ChainedEvents != 6 {
-		t.Fatalf("verdict %s, %d chained events (want VALID with the -wal row, 6): %s", res.Verdict, res.ChainedEvents, res.Reason)
-	}
-	if after := dirSnapshot(t, evidence); !reflect.DeepEqual(before, after) {
-		t.Fatal("verification changed the evidence directory or its -wal")
+	for set, dir := range evidence {
+		before := dirSnapshot(t, dir)
+		readOnlyDir(t, dir)
+		res := verifySQLiteFile(t, filepath.Join(dir, "audit.db"))
+		if res.Verdict != VerdictValid || res.ChainedEvents != 6 {
+			t.Fatalf("%s: verdict %s, %d chained events (want VALID with the -wal row, 6): %s", set, res.Verdict, res.ChainedEvents, res.Reason)
+		}
+		if after := dirSnapshot(t, dir); !reflect.DeepEqual(before, after) {
+			t.Fatalf("%s: verification changed the evidence directory or a file in it", set)
+		}
 	}
 }
 

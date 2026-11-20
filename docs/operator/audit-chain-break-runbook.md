@@ -98,8 +98,11 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
    read, never skipped. The copy needs free space under `$TMPDIR` equal to the database
    plus its `-wal`; if that is not available the command exits 3 and names the shortfall,
    so set `TMPDIR` to a directory with room. A database whose `-wal` and `-shm` are both
-   present in a writable directory is in use by a SQLite process and is read in place, as
-   before; for evidence, copy it with the server stopped (step 2).
+   present in a writable directory may be in use by a SQLite process, so it is read in place
+   (a copy taken under a live writer could be torn): no entry is added and the database and
+   `-wal` bytes stay as they were, but SQLite may rewrite the `-shm`, its shared-memory index.
+   To keep the `-shm` of an evidence copy untouched as well, make its directory read-only
+   (`chmod 0500`); it is then verified from a private copy.
 4. Re-run it with the checkpoint key, which is what makes truncation visible. Derive the key
    with the server stopped and keep the file off the audited host (it is a shared secret:
    with the database it can forge a history):
