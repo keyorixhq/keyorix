@@ -1,0 +1,2 @@
+### Documentation
+- **FINDING doc template and regression-test traceability checker.** `docs/findings/TEMPLATE.md` establishes the canonical structure for new finding docs, including a required `**Regression test:**` metadata field. `TestFindingRegressionTests_NamedTestsExist` (`internal/docsdrift`) verifies every finding doc that carries this field names a test function that actually exists in the stated package. Old finding docs without the field are silently skipped. CLAUDE.md "Writing a FINDING doc" section documents the workflow.
