@@ -105,6 +105,22 @@ func kinRefDocument(schemaBytes []byte) ([]byte, bool) {
 	if !ok || !isMap {
 		return nil, false
 	}
+	// 2020-12-only keywords that kin's 3.0 document validation does not understand.
+	// $dynamicRef with an empty URI is treated as an ignored extension keyword by kin
+	// rather than triggering a document-level error, so the pair would reach comparison
+	// and produce a spurious divergence. Detect these anywhere in the schema tree and
+	// return ok=false (skip-only), consistent with the "dynamic" seed group documentation.
+	if anyNode(doc, func(n any) bool {
+		m, isMap := n.(map[string]any)
+		if !isMap {
+			return false
+		}
+		_, hasDR := m["$dynamicRef"]
+		_, hasDA := m["$dynamicAnchor"]
+		return hasDR || hasDA
+	}) {
+		return nil, false
+	}
 	components := map[string]any{}
 	if raw, has := root["$defs"]; has {
 		defs, isMap := raw.(map[string]any)
@@ -319,6 +335,10 @@ var refSeedGroups = []refSeedGroup{
 		// 2020-12-only: kin's 3.0 document validation rejects these (skip-only).
 		`{"$dynamicAnchor":"item","type":"string"}`,
 		`{"$defs":{"base":{"$dynamicAnchor":"item","type":"string"}},"$dynamicRef":"#item"}`,
+		// $dynamicRef with an empty URI: kin ignores it (unknown extension keyword) but
+		// jsonschema/v6 treats it as a self-ref cycle. kinRefDocument now detects
+		// $dynamicRef anywhere and returns ok=false before reaching comparison.
+		`{"$dynamicRef":""}`,
 	}},
 	{name: "oracle-c", compared: true, schemas: []string{
 		// Plain Oracle-C seeds, so mutations also start from the inherited splits.
