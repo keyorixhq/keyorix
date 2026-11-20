@@ -2,24 +2,28 @@ package dynamic
 
 // postgres_connect_sites_test.go — every pgx connection internal/dynamic opens
 // toward an admin_dsn host must be built by connectPostgres, because that is the
-// one place pgxlimits.Apply is called (see
-// postgres_max_body_len_test.go for why the bound exists). A second, direct
-// pgx.Connect* call in this package would silently reintroduce the unbounded
-// server-claimed allocation, and no behavioural test of the existing engines
-// would notice.
+// one place pgxlimits.Apply is called (see postgres_max_body_len_test.go for why
+// the bound exists). A second, direct pgx.Connect* call in this package would
+// silently reintroduce the unbounded server-claimed allocation, and no
+// behavioural test of the existing engines would notice.
 //
-// Recognised connect idioms (a call through an import of github.com/jackc/pgx/v5,
-// .../pgconn, .../pgxpool or .../stdlib whose name is in pgxConnectFuncs, plus
-// database/sql.Open with the literal driver name "pgx"). That list was derived
-// from those four packages' exported constructors that dial a server, and is
-// what a reviewer should check when pgx grows a new one.
+// Recognised idioms, all by import path so aliases do not hide them: ANY
+// reference (a call, or a function value such as f := pgx.ConnectConfig or
+// retry(pgx.ConnectConfig)) to a name in pgxConnectFuncs through an import of
+// github.com/jackc/pgx/v5, .../pgconn, .../pgxpool, .../stdlib or .../pgproto3;
+// a dot import of any of those; database/sql.Open with the driver literal "pgx" or
+// "pgx/v5" (stdlib registers both) or with a non-literal driver name. The list of
+// names was taken from those packages' exported functions that dial a server or
+// wrap an already-dialled connection; a reviewer should extend it when pgx grows
+// another.
 //
-// What this does NOT cover: other packages (internal/storage, internal/auditverify
-// and internal/rotation open their own pgx or database/sql connections against
-// operator-trusted databases and are out of scope here), a connection obtained by
-// a call this package does not make itself (a driver registered elsewhere and
-// opened via a name other than the literal "pgx"), and any connect reached through
-// reflection or a function value assigned from a non-literal.
+// What this does NOT cover: other packages (internal/storage, internal/auditverify,
+// internal/rotation and server/admin open their own connections against
+// operator-trusted databases and are out of scope here), subpackages of
+// internal/dynamic, whether Apply runs BEFORE the connect on the same config or is
+// overwritten afterwards (the behavioural test covers that for Issue, Renew and
+// Revoke), and a connect reached through reflection or an interface value built
+// elsewhere.
 
 import (
 	"go/ast"
@@ -35,22 +39,25 @@ import (
 )
 
 var pgxImportPaths = map[string]bool{
-	"github.com/jackc/pgx/v5":         true,
-	"github.com/jackc/pgx/v5/pgconn":  true,
-	"github.com/jackc/pgx/v5/pgxpool": true,
-	"github.com/jackc/pgx/v5/stdlib":  true,
+	"github.com/jackc/pgx/v5":          true,
+	"github.com/jackc/pgx/v5/pgconn":   true,
+	"github.com/jackc/pgx/v5/pgxpool":  true,
+	"github.com/jackc/pgx/v5/stdlib":   true,
+	"github.com/jackc/pgx/v5/pgproto3": true,
 }
 
 const pgxlimitsPath = "github.com/keyorixhq/keyorix/internal/pgxlimits"
 
 var pgxConnectFuncs = map[string]bool{
 	"Connect": true, "ConnectConfig": true, "ConnectWithOptions": true,
-	"New": true, "NewWithConfig": true, "OpenDB": true, "Open": true,
+	"New": true, "NewWithConfig": true,
+	"OpenDB": true, "Open": true, "GetConnector": true, "OpenDBFromPool": true,
+	"Construct": true, "NewFrontend": true,
 }
 
 type pgxSite struct{ Fn, Call string }
 
-// pgxConnectSites lists every recognised pgx connect call in src (file name ->
+// pgxConnectSites lists every recognised pgx connect idiom in src (file name ->
 // source) and whether connectPostgres calls pgxlimits.Apply.
 func pgxConnectSites(t testing.TB, src map[string]string) (sites []pgxSite, setsBound bool) {
 	t.Helper()
@@ -73,6 +80,10 @@ func pgxConnectSites(t testing.TB, src map[string]string) (sites []pgxSite, sets
 			if imp.Name != nil {
 				n = imp.Name.Name
 			}
+			if n == "." && pgxImportPaths[path] {
+				sites = append(sites, pgxSite{"<imports>", ". import of " + path})
+				continue
+			}
 			local[n] = path
 		}
 		for _, d := range f.Decls {
@@ -82,26 +93,34 @@ func pgxConnectSites(t testing.TB, src map[string]string) (sites []pgxSite, sets
 			}
 			ast.Inspect(d, func(n ast.Node) bool {
 				switch x := n.(type) {
-				case *ast.CallExpr:
-					se, ok := x.Fun.(*ast.SelectorExpr)
-					if !ok {
-						return true
-					}
-					id, ok := se.X.(*ast.Ident)
+				case *ast.SelectorExpr:
+					id, ok := x.X.(*ast.Ident)
 					if !ok {
 						return true
 					}
 					path := local[id.Name]
-					if path == pgxlimitsPath && se.Sel.Name == "Apply" && fn == "connectPostgres" {
+					if path == pgxlimitsPath && x.Sel.Name == "Apply" && fn == "connectPostgres" {
 						setsBound = true
 					}
-					if pgxImportPaths[path] && pgxConnectFuncs[se.Sel.Name] {
-						sites = append(sites, pgxSite{fn, id.Name + "." + se.Sel.Name})
+					if pgxImportPaths[path] && pgxConnectFuncs[x.Sel.Name] {
+						sites = append(sites, pgxSite{fn, id.Name + "." + x.Sel.Name})
 					}
-					if path == "database/sql" && se.Sel.Name == "Open" && len(x.Args) > 0 {
-						if lit, ok := x.Args[0].(*ast.BasicLit); ok && strings.Trim(lit.Value, "\"`") == "pgx" {
-							sites = append(sites, pgxSite{fn, "sql.Open(\"pgx\")"})
-						}
+				case *ast.CallExpr:
+					se, ok := x.Fun.(*ast.SelectorExpr)
+					if !ok || len(x.Args) == 0 {
+						return true
+					}
+					id, ok := se.X.(*ast.Ident)
+					if !ok || local[id.Name] != "database/sql" || se.Sel.Name != "Open" {
+						return true
+					}
+					lit, isLit := x.Args[0].(*ast.BasicLit)
+					drv := ""
+					if isLit {
+						drv = strings.Trim(lit.Value, "\"`")
+					}
+					if !isLit || drv == "pgx" || drv == "pgx/v5" {
+						sites = append(sites, pgxSite{fn, "sql.Open(" + map[bool]string{true: drv, false: "non-literal driver"}[isLit] + ")"})
 					}
 				}
 				return true
@@ -135,8 +154,8 @@ func TestEveryPgxConnectInDynamicUsesTheBoundedConfig(t *testing.T) {
 	}
 	for _, s := range sites {
 		if s.Fn != "connectPostgres" {
-			t.Errorf("%s is called from %s: pgx connections toward an admin_dsn host must be built by connectPostgres, "+
-				"which applies postgresMaxProtocolMessageBodyLen", s.Call, s.Fn)
+			t.Errorf("%s is used in %s: pgx connections toward an admin_dsn host must be built by connectPostgres, "+
+				"which applies pgxlimits.Apply", s.Call, s.Fn)
 		}
 	}
 	if !setsBound {
@@ -158,6 +177,7 @@ func connectPostgres(cfg *pgx.ConnConfig) { pgxlimits.Apply(cfg); pgx.ConnectCon
 		t.Fatalf("GREEN: bounded connectPostgres must be accepted, got sites=%v bound=%v", sites, bound)
 	}
 
+	// Each planted violation sits in its own function so the expectation is exact.
 	red := map[string]string{
 		"direct.go": `package dynamic
 import "github.com/jackc/pgx/v5"
@@ -171,15 +191,38 @@ var p, _ = pgxpool.New(nil, "")`,
 		"stdlib.go": `package dynamic
 import "database/sql"
 func viaSQL() { sql.Open("pgx", "") }`,
+		"stdlibv5.go": `package dynamic
+import "database/sql"
+func viaSQLv5() { sql.Open("pgx/v5", "") }`,
+		"nonliteral.go": `package dynamic
+import "database/sql"
+func viaVar(driver string) { sql.Open(driver, "") }`,
+		"funcvalue.go": `package dynamic
+import "github.com/jackc/pgx/v5"
+func asValue() { f := pgx.ConnectConfig; _ = f }`,
+		"connector.go": `package dynamic
+import "github.com/jackc/pgx/v5/stdlib"
+func viaConnector() { stdlib.GetConnector(nil) }`,
+		"frontend.go": `package dynamic
+import "github.com/jackc/pgx/v5/pgproto3"
+func rawFrontend() { pgproto3.NewFrontend(nil, nil) }`,
+		"dot.go": `package dynamic
+import . "github.com/jackc/pgx/v5/pgconn"
+func dotted() { _ = Connect }`,
 	}
-	want := map[string]string{"other": "pgx.Connect", "aliased": "pg.ConnectConfig", "<package-level>": "pgxpool.New", "viaSQL": `sql.Open("pgx")`}
+	want := map[string]string{
+		"other": "pgx.Connect", "aliased": "pg.ConnectConfig", "<package-level>": "pgxpool.New",
+		"viaSQL": "sql.Open(pgx)", "viaSQLv5": "sql.Open(pgx/v5)", "viaVar": "sql.Open(non-literal driver)",
+		"asValue": "pgx.ConnectConfig", "viaConnector": "stdlib.GetConnector", "rawFrontend": "pgproto3.NewFrontend",
+		"<imports>": ". import of github.com/jackc/pgx/v5/pgconn",
+	}
 	got, _ := pgxConnectSites(t, red)
 	if len(got) != len(want) {
-		t.Fatalf("RED: want %d planted violations found, got %v", len(want), got)
+		t.Fatalf("RED: want %d planted violations found, got %d: %v", len(want), len(got), got)
 	}
 	for _, s := range got {
 		if want[s.Fn] != s.Call {
-			t.Errorf("RED: unexpected site %v", s)
+			t.Errorf("RED: unexpected site %v (want %q)", s, want[s.Fn])
 		}
 	}
 

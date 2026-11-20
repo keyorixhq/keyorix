@@ -195,6 +195,50 @@ func TestBudgetAbsMaxFallsBackToSlopeWhenUncalibrated(t *testing.T) {
 	}
 }
 
+// TestBudgetUseBoundedAbsolute: a target whose cost is set by a CLAIMED size
+// (not by input bytes) gets AbsMax = calibrated AbsMax + the product's enforced
+// bound. GREEN: a tiny input costing one bounded buffer passes. RED: an input
+// costing more than bound + the calibrated ceiling fires, naming the meter, and
+// the boundary is exact (just below passes, just above fires). The per-byte slope
+// alone would have failed the GREEN case.
+func TestBudgetUseBoundedAbsolute(t *testing.T) {
+	const bound = 1 << 20
+	corpus := []Cost{{InputLen: 10, Sampled: true, AllocSampled: true, AllocBytes: 100000}}
+	b := Calibrate("claimed", corpus, DefaultFactor)
+	slope := b
+	slope.Meters = map[string]MeterBudget{"alloc_bytes": b.Meters["alloc_bytes"]}
+	tiny := Cost{InputLen: 9, Sampled: true, AllocSampled: true, AllocBytes: bound}
+	if !slope.Check(func(string, ...any) {}, tiny) {
+		t.Fatalf("precondition: the per-byte slope must reject a 9-byte input costing one bounded buffer")
+	}
+
+	b.UseBoundedAbsolute("alloc_bytes", bound)
+	b.UseBoundedAbsolute("no_such_meter", bound) // ignored
+	b.UseBoundedAbsolute("alloc_bytes", 0)       // ignored: no bound, no change
+	ceiling := b.Meters["alloc_bytes"].AbsMax
+	if want := 100000*DefaultFactor + bound; ceiling != want {
+		t.Fatalf("AbsMax = %v, want calibrated + bound = %v", ceiling, want)
+	}
+	if b.Meters["alloc_bytes"].Mode != ModeAbsolute {
+		t.Fatalf("meter must be absolute")
+	}
+
+	if b.Check(func(string, ...any) {}, tiny) {
+		t.Fatalf("GREEN: one bounded buffer for a 9-byte input must pass")
+	}
+	below := tiny
+	below.AllocBytes = uint64(ceiling) - 1
+	if b.Check(func(string, ...any) {}, below) {
+		t.Fatalf("GREEN: just below the ceiling must pass")
+	}
+	above := tiny
+	above.AllocBytes = uint64(ceiling) + 1
+	var msg string
+	if !b.Check(func(f string, a ...any) { msg = fmt.Sprintf(f, a...) }, above) || !strings.Contains(msg, "alloc_bytes") {
+		t.Fatalf("RED: just above the ceiling must fire naming alloc_bytes, got %q", msg)
+	}
+}
+
 // TestBudgetSkipsUnsampledSampleOnlyMeters guards that a cheap (unsampled)
 // input never fails on a sampled-only meter whose fields are zero.
 func TestBudgetSkipsUnsampledSampleOnlyMeters(t *testing.T) {

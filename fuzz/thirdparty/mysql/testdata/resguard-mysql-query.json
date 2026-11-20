@@ -5,20 +5,20 @@
   "seeds": 9,
   "meters": {
     "alloc_bytes": {
-      "floor": 20448,
+      "floor": 22448,
       "per_byte": 1858.909090909091,
-      "abs_max": 41943040,
+      "abs_max": 16867007,
       "mode": "absolute"
     },
     "cpu_ns": {
-      "floor": 1071000,
-      "per_byte": 97363.63636363637,
-      "abs_max": 4284000
+      "floor": 1504000,
+      "per_byte": 136727.27272727274,
+      "abs_max": 6016000
     },
     "mallocs": {
-      "floor": 114,
+      "floor": 127,
       "per_byte": 10.363636363636363,
-      "abs_max": 456
+      "abs_max": 508
     }
   }
 }
