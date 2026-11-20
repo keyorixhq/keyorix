@@ -92,3 +92,49 @@ func TestBulkRotateSecrets_Success(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.True(t, resp.Success)
 }
+
+// bulkRotateEmpty sends an empty project-wide bulk rotation as withUserCtx's
+// account and returns the recorder.
+func bulkRotateEmpty(t *testing.T, h *SecretHandler) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{})
+	req := withChiParam(httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/secrets/bulk-rotate",
+		bytes.NewReader(body)), "id", "1")
+	req = withUserCtx(req)
+	w := httptest.NewRecorder()
+	h.BulkRotateSecrets(w, req)
+	return w
+}
+
+// TestBulkRotateSecrets_InactiveActorIsForbidden: core refuses an acting account
+// that is not active (#4159) with a typed permission refusal, which the handler
+// answers 403, not 500. A missing account is the same refusal.
+func TestBulkRotateSecrets_InactiveActorIsForbidden(t *testing.T) {
+	t.Run("deactivated", func(t *testing.T) {
+		h, db := newProjectHealthHandler(t)
+		seedBulkRotateActor(t, db)
+		require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("is_active", false).Error)
+		w := bulkRotateEmpty(t, h)
+		assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	})
+	t.Run("no such account", func(t *testing.T) {
+		h, _ := newProjectHealthHandler(t)
+		w := bulkRotateEmpty(t, h)
+		assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	})
+}
+
+// TestBulkRotateSecrets_ActorReadFaultIs503: a failed read of the acting account
+// is a storage fault (STORAGE-ERR-CLASS-4), answered 503 storage_unavailable with
+// Retry-After, not a refusal and not a 500.
+func TestBulkRotateSecrets_ActorReadFaultIs503(t *testing.T) {
+	h, db := newProjectHealthHandler(t)
+	seedBulkRotateActor(t, db)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+	w := bulkRotateEmpty(t, h)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), storageUnavailableCode)
+	assert.NotEmpty(t, w.Header().Get("Retry-After"))
+}
