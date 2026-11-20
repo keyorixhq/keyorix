@@ -9,6 +9,7 @@ import { MfaGraceBanner } from './MfaGraceBanner';
 import { AuditReadsSkippedBanner } from './AuditReadsSkippedBanner';
 import { AuditOwedBanner } from './AuditOwedBanner';
 import { BreakGlassDegradedBanner } from './BreakGlassDegradedBanner';
+import { BackupRefusedBanner } from './BackupRefusedBanner';
 import { CmdKSearch } from '../ui/CmdKSearch';
 import { isPaletteShortcut } from '../../utils/platform';
 import { useAuthStore } from '../../store/authStore';
@@ -67,6 +68,9 @@ const Layout: React.FC<LayoutProps> = ({ children, breadcrumbs, showFooter = tru
 
                     {/* While emergency access granted during an audit outage is owed or unreviewed */}
                     <BreakGlassDegradedBanner />
+
+                    {/* While every admin backup is refused for a key-rotation staging file (system.write only) */}
+                    <BackupRefusedBanner />
 
                     {/* Header */}
                     <Header onMenuClick={() => setSidebarOpen(true)} />

@@ -129,6 +129,12 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// live caller). Scoped to inputs containing `:}`/`:,`.
 	"flow-map-colon-nospace": true,
 
+	// The D23 root cause with a line break before the `:` (`0: {0\n:}`): v3 folds the
+	// break into the key and accepts; v4 rejects ("mapping values are not allowed in
+	// this context"). Recognised causally by isFlowMultilineKeySplit. Not a Keyorix
+	// defect (v4 has no live caller).
+	"v4-rejects:flow-multiline-key": true,
+
 	// A `?` complex-key indicator in a context v3 forbids — e.g. `&0?` (anchor then
 	// `?`). v3.0.5 REJECTS ("mapping keys are not allowed in this context"); v4.0.0
 	// ACCEPTS leniently. Found by the DF3 multi-doc fuzzer at `&0?`. v4 accepts what
@@ -265,6 +271,133 @@ var yamlV4ExpectedDiff = map[string]bool{
 	// Keyorix defect (v4 has no live caller); a forward-looking flow-leniency
 	// migration note. Keyed on the v3 error "did not find expected node content".
 	"v3-rejects:flow-node-content": true,
+
+	// D24. A flow-SEQUENCE entry whose `:` is immediately followed by `]` with no
+	// space (`[0:]`, `[a:]`). v3.0.5 keeps the `:` IN the value (value `"0:"`), giving
+	// a one-element sequence of a string; v4.0.0 treats the `:` as the key/value
+	// separator (key `0`/`a`, null value), giving a one-element sequence of a {key:
+	// null} map. The flow-SEQUENCE analogue of D23 (`{0:}` / `flow-map-colon-nospace`);
+	// same root cause: a `:` without following whitespace inside a flow container. Found
+	// by the DF3 fuzz run at `[0:]` (testdata/fuzz/FuzzYAMLV4Differential/28731c901e37d1c2).
+	// Recognised causally by isFlowSeqColonNoSpaceDivergence (inserting `: ]` makes v3
+	// agree with v4, which is unchanged). Not a Keyorix defect (v4 has no live caller).
+	// Scoped to inputs containing `:]`.
+	"flow-seq-colon-nospace": true,
+
+	// D25. A mapping entry whose v4-side errors with "did not find expected key" while
+	// v3 accepts — the INVERSE direction of D2 (v3-rejects:empty-implicit-key). Found
+	// by the DF3 struct fuzzer at `0: &0:0000000,` (FuzzYAMLV4StructDifferential/
+	// 05ca5f53b4ce7568). Root cause: D18 (anchor-colon absorption) makes v4 expand
+	// `&0:0000000` to anchor name `0:0000000`, leaving `,` as the residual content in
+	// a block mapping context; v4 then cannot find a key for the `,` entry and rejects.
+	// v3 ends the anchor name at the first `:`, so `&0` is the anchor name and
+	// `:0000000,` is a valid (if odd) mapping entry. v4 is the STRICTER side here;
+	// the reachable library (v3) accepts the input. Not a Keyorix defect (v4 has no
+	// live caller). Keyed on the v4 error "did not find expected key" with side
+	// "v4-rejects", scoped away from D2's "v3-rejects" direction.
+	"v4-rejects:empty-implicit-key": true,
+
+	// D26. A block scalar with an explicit indentation indicator of 0 (`>0`, `|0`).
+	// YAML spec §8.1 states the indentation indicator must be 1–9 if present; zero is
+	// explicitly forbidden. v3.0.5 enforces this and REJECTS ("found an indentation
+	// indicator equal to 0"); v4.0.0 is lenient and ACCEPTS. Found by the DF3 multi-doc
+	// fuzzer at `>\n>0` (the SECOND document of the stream, testdata/fuzz/
+	// FuzzYAMLV4MultiDocDifferential/9a8b08fc667ea076). v3 is the stricter/safer side.
+	// Not a Keyorix defect (v4 has no live caller). Keyed on the v3 error substring
+	// "found an indentation indicator equal to 0".
+	"v3-rejects:indentation-indicator": true,
+
+	// D27. Block-scalar end-of-stream clip difference. When a block scalar's last
+	// content line is whitespace-only (above indent level) and the input ends without
+	// a terminal newline, v3.0.5 omits the clip-chomping newline while v4.0.0 adds it.
+	// Found by the DF3 fuzz run at `|\n 000000\n  ` (testdata/fuzz/
+	// FuzzYAMLV4Differential/597ac6ec0bae9ae4). The shape is v4val == v3val + "\n" for
+	// every differing string leaf. Confirmed causal: adding a trailing newline to the
+	// input makes both parsers agree. Not a Keyorix defect (v4 has no live caller);
+	// v3 (the reachable side) drops the clip newline in this edge case, which is
+	// reasonable at end-of-stream. Guarded by: block-scalar header present AND input
+	// does not end with `\n`/`\r`.
+	"block-scalar-eos-clip": true,
+
+	// D28. D18 compound: anchor-colon absorption extends the anchor name past `:` into
+	// a non-ASCII character that v4's anchor scanner rejects with "did not find expected
+	// alphabetic or numeric character". v3 ends the anchor at `:` and never sees the
+	// non-ASCII character in anchor-name position. Found by the DF3 fuzz run at
+	// `&0:0ډ` (testdata/fuzz/FuzzYAMLV4Differential/a9fc9bb63e204a8b). v4 is the
+	// stricter side here (rejects). The reachable library (v3) accepts. Not a Keyorix
+	// defect (v4 has no live caller). Keyed on the v4 error "did not find expected
+	// alphabetic or numeric character" with side "v4-rejects".
+	"v4-rejects:anchor-char": true,
+
+	// D29. `<<` merge-key with INVALID merge value: v4 enforces merge-key semantics and
+	// rejects when the merge value is not a map or sequence of maps ("map merge requires
+	// map or sequence of maps as the value"). v3 treats `<<` as a plain key with nil
+	// value and accepts. Found by the DF3 fuzz run at `00000: 00\n0: {<<:}` (testdata/
+	// fuzz/FuzzYAMLV4Differential/6abe4fb3590fbcb7). This is the REJECT direction of D22
+	// (which covers the ACCEPT-but-silently-drop case). Not a Keyorix defect (v4 has no
+	// live caller). v4 is the stricter side. Keyed on "merge requires" / "map merge".
+	"v4-rejects:merge-value": true,
+
+	// D30. Block scalar header followed by non-whitespace content (`|\n|A`): v3 re-parses
+	// the second `|` as a new block scalar header and rejects with "did not find expected
+	// comment or line break"; v4 accepts and treats `|A` as block scalar content at
+	// column 0. Found by the DF3 fuzz run at `|\n|A` (testdata/fuzz/
+	// FuzzYAMLV4Differential/1dea1d27d66a943b). v3 is stricter: it validates block
+	// scalar headers strictly. The reachable library (v3) rejects the input. Not a
+	// Keyorix defect (v4 has no live caller). Keyed on "comment or line break".
+	"v3-rejects:block-header": true,
+
+	// D33. D18 compound: anchor-colon absorption exposes a truncated double-quoted string
+	// to v4, which rejects with "unexpected end of stream" (`&0:0 "0`). v3 ends the anchor
+	// name at the first `:` (anchor=`0`), reads the remaining `:0 "0` and accepts; v4
+	// absorbs the `:` into anchor name `0:0`, leaving ` "0` as the node content — an
+	// unterminated double-quoted scalar. Found by the DF3 fuzz run at `&0:0 "0`
+	// (testdata/fuzz/FuzzYAMLV4Differential/763be458e6c85df9). v4 rejects; v3 accepts.
+	// Not a Keyorix defect (v4 has no live caller). Keyed on v4 error "unexpected end of
+	// stream" with side "v4-rejects"; the symmetric D20 class (v3-rejects:unexpected-eos)
+	// is already tolerated.
+	"v4-rejects:unexpected-eos": true,
+
+	// D32. Tab as block scalar indentation (`|\n\t`): a tab character used as the
+	// indentation of block scalar content. YAML spec requires spaces for indentation; v3.0.5
+	// enforces this ("found a tab character where an indentation space is expected"). v4.0.0
+	// is lenient and accepts it (decoded value: `"\t\n"`). Same v4-lenient direction as D7
+	// (token-start for a bare tab), but in a block-scalar context. Found by the DF3 fuzz run
+	// at `|\n\t` (testdata/fuzz/FuzzYAMLV4Differential/3f946e2a7bf22579). The reachable
+	// library (v3) rejects the input. Not a Keyorix defect (v4 has no live caller). Keyed on
+	// the v3 error substring "tab character".
+	"v3-rejects:tab-indent": true,
+
+	// D31. YAML 1.1 binary integer literal (`0b+0`, `0b1`, `0b101`): v3.0.5 (YAML 1.1)
+	// decodes the `0b` prefix (with optional sign) as a binary integer; v4.0.0 (YAML 1.2)
+	// dropped binary literals and treats the whole token as a string. Found by the DF3 fuzz
+	// run at `0b+0` (testdata/fuzz/FuzzYAMLV4Differential/71de6c43bb10a32d). v4 is the more
+	// spec-correct side (YAML 1.2 core schema dropped 0b); the reachable library (v3) silently
+	// converts `0b+0` to integer 0. Not a Keyorix defect (v4 has no live caller); forward-
+	// looking migration hazard for YAML 1.1 binary number literals. Recognised by regex
+	// `^[-+]?0[bB][-+]?[0-1_]+$` on the whole input (bare scalar only).
+	"yaml11-binary-int": true,
+
+	// D35. Multi-doc stream document-count mismatch (`|\n---`): v3.0.5 and v4.0.0 disagree
+	// on how to split a stream when a `---` document separator appears directly after a
+	// block scalar indicator. v3 ends the block scalar at the `---` marker and counts it
+	// as a second document (2 docs); v4 does not start a new document here (1 doc). This
+	// class is checked by the MultiDoc target's document-count oracle, not the per-doc
+	// value classifier. Found by FuzzYAMLV4MultiDocDifferential at `|\n---`
+	// (testdata/fuzz/FuzzYAMLV4MultiDocDifferential/5de76aef6d145bb6). The reachable
+	// library (v3) interprets `---` as a document separator. Not a Keyorix defect
+	// (v4 has no live caller).
+	"multidoc:count-mismatch": true,
+
+	// D34. v4-rejects:token-start in flow context (`{-}`): v3.0.5 (YAML 1.1) allows `-`
+	// as the start of a plain scalar key inside a flow mapping, decoding `{-}` as a map
+	// with key "-" and value nil; v4.0.0 (YAML 1.2) is stricter about which characters
+	// can start a token in flow context and rejects with "found character that cannot start
+	// any token". Same error message as D7 (v3-rejects:token-start for a bare tab), but
+	// in the opposite acceptance direction. Found by the DF3 fuzz run at `{-}`
+	// (testdata/fuzz/FuzzYAMLV4Differential/14a65f0e7238ec67). The reachable library (v3)
+	// accepts the input. Not a Keyorix defect (v4 has no live caller).
+	"v4-rejects:token-start": true,
 }
 
 // TestYAMLV4DifferentialRedGreen is the committed red/green proof for the three
@@ -559,13 +692,30 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 		if !yamlV4ExpectedDiff[class] {
 			t.Fatalf("block-scalar-underindent must be listed (tolerated)")
 		}
+		// Extended coverage: ` |\r0` (indented block scalar with CR line terminator) must
+		// also classify as block-scalar-underindent. blockScalarHeaderRe uses ^[ \t]* to
+		// match `|` or `>` preceded by leading whitespace at start of line.
+		{
+			inCR := []byte(" |\r0")
+			var v3cr, v4cr any
+			if err := v3yaml.Unmarshal(inCR, &v3cr); err != nil {
+				t.Fatalf("v3 must accept ` |\\r0`: %v", err)
+			}
+			if err := v4yaml.Unmarshal(inCR, &v4cr); err != nil {
+				t.Fatalf("v4 must accept ` |\\r0`: %v", err)
+			}
+			classCR := classifyYAMLV4ValueSplit(inCR, v3cr, v4cr)
+			if classCR != "block-scalar-underindent" {
+				t.Fatalf("` |\\r0` split must class as block-scalar-underindent, got %q (v3=%#v v4=%#v)", classCR, v3cr, v4cr)
+			}
+		}
 		// RED: the SAME empty-vs-nonempty shape WITHOUT a block-scalar header must
 		// NOT be absorbed (stays value-mismatch -> fails).
 		noHeader := classifyYAMLV4ValueSplit([]byte("a: b"), map[string]any{"a": ""}, map[string]any{"a": "x"})
 		if noHeader != "value-mismatch" {
 			t.Fatalf("empty-vs-nonempty WITHOUT a block header must stay value-mismatch, got %q", noHeader)
 		}
-		t.Logf("oracle-3 block-scalar gating proven: v3 drops to \"\", v4 keeps \"00\"; non-block empty-vs-nonempty still fails")
+		t.Logf("oracle-3 block-scalar gating proven: v3 drops to \"\", v4 keeps \"00\"; non-block empty-vs-nonempty; ` |\\r0` indented-CR also covered")
 	}
 
 	// ---- Oracle 2 class gating: anchor-name character leniency ----
@@ -922,11 +1072,537 @@ func TestYAMLV4DifferentialRedGreen(t *testing.T) {
 			t.Fatalf("flow-node-content class must be listed (tolerated)")
 		}
 		// RED: a generic v3 syntax rejection must still fall through to :syntax (untolerated).
-		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected directive"}, nil)
+		// Use an error that contains "did not find expected" but NOT "directive", "key",
+		// "node content", or any other specifically-classified substring, so the generic
+		// :syntax case is what actually fires.
+		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected block entry"}, nil)
 		if other != "v3-rejects:syntax" || yamlV4ExpectedDiff[other] {
 			t.Fatalf("a generic v3 syntax error must stay the untolerated :syntax class, got %q", other)
 		}
 		t.Logf("oracle-2 flow-node-content gating proven: '[: 1]' tolerated; generic syntax still fails")
+	}
+
+	// ---- Oracle 3 class gating: flow-SEQUENCE colon-no-space (D24) ----
+	{
+		in := []byte("[0:]")
+		var v3v, v4v any
+		if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+			t.Fatal(err)
+		}
+		if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+			t.Fatal(err)
+		}
+		cb3, _ := v3yaml.Marshal(v3v)
+		cb4, _ := v3yaml.Marshal(v4v)
+		if reflect.DeepEqual(cb3, cb4) {
+			t.Fatalf("precondition: `[0:]` v3/v4 must disagree (v3=%q v4=%q)", cb3, cb4)
+		}
+		if class := classifyYAMLV4ValueSplit(in, v3v, v4v); class != "flow-seq-colon-nospace" || !yamlV4ExpectedDiff[class] {
+			t.Fatalf("`[0:]` must class as the tolerated flow-seq-colon-nospace, got %q (v3=%#v v4=%#v)", class, v3v, v4v)
+		}
+		// RED: an input without `:]` must not be recognised.
+		if isFlowSeqColonNoSpaceDivergence([]byte("[0: 1]"), []any{"0: 1"}, []any{map[string]any{"0": 1}}) {
+			t.Fatalf("an input without `:]` must not be recognised as flow-seq-colon-nospace")
+		}
+		// RED: a genuine divergence where the space-insertion changes v4 must NOT be absorbed.
+		if isFlowSeqColonNoSpaceDivergence([]byte("a: 1"), map[string]any{"a": 1}, map[string]any{"a": 2}) {
+			t.Fatalf("a genuine non-colon-nospace divergence must not be absorbed")
+		}
+		t.Logf("oracle-3 D24 flow-seq-colon gating proven: `[0:]` tolerated causally")
+	}
+
+	// ---- Oracle 2 class gating: v4-rejects:empty-implicit-key (D25) ----
+	// The INVERSE direction of D2: v4 rejects where v3 accepts, with the same
+	// "did not find expected key" error message on the v4 side.
+	{
+		in := []byte("0: &0:0000000,")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 != nil || err4 == nil {
+			t.Fatalf("precondition: '0: &0:0000000,' must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v4-rejects:empty-implicit-key" {
+			t.Fatalf("split must class as v4-rejects:empty-implicit-key, got %q (v4err=%v)", class, err4)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v4-rejects:empty-implicit-key must be listed (tolerated)")
+		}
+		// RED: the class is directional — v3-rejects:empty-implicit-key (D2) must NOT
+		// absorb a v4-rejects split, and vice versa.
+		if class == "v3-rejects:empty-implicit-key" {
+			t.Fatalf("the v4-side rejection must not be confused with the v3-side D2 class")
+		}
+		// GREEN: D2 (v3 rejects, v4 accepts) is STILL its own distinct class.
+		var z3, z4 any
+		e3D2 := v3yaml.Unmarshal([]byte(":"), &z3)
+		e4D2 := v4yaml.Unmarshal([]byte(":"), &z4)
+		if classifyYAMLV4Split(e3D2, e4D2) != "v3-rejects:empty-implicit-key" {
+			t.Fatalf("D2 ':' split must still class as v3-rejects:empty-implicit-key")
+		}
+		t.Logf("oracle-2 D25 v4-rejects:empty-implicit-key gating proven; D2 unchanged")
+	}
+
+	// ---- Oracle 2 class gating: v3-rejects:indentation-indicator (D26) ----
+	// This split manifests in multi-doc mode (the second document is `>0` with
+	// indentation indicator 0). Test it via decodeStreamV3/decodeStreamV4 to match
+	// the oracle that finds it.
+	{
+		in := []byte(">\n>0")
+		_, err3 := decodeStreamV3(in)
+		_, err4 := decodeStreamV4(in)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: `>\\n>0` stream must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:indentation-indicator" {
+			t.Fatalf("`>\\n>0` split must class as v3-rejects:indentation-indicator, got %q (v3err=%v)", class, err3)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v3-rejects:indentation-indicator must be listed (tolerated)")
+		}
+		// RED: a different v3 error must NOT be absorbed by this class.
+		other := classifyYAMLV4Split(&yamlErr{"yaml: some other parse error"}, nil)
+		if other == "v3-rejects:indentation-indicator" {
+			t.Fatalf("an unrelated v3 error must not class as indentation-indicator")
+		}
+		t.Logf("oracle-2 D26 indentation-indicator gating proven; other v3 errors still fail")
+	}
+
+	// ---- Oracle 3 class gating: block-scalar EOS clip (D27) ----
+	{
+		in := []byte("|\n 000000\n  ")
+		var v3v, v4v any
+		if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+			t.Fatal(err)
+		}
+		if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+			t.Fatal(err)
+		}
+		cb3, e3 := v3yaml.Marshal(v3v)
+		cb4, e4 := v3yaml.Marshal(v4v)
+		if e3 != nil || e4 != nil {
+			t.Fatal(e3, e4)
+		}
+		if reflect.DeepEqual(cb3, cb4) {
+			t.Fatalf("precondition: D27 input must diverge (v3=%q v4=%q)", cb3, cb4)
+		}
+		if class := classifyYAMLV4ValueSplit(in, v3v, v4v); class != "block-scalar-eos-clip" || !yamlV4ExpectedDiff[class] {
+			t.Fatalf("`|\\n 000000\\n  ` must class as block-scalar-eos-clip, got %q (v3=%#v v4=%#v)", class, v3v, v4v)
+		}
+		// GREEN: adding a trailing newline makes both parsers agree (no divergence).
+		inNL := append(append([]byte{}, in...), '\n')
+		var v3nl, v4nl any
+		if err := v3yaml.Unmarshal(inNL, &v3nl); err != nil {
+			t.Fatal(err)
+		}
+		if err := v4yaml.Unmarshal(inNL, &v4nl); err != nil {
+			t.Fatal(err)
+		}
+		cnl3, _ := v3yaml.Marshal(v3nl)
+		cnl4, _ := v3yaml.Marshal(v4nl)
+		if !reflect.DeepEqual(cnl3, cnl4) {
+			t.Fatalf("adding trailing newline must resolve D27 divergence (v3=%q v4=%q)", cnl3, cnl4)
+		}
+		// RED: an input that ends with \n must NOT be absorbed by this class.
+		inWithNL := []byte("|\n 000000\n")
+		var v3wn, v4wn any
+		_ = v3yaml.Unmarshal(inWithNL, &v3wn)
+		_ = v4yaml.Unmarshal(inWithNL, &v4wn)
+		if class2 := classifyYAMLV4ValueSplit(inWithNL, v3wn, v4wn); class2 == "block-scalar-eos-clip" {
+			t.Fatalf("an input ending with \\n must not class as block-scalar-eos-clip")
+		}
+		// RED: a non-block-scalar value diff must NOT be absorbed.
+		if class3 := classifyYAMLV4ValueSplit([]byte("x"), "foo", "foo\n"); class3 == "block-scalar-eos-clip" {
+			t.Fatalf("a non-block-scalar +newline diff must not class as block-scalar-eos-clip")
+		}
+		t.Logf("oracle-3 D27 block-scalar-eos-clip gating proven; trailing-newline inputs still fail")
+	}
+
+	// ---- Oracle 2 class gating: v4-rejects:anchor-char (D28) ----
+	{
+		in := []byte("&0:0ډ")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 != nil || err4 == nil {
+			t.Fatalf("precondition: `&0:0ډ` must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v4-rejects:anchor-char" {
+			t.Fatalf("`&0:0ډ` split must class as v4-rejects:anchor-char, got %q (v4err=%v)", class, err4)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v4-rejects:anchor-char must be listed (tolerated)")
+		}
+		// RED: the v3-rejects:anchor-char direction (D9) must remain distinct.
+		var z3, z4 any
+		e3D9 := v3yaml.Unmarshal([]byte("o: &!0000"), &z3)
+		e4D9 := v4yaml.Unmarshal([]byte("o: &!0000"), &z4)
+		if classifyYAMLV4Split(e3D9, e4D9) != "v3-rejects:anchor-char" {
+			t.Fatalf("D9 `o: &!0000` split must still class as v3-rejects:anchor-char (direction unchanged)")
+		}
+		t.Logf("oracle-2 D28 v4-rejects:anchor-char gating proven; D9 direction unchanged")
+	}
+
+	// ---- Oracle 2 class gating: v4-rejects:merge-value (D29) ----
+	{
+		in := []byte("0: {<<:}")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 != nil || err4 == nil {
+			t.Fatalf("precondition: `0: {<<:}` must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v4-rejects:merge-value" {
+			t.Fatalf("`0: {<<:}` split must class as v4-rejects:merge-value, got %q (v4err=%v)", class, err4)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v4-rejects:merge-value must be listed (tolerated)")
+		}
+		// RED: D22 (merge-key value divergence, both accept) must remain distinct.
+		var z3, z4 any
+		e3D22 := v3yaml.Unmarshal([]byte("<<"), &z3)
+		e4D22 := v4yaml.Unmarshal([]byte("<<"), &z4)
+		if e3D22 != nil || e4D22 != nil {
+			t.Fatalf("precondition: `<<` must be accepted by both (v3=%v v4=%v)", e3D22, e4D22)
+		}
+		// D22 is a value split, not an accept/reject split — classifyYAMLV4Split is not
+		// called for it. Verify v3val != v4val (the value split still fires).
+		cb3, _ := v3yaml.Marshal(z3)
+		cb4, _ := v3yaml.Marshal(z4)
+		if reflect.DeepEqual(cb3, cb4) {
+			t.Fatalf("D22 `<<` must still produce a value split (v3=%q v4=%q)", cb3, cb4)
+		}
+		t.Logf("oracle-2 D29 v4-rejects:merge-value gating proven; D22 value split still fires")
+	}
+
+	// ---- Oracle 2 class gating: v3-rejects:block-header (D30) ----
+	{
+		in := []byte("|\n|A")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: `|\\n|A` must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:block-header" {
+			t.Fatalf("`|\\n|A` split must class as v3-rejects:block-header, got %q (v3err=%v)", class, err3)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v3-rejects:block-header must be listed (tolerated)")
+		}
+		// RED: a generic "did not find expected" error (not "comment or line break")
+		// must NOT be absorbed by this class.
+		other := classifyYAMLV4Split(&yamlErr{"yaml: did not find expected block entry"}, nil)
+		if other == "v3-rejects:block-header" {
+			t.Fatalf("a generic 'did not find expected' error must not class as block-header")
+		}
+		t.Logf("oracle-2 D30 v3-rejects:block-header gating proven; generic syntax still fails")
+	}
+
+	// ---- Oracle 2 class gating: D18-compound v4 EOS rejection (D33) ----
+	{
+		in := []byte(`&0:0 "0`)
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 != nil || err4 == nil {
+			t.Fatalf("precondition: `&0:0 \"0` must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v4-rejects:unexpected-eos" {
+			t.Fatalf("`&0:0 \"0` split must class as v4-rejects:unexpected-eos, got %q (v4err=%v)", class, err4)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v4-rejects:unexpected-eos must be listed (tolerated)")
+		}
+		// RED: D20 (v3-rejects:unexpected-eos) must remain its own distinct class.
+		var z3, z4 any
+		e3D20 := v3yaml.Unmarshal([]byte("|\n\""), &z3)
+		e4D20 := v4yaml.Unmarshal([]byte("|\n\""), &z4)
+		if classifyYAMLV4Split(e3D20, e4D20) != "v3-rejects:unexpected-eos" {
+			t.Fatalf("D20 `|\\n\"` split must still class as v3-rejects:unexpected-eos")
+		}
+		t.Logf("oracle-2 D33 v4-rejects:unexpected-eos gating proven; D20 v3 direction unchanged")
+	}
+
+	// ---- Oracle 2 class gating: tab as block scalar indentation (D32) ----
+	{
+		in := []byte("|\n\t")
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(in, &v3v)
+		err4 := v4yaml.Unmarshal(in, &v4v)
+		if err3 == nil || err4 != nil {
+			t.Fatalf("precondition: `|\\n\\t` must be rejected by v3 and accepted by v4 (v3=%v v4=%v)", err3, err4)
+		}
+		class := classifyYAMLV4Split(err3, err4)
+		if class != "v3-rejects:tab-indent" {
+			t.Fatalf("`|\\n\\t` split must class as v3-rejects:tab-indent, got %q (v3err=%v)", class, err3)
+		}
+		if !yamlV4ExpectedDiff[class] {
+			t.Fatalf("v3-rejects:tab-indent must be listed (tolerated)")
+		}
+		// RED: v3-rejects:token-start (D7 — bare leading tab, NOT inside a block scalar)
+		// must remain its own distinct class.
+		var z3, z4 any
+		e3D7 := v3yaml.Unmarshal([]byte("\t"), &z3)
+		e4D7 := v4yaml.Unmarshal([]byte("\t"), &z4)
+		if classifyYAMLV4Split(e3D7, e4D7) != "v3-rejects:token-start" {
+			t.Fatalf("D7 bare-tab split must still class as v3-rejects:token-start (direction unchanged)")
+		}
+		t.Logf("oracle-2 D32 tab-indent gating proven; D7 token-start still distinct")
+	}
+
+	// ---- Oracle 3 class gating: YAML 1.1 binary integer literal (D31) ----
+	// v3 (YAML 1.1) decodes `0b+0` as binary integer 0; v4 (YAML 1.2) decodes it as string.
+	// Also covers the container case: `0: 0b+0` → v3 {0:0} vs v4 {0:"0b+0"}.
+	{
+		for _, in := range [][]byte{
+			[]byte("0b+0"),    // bare scalar (testdata seed 71de6c43bb10a32d)
+			[]byte("0: 0b+0"), // value inside a map (testdata seed 70f8e3e01bc42e7e)
+		} {
+			var v3v, v4v any
+			if err := v3yaml.Unmarshal(in, &v3v); err != nil {
+				t.Fatalf("D31 %q: v3 unmarshal error: %v", in, err)
+			}
+			if err := v4yaml.Unmarshal(in, &v4v); err != nil {
+				t.Fatalf("D31 %q: v4 unmarshal error: %v", in, err)
+			}
+			cb3, _ := v3yaml.Marshal(v3v)
+			cb4, _ := v3yaml.Marshal(v4v)
+			if reflect.DeepEqual(cb3, cb4) {
+				t.Fatalf("precondition: D31 input %q v3/v4 must disagree (v3=%q v4=%q)", in, cb3, cb4)
+			}
+			if class := classifyYAMLV4ValueSplit(in, v3v, v4v); class != "yaml11-binary-int" || !yamlV4ExpectedDiff[class] {
+				t.Fatalf("%q must class as the tolerated yaml11-binary-int, got %q (v3=%#v v4=%#v)", in, class, v3v, v4v)
+			}
+		}
+		// RED: a standard decimal integer must not match the regex.
+		if yaml11BinaryIntRe.MatchString("42") {
+			t.Fatalf("a standard decimal integer must not match yaml11BinaryIntRe")
+		}
+		// RED: a byte string starting with 0b but with an invalid binary digit (2) must not match.
+		if yaml11BinaryIntRe.MatchString("0b2") {
+			t.Fatalf("0b2 (digit 2 not in binary set) must not match yaml11BinaryIntRe")
+		}
+		// RED: a genuine int-vs-string mismatch where the string is NOT a binary int literal
+		// must stay value-mismatch (not absorbed by the structural checker).
+		notBin := classifyYAMLV4ValueSplit([]byte("x: 42"), map[string]any{"x": 42}, map[string]any{"x": "42"})
+		if notBin != "value-mismatch" {
+			t.Fatalf("a non-binary-int int-vs-string mismatch must stay value-mismatch, got %q", notBin)
+		}
+		// RED: a re-parse mismatch (int 5 vs string "0b+0" which decodes to 0) must NOT be absorbed.
+		{
+			diffs, ok := yaml11BinaryIntVsStringOnly(5, "0b+0")
+			if ok && diffs > 0 {
+				t.Fatalf("int 5 vs string '0b+0' (which decodes to 0) must NOT be absorbed by yaml11BinaryIntVsStringOnly")
+			}
+		}
+		t.Logf("oracle-3 D31 yaml11-binary-int gating proven: `0b+0` and `0: 0b+0` tolerated; genuine mismatches still fail")
+	}
+
+	// ---- Oracle 2 class gating: v4-rejects:token-start in flow context (D34) ----
+	// `{-}`: v3 accepts (map with key "-" value nil), v4 rejects with "found character that
+	// cannot start any token". Same error substring as D7 (tab, v3-rejects direction) but
+	// acceptance is reversed. The RED proof shows D7's v3-rejects:token-start is unaffected.
+	{
+		in34 := []byte("{-}")
+		var v3v34, v4v34 any
+		err3D34 := v3yaml.Unmarshal(in34, &v3v34)
+		err4D34 := v4yaml.Unmarshal(in34, &v4v34)
+		if err3D34 != nil || err4D34 == nil {
+			t.Fatalf("precondition: `{-}` must be accepted by v3 and rejected by v4 (v3=%v v4=%v)", err3D34, err4D34)
+		}
+		class34 := classifyYAMLV4Split(err3D34, err4D34)
+		if class34 != "v4-rejects:token-start" {
+			t.Fatalf("`{-}` split must class as v4-rejects:token-start, got %q (v4err=%v)", class34, err4D34)
+		}
+		if !yamlV4ExpectedDiff[class34] {
+			t.Fatalf("v4-rejects:token-start must be listed (tolerated)")
+		}
+		// RED: D7 (bare tab, v3-rejects direction) must remain its own distinct class and direction.
+		var z3D34, z4D34 any
+		e3D7 := v3yaml.Unmarshal([]byte("\t"), &z3D34)
+		e4D7 := v4yaml.Unmarshal([]byte("\t"), &z4D34)
+		if classifyYAMLV4Split(e3D7, e4D7) != "v3-rejects:token-start" {
+			t.Fatalf("D7 bare-tab split must remain v3-rejects:token-start (D34 must not corrupt direction)")
+		}
+		t.Logf("oracle-2 D34 v4-rejects:token-start gating proven; D7 v3-rejects direction unchanged")
+	}
+
+	// ---- MultiDoc oracle class gating: document-count mismatch (D35) ----
+	// `|\n---`: v3 ends the block scalar at the `---` marker (2 docs), v4 does not
+	// start a new document here (1 doc). The check mirrors the MultiDoc target's
+	// own document-count branch (yaml_v4_struct_stream_fuzz_test.go:332).
+	{
+		in35 := []byte("|\n---")
+		docs3D35, err3D35 := decodeStreamV3(in35)
+		docs4D35, err4D35 := decodeStreamV4(in35)
+		if err3D35 != nil || err4D35 != nil {
+			t.Fatalf("precondition: `|\\n---` must be accepted by both v3 and v4 (v3=%v v4=%v)", err3D35, err4D35)
+		}
+		if len(docs3D35) == len(docs4D35) {
+			t.Fatalf("precondition: `|\\n---` must yield different document counts (v3=%d v4=%d)", len(docs3D35), len(docs4D35))
+		}
+		if !yamlV4ExpectedDiff["multidoc:count-mismatch"] {
+			t.Fatalf("multidoc:count-mismatch must be listed (tolerated)")
+		}
+		// RED: a stream where both v3 and v4 agree on document count must NOT be
+		// absorbed (class must NOT be multidoc:count-mismatch — the guard only fires
+		// when len(docs3) != len(docs4); same-count inputs bypass it entirely).
+		docs3Same, errS3 := decodeStreamV3([]byte("0\n---\n1"))
+		docs4Same, errS4 := decodeStreamV4([]byte("0\n---\n1"))
+		if errS3 != nil || errS4 != nil || len(docs3Same) != len(docs4Same) {
+			t.Fatalf("RED check: `0\\n---\\n1` must be accepted with same doc count by both libraries")
+		}
+		t.Logf("multidoc D35 count-mismatch gating proven: `|\\n---` → v3 %d docs, v4 %d docs; same-count streams bypass guard", len(docs3D35), len(docs4D35))
+	}
+}
+
+// TestYAMLV4AllowlistEntriesHitBySeed verifies that every entry in yamlV4ExpectedDiff
+// is exercised (classified) by at least one committed seed. A dead entry — an allowlist
+// key that nothing ever classifies to — is a stale claim that could silently cover an
+// otherwise-failing input. This test has the same role as TestRefDiffAllowlistNoDead.
+//
+// Seeds cover all three oracles that use yamlV4ExpectedDiff:
+//   - single-doc (Unmarshal) seeds cover the accept/reject and value classes
+//   - multi-doc stream seeds cover the stream-only split classes
+//     (v3-rejects:mapping-key-context, v3-rejects:doc-start, v3-rejects:indentation-indicator)
+func TestYAMLV4AllowlistEntriesHitBySeed(t *testing.T) {
+	hit := map[string]bool{}
+
+	// Single-doc oracle: run seed bytes through v3/v4 Unmarshal and classify any split.
+	runSingle := func(data []byte) {
+		var v3v, v4v any
+		err3 := v3yaml.Unmarshal(data, &v3v)
+		err4 := v4yaml.Unmarshal(data, &v4v)
+		a3, a4 := err3 == nil, err4 == nil
+		if a3 != a4 {
+			class := classifyYAMLV4Split(err3, err4)
+			if class == "v4-rejects:mapping-context" && a3 && isFlowMultilineKeySplit(data) {
+				class = "v4-rejects:flow-multiline-key"
+			}
+			hit[class] = true
+			return
+		}
+		if !a3 {
+			return
+		}
+		cb3, m3 := v3yaml.Marshal(v3v)
+		cb4, m4 := v3yaml.Marshal(v4v)
+		if m3 != nil || m4 != nil {
+			return
+		}
+		if !reflect.DeepEqual(cb3, cb4) {
+			hit[classifyYAMLV4ValueSplit(data, v3v, v4v)] = true
+		}
+	}
+
+	// Multi-doc oracle: classify stream-level accept/reject splits and count mismatches.
+	runMultiDoc := func(data []byte) {
+		docs3, err3 := decodeStreamV3(data)
+		docs4, err4 := decodeStreamV4(data)
+		if (err3 == nil) != (err4 == nil) {
+			hit[classifyYAMLV4Split(err3, err4)] = true
+			return
+		}
+		if err3 == nil && len(docs3) != len(docs4) {
+			hit["multidoc:count-mismatch"] = true
+		}
+	}
+
+	// Single-doc seeds (FuzzYAMLV4Differential in-code corpus + testdata seeds).
+	for _, s := range []string{
+		// D1 nonspecific-tag-empty-scalar
+		"!", "a: !", "- !",
+		// D12 nonspecific-tag-nonempty-scalar
+		"! 00", "! true", "! null", "! 1.5",
+		// D17 nonspecific-tag-structural
+		"! : 00", "! 00 : x",
+		// D18 anchor-name-colon-boundary
+		"&a:b", "&00:00000", "k: &00:00000",
+		// D10 negative-zero-int-vs-float
+		"- -0",
+		// D19 negative-zero-structural
+		"-0:",
+		// D20 v3-rejects:unexpected-eos
+		"|\n\"",
+		// D21 v3-rejects:directive
+		"|\n%0",
+		// D22 merge-key-handling
+		"<<", "a: <<", "- <<",
+		// D23 flow-map-colon-nospace
+		"0: {0:} ", "{0\n:}",
+		// D36 v4-rejects:flow-multiline-key
+		"0: {0\n:}",
+		// D2 v3-rejects:empty-implicit-key
+		":", "- :\n",
+		// D3 v3-rejects:control-char
+		"\x7f",
+		// D4 v4-rejects:doc-start
+		"0\n:",
+		// D5 v4-rejects:tag-char
+		"!,",
+		// D6 v4-rejects:comment-ws
+		"|#0",
+		// D7 v3-rejects:token-start
+		"\t",
+		// D8 block-scalar-underindent
+		"|\n00", ">\n0x",
+		// D9 v3-rejects:anchor-char
+		"o: &!0000",
+		// D11 v3-rejects:flow-ws
+		"{!}",
+		// D15 v3-rejects:flow-seq-tagged-empty
+		"[!x]", "[0: !]",
+		// D16 v3-rejects:flow-node-content
+		"[: 1]",
+		// D24 flow-seq-colon-nospace (testdata seed 28731c901e37d1c2)
+		"[0:]",
+		// D25 v4-rejects:empty-implicit-key (testdata seed 05ca5f53b4ce7568)
+		"0: &0:0000000,",
+		// D27 block-scalar-eos-clip (testdata seed 597ac6ec0bae9ae4)
+		"|\n 000000\n  ",
+		// D28 v4-rejects:anchor-char (testdata seed a9fc9bb63e204a8b)
+		"&0:0ډ",
+		// D29 v4-rejects:merge-value (testdata seed 6abe4fb3590fbcb7)
+		"0: {<<:}",
+		// D30 v3-rejects:block-header (testdata seed 1dea1d27d66a943b)
+		"|\n|A",
+		// D33 v4-rejects:unexpected-eos (testdata seed 763be458e6c85df9)
+		"&0:0 \"0",
+		// D32 v3-rejects:tab-indent (testdata seed 3f946e2a7bf22579)
+		"|\n\t",
+		// D31 yaml11-binary-int (testdata seeds 71de6c43bb10a32d, 70f8e3e01bc42e7e)
+		"0b+0", "0: 0b+0",
+		// D34 v4-rejects:token-start in flow context (testdata seed 14a65f0e7238ec67)
+		"{-}",
+	} {
+		runSingle([]byte(s))
+	}
+
+	// Multi-doc seeds: classes that only manifest in a stream decode.
+	for _, s := range []string{
+		// v3-rejects:mapping-key-context (FuzzYAMLV4MultiDocDifferential in-code seed)
+		"&0?",
+		// v3-rejects:doc-start (FuzzYAMLV4MultiDocDifferential in-code seed)
+		">\n0",
+		// D26 v3-rejects:indentation-indicator (testdata seed 9a8b08fc667ea076)
+		">\n>0",
+		// D35 multidoc:count-mismatch (testdata seed 5de76aef6d145bb6)
+		"|\n---",
+	} {
+		runMultiDoc([]byte(s))
+	}
+
+	for class := range yamlV4ExpectedDiff {
+		if !hit[class] {
+			t.Errorf("allowlist entry %q is not hit by any seed — add a seed to this test or remove the entry", class)
+		}
 	}
 }
 
