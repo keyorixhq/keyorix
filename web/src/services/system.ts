@@ -56,6 +56,23 @@ export interface SystemSecurityInfo {
      * -1 when the server could not read it. Drives BreakGlassDegradedBanner.
      */
     break_glass_degraded?: SystemBreakGlassDegraded;
+    /**
+     * Present only for system.write callers, and only while `admin backup` is refused
+     * for a key-rotation staging file (#4105, server/http/handlers/system_backup_refused.go).
+     * Absent once the file is moved. Drives BackupRefusedBanner.
+     */
+    backup_refused?: SystemBackupRefused;
+}
+
+export interface SystemBackupRefused {
+    /** "key-rotation-staging-file" (backup exit 4) or "staging-file-check-failed" (exit 1). */
+    reason: string;
+    /** Staging files present, as the backup names them. */
+    files?: string[];
+    /** True when only the KEK salt's staging file is present. */
+    staging_salt_only?: boolean;
+    /** The operator's next step, one sentence, from the server. */
+    remedy: string;
 }
 
 export interface SystemAuditOwed {
