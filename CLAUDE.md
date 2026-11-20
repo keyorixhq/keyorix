@@ -350,6 +350,41 @@ same idea applied to a mechanism already in front of you.
   assertion that could have told `CreateNotification` was a permanently-
   failing stub from `CreateNotification` genuinely working.
 
+## Writing a FINDING doc
+
+A FINDING doc is a narrative record of a confirmed bug — what it is, how it was found,
+how to reproduce it, and (once fixed) what test proves it stays fixed. Use the template
+at `docs/findings/TEMPLATE.md`. Filename: `docs/findings/YYYY-MM-DD-FINDING-<slug>.md`.
+
+**Required field: `**Regression test:**`** — name the one canonical Go test function
+that proves the bug is fixed and will stay fixed:
+
+```
+**Regression test:** `TestFunctionName` (`path/to/package`)
+```
+
+where `path/to/package` is the package directory relative to the repo root
+(e.g. `server/http`, `internal/core`). If no deterministic test applies (a contained
+third-party-library bug with no Keyorix code change, a process-only finding), use:
+
+```
+**Regression test:** N/A — <reason>
+```
+
+`TestFindingRegressionTests_NamedTestsExist` (`internal/docsdrift`) verifies every
+doc that carries this field: it confirms the named function exists in the stated
+package. It does **not** verify the test passes (CI's job) or that the test actually
+exercises the specific bug (the author's job). This is a traceability aid, not an
+automatic test generator — a human still writes the assertions.
+
+**Optional field: `**KFZ id:**`** — include only for findings that originated in or
+were cross-filed to the keyorix-private fuzz-corpus registry. Omit for internal Keyorix
+findings (the common case).
+
+Finding docs that predate this requirement carry no `**Regression test:**` field and are
+silently skipped by the checker. Do not retroactively add the field to every old doc —
+only add it when you have a verified test name to put there.
+
 ## Closing a security fix
 
 - Add a file to `docs/security-closures.d/<claim_id>.tsv` (one row: claim id,
