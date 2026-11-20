@@ -1,54 +1,128 @@
 package configspace
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
+	yaml "go.yaml.in/yaml/v4"
+
 	"github.com/keyorixhq/keyorix/internal/config"
 )
 
 const fuzzCanary = "cnryfuzz0123456789ab"
+
+// envCanary is the value the harness puts into the env-sourced secrets
+// (KEYORIX_SIEM_TOKEN, KEYORIX_DB_PASSWORD, KEYORIX_SCIM_TOKEN). It differs from
+// fuzzCanary so that an error echoing it is always a leak: nothing but a secret
+// accessor can bring it into an error text, whatever the document says.
+const envCanary = "cnryenv0123456789abcd"
 
 // unknownKeyEcho matches the part of a load error that repeats a key NAME taken from the
 // file ("unknown key \"x\" at the top level of the file ..."). Naming the misspelt key is
 // the point of that message, so a canary that the fuzzer typed as a key name is not a
 // disclosure of a secret value. Values, DSNs, tokens and every other part of the error are
 // still checked.
-var unknownKeyEcho = regexp.MustCompile(`unknown key "[^"]*"|field \S+ not found in type [\w.]+`)
+//
+// The field branch allows spaces in the key (YAML keys may contain them) but stops at ';'
+// and newlines: yaml v4 joins several construct errors with "; ", and a greedy match would
+// mask a value echo that sits between two key echoes. A key containing ';' therefore stays
+// unmasked, which fails closed. Same pattern as configcompat's keyEcho.
+var unknownKeyEcho = regexp.MustCompile(`unknown key "[^"]*"|field [^;\n]+ not found in type [\w.]+`)
 
 // leaksCanary reports whether an error text discloses the canary outside an unknown-key echo.
 func leaksCanary(verdict string) bool {
-	return strings.Contains(unknownKeyEcho.ReplaceAllString(verdict, `-`), fuzzCanary)
+	return leaks(verdict, fuzzCanary)
 }
 
-// secretCanaryLoaded reports whether the fuzz canary value appears in a secret-typed
-// field of the loaded config (as determined by IsSecretPath). When the canary appears
-// only in non-secret fields — such as an enum or free-text field like storage.type —
-// an error echoing it is not a secret disclosure and must not be flagged.
+func leaks(verdict, canary string) bool {
+	return strings.Contains(unknownKeyEcho.ReplaceAllString(verdict, `-`), canary)
+}
+
+// i4Leak is the I4 verdict: does this error text disclose a secret? It fails closed and
+// exempts exactly one case, an echo of fuzzCanary that the document placed only under
+// non-secret paths of a config that loaded (KFZ-2026-167: Validate echoing an invalid
+// storage.type). Everything else that echoes a canary is flagged:
+//   - envCanary anywhere outside a key echo (env-sourced secrets never sit in the document);
+//   - fuzzCanary in a load error (cfg == nil, loaded false): nothing tells a load error's
+//     echo apart from a secret value;
+//   - fuzzCanary when any scalar under a secret path of the document holds it, including
+//     slice elements such as sso.providers[].client_secret, or when the document does not
+//     decode (secretCanaryInDoc fails closed).
 //
-// Slice-of-struct paths (e.g. sso.providers[].client_secret) are not checked here
-// because lookupEffective does not walk slice elements; this is a known gap.
-func secretCanaryLoaded(cfg *config.Config) bool {
-	if cfg == nil {
+// It does not see a secret that reaches a non-secret field through ${VAR} expansion of
+// server.http.domain/allowed_origins: such an echo carries envCanary and is flagged.
+func i4Leak(verdict string, data []byte, loaded bool) bool {
+	if leaks(verdict, envCanary) {
+		return true
+	}
+	if !leaks(verdict, fuzzCanary) {
 		return false
 	}
-	for _, e := range Surface() {
-		if !e.Secret {
-			continue
+	return !loaded || secretCanaryInDoc(data)
+}
+
+// secretCanaryInDoc reports whether fuzzCanary sits in a scalar value under a secret path
+// (IsSecretPath) of any YAML document in data. Sequence elements add "[]" to the path, so
+// sso.providers[].client_secret is checked as client_secret. Aliases are resolved by the
+// decoder, so an anchor defined under a non-secret key and used under a secret one counts.
+// A canary in a map KEY is treated as a key name (as unknownKeyEcho does). It returns true
+// when data does not decode, so an input the walk cannot read is flagged rather than exempt.
+func secretCanaryInDoc(data []byte) bool {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	for {
+		var doc any
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return false
 		}
-		val, ok := lookupEffective(cfg, e.Path)
-		if !ok {
-			continue
+		if err != nil {
+			return true
 		}
-		if strings.Contains(fmt.Sprint(val), fuzzCanary) {
+		if secretCanaryIn("", doc) {
 			return true
 		}
 	}
+}
+
+func secretCanaryIn(path string, v any) bool {
+	switch n := v.(type) {
+	case map[string]any:
+		for k, c := range n {
+			if secretCanaryIn(joinPath(path, k), c) {
+				return true
+			}
+		}
+	case map[any]any:
+		for k, c := range n {
+			if secretCanaryIn(joinPath(path, fmt.Sprint(k)), c) {
+				return true
+			}
+		}
+	case []any:
+		for _, c := range n {
+			if secretCanaryIn(path+"[]", c) {
+				return true
+			}
+		}
+	case nil:
+	default:
+		return IsSecretPath(path) && strings.Contains(fmt.Sprint(n), fuzzCanary)
+	}
 	return false
+}
+
+func joinPath(path, key string) string {
+	if path == "" {
+		return key
+	}
+	return path + "." + key
 }
 
 var fuzzSeeds = []string{
@@ -62,6 +136,8 @@ var fuzzSeeds = []string{
 	"sso:\n  enabled: true\n  providers:\n    - name: okta\n      type: oidc\n      issuer: https://idp.example.com\n      client_id: a\n      client_secret: " + fuzzCanary + "\n      redirect_url: https://k.example.com/auth/sso/okta/callback\n      trust_asserted_email: true\n",
 	"storage: {type: remote}\nserver: {grpc: {enabled: true, port: \"9090\", tls: {auto_cert: true}}}\n",
 	"environment: development\nserver: {http: {enabled: true, port: \"0\", domain: \"${KEYORIX_CS_UNSET:-x.example.com}\", allowed_origins: [\"${KEYORIX_CS_UNSET}\"]}}\n",
+	// KFZ-2026-167: Validate echoes a canary that sits only in a non-secret enum
+	"storage:\n  type: " + fuzzCanary + "\n",
 }
 
 // FuzzConfigLoadValidate drives config.Load and Config.Validate with arbitrary YAML and a
@@ -104,7 +180,7 @@ func FuzzConfigLoadValidate(f *testing.F) {
 			case strings.HasSuffix(name, "_FILE"):
 				val = filepath.Join(dir, "missing")
 			default:
-				val = fuzzCanary
+				val = envCanary
 			}
 			if val == "" {
 				t.Setenv(name, "")
@@ -135,7 +211,7 @@ func FuzzConfigLoadValidate(f *testing.F) {
 			return "", c
 		}
 		v1, cfg := load()
-		if leaksCanary(v1) && secretCanaryLoaded(cfg) {
+		if i4Leak(v1, data, cfg != nil) {
 			t.Fatalf("secret value in error text: %s", v1)
 		}
 		if v2, _ := load(); v2 != v1 {

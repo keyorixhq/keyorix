@@ -45,6 +45,10 @@ func FuzzConfigCompat(f *testing.F) {
 	// a few non-file seeds that stress the key-naming and canary paths
 	f.Add([]byte(Canary+"zz_unknown: 1\n"), uint8(0))
 	f.Add([]byte("server:\n  http:\n    token: "+Canary+"\n"), uint8(3))
+	// KFZ-2026-166: a spaced key name that starts with the canary
+	f.Add([]byte(Canary+" 000000000: 00\n"), uint8(0))
+	// several "; "-joined construct errors around a canary value
+	f.Add([]byte("a b: 1\nsecurity:\n  login_lockout:\n    max_attempts: "+Canary+"\nc d: 1\n"), uint8(0))
 
 	dir := f.TempDir()
 	env := NewEnv(dir)

@@ -208,6 +208,28 @@ func TestI1Robust_KeyPrefixNotALeak(t *testing.T) {
 	}
 }
 
+// TestI1Robust_JoinedConstructErrors drives the real loader into three "; "-joined
+// construct errors and plants a value echo between the two key echoes
+// (REVIEW-4541 LOW-1): keyEcho must stop at "; " and leave the value visible.
+func TestI1Robust_JoinedConstructErrors(t *testing.T) {
+	env := newEnv(t)
+	data := []byte("a b: 1\nsecurity:\n  login_lockout:\n    max_attempts: " + Canary + "\nc d: 1\n")
+	got := env.Load(data).Verdict
+	if strings.Count(got, "; ") < 2 || strings.Count(got, "not found in type") < 2 {
+		t.Fatalf("premise: want three joined construct errors, got %q", got)
+	}
+	if fnd := CheckI1Robust(env.Load, data); len(fnd) != 0 {
+		t.Fatalf("green: real loader output flagged: %v", fnd)
+	}
+	first, rest, _ := strings.Cut(got, "; ")
+	_, last, _ := strings.Cut(rest, "; ")
+	planted := first + "; line 4: cannot construct !!str `" + Canary + "` into int; " + last
+	plantedLoader := func(_ []byte) LoadResult { return LoadResult{Verdict: planted} }
+	if fnd := CheckI1Robust(plantedLoader, data); len(fnd) == 0 {
+		t.Fatalf("red: value echo between two key echoes masked: %s", planted)
+	}
+}
+
 func TestI2_PlantRedGreen(t *testing.T) {
 	m := mustModel(t)
 	env := newEnv(t)
