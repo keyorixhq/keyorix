@@ -34,6 +34,11 @@
 # backup-restore uses dsn2 (source), dsn3 (restore target) and dsn4 (tamper leg; without it that
 # leg says SKIP inside the drill). Without the directory the PostgreSQL legs are SKIP.
 #
+# --cli-bin FILE (RC_GATE_CLI_BIN): drive the drills with this CLI instead of the candidate's own
+# release CLI. Needed only when the candidate is OLDER than the drills in this checkout (the drills
+# pass the password through KEYORIX_PASSWORD, which the v0.96.3 CLI does not read). The servers stay
+# the released binaries. The result records `# cli-override` and --check-result refuses it.
+#
 # Environment: RC_GATE_PG_DSN_DIR, RC_GATE_PLATFORM (default: this host, e.g. linux_amd64),
 # RC_GATE_VERIFY_ARGS (extra verify-release.sh arguments, e.g. "--skip-images --skip-charts"),
 # RC_GATE_REPO (default keyorixhq/keyorix), GITHUB_TOKEN (API rate limit only), RC_GATE_CURL_TIMEOUT
@@ -53,6 +58,7 @@ API_BASE=${RC_GATE_API_BASE:-https://api.github.com}
 CURL_TIMEOUT=${RC_GATE_CURL_TIMEOUT:-900}
 
 REFRESH=0
+CLI_OVERRIDE=${RC_GATE_CLI_BIN:-}
 STRICT=0
 ALLOW_SKIP=0
 OUT=""
@@ -195,7 +201,7 @@ download_candidate() { # -> 0 when every asset named in checksums.txt, plus the 
   done <<EOF
 $(awk '{ print $2 }' "$dir/checksums.txt")
 EOF
-  [ "$bad" = 0 ] && DL_N=$((count + 2))
+  [ "$bad" = 0 ] && DL_N=$((count + 3)) # the listed files, checksums.txt, .sig and .pem
 }
 
 download_previous() {
@@ -246,7 +252,7 @@ run_drill() {
       DRILL_BACKEND="$backend" DRILL_ROOT="$OUT/drills" \
       DRILL_OLD_SERVER_BIN="$OUT/$PREV/keyorix-server_$PLATFORM" \
       DRILL_SERVER_BIN="$OUT/$CAND/keyorix-server_$PLATFORM" \
-      DRILL_CLI_BIN="$OUT/$CAND/keyorix_$PLATFORM" \
+      DRILL_CLI_BIN="${CLI_OVERRIDE:-$OUT/$CAND/keyorix_$PLATFORM}" \
       "$@" bash "$DRILLS/$script"
   ) >"$logf" 2>&1 || rc=$?
   last=$(awk 'NF { l = $0 } END { print l }' "$logf")
@@ -304,6 +310,10 @@ check_result() {
   [ -r "$f" ] || { log "rc-gate: cannot read $f"; return 1; }
   head=$(head -n 1 "$f")
   case $head in "# rc-gate"*) ;; *) log "rc-gate: $f is not an rc-gate result (first line: ${head:-empty})"; return 1 ;; esac
+  if grep -q '^# cli-override' "$f"; then
+    log "rc-gate: $f was made with --cli-bin (not the candidate's release CLI); rerun without it"
+    return 1
+  fi
   if [ -n "$want" ]; then
     case $head in *"candidate=$want"$'\t'*) ;; *) log "rc-gate: $f is for another candidate (header: $head)"; return 1 ;; esac
   fi
@@ -326,6 +336,7 @@ main() {
     case $1 in
       --dir) OUT=${2:?--dir needs DIR}; shift 2 ;;
       --refresh) REFRESH=1; shift ;;
+      --cli-bin) CLI_OVERRIDE=${2:?--cli-bin needs FILE}; shift 2 ;;
       --strict) STRICT=1; shift ;;
       --allow-skip) ALLOW_SKIP=1; shift ;;
       --check-result) CHECK_FILE=${2:?--check-result needs FILE}; shift 2 ;;
@@ -409,6 +420,10 @@ main() {
   printf '# old-server\t%s\n# new-server\t%s\n' \
     "$("$OUT/$PREV/keyorix-server_$PLATFORM" --version 2>&1 | head -n 1)" \
     "$("$OUT/$CAND/keyorix-server_$PLATFORM" --version 2>&1 | head -n 1)" >>"$TSV"
+  if [ -n "$CLI_OVERRIDE" ]; then
+    printf '# cli-override\t%s\n' "$CLI_OVERRIDE" >>"$TSV"
+    log "NOTE: the drills drive the servers with $CLI_OVERRIDE, not the candidate's release CLI; this result is not eligible for the final-tag check"
+  fi
   run_all_drills
   summary
 }
