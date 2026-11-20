@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"time"
@@ -52,12 +53,25 @@ func RecoverClientPanic(component, name, op string, errp *error) func() {
 		if r == nil {
 			return
 		}
-		msg := ports.RedactSensitive(fmt.Sprint(r))
+		msg := ports.RedactSensitive(panicSummary(r))
 		stack := ports.RedactSensitive(string(debug.Stack()))
 		log.Printf("SECURITY: %s %q panicked in %s (contained, reported as a typed error): %s\n%s",
 			component, name, op, strconv.Quote(msg), stack)
 		*errp = &EngineClientPanicError{Component: component, Name: name, Op: op}
 	}
+}
+
+// panicSummary is what the log may say about a recovered panic value. A client library
+// that panics while parsing a target reply can put reply bytes into the value
+// (panic(fmt.Sprintf("unexpected %q", frame))), and the target is the party we do not
+// trust, so only two things are logged: the message of a runtime.Error (a bounds,
+// nil-dereference or type-assertion failure: it carries indices, lengths and type
+// names, never data) and the Go type of anything else. The stack still says where.
+func panicSummary(r any) string {
+	if re, ok := r.(runtime.Error); ok {
+		return re.Error()
+	}
+	return fmt.Sprintf("%T (value withheld: it may carry target reply bytes)", r)
 }
 
 // containedEngine decorates a CredentialEngine so a client-library panic in Issue,
