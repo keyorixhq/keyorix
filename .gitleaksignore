@@ -9,3 +9,7 @@
 # Same demo-fixture literal as the entry above, as it appears in this branch (#2757 commit carried here by cherry-pick/rebase; removed in the ci.yml fix commit on this branch).
 78603ff28f638349789fec1889e1ad37de045c6b:.github/workflows/ci.yml:generic-api-key:1620
 83f8361c36a22ae8db059e55d288ffc81cb8fd84:.github/workflows/ci.yml:generic-api-key:1620
+# False positive (#4542): rbacReconcilePendingKey is the name of a system_metadata
+# row ("rbac_reconcile_pending_grants_v1"), flagged by generic-api-key because the
+# identifier contains "Key". It is a key NAME, not a secret.
+9c66b8dc78ae515af771a60686db1c9155e9650a:internal/core/rbac_reconcile.go:generic-api-key:34

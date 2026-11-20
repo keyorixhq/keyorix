@@ -27,6 +27,13 @@ var ErrPATExpired = errors.New("token expired")
 // as a 401.
 var ErrPATRevoked = errors.New("token revoked")
 
+// ErrPATOwnerNotActive is returned by CurrentPATRestriction when the token's
+// owning account is gone, inactive, or login-blocked (suspended,
+// deprovisioned, unrecognized state). Like ErrPATRevoked it is a definitive
+// deny, not a transient lookup failure: the auth middleware's cache-hit path
+// denies and evicts on it.
+var ErrPATOwnerNotActive = errors.New("token owner is not active")
+
 // IsPATExpired reports whether pat has a non-nil ExpiresAt that is in the past
 // relative to now.  It is a pure function — injectable for testing.
 func IsPATExpired(pat *models.PersonalAccessToken, now time.Time) bool {
