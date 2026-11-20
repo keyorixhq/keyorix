@@ -448,6 +448,13 @@ type KeyorixCore struct {
 	auditVerifySegments int
 	// auditVerifyMinWidth overrides auditVerifyMinSegmentWidth (tests only; 0 = default).
 	auditVerifyMinWidth uint
+	// auditPosture caches the chain check the compliance posture shows
+	// (compliance_posture_audit_refresh.go), guarded by auditPostureMu.
+	// auditPostureWalk replaces the check itself (tests only; nil = the same
+	// bounded tail check GET /audit/verify runs).
+	auditPostureMu   sync.Mutex
+	auditPosture     *auditPostureCache
+	auditPostureWalk func(context.Context) (*AuditVerifyReport, error)
 	// auditVerifyJobMu admits one ?full=true job per process; auditVerifyJobID
 	// holds the id of the job this process is running ("" = none).
 	auditVerifyJobMu sync.Mutex
