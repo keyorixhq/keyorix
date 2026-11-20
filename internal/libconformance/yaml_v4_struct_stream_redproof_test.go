@@ -207,13 +207,25 @@ func TestYAMLV4StructStreamRedGreen(t *testing.T) {
 		t.Logf("S3 GREEN proven: 2-doc stream decodes identically in both")
 	}
 
-	// The document-count-mismatch class is NOT in the table, so a count split is a
-	// finding (RED direction). Prove the gate: the class must be absent.
+	// D35: multidoc:count-mismatch is now a tolerated class (added after the fuzzer found
+	// `|\n---` → v3 returns 2 docs, v4 returns 1 doc; a confirmed YAML 1.1→1.2 divergence).
+	// The original premise ("no count split is ever expected") was wrong once a real one was
+	// found and triaged. The gate is now: the confirmed case must actually produce a count
+	// split, and the class must be listed in the allowlist.
 	{
-		if yamlV4ExpectedDiff["multidoc:count-mismatch"] {
-			t.Fatalf("RED gate broken: multidoc:count-mismatch must NOT be tolerated")
+		inCM := []byte("|\n---")
+		d3CM, e3CM := decodeStreamV3(inCM)
+		d4CM, e4CM := decodeStreamV4(inCM)
+		if e3CM != nil || e4CM != nil {
+			t.Fatalf("precondition: `|\\n---` must be accepted by both (v3=%v v4=%v)", e3CM, e4CM)
 		}
-		t.Logf("S3 count-mismatch gate proven: a differing document count fails the target")
+		if len(d3CM) == len(d4CM) {
+			t.Fatalf("precondition: `|\\n---` must yield different doc counts (v3=%d v4=%d)", len(d3CM), len(d4CM))
+		}
+		if !yamlV4ExpectedDiff["multidoc:count-mismatch"] {
+			t.Fatalf("multidoc:count-mismatch must be listed (tolerated) after D35 was confirmed")
+		}
+		t.Logf("S3 D35 count-mismatch proven: `|\\n---` → v3 %d docs v4 %d docs, tolerated", len(d3CM), len(d4CM))
 	}
 
 	// Per-document nonspecific-tag divergence survives and is tolerated per-doc.
