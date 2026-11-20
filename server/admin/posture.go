@@ -626,10 +626,12 @@ func collectDatabaseTLSPosture(cfg *config.Config, report *postureReport) {
 // itself, and scheduled KEK rotation is explicitly out of scope for this
 // work; inventing a threshold here would be a guess, not a derived fact.
 func collectKEKAgePosture(cfg *config.Config, report *postureReport) {
-	if !cfg.Storage.Encryption.Enabled || cfg.Storage.Encryption.SaltPath == "" {
+	// EffectiveSaltPath: a salt_path no provider uses is not a KEK file (#4395).
+	saltPath := cfg.Storage.Encryption.EffectiveSaltPath()
+	if !cfg.Storage.Encryption.Enabled || saltPath == "" {
 		return
 	}
-	info, err := os.Stat(cfg.Storage.Encryption.SaltPath)
+	info, err := os.Stat(saltPath)
 	if err != nil {
 		return // key-file-set-consistency above already reports a missing/partial set
 	}

@@ -66,18 +66,57 @@ var errMutationWroteNoAudit = errors.New("mutation wrote no audit row")
 // target bound to it. The transaction commits only when fn returns nil AND
 // every audit write fn made through tgt persisted (at least one). Off-box audit
 // side effects run after the commit.
+//
+// When fn and its audit writes succeeded but the transaction still reported an
+// error (the commit may have landed and its acknowledgement been lost, #3225),
+// the error carries the unflushed sink (errAuditCommitUnacknowledged). A caller
+// that reads the mutation back and delivers it calls flushDeliveredAudit on that
+// error, so the off-box mirror gets the rows the database already holds; any
+// other caller answers the error and the sink is dropped, as on a rollback.
 func (c *KeyorixCore) withAuditedMutation(ctx context.Context, fn func(tx storage.Storage, tgt auditTarget) error) error {
 	sink := &auditForwardSink{failClosed: true}
+	fnCommitted := false
 	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		if err := fn(tx, auditInto(tx, sink)); err != nil {
 			return err
 		}
-		return failClosedAuditResult(sink)
+		if err := failClosedAuditResult(sink); err != nil {
+			return err
+		}
+		fnCommitted = true
+		return nil
 	}); err != nil {
+		if fnCommitted && len(sink.persisted) > 0 {
+			return &errAuditCommitUnacknowledged{err: err, sink: sink}
+		}
 		return err
 	}
 	sink.Flush(c)
 	return nil
+}
+
+// errAuditCommitUnacknowledged is withAuditedMutation's error when fn asked to
+// commit and the transaction then failed: the commit may have landed. It reads
+// and unwraps as the transaction's own error, so every classification of that
+// error still applies; it only adds the sink whose forwarding is still owed if
+// the mutation turns out to have committed.
+type errAuditCommitUnacknowledged struct {
+	err  error
+	sink *auditForwardSink
+}
+
+func (e *errAuditCommitUnacknowledged) Error() string { return e.err.Error() }
+func (e *errAuditCommitUnacknowledged) Unwrap() error { return e.err }
+
+// flushDeliveredAudit forwards the audit rows of a withAuditedMutation whose
+// error was a lost commit acknowledgement, once the caller has read the mutation
+// back and is delivering it. Call it ONLY after that read-back confirmed the
+// commit: forwarding a rolled-back row would put a phantom event in the off-box
+// mirror. A no-op for any other error, and idempotent (Flush empties the sink).
+func (c *KeyorixCore) flushDeliveredAudit(err error) {
+	if pending, ok := errors.AsType[*errAuditCommitUnacknowledged](err); ok {
+		pending.sink.Flush(c)
+	}
 }
 
 // failClosedAuditResult is the commit condition of a fail-closed audited

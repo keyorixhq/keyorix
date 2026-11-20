@@ -164,7 +164,7 @@ func Registry(enc *config.EncryptionConfig, baseDir string) ([]securefiles.FileP
 		return nil
 	}
 
-	if err := add("KEK salt", enc.SaltPath, true); err != nil {
+	if err := add("KEK salt", enc.EffectiveSaltPath(), true); err != nil {
 		return nil, err
 	}
 	if err := add("DEK", enc.DEKPath, true); err != nil {

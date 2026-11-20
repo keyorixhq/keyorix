@@ -139,14 +139,15 @@ the lock-key expression exactly as written at the call site.
 | internal/core/machine_token.go | withMachineRoleRemovalGuards | sodGrantLockKey("machine", machineID) | none that overlap can break: a removal plus an environment-in-project scope check | removal only | safe |
 | internal/core/membership_lifecycle.go | inviteMemberWithMode | membershipLockKey(projectID, userID) | (1) one active onboarding per (project, user) (2) no grant on a revoked membership (#2659) | (1) partial unique index `uniq_project_memberships_active`; (2) `membershipActiveFence` in the grant's transaction | safe (1), fixed (-2) (2) |
 | internal/core/membership_lifecycle.go | TransitionMembership | membershipLockKey(m.ProjectID, m.UserID) | no grant on a revoked membership (#2657) | the state CAS takes the membership key in its transaction; the activation grant's transaction takes it and re-reads the state (`membershipActiveFence`) | fixed (-2) |
+| internal/core/invitations.go | revokeInvitationMembershipRow | membershipLockKey(projectID, userID) | an undone invitation accept leaves its membership revoked, not `active` with no role (#4410) | the revoke is `revertFailedActivation`'s conditional write (fromState CAS): an overlapping transition makes it no-op, and the read-back under the lock reports the row still live (MANUAL CLEANUP audited), never a revoke that did not happen | safe |
 | internal/core/invitations.go | ApproveAccessRequestWithExpiry | dualControlLockKey(requestID) | the K-th approval grants (M-of-K) | role grant by primary key, one approval per approver by unique index, conditional request update: an overlap fails closed (the request stays pending) | safe |
 | internal/core/secret_dependencies.go | LockedCreateSecretDependencyExclusive | secretDependencyGraphLockKey(d.ProjectID) | the project's dependency graph stays acyclic (read-graph-then-insert) | the graph key (`LockNamedKeyInTx`), then the fused `CreateSecretDependencyExclusive` as a savepoint | fixed (-2) |
 | internal/core/secrets.go | withEnvironmentSecretGuard | storage.EnvironmentSecretGuardLockKey(environmentID) | no secret or folder created in, or resumed into, a deleted environment (check-then-insert) | the environment key, then the existence check through tx | fixed (-2) |
 | internal/core/secrets.go | RestoreSecret | storage.EnvironmentSecretGuardLockKey(secret.EnvironmentID) | as above (restore) | the environment key, then the storage restore's `requireLiveEnvironment` through tx | fixed (-2) |
 | internal/core/catalog.go | DeleteEnvironment | storage.EnvironmentSecretGuardLockKey(id) | no active secret left in a deleted environment (count-then-delete) | the environment key, then the storage count and delete through tx | fixed (-2) |
 
-Totals: 38 sites. 31 fixed (6 by NAMEDLOCK-OVERLAP-1, 25 by NAMEDLOCK-OVERLAP-2);
-5 safe; 2 with two invariants, each now kept (`RevokeBreakGlassActivationAtomic`,
+Totals: 39 sites. 31 fixed (6 by NAMEDLOCK-OVERLAP-1, 25 by NAMEDLOCK-OVERLAP-2);
+6 safe; 2 with two invariants, each now kept (`RevokeBreakGlassActivationAtomic`,
 `inviteMemberWithMode`: safe for the first, fixed for the second). None needs a
 check, none waits on a decision.
 

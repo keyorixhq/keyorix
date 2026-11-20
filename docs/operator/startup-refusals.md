@@ -640,6 +640,26 @@ adopts the current files with a WARN and an `encryption.keyset_manifest_adopted`
 partial files and let first boot recreate them" is only right on an install that has **no data
 yet**. **In place:** no.
 
+### `salt_path` ignored for a non-password key provider (a warning, not a refusal) — from code
+
+```
+WARNING: storage.encryption.salt_path ("keys/kek.salt") is unused by provider env and is ignored: only the password key provider reads a KEK salt; remove salt_path from the config
+```
+
+**Match:** `is unused by provider`
+
+**Cause.** `storage.encryption.salt_path` is set, but no configured key provider (`file`, `env`,
+`exec`, `shamir`, `tpm`, `aws-kms`, `gcp-kms`, `azure-kms`, and no `password` fallback) reads a
+salt, so no salt file exists or is expected. The key is ignored: it is not required, checksummed
+or locked, and `admin validate` repeats the line as a warning. Earlier versions treated it as
+required key material and refused the second start with "key material is an incomplete set"
+naming the salt. **Fix.** Delete `salt_path` from the config. A `password` provider (or a
+`password` entry in `fallbacks`) still refuses a missing or unreadable salt. A backup taken by an
+earlier version archived the salt with the DEK: restore it with `salt_path` still in the config
+(the config the backup was taken from), and `admin restore` installs the other key files and skips
+the salt with a `not installing the archived KEK salt` line; delete `salt_path` after the restore.
+Without `salt_path`, that restore is refused as a mismatched key-file set. **In place:** yes.
+
 ### Key operation interrupted mid-commit — from code
 
 ```
@@ -1331,7 +1351,8 @@ and `keyorix-server admin diagnose`, which changes nothing, prints (after `confi
 
 followed by the same text as the refusal. With a `dek.key.pending` it adds a line saying to
 never delete it by hand and to recover with the rotate-kek recovery (covered by a test, not
-run on a real install here).
+run on a real install here). A running server also shows it in `GET /api/v1/system/info`
+as `security.backup_refused` (`system.write` callers; see `j6-key-rotation.md`).
 
 **Match:** `keyorix-backup-refused reason=key-rotation-staging-file`, `a key rotation is running or was interrupted`, `backups would be refused`, `will refuse until`
 

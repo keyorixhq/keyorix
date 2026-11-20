@@ -519,9 +519,18 @@ func emitRoundTrip(b *strings.Builder, rt rtpair) {
 	fmt.Fprintf(b, "\t\tvar v2 any\n")
 	fmt.Fprintf(b, "\t\tif %s.Unmarshal(b1, &v2) != nil {\n\t\t\treturn\n\t\t}\n", rt.Alias)
 	fmt.Fprintf(b, "\t\tb2, err := %s.Marshal(v2)\n\t\tif err != nil {\n\t\t\treturn\n\t\t}\n", rt.Alias)
+	// Two-round check: allow one-round normalisations (b1≠b2 when b2 is stable).
+	// Some codecs settle on round 2, not round 1 — e.g. yaml.v2 (YAML 1.1) encodes
+	// float64(-0) as "-0" which re-decodes as int(0); resolve.go:151 tries ParseInt
+	// before ParseFloat for plain scalars, so "-0" becomes int(0) → "0" (stable).
+	// Only a codec that never reaches a fixed point (b2≠b3) is a real finding.
 	fmt.Fprintf(b, "\t\tif !bytes.Equal(b1, b2) {\n")
-	fmt.Fprintf(b, "\t\t\tt.Fatalf(%q, len(b1), len(b2))\n", "ROUND-TRIP: decode∘encode not stable (b1=%d b2=%d bytes)")
-	fmt.Fprintf(b, "\t\t}\n\t})\n}\n\n")
+	fmt.Fprintf(b, "\t\t\tvar v3 any\n")
+	fmt.Fprintf(b, "\t\t\tif %s.Unmarshal(b2, &v3) != nil {\n\t\t\t\treturn\n\t\t\t}\n", rt.Alias)
+	fmt.Fprintf(b, "\t\t\tb3, err := %s.Marshal(v3)\n\t\t\tif err != nil {\n\t\t\t\treturn\n\t\t\t}\n", rt.Alias)
+	fmt.Fprintf(b, "\t\t\tif !bytes.Equal(b2, b3) {\n")
+	fmt.Fprintf(b, "\t\t\t\tt.Fatalf(%q, len(b1), len(b2))\n", "ROUND-TRIP: decode∘encode not stable (b1=%d b2=%d bytes)")
+	fmt.Fprintf(b, "\t\t\t}\n\t\t}\n\t})\n}\n\n")
 }
 
 // seeds are parser-stressing inputs that naturally scale into super-linear
