@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -23,5 +24,24 @@ func TestValidateAllowedOrigins_RejectsWildcardInsideEntry(t *testing.T) {
 	}
 	if err := validateAllowedOrigins([]string{"https://app.example.com", "http://localhost:3000"}); err != nil {
 		t.Fatalf("validateAllowedOrigins rejected an explicit list: %v", err)
+	}
+}
+
+// TestValidateServerSection_RejectsWildcardDomain is #4382's sibling: with
+// allowed_origins empty the CORS allowlist defaults to https://<server.http.domain>,
+// so domain "*" or "*.example.com" became the same credentialed wildcard pattern.
+func TestValidateServerSection_RejectsWildcardDomain(t *testing.T) {
+	for _, domain := range []string{"*", "*.example.com"} {
+		c := &Config{}
+		c.Server.HTTP.Domain = domain
+		err := validateServerSection(c)
+		if err == nil || !strings.Contains(err.Error(), "server.http.domain") {
+			t.Errorf("domain %q: got %v, want the server.http.domain refusal", domain, err)
+		}
+	}
+	c := &Config{}
+	c.Server.HTTP.Domain = "keyorix.example.com"
+	if err := validateServerSection(c); err != nil && strings.Contains(err.Error(), "server.http.domain") {
+		t.Fatalf("an ordinary domain was refused: %v", err)
 	}
 }

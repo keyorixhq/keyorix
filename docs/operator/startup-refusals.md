@@ -200,7 +200,8 @@ Configuration is invalid: server.http.allowed_origins must not contain "*" — l
 
 **Cause / fix.** List each origin as `scheme://host[:port]`. Entries that are not origins, or
 use a scheme other than http/https, are refused with a similar message, and so is a `*` inside
-an entry (`https://*`, `https://*.example.com`), which the CORS layer would treat as a pattern.
+an entry (`https://*`, `https://*.example.com`), which the CORS layer would treat as a pattern,
+or in `server.http.domain` (the default origin, `https://<domain>`, when `allowed_origins` is empty).
 **In place:** yes.
 
 ### Other value checks — from code

@@ -449,6 +449,12 @@ func validateServerSection(c *Config) error {
 	if err := validateAllowedOrigins(c.Server.HTTP.AllowedOrigins); err != nil {
 		return err
 	}
+	// With allowed_origins empty, the CORS allowlist defaults to https://<domain>
+	// (server/http/router.go getAllowedOrigins), so a '*' here is the same
+	// credentialed wildcard pattern validateAllowedOrigins refuses (#4382 sibling).
+	if strings.Contains(c.Server.HTTP.Domain, "*") {
+		return fmt.Errorf("server.http.domain must not contain \"*\" — it is the default CORS origin (https://<domain>); a wildcard pattern defeats the CORS allowlist")
+	}
 
 	if err := validateAutoCertForProfile(c, airgapProfile); err != nil {
 		return err
