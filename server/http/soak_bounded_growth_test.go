@@ -47,7 +47,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- seeded, reproducible soak op stream (KEYORIX_SOAK_SEED), not a security context
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -82,10 +82,12 @@ const (
 	soakMaxGoroutineSlopePer10k = 8.0
 	// file descriptors: likewise flat; a leaked fd per request swamps this.
 	soakMaxFDSlopePer10k = 8.0
-	// heap in use after GC (bytes per 10k ops). Go-side caches settle; a leaked
-	// allocation per op (even 1 KiB) is 10 MiB per 10k ops, far above this. The
-	// ceiling is set above the worst warm-up-contaminated SHORT-run second-half
-	// slope observed at baseline (~2.5 MiB/10k over 1.5k ops, where warm-up still
+	// heap in use after GC (bytes per 10k ops). Go-side caches settle; the
+	// ceiling alone flags a leak above ~0.63 KiB/op (6 MiB per 10k ops), but on
+	// the default 1.5k-op CI run the noise floor below binds first: there a heap
+	// verdict needs ~2.8 KiB/op (2 MiB over the ~750-op fit). The ceiling alone
+	// binds only from a ~3.3k-op fit span (KEYORIX_SOAK_OPS >= ~6700). It is set
+	// above the worst warm-up-contaminated SHORT-run second-half slope observed at baseline (~2.5 MiB/10k over 1.5k ops, where warm-up still
 	// bleeds into the second half); on a long run the steady-state slope is ~0
 	// (baseline run), so this comfortably catches a real per-request leak
 	// while staying green on an honest run of any length.
@@ -96,9 +98,10 @@ const (
 	// extrapolates to 7-9 MiB/10k and tripped the slope check on main four times
 	// after the 2026-11-17 latency fix, while the same run at 6k ops measured
 	// +1.2 MiB/10k (flat). A heap verdict therefore also needs the fitted rise
-	// over the second half to exceed this floor. A 10 KiB/op leak still fails the
-	// default run (7 MiB over 750 ops); a ~1 KiB/op leak is caught by a long soak
-	// (KEYORIX_SOAK_OPS), not by the short CI run.
+	// over the second half to exceed this floor. A 3 KiB/op leak still fails the
+	// default run (2.2 MiB over 750 ops, TestSoakHeapOracle_FloorBoundary). A
+	// slower leak (below ~2.8 KiB/op) is NOT covered in CI: no workflow runs a
+	// long soak today; only a manual KEYORIX_SOAK_OPS >= ~6700 run sees it.
 	soakHeapMinRiseBytes = 2 << 20 // 2 MiB
 	// DB+WAL bytes per logical record (bytes-per-record slope per 10k ops). Flat
 	// means storage grows only with legitimate content; a positive slope means
@@ -654,8 +657,8 @@ func checkGrowthMinRise(tb testing.TB, label string, samples []soakSample, thres
 	tb.Logf("GROWTH %-26s slope=%+.3f/10k-ops threshold=%.3f monotonic=%v rise=%+.0f floor=%.0f -> %s",
 		label, per10k, threshold, monotonic, rise, minRise, verdict)
 	if leak {
-		tb.Errorf("BOUNDED-GROWTH VIOLATION [%s]: slope %+.3f per 10k ops exceeds threshold %.3f and is monotonic over the second half",
-			label, per10k, threshold)
+		tb.Errorf("BOUNDED-GROWTH VIOLATION [%s]: slope %+.3f per 10k ops exceeds threshold %.3f and is monotonic over the second half (fitted rise %+.0f, floor %.0f)",
+			label, per10k, threshold, rise, minRise)
 	}
 	return per10k
 }

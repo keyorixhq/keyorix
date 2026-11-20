@@ -61,3 +61,36 @@ func TestSoakHeapOracle_PlantedLeakStillFails(t *testing.T) {
 		t.Fatalf("planted 10 KiB/op leak: want 1 violation, got %d", rec.errs)
 	}
 }
+
+// linearHeapLeak is the default CI run's heap rows (11 samples every 150 ops)
+// for a clean, monotonic leak of bytesPerOp.
+func linearHeapLeak(bytesPerOp uint64) []soakSample {
+	heap := make([]uint64, 11)
+	for i := range heap {
+		heap[i] = 100<<20 + uint64(i)*150*bytesPerOp
+	}
+	return heapSamples(150, heap...)
+}
+
+// Pins the floor from both sides on the default 1500-op run, so it cannot grow
+// silently and the "below ~2.8 KiB/op is not covered in CI" comment and
+// INV-HTTP-soak-bounded-resource-growth stay true: a 3 KiB/op leak fails, a
+// 2 KiB/op leak passes only because of the floor (the slope ceiling flags it).
+func TestSoakHeapOracle_FloorBoundary(t *testing.T) {
+	rec := &recordingTB{TB: t}
+	checkGrowthMinRise(rec, "heap-inuse/3KiB", linearHeapLeak(3<<10), soakMaxHeapSlopePer10kBytes, soakHeapMinRiseBytes, heapOf)
+	if rec.errs != 1 {
+		t.Fatalf("3 KiB/op leak on the default run: want 1 violation, got %d", rec.errs)
+	}
+
+	rec = &recordingTB{TB: t}
+	checkGrowthMinRise(rec, "heap-inuse/2KiB", linearHeapLeak(2<<10), soakMaxHeapSlopePer10kBytes, soakHeapMinRiseBytes, heapOf)
+	if rec.errs != 0 {
+		t.Fatalf("2 KiB/op leak is flagged on the default run: the floor got lower, update the soak comment and the invariant's Not covered list")
+	}
+	rec = &recordingTB{TB: t}
+	checkGrowth(rec, "heap-inuse/2KiB", linearHeapLeak(2<<10), soakMaxHeapSlopePer10kBytes, heapOf)
+	if rec.errs != 1 {
+		t.Fatalf("2 KiB/op leak without the floor: want 1 violation, got %d", rec.errs)
+	}
+}
