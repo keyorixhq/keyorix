@@ -127,6 +127,7 @@ func TestConcurrency_DecideAccessReviewItem_AttestRevokeRace(t *testing.T) {
 		item := &models.AccessReviewItem{CampaignID: campaign.ID, PrincipalType: "role", PrincipalID: 999, RoleID: 1, Source: "role", Decision: core.ReviewItemPending}
 		require.NoError(t, db.Create(item).Error)
 
+		seedActiveActors(t, db, 100, 101) // the two reviewers must be active accounts (#4159)
 		c := core.NewKeyorixCore(store.NewLocalStorage(db))
 		ctx := context.Background()
 
