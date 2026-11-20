@@ -59,7 +59,7 @@ type cfcCase struct {
 func cfcCases() []cfcCase {
 	return []cfcCase{
 		{
-			name: "pat", token: "kx_pat_validtoken", recheck: "GetPersonalAccessTokenByHash",
+			name: "pat", token: "kx_pat_validtoken", recheck: "GetPersonalAccessTokenWithOwnerByHash",
 			revokeIn: func(t *testing.T, db *gorm.DB) {
 				require.NoError(t, db.Model(&models.PersonalAccessToken{}).Where("id = ?", 1).Update("revoked", true).Error)
 			},
