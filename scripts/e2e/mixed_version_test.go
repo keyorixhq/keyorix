@@ -14,7 +14,7 @@
 //
 // Needs KEYORIX_TEST_PG_DSN (keyword/value form). The N-1 binary is
 // KEYORIX_E2E_MIXED_OLD_BIN when set (e.g. built from the tag:
-// `git archive v0.96.1 | tar -x -C old && go -C old build -o ../kx-old ./server`),
+// `git archive v0.96.3 | tar -x -C old && go -C old build -o ../kx-old ./server`),
 // otherwise the release asset for KEYORIX_E2E_MIXED_FROM_TAG (default
 // defaultMixedVersionOldTag). docs/SELF_HOSTING.md "Running more than one
 // replica" lists what this covers and the required upgrade order.
@@ -37,7 +37,7 @@ import (
 )
 
 // defaultMixedVersionOldTag is the N-1 release: the latest tag.
-const defaultMixedVersionOldTag = "v0.96.1"
+const defaultMixedVersionOldTag = "v0.96.3"
 
 const mixedAdminPassword = "Lantern-Quartz-58-Harbor!"
 

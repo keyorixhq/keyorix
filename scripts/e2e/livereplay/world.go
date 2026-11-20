@@ -104,12 +104,17 @@ func (w *World) FirstID(tenant, kind string) (string, bool) {
 // Do sends one request as actor and returns status and (capped) body. 429 is
 // retried a few times with the server's own Retry-After and counted.
 func (w *World) Do(a *Actor, method, target string, body []byte) (int, []byte, error) {
+	// The replay sends actor tokens and attack payloads: refuse any system under
+	// test that is not on this machine.
+	if err := validateLoopbackURL(w.BaseURL); err != nil {
+		return 0, nil, err
+	}
 	for attempt := 0; ; attempt++ {
 		var rd io.Reader
 		if body != nil {
 			rd = bytes.NewReader(body)
 		}
-		req, err := http.NewRequest(method, w.BaseURL+target, rd)
+		req, err := http.NewRequest(method, w.BaseURL+target, rd) // BaseURL checked by validateLoopbackURL above
 		if err != nil {
 			return 0, nil, err
 		}

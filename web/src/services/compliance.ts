@@ -46,6 +46,10 @@ export interface CompliancePosture {
     emergencyAccess: {
         activeActivations: number;
         totalActivations: number;
+        // Break-glass activations committed while the audit log refused their rows, whose
+        // owed audit rows (and so their review) are still outstanding. Absent from older
+        // servers: absent is not zero, so the tile stays as it was.
+        degradedActivations?: number | undefined;
     };
     classification: {
         totalSecrets: number;
@@ -113,6 +117,10 @@ const normalize = (d: any): CompliancePosture => ({
     emergencyAccess: {
         activeActivations: num(d.emergency_access?.active_activations),
         totalActivations: num(d.emergency_access?.total_activations),
+        degradedActivations:
+            typeof d.emergency_access?.degraded_activations === 'number'
+                ? d.emergency_access.degraded_activations
+                : undefined,
     },
     classification: {
         totalSecrets: num(d.classification?.total_secrets),

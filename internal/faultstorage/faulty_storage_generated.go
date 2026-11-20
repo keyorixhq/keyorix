@@ -3021,6 +3021,24 @@ func (w *FaultyStorage) GetPersonalAccessTokenByID(ctx context.Context, id uint)
 	return w.real.GetPersonalAccessTokenByID(ctx, id)
 }
 
+func (w *FaultyStorage) GetPersonalAccessTokenWithOwnerByHash(ctx context.Context, hash string) (*models.PersonalAccessToken, storage.PATOwnerState, error) {
+	fire, kind, injected := w.check("GetPersonalAccessTokenWithOwnerByHash")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 *models.PersonalAccessToken
+			var zero2 storage.PATOwnerState
+			return zero1, zero2, injected
+		case KindEffectThenError:
+			rv1, rv2, _ := w.real.GetPersonalAccessTokenWithOwnerByHash(ctx, hash)
+			return rv1, rv2, injected
+		}
+	}
+	return w.real.GetPersonalAccessTokenWithOwnerByHash(ctx, hash)
+}
+
 func (w *FaultyStorage) GetPreviousCompliancePostureSnapshot(ctx context.Context, before time.Time) (*models.CompliancePostureSnapshot, error) {
 	fire, kind, injected := w.check("GetPreviousCompliancePostureSnapshot")
 	if fire {

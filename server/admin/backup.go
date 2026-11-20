@@ -696,7 +696,11 @@ const backupRefusedExitCode = 4
 
 // backupRefusedLine is the one structured stderr line that comes with
 // backupRefusedExitCode, for wrappers that match output rather than the exit
-// status.
+// status. Its reason is keyfiles.BackupRefusedReasonStagingFile, the one the
+// server reports in security.backup_refused; kept a single literal so
+// docs/operator/startup-refusals.md's Match text stays greppable
+// (TestDocumentedRefusalsExistInCode), and pinned to the constant by
+// TestBackupRefusedLine_ReasonIsTheServerSignalsReason.
 const backupRefusedLine = "keyorix-backup-refused reason=key-rotation-staging-file exit_code=%d files=%q"
 
 // machineVisibleBackupRefusal turns refusePendingKeyRotation's refusal into

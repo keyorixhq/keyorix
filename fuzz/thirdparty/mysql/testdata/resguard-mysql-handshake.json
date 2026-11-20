@@ -1,0 +1,26 @@
+{
+  "target": "mysql_handshake",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 9,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 92800,
+      "per_byte": 1042.6966292134832,
+      "abs_max": 17148415,
+      "mode": "absolute"
+    },
+    "cpu_ns": {
+      "floor": 3719000,
+      "per_byte": 37190,
+      "abs_max": 14876000,
+      "mode": "absolute"
+    },
+    "mallocs": {
+      "floor": 163,
+      "per_byte": 3.8846153846153846,
+      "abs_max": 652,
+      "mode": "absolute"
+    }
+  }
+}

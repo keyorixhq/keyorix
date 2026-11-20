@@ -460,7 +460,23 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 		return nil
 	})
 	if txErr != nil {
-		return nil, txErr
+		// #3225: the transaction may have committed and still reported an error (a
+		// lost acknowledgement). Read the admin back: if it is there, the whole
+		// transaction (catalog, project, environments, marker) committed with it,
+		// and the bootstrap continues down the success path, so the audit rows and
+		// the password history are written and the token is cleared. Under the
+		// bootstrap lock still held, so no second claim runs before the token is
+		// cleared; once the lock is released the committed marker refuses one.
+		// Unknown or rolled back: the error stands and the token stays armed (a real
+		// rollback must stay retryable; if it did commit, the marker refuses the retry).
+		if landed, answer := c.userCreateLanded(ctx, "auth_bootstrap.BootstrapSystem", createdUser, txErr); !landed {
+			return nil, answer
+		}
+		if project == nil {
+			// The closure returned before creating the project, so it cannot have
+			// committed; a row under the admin's id and name is not ours (fail closed).
+			return nil, txErr
+		}
 	}
 
 	// Audit only AFTER the transaction has committed: an event written inside

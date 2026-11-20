@@ -748,6 +748,10 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
+		// A read FAULT is a retry answer, not "secret not found" (ERRMAP-TAILS-NOV-4).
+		if fault := ReadFault(err); fault != nil {
+			return fault
+		}
 		return fmt.Errorf("secret not found: %w", err)
 	}
 	// Binding a backend is a materially bigger grant than scoped secrets.write alone:

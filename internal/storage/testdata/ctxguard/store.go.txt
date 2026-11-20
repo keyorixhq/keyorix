@@ -1,0 +1,60 @@
+package store
+
+import "context"
+
+// Fixture for TestCtxThreading_ScannerFixture. Never compiled (*.go.txt).
+
+type LocalStorage struct{}
+
+// newBackgroundJob is the documented background entry point: exempt.
+func newBackgroundJob() context.Context { return context.Background() }
+
+func mintsTodo() context.Context { return context.TODO() }
+
+func hop() context.Context { return mintsTodo() }
+
+// --- safe forms ---
+
+func (ls *LocalStorage) GetWidget(ctx context.Context, id string) (string, error) {
+	_ = ctx
+	return id, nil
+}
+
+func (ls *LocalStorage) ThreadsCtx(ctx context.Context) error {
+	_, err := ls.GetWidget(ctx, "x")
+	return err
+}
+
+func (ls *LocalStorage) UsesBackgroundJob(ctx context.Context) {
+	_ = ctx
+	_ = newBackgroundJob()
+}
+
+func (ls *LocalStorage) WithoutCancelKeepsValues(ctx context.Context) context.Context {
+	return context.WithoutCancel(ctx)
+}
+
+// --- planted violations ---
+
+func (ls *LocalStorage) DeleteWidget(id string) error { return nil }
+
+func (ls *LocalStorage) DiscardsCtx(_ context.Context) error { return nil }
+
+func (ls *LocalStorage) UnnamedCtx(context.Context) error { return nil }
+
+func (ls *LocalStorage) SubstitutesDirect(ctx context.Context) context.Context {
+	_ = ctx
+	return context.Background()
+}
+
+func (ls *LocalStorage) SubstitutesViaHelper(ctx context.Context) context.Context {
+	_ = ctx
+	return mintsTodo()
+}
+
+func (ls *LocalStorage) SubstitutesTwoHops(ctx context.Context) context.Context {
+	_ = ctx
+	return ls.twoHops()
+}
+
+func (ls *LocalStorage) twoHops() context.Context { return hop() }

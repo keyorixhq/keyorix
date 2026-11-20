@@ -1,0 +1,16 @@
+package storage
+
+import "context"
+
+// Fixture for TestCtxThreading_ScannerFixture. Never compiled (*.go.txt).
+
+type Storage interface {
+	WidgetStore
+}
+
+type WidgetStore interface {
+	// GetWidget is the safe form: a leading context.Context (unnamed is fine in an interface).
+	GetWidget(context.Context, string) (string, error)
+	// DeleteWidget is the planted violation: no leading context.
+	DeleteWidget(id string) error
+}

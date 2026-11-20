@@ -1,0 +1,1 @@
+fuzz/thirdparty/compress	none	-	test-only decompression-amplification and round-trip fuzz harness for mongo-driver DecompressPayload and klauspost/compress snappy; not part of any shipped build	test-helper

@@ -9,9 +9,11 @@ import "fmt"
 // against a baseline captured after warm-up, and reports sustained growth (K
 // consecutive samples over threshold), naming the meter that crept.
 //
-// It only consumes SAMPLED costs (LiveHeap is measured after a forced GC, so
-// transient garbage is already collected — growth seen here is live). An
-// unsampled Cost is ignored.
+// It only consumes SAMPLED costs and watches Cost.LiveHeapAbs (the absolute live
+// heap after a forced GC, so transient garbage is already collected — growth seen
+// here is live and retained), NOT the per-input Cost.LiveHeap delta: a leak hides
+// precisely in the gap between the two, staying invisibly small on every single
+// input's delta while the absolute floor climbs. An unsampled Cost is ignored.
 type Drift struct {
 	warmupLeft int
 	haveBase   bool
@@ -48,22 +50,24 @@ func (d *Drift) Observe(c Cost) string {
 		return ""
 	}
 	if !d.haveBase {
-		d.baseHeap, d.baseGor, d.baseFDs = c.LiveHeap, absBaseline(c.Goroutines), absBaseline(c.OpenFDs)
+		d.baseHeap, d.baseGor, d.baseFDs = c.LiveHeapAbs, absBaseline(c.Goroutines), absBaseline(c.OpenFDs)
 		d.haveBase = true
 		return ""
 	}
 
-	// Heap: the delta meters are per-input; drift rides on the absolute live
-	// heap, which the Probe reports as LiveHeap (an absolute, not a delta).
+	// Heap: the per-input budget meter rides on the DELTA (Cost.LiveHeap); drift
+	// instead rides on the ABSOLUTE live heap (Cost.LiveHeapAbs), because a leak
+	// is a floor that creeps up over many inputs — invisible to any single-input
+	// delta, which stays small on every one while the absolute climbs.
 	heapCeil := uint64(float64(d.baseHeap)*driftHeapFactor) + driftHeapFloor
-	if c.LiveHeap > heapCeil {
+	if c.LiveHeapAbs > heapCeil {
 		d.heapRun++
 	} else {
 		d.heapRun = 0
 	}
 	if d.heapRun >= driftK {
 		return fmt.Sprintf("DRIFT live-heap: %d bytes for %d consecutive samples, over ceiling %d (baseline %d) — suspected leak",
-			c.LiveHeap, d.heapRun, heapCeil, d.baseHeap)
+			c.LiveHeapAbs, d.heapRun, heapCeil, d.baseHeap)
 	}
 
 	// Goroutines / fds: the Cost deltas accumulate into an absolute estimate is

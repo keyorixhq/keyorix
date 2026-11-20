@@ -1,0 +1,26 @@
+{
+  "target": "pgx_ssl",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 12,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 71712,
+      "per_byte": 71712,
+      "abs_max": 286848,
+      "mode": "absolute"
+    },
+    "cpu_ns": {
+      "floor": 1474000,
+      "per_byte": 1474000,
+      "abs_max": 5896000,
+      "mode": "absolute"
+    },
+    "mallocs": {
+      "floor": 284,
+      "per_byte": 284,
+      "abs_max": 1136,
+      "mode": "absolute"
+    }
+  }
+}
