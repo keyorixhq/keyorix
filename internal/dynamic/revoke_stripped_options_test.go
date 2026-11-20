@@ -305,10 +305,12 @@ func startRecordingMongo(t *testing.T, serverTLS *tls.Config) (hostPort string, 
 func TestMongoRevokeStripsTLSFileOptions(t *testing.T) {
 	f := newServerFiles(t)
 	addr, rec := startRecordingMongo(t, f.tls)
-	// TLS stays required (allowInsecureTransport false); tlsInsecure only lets the
-	// stub's self-signed certificate through. The file options point at a file
-	// that is not a certificate: a driver that read it would fail before dialing.
-	e := &MongoEngine{allowPrivateNetwork: true}
+	// tlsInsecure only lets the stub's self-signed certificate through. Since #4374
+	// an admin_dsn may carry it only where the operator allowed insecure transport,
+	// so the operator flag is on here; the stub speaks TLS only, so a revoke that
+	// fell back to plaintext would fail. The file options point at a file that is
+	// not a certificate: a driver that read it would fail before dialing.
+	e := &MongoEngine{allowPrivateNetwork: true, allowInsecureTransport: true}
 	opts := "directConnection=true&serverSelectionTimeoutMS=3000&tlsInsecure=true"
 	for i, q := range []string{
 		"tlsCAFile=" + f.garbage,

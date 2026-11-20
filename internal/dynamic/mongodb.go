@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"slices"
 	"strings"
@@ -114,7 +115,14 @@ func (e *MongoEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	// The tls*File options Issue refuses are removed instead, with TLS kept on
 	// (#3980): MongoDB users have no native expiry, so a refused revoke would
 	// leave them live on the target.
-	revokeURI, removed := stripMongoRevokeOptions(adminDSN)
+	//
+	// tlsInsecure=true (a certificate check Issue now refuses unless the operator
+	// allowed insecure transport) is dropped the same way, with verification kept on.
+	revokeURI, insecureDropped := adminDSN, false
+	if !e.allowInsecureTransport {
+		revokeURI, insecureDropped = mongoURIWithoutInsecureTLS(adminDSN)
+	}
+	revokeURI, removed := stripMongoRevokeOptions(revokeURI)
 	client, err := connectMongo(ctx, revokeURI, e.allowPrivateNetwork, e.allowInsecureTransport)
 	if err != nil {
 		if _, refused := errors.AsType[*dsn.ForbiddenOptionError](err); refused {
@@ -123,7 +131,13 @@ func (e *MongoEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 		caStripped := slices.ContainsFunc(removed, func(k string) bool {
 			return strings.EqualFold(k, "tlsCAFile") || strings.EqualFold(k, "sslCertificateAuthorityFile")
 		})
-		return revokeStrippedError(removed, caStripped, err)
+		err = revokeStrippedError(removed, caStripped, err)
+		if insecureDropped {
+			// Name the dropped option, so an operator reading revoke_failed knows
+			// why a target with an untrusted certificate now fails the handshake.
+			err = fmt.Errorf("revoke ran without admin_dsn option tlsInsecure (the server certificate was verified): %w", err)
+		}
+		return err
 	}
 	defer func() { _ = client.Disconnect(context.Background()) }()
 
@@ -241,6 +255,31 @@ func connectMongo(ctx context.Context, adminDSN string, allowPrivateNetwork, all
 	}
 
 	opts := options.Client().ApplyURI(adminDSN)
+	if err := opts.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid mongodb admin URI: %w", err)
+	}
+	// The text check above reads option names as written; the driver lower-cases
+	// them (TLS=false on a mongodb+srv URI turns the implicit TLS off). What the
+	// driver will actually do is in the parsed options, so require TLS from them too.
+	if err := guard.RequireTLS(opts.TLSConfig != nil, "mongodb admin_dsn", u.Hostname()); err != nil {
+		return nil, err
+	}
+	// tlsInsecure=true (alias sslInsecure) satisfies the TLS requirement while the
+	// driver accepts any certificate and hostname: a project admin could then undo
+	// the operator's transport policy. Checked on the parsed options, not the DSN
+	// text, so every spelling the driver accepts is covered. Allowed only where the
+	// operator has opted into insecure transport, and then logged like a plaintext
+	// connection.
+	if opts.TLSConfig != nil && opts.TLSConfig.InsecureSkipVerify {
+		if !allowInsecureTransport {
+			return nil, &dsn.ForbiddenOptionError{
+				Backend: "mongodb",
+				Option:  "tlsInsecure",
+				Reason:  "certificate verification cannot be turned off in an admin_dsn; remove tlsInsecure=true (or sslInsecure=true), or the operator can allow insecure transport",
+			}
+		}
+		log.Printf("WARNING: mongodb admin_dsn host %q has tlsInsecure=true: the server certificate is not verified; dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport is explicitly enabled", u.Hostname())
+	}
 	if !allowPrivateNetwork {
 		opts = opts.SetDialer(guard.Dial)
 	}
@@ -263,15 +302,24 @@ func connectMongo(ctx context.Context, adminDSN string, allowPrivateNetwork, all
 // pure function of the parsed URI (no I/O), so it's testable without a real
 // connection attempt or DNS lookup.
 func mongoTLSEnabled(u *url.URL) bool {
-	tlsEnabled := u.Scheme == "mongodb+srv"
-	q := u.Query()
-	if v := q.Get("tls"); v != "" {
-		return v == "true"
+	enabled := u.Scheme == "mongodb+srv"
+	// Read the raw query the way the driver does: options split on '&' and ';',
+	// names lower-cased (TLS=false is tls=false), the last tls/ssl value wins (the
+	// driver rejects tls and ssl that disagree, so there is no other case).
+	for _, p := range strings.FieldsFunc(u.RawQuery, func(r rune) bool { return r == '&' || r == ';' }) {
+		key, val, _ := strings.Cut(p, "=")
+		if dec, err := url.QueryUnescape(key); err == nil {
+			key = dec
+		}
+		if k := strings.ToLower(key); k != "tls" && k != "ssl" {
+			continue
+		}
+		if dec, err := url.QueryUnescape(val); err == nil {
+			val = dec
+		}
+		enabled = val == "true"
 	}
-	if v := q.Get("ssl"); v != "" {
-		return v == "true"
-	}
-	return tlsEnabled
+	return enabled
 }
 
 // isMongoUserNotFound reports whether err is MongoDB's UserNotFound (code 11),
