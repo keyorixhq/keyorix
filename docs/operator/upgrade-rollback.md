@@ -51,6 +51,53 @@ a failed check. Step 1 without cosign or without `ghcr.io` ends `INCOMPLETE` (ex
 not a pass. The container and Kubernetes legs of the upgrade (§2 to §4 with Compose or Helm) are
 not covered by these scripts.
 
+### The RC gate (one command)
+
+`scripts/release/rc-gate.sh` runs the block above for a RELEASED candidate, on the binaries the
+release published (not a build of the checkout), and writes one result file:
+
+```sh
+export RC_GATE_PG_DSN_DIR=/path/to/dsns   # dsn1.txt .. dsn4.txt: one EMPTY PostgreSQL database each
+scripts/release/rc-gate.sh v0.97.0-rc.1                # previous = newest final release below it
+scripts/release/rc-gate.sh v0.97.0-rc.1 v0.96.3        # or name the previous release
+scripts/release/rc-gate.sh --check-result tmp/rc-gate-v0.97.0-rc.1/rc-gate-result.tsv v0.97.0-rc.1
+```
+
+Everything is downloaded into `tmp/rc-gate-<candidate>/` (the host's server and CLI of both tags
+and every asset of the candidate); a file already there is reused and hashed again, `--refresh`
+downloads it again. The output is one `PASS|FAIL|SKIP  <leg>  <detail>` line per leg, the same
+legs as TSV in `rc-gate-result.tsv`, and one log per drill leg in `legs/`. Exit 0: no FAIL; 1: a
+FAIL; 2: no FAIL but a SKIP under `--strict`; 3: usage or a missing tool. A SKIP always names its
+reason, and a gate with a SKIP is not a full pass: `--check-result` (the check the release
+checklist asks for) refuses it unless `--allow-skip` is given.
+
+| Leg | What a PASS proves |
+| --- | --- |
+| `download` | every file the candidate's own `checksums.txt` lists, plus `checksums.txt`, its `.sig` and `.pem`, could be downloaded, and the previous release's server, CLI and checksum files too |
+| `verify-release` | `scripts/release/verify-release.sh` on the candidate's downloaded files: file set, checksums, SBOMs, the cosign signature of `checksums.txt`, CI runs, SLSA provenance, images and charts. It needs cosign >= 3 and `ghcr.io`: without them the leg is SKIP (INCOMPLETE) and names the checks that did not run. A FAIL here stops the gate before any drill starts |
+| `previous.checksum` | the previous release's server and CLI match its `checksums.txt` before they are run (its signature is not checked here). A FAIL also stops the gate before any drill |
+| `upgrade.sqlite`, `upgrade.postgres` | `scripts/drills/upgrade.sh` with the previous release as the old server and the candidate's server: the old data boots under the new binary, the startup log matches [UPGRADING.md](../UPGRADING.md), seeded data and logins survive, the audit chain stays VALID and grows, the old binary's answer on the migrated data is the documented schema-epoch refusal (or a note that the epochs match), and the pre-upgrade backup restores into the OLD binary (4B above) with the post-upgrade write gone |
+| `backup-restore.sqlite`, `backup-restore.postgres` | `scripts/drills/backup-restore.sh` with the candidate's server and CLI: backup, restore into a fresh target, restore's own audit check, `verify-audit` against an off-host anchor, the server boots on the restored data, the post-backup write is absent; a tampered archive, a non-empty target and a stale backup are refused |
+
+The PostgreSQL legs need `RC_GATE_PG_DSN_DIR`: `upgrade` uses `dsn1.txt`, `backup-restore` uses
+`dsn2.txt` (source), `dsn3.txt` (restore target) and `dsn4.txt` (tamper leg; without it the
+drill prints its own `SKIP postgres` line for that leg and the gate shows it in the PASS detail).
+The drills never create or drop a database: give each file a fresh EMPTY one. Without the
+directory those two legs are SKIP.
+
+The drills drive the servers with the candidate's own CLI. `--cli-bin FILE` swaps in another CLI;
+that is for a candidate OLDER than the drills in the checkout (the v0.96.3 CLI does not read
+`KEYORIX_PASSWORD`, which the drills use), the result records `# cli-override`, and
+`--check-result` refuses it.
+
+**What the gate does NOT prove.** The container legs (the published images, `docker compose`
+upgrade and rollback), the Kubernetes legs (Helm upgrade, a rolling upgrade across replicas,
+the operator) and the skip-level path (an install older than the previous release): pending the
+e2e VM, see §2 to §4 and [drill-upgrade.md](drill-upgrade.md). Also not covered: platforms other
+than the host's, the web UI, the signature of the previous release, `check-docs-version.sh` and
+the open `release-blocker` issues (separate steps above and in [RELEASING.md](../../RELEASING.md)).
+`scripts/release/rc-gate-selftest.sh` shows the gate's own red and green cases without a network.
+
 ## 1. Which binary can run on which database
 
 | Release | Schema epoch | Floor it records | Runs on a database last migrated by |

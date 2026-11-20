@@ -40,6 +40,7 @@ func newOverlapTwoAdminGroupsFixture(t *testing.T, projectID uint) *gorm.DB {
 		require.NoError(t, db.Create(&models.Role{ID: 10, Name: "proj_admin"}).Error)
 		require.NoError(t, db.Create(&models.RolePermission{RoleID: 10, PermissionID: 1}).Error)
 	}
+	seedActiveActors(t, db, 99) // the acting admin must be an active account (#4159)
 	for _, id := range []uint{1, 2} {
 		require.NoError(t, db.Create(&models.User{ID: id, Username: []string{"", "a", "b"}[id], IsActive: true, AccountState: core.AccountActive}).Error)
 		gid := id * 10

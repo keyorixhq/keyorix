@@ -321,8 +321,8 @@ func classify(spec opSpec, p *principal, r *caseResult) []string {
 			}
 			continue
 		}
-		if l == layerCore && !spec.coreEnforced {
-			continue // ID-2: transport-enforced op, core leg recorded only
+		if l == layerCore && (!spec.coreEnforced || spec.coreGateExcluded) {
+			continue // ID-2: transport-enforced, or core enforces only business rules not the permission gate
 		}
 		part[l] = lo.Outcome
 	}

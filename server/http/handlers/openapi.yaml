@@ -7459,8 +7459,17 @@ paths:
       responses:
         '200':
           description: >-
-            Envelope {data}. data: {generated_at, audit_integrity, access_governance,
-            rotation, identity, emergency_access} — see the description for each group's fields.
+            Envelope {data}. data is the CompliancePosture snapshot: one object per
+            control area (audit_integrity, access_governance, rotation, identity,
+            emergency_access, access_requests, classification, anomalies, legal_hold,
+            retention, risk, certificates, supply_chain), plus degraded /
+            degraded_reasons and, once a prior snapshot exists, trend.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: '#/components/schemas/CompliancePosture'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
   /api/v1/compliance/controls:
@@ -9472,3 +9481,199 @@ components:
         order:
           type: array
           items: {$ref: '#/components/schemas/RotationOrderStep'}
+    CompliancePosture:
+      type: object
+      description: >-
+        The deployment-wide controls-posture snapshot (GET /compliance/posture): one
+        object per control area. degraded is true when a sub-rollup could not be
+        queried, so the zero values it carries are UNKNOWN rather than verified
+        clean; degraded_reasons names each failed rollup. Mirrors
+        core.CompliancePosture; TestCompliancePostureSchemaMatchesHandlerBody
+        fails when the two drift.
+      required: [generated_at, audit_integrity, access_governance, rotation, identity, emergency_access, access_requests, classification, anomalies, legal_hold, retention, risk, certificates, supply_chain, degraded]
+      properties:
+        generated_at: {type: string, format: date-time}
+        audit_integrity: {$ref: '#/components/schemas/AuditIntegrityPosture'}
+        access_governance: {$ref: '#/components/schemas/AccessGovernancePosture'}
+        rotation: {$ref: '#/components/schemas/RotationPosture'}
+        identity: {$ref: '#/components/schemas/IdentityPosture'}
+        emergency_access: {$ref: '#/components/schemas/EmergencyAccessPosture'}
+        access_requests: {$ref: '#/components/schemas/AccessRequestPosture'}
+        classification: {$ref: '#/components/schemas/ClassificationPosture'}
+        anomalies: {$ref: '#/components/schemas/AnomaliesPosture'}
+        legal_hold: {$ref: '#/components/schemas/LegalHoldPosture'}
+        retention: {$ref: '#/components/schemas/RetentionPosture'}
+        risk: {$ref: '#/components/schemas/RiskPosture'}
+        certificates: {$ref: '#/components/schemas/CertificatePosture'}
+        supply_chain: {$ref: '#/components/schemas/SupplyChainPosture'}
+        degraded:
+          type: boolean
+          description: One or more sub-rollups could not be queried; treat the snapshot as incomplete, not passing.
+        degraded_reasons:
+          type: array
+          items: {type: string}
+          description: Each failed sub-rollup with its underlying error. Absent when degraded is false.
+        trend: {$ref: '#/components/schemas/ComplianceTrend'}
+    AuditIntegrityPosture:
+      type: object
+      description: >-
+        The tamper-evident audit trail (ADR-029). chained_events is the count verified
+        at the last check, through head_id, not a live count: when stale is true the
+        check is older than a minute and latest_event_id / events_since_check say how
+        many events lie past it (#4186). Neither of those is a verification result.
+      required: [chain_verified, chained_events, checkpointed]
+      properties:
+        chain_verified: {type: boolean, description: 'True only when verification_status is valid.'}
+        chained_events: {type: integer, format: int64}
+        checkpointed: {type: boolean}
+        reason: {type: string, description: 'Why the chain is not fully verified, when it is not.'}
+        verification_status: {type: string, enum: [valid, broken, not_proven, sealed]}
+        last_full_verification_at: {type: string, format: date-time}
+        last_checked_at: {type: string, format: date-time, description: 'When the chain tail was last checked.'}
+        head_id: {type: integer, description: 'Id of the chain head as of the last check.'}
+        stale: {type: boolean, description: 'The last check is older than the freshness window, or its refresh failed and the previous value is shown.'}
+        latest_event_id: {type: integer, description: 'Newest audit event id now; set only when stale.'}
+        events_since_check: {type: integer, format: int64, description: 'Events past head_id written since the check and not yet verified; set only when stale.'}
+    AccessGovernancePosture:
+      type: object
+      description: Access recertification and dormant standing access.
+      required: [projects, projects_with_open_campaign, projects_never_reviewed, open_campaigns, pending_items, projects_overdue, dormant_role_grants, sod_violations]
+      properties:
+        projects: {type: integer}
+        projects_with_open_campaign: {type: integer}
+        projects_never_reviewed: {type: integer}
+        open_campaigns: {type: integer}
+        pending_items: {type: integer, description: 'Undecided items across open campaigns.'}
+        projects_overdue: {type: integer, description: 'Overdue for recertification (A.5.18 cadence).'}
+        dormant_role_grants: {type: integer, description: 'Grants with no or old activity at the capability they confer.'}
+        sod_violations: {type: integer, description: 'Principals holding a forbidden permission pair (A.5.3).'}
+    RotationPosture:
+      type: object
+      description: Secret-rotation hygiene (ISO A.5.15 / NIS2).
+      required: [total_secrets, covered_secrets, overdue, due_soon]
+      properties:
+        total_secrets: {type: integer, description: 'All static secrets in scope.'}
+        covered_secrets: {type: integer, description: 'Those with a rotation schedule.'}
+        overdue: {type: integer}
+        due_soon: {type: integer}
+    IdentityPosture:
+      type: object
+      description: Second-factor (MFA / passkey) coverage.
+      required: [active_users, users_with_second_factor, second_factor_percent]
+      properties:
+        active_users: {type: integer}
+        users_with_second_factor: {type: integer}
+        second_factor_percent: {type: integer}
+    EmergencyAccessPosture:
+      type: object
+      description: >-
+        Break-glass usage (NIS2/DORA). degraded_activations counts activations
+        committed while the audit log refused their rows whose owed audit rows are
+        not yet in the hash chain: their audit record is incomplete and their review
+        is owed. Non-zero also sets the snapshot's degraded flag.
+      required: [active_activations, total_activations, unreviewed_activations, oldest_unreviewed_age_hours, review_window_hours, independent_review_impossible, degraded_activations]
+      properties:
+        active_activations: {type: integer}
+        total_activations: {type: integer}
+        unreviewed_activations: {type: integer, description: 'Activations with no recorded review that are older than review_window_hours (ADR-112).'}
+        oldest_unreviewed_age_hours: {type: integer, description: '0 when there are none.'}
+        review_window_hours: {type: integer}
+        independent_review_impossible: {type: boolean, description: 'At most one active global admin-tier holder, so no one but the activator could review.'}
+        degraded_activations: {type: integer}
+    AccessRequestPosture:
+      type: object
+      description: The dual-control access-request workflow (ADR-024, A.5.3), counted by state.
+      required: [total_requests, pending, approved, rejected, withdrawn, expired, required_approvals]
+      properties:
+        total_requests: {type: integer}
+        pending: {type: integer}
+        approved: {type: integer}
+        rejected: {type: integer}
+        withdrawn: {type: integer}
+        expired: {type: integer}
+        required_approvals: {type: integer, description: 'The configured N-of-M dual-control threshold.'}
+    ClassificationCounts:
+      type: object
+      description: A per-level tally of classifiable entities.
+      required: [total, public, internal, confidential, restricted, unclassified]
+      properties:
+        total: {type: integer}
+        public: {type: integer}
+        internal: {type: integer}
+        confidential: {type: integer}
+        restricted: {type: integer}
+        unclassified: {type: integer}
+    ClassificationPosture:
+      type: object
+      description: Data-classification coverage (A.5.12). The flat counts are static secrets.
+      required: [total_secrets, public, internal, confidential, restricted, unclassified, dynamic_configs, machine_identities, machine_credentials]
+      properties:
+        total_secrets: {type: integer}
+        public: {type: integer}
+        internal: {type: integer}
+        confidential: {type: integer}
+        restricted: {type: integer}
+        unclassified: {type: integer}
+        dynamic_configs: {$ref: '#/components/schemas/ClassificationCounts'}
+        machine_identities: {$ref: '#/components/schemas/ClassificationCounts'}
+        machine_credentials: {$ref: '#/components/schemas/ClassificationCounts'}
+    AnomaliesPosture:
+      type: object
+      description: Detected access anomalies (NIS2 detection).
+      required: [unacknowledged, high_severity_open]
+      properties:
+        unacknowledged: {type: integer}
+        high_severity_open: {type: integer}
+    LegalHoldPosture:
+      type: object
+      description: Whether a litigation or investigation hold is in effect (A.5.34).
+      required: [active]
+      properties:
+        active: {type: boolean}
+        placed_at: {type: string, format: date-time}
+        reason: {type: string}
+    RetentionPosture:
+      type: object
+      description: Configured retention windows in days; 0 keeps that record type forever (A.5.33).
+      required: [enabled, anomaly_alerts_days, closed_access_reviews_days, break_glass_days, resolved_access_requests_days]
+      properties:
+        enabled: {type: boolean}
+        anomaly_alerts_days: {type: integer}
+        closed_access_reviews_days: {type: integer}
+        break_glass_days: {type: integer}
+        resolved_access_requests_days: {type: integer}
+    RiskPosture:
+      type: object
+      description: The risk register (A.5.8).
+      required: [active_exceptions, expiring_soon, expired]
+      properties:
+        active_exceptions: {type: integer}
+        expiring_soon: {type: integer}
+        expired: {type: integer, description: 'Past their expiry but still not revoked.'}
+    CertificatePosture:
+      type: object
+      description: Certificate hygiene from the cached expiry (ADR-056).
+      required: [total_certificates, expired, expiring_soon, not_evaluated]
+      properties:
+        total_certificates: {type: integer}
+        expired: {type: integer}
+        expiring_soon: {type: integer, description: 'Within 30 days.'}
+        not_evaluated: {type: integer, description: 'Certificate secrets whose certificate has not been parsed yet.'}
+    SupplyChainPosture:
+      type: object
+      description: Software-supply-chain integrity (ADR-062/064/065).
+      required: [update_signing_trusted, trusted_update_keys, license_state, license_valid]
+      properties:
+        update_signing_trusted: {type: boolean}
+        trusted_update_keys: {type: integer}
+        license_state: {type: string, description: 'Offline-license state, e.g. active, expiring_soon, none.'}
+        license_valid: {type: boolean}
+    ComplianceTrend:
+      type: object
+      description: Week-over-week direction against the latest snapshot at least 20 hours old. Absent on the first call.
+      required: [direction]
+      properties:
+        previous_date: {type: string, format: date-time}
+        passed_delta: {type: integer}
+        failed_delta: {type: integer}
+        direction: {type: string, enum: [improving, regressing, stable, no_data]}

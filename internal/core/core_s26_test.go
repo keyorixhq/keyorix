@@ -1027,6 +1027,7 @@ func TestValidateShareSecretRequest_GroupRefused(t *testing.T) {
 func TestRevokeAccessReviewGrant_ZeroProjectID(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting user is an active account (#4159)
 	c := NewKeyorixCore(ms)
 	err := c.RevokeAccessReviewGrant(context.Background(), 1, 0, AccessReviewDecision{Source: "role"})
 	require.Error(t, err)
@@ -1036,6 +1037,7 @@ func TestRevokeAccessReviewGrant_ZeroProjectID(t *testing.T) {
 func TestRevokeAccessReviewGrant_OwnerSource(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting user is an active account (#4159)
 	c := NewKeyorixCore(ms)
 	err := c.RevokeAccessReviewGrant(context.Background(), 1, 1, AccessReviewDecision{Source: "owner"})
 	require.Error(t, err)
@@ -1045,6 +1047,7 @@ func TestRevokeAccessReviewGrant_OwnerSource(t *testing.T) {
 func TestRevokeAccessReviewGrant_UnknownSource(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting user is an active account (#4159)
 	c := NewKeyorixCore(ms)
 	err := c.RevokeAccessReviewGrant(context.Background(), 1, 1, AccessReviewDecision{Source: "mystery"})
 	require.Error(t, err)
@@ -1054,6 +1057,7 @@ func TestRevokeAccessReviewGrant_UnknownSource(t *testing.T) {
 func TestRevokeAccessReviewGrant_RoleMissingIDs(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting user is an active account (#4159)
 	c := NewKeyorixCore(ms)
 	err := c.RevokeAccessReviewGrant(context.Background(), 1, 1, AccessReviewDecision{
 		Source:      "role",
@@ -1069,6 +1073,7 @@ func TestRevokeAccessReviewGrant_RoleMissingIDs(t *testing.T) {
 func TestAttestAccessReviewGrant_ZeroProjectID(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting user is an active account (#4159)
 	c := NewKeyorixCore(ms)
 	err := c.AttestAccessReviewGrant(context.Background(), 1, 0, AccessReviewDecision{Source: "role"})
 	require.Error(t, err)
@@ -1078,6 +1083,7 @@ func TestAttestAccessReviewGrant_ZeroProjectID(t *testing.T) {
 func TestAttestAccessReviewGrant_EmptySource(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting user is an active account (#4159)
 	c := NewKeyorixCore(ms)
 	err := c.AttestAccessReviewGrant(context.Background(), 1, 1, AccessReviewDecision{Source: ""})
 	require.Error(t, err)
