@@ -53,6 +53,9 @@ func (h *SecretHandler) SuspendProjectSecrets(w http.ResponseWriter, r *http.Req
 			h.sendError(w, core.SuspendAuditUnavailableCode, core.SuspendAuditUnavailableMessage, http.StatusInternalServerError, nil)
 			return
 		}
+		if sendActorGateError(w, err) {
+			return
+		}
 		h.sendError(w, "InternalError", "Failed to suspend project secrets", http.StatusInternalServerError, nil)
 		return
 	}
@@ -77,11 +80,26 @@ func (h *SecretHandler) ResumeProjectSecrets(w http.ResponseWriter, r *http.Requ
 	}
 	n, err := h.coreService.ResumeProjectSecrets(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
-		if sendAuditUnavailable(w, err) {
+		if sendAuditUnavailable(w, err) || sendActorGateError(w, err) {
 			return
 		}
 		h.sendError(w, "InternalError", "Failed to resume project secrets", http.StatusInternalServerError, nil)
 		return
 	}
 	h.sendSuccess(w, map[string]any{"resumed": n}, "")
+}
+
+// sendActorGateError answers core's acting-account gate (requireActorActive, #4159)
+// on the bulk suspend/resume/rename routes: a suspended or deleted acting account is
+// a refusal (403, never a 500), and a fault reading that account is a retry (503).
+// It reports whether it answered.
+func sendActorGateError(w http.ResponseWriter, err error) bool {
+	if sendStorageUnavailable(w, err) {
+		return true
+	}
+	if errors.Is(err, core.ErrPermissionDenied) {
+		sendError(w, "Forbidden", "Permission denied", http.StatusForbidden, nil)
+		return true
+	}
+	return false
 }
