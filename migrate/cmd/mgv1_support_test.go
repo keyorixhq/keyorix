@@ -23,7 +23,6 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -31,11 +30,7 @@ import (
 	"github.com/keyorixhq/keyorix/migrate/internal/hostile"
 )
 
-// Enforce GOMAXPROCS=2 in the test binary AND in every `go test -fuzz` worker process
-// (same binary) — the session permission layer auto-denies any env-prefix/`nice` wrapper,
-// so the only way to honour the "GOMAXPROCS=2" resource rule is from inside the process.
 func init() {
-	runtime.GOMAXPROCS(2)
 	// Special runes added from code points (kept out of the source literal: a BOM in source
 	// is a compile error). U+202E bidi override, U+200B zero-width space, U+0085 NEL,
 	// U+FEFF BOM, U+0007 bell (control), U+2028 line separator.
