@@ -157,7 +157,7 @@ func TestAdminBackup_StaleSaltPending_RefusesEveryBackupUntilDeleted(t *testing.
 		require.Error(t, backupErr, "backup #%d must be refused while kek.salt.pending exists:\n%s", i, out)
 		// Loudness: the message names the file and the manual-delete remedy.
 		require.Contains(t, backupErr.Error(), "kek.salt.pending")
-		require.Contains(t, backupErr.Error(), "delete that file")
+		require.Contains(t, backupErr.Error(), "move it out of the key directory")
 		// No archive was written (fail-closed).
 		_, archStat := os.Stat(archivePath)
 		require.True(t, os.IsNotExist(archStat), "a refused backup must write no archive")
