@@ -15,10 +15,14 @@ Format: `INV-MW-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
 
 ## Auth-cache hit re-verification
 
-- **INV-MW-01** On a cache hit, a PAT's restriction/revoked/expired state is re-checked live
-  (`CurrentPATRestriction`) before serving the cached principal. Guard:
-  `auth.go:serveAuthCacheHit` (lines ~516-533); `g18_cache_hit_revocation_test.go`
-  (`TestAuthentication_PATRevokedAfterCache_DeniedOnCacheHit`, `_PATExpiredAfterCache_DeniedOnCacheHit`).
+- **INV-MW-01** On a cache hit, a PAT's restriction/revoked/expired state AND its owner's
+  account (gone, inactive, login-blocked) are re-checked live (`CurrentPATRestriction`, one
+  storage read: `GetPersonalAccessTokenWithOwnerByHash`) before serving the cached principal.
+  The owner half does not depend on the suspend/delete sweep having marked the PATs revoked.
+  Guard: `auth.go:serveAuthCacheHit`; `g18_cache_hit_revocation_test.go`
+  (`TestAuthentication_PATRevokedAfterCache_DeniedOnCacheHit`, `_PATExpiredAfterCache_DeniedOnCacheHit`);
+  `pat_cache_hit_owner_recheck_test.go` (`TestCacheHit_PATOwner{Suspended,Deactivated,Deprovisioned,Deleted}_DeniedAndEvicted`,
+  `_PATOwnerReadFails_RefusedNotServed`).
 - **INV-MW-02** On a cache hit, a machine token's restriction/revoked/expired/active-state is
   re-checked live (`CurrentMachineTokenRestriction`), including a CIDR-allowlist refresh. Guard:
   `g18_cache_hit_revocation_test.go` (`TestAuthentication_MachineTokenCIDR_RefreshesOnCacheHit`,

@@ -83,8 +83,14 @@ var newGoMailMsg = func(rcpt, subject, body string) (*gomail.Msg, error) {
 
 type goMailBuilder func(rcpt, subject, body string) (*gomail.Msg, error)
 
-// xmailEncodedWordLookalike matches an RFC 2047 encoded word.
-var xmailEncodedWordLookalike = regexp.MustCompile(`=\?[^?\s]*\?[bBqQ]\?[^?\s]*\?=`)
+// xmailEncodedWordLookalike matches any string that looks like an RFC 2047 encoded word
+// (=?charset?encoding?encoded-text?=). The encoded-text field may contain spaces
+// (a malformed encoded word); mime.WordDecoder will attempt to parse it and may fail
+// (e.g. "mime: unhandled charset """). That failure is not an injection — the oracle
+// comment explicitly says "which may decode it or, for an unknown charset, fail to.
+// Neither is an injection, so O3 does not judge it." `[^?]*` (not `[^?\s]*`) covers
+// the encoded-text field so that malformed variants like `=??q? ?=` are skipped too.
+var xmailEncodedWordLookalike = regexp.MustCompile(`=\?[^?]*\?[bBqQ]\?[^?]*\?=`)
 
 var foldingWS = regexp.MustCompile(`[ \t]+`)
 

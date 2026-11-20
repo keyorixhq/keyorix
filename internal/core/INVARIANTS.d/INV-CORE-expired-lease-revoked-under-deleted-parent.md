@@ -15,4 +15,6 @@
   the project (the `active_project_purged` case).
   Guard: `dynamic_secrets_sweep_deleted_project_test.go`
   `TestDynamicSecrets_SweepRevokesLeaseUnderDeletedProject` (default CI; active, revoke_failed,
-  and purged project).
+  and purged project); on Postgres through the real `LocalStorage.DeleteProject` cascade, from
+  a second replica, for both the sweep and a direct `RevokeLease`:
+  `TestCTAReview_LeaseRevokeUnderDeletedProject_CrossReplicaPostgres` (pg-gated).

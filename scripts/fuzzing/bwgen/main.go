@@ -524,12 +524,17 @@ func emitRoundTrip(b *strings.Builder, rt rtpair) {
 	// float64(-0) as "-0" which re-decodes as int(0); resolve.go:151 tries ParseInt
 	// before ParseFloat for plain scalars, so "-0" becomes int(0) → "0" (stable).
 	// Only a codec that never reaches a fixed point (b2≠b3) is a real finding.
+	fmt.Fprintf(b, "\t\t// A one-round normalisation (b1≠b2 but b2 stable) is allowed: some codecs settle\n"+
+		"\t\t// on round 2, not round 1. Only a codec that never reaches a fixed point (b2≠b3) is\n"+
+		"\t\t// a real finding. See bwgen/main.go emitRoundTrip.\n")
 	fmt.Fprintf(b, "\t\tif !bytes.Equal(b1, b2) {\n")
 	fmt.Fprintf(b, "\t\t\tvar v3 any\n")
-	fmt.Fprintf(b, "\t\t\tif %s.Unmarshal(b2, &v3) != nil {\n\t\t\t\treturn\n\t\t\t}\n", rt.Alias)
+	// b2 is the encoder's own output: a decoder that rejects it is a finding, not a skip.
+	fmt.Fprintf(b, "\t\t\tif err := %s.Unmarshal(b2, &v3); err != nil {\n\t\t\t\tt.Fatalf(%q, len(b1), len(b2), err)\n\t\t\t}\n",
+		rt.Alias, "ROUND-TRIP: decoder rejects its own encoder's output (b1=%d b2=%d bytes): %v")
 	fmt.Fprintf(b, "\t\t\tb3, err := %s.Marshal(v3)\n\t\t\tif err != nil {\n\t\t\t\treturn\n\t\t\t}\n", rt.Alias)
 	fmt.Fprintf(b, "\t\t\tif !bytes.Equal(b2, b3) {\n")
-	fmt.Fprintf(b, "\t\t\t\tt.Fatalf(%q, len(b1), len(b2))\n", "ROUND-TRIP: decode∘encode not stable (b1=%d b2=%d bytes)")
+	fmt.Fprintf(b, "\t\t\t\tt.Fatalf(%q, len(b1), len(b2), len(b3))\n", "ROUND-TRIP: decode∘encode not stable (b1=%d b2=%d b3=%d bytes)")
 	fmt.Fprintf(b, "\t\t\t}\n\t\t}\n\t})\n}\n\n")
 }
 
