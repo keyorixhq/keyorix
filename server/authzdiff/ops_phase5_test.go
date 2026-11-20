@@ -95,7 +95,7 @@ func secretPhase5Ops() []opSpec {
 			// owner-only (requireShareAuthority) behind a secrets.write gate; a
 			// non-owner holding secrets.manage at the secret's scope may also
 			// revoke (revokerMayManageSecret).
-			name: "share.revoke", row: "RevokeShare", targets: projTargets,
+			name: "share.revoke", row: "RevokeShare", targets: projTargets, coreEnforced: true,
 			req: func(fx *fixtures, t tgt, _ byte) requirement {
 				return requirement{perms: []string{"secrets.write"}, scope: pid(fx, t), ownerUserID: fx.adminID, ownerOrPerm: "secrets.manage"}
 			},
@@ -111,7 +111,7 @@ func secretPhase5Ops() []opSpec {
 			},
 		},
 		{
-			name: "share.update", row: "UpdateSharePermission", targets: projTargets,
+			name: "share.update", row: "UpdateSharePermission", targets: projTargets, coreEnforced: true,
 			req: func(fx *fixtures, t tgt, _ byte) requirement {
 				return requirement{perms: []string{"secrets.write"}, scope: pid(fx, t), ownerUserID: fx.adminID}
 			},
