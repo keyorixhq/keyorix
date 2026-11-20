@@ -15,8 +15,9 @@
 //
 // Where the reviewer is recorded:
 //   - docs/check-then-act-lock-exempt.tsv and docs/atomicity-exempt.tsv: in the
-//     sidecars docs/<ledger>.reviewed.tsv, keyed by the ledger's first column
-//     (function). The ledger itself is left untouched because the race-fix
+//     sidecars docs/check-then-act-lock-exempt.reviewed.tsv (flat file) and
+//     docs/atomicity-exempt.reviewed.d/ (one fragment per row, no flat file),
+//     keyed by the ledger's first column (function). The ledger itself is left untouched because the race-fix
 //     PRs edit it. Every ledger key needs a sidecar row and every sidecar row a
 //     ledger key, so a row added to the ledger fails until it is reviewed.
 //   - ledgers created with the columns built in (full-row-write-exempt.tsv,
@@ -62,7 +63,7 @@ type exemptLedger struct {
 
 var exemptLedgers = map[string]exemptLedger{
 	"check-then-act-lock-exempt.tsv": {keyCols: []int{0}, sidecar: "check-then-act-lock-exempt.reviewed.tsv", reasonCol: 2},
-	// Brought under the rule by #2693 (ATOMICITY-REVIEW-2693). A sidecar for the same
+	// Brought under the rule by #2693 (PR #4543; rows reviewed by REVIEW-4543-DEEP-1). A sidecar for the same
 	// reason as check-then-act: several readers parse the ledger's three columns.
 	"atomicity-exempt.tsv": {keyCols: []int{0}, sidecar: "atomicity-exempt.reviewed.tsv", reasonCol: 2},
 	// Added by the C-GUARD-3 guards; listed here so whichever of those PRs lands
@@ -215,6 +216,16 @@ func readSidecarRows(t *testing.T, dir, sidecar string) []reviewLedgerRow {
 	return rows
 }
 
+// sidecarWhere names where a missing sidecar row belongs: the flat
+// docs/<sidecar> when it exists, otherwise its docs/<sidecar minus .tsv>.d/
+// fragment directory.
+func sidecarWhere(dir, sidecar string) string {
+	if _, err := os.Stat(filepath.Join(dir, sidecar)); err == nil {
+		return "docs/" + sidecar
+	}
+	return "docs/" + strings.TrimSuffix(sidecar, ".tsv") + ".d/ (one <key>.tsv fragment per row, see its README.md)"
+}
+
 // dir-listing-ok: ledger *.tsv files under docs/
 func discoverExemptLedgers(t *testing.T, dir string) []string {
 	t.Helper()
@@ -275,7 +286,7 @@ func exemptLedgerProblems(t *testing.T, dir string) []string {
 			k := ledgerKey(r, l.keyCols)
 			keys[k] = true
 			if _, ok := side[k]; !ok {
-				problems = append(problems, fmt.Sprintf("%s %s has no row in docs/%s — add one naming who added it and who (someone else) reviewed it", r.where(), k, l.sidecar))
+				problems = append(problems, fmt.Sprintf("%s %s has no row in %s — add one naming who added it and who (someone else) reviewed it", r.where(), k, sidecarWhere(dir, l.sidecar)))
 			}
 		}
 		for k, r := range side {
@@ -436,25 +447,28 @@ func TestExemptLedgers_SidecarFragments(t *testing.T) {
 	}
 	const ledger = "# h\nF1\tB\treason\nF2\tD\treason\n"
 	require.Empty(t, run(ledger, map[string]string{
-		"F1.tsv": "F1\tSession O\tATOMICITY-REVIEW-2693\n",
-		"F2.tsv": "# comment\nF2\tPAT-GUARD-1\tATOMICITY-REVIEW-2693\n",
+		"F1.tsv": "F1\tSession O\tREVIEW-4543-DEEP-1\n",
+		"F2.tsv": "# comment\nF2\tPAT-GUARD-1\tREVIEW-4543-DEEP-1\n",
 	}))
+	p := run(ledger, map[string]string{"F1.tsv": "F1\tSession O\tREVIEW-4543-DEEP-1\n"})
+	require.Len(t, p, 1)
+	require.Contains(t, p[0], "has no row in docs/atomicity-exempt.reviewed.d/", "with no flat sidecar the message names the fragment directory")
 
 	for name, frags := range map[string]map[string]string{
-		"ledger row with no fragment": {"F1.tsv": "F1\tSession O\tATOMICITY-REVIEW-2693\n"},
+		"ledger row with no fragment": {"F1.tsv": "F1\tSession O\tREVIEW-4543-DEEP-1\n"},
 		"self-reviewed fragment": {
-			"F1.tsv": "F1\tSession O\tATOMICITY-REVIEW-2693\n", "F2.tsv": "F2\tPAT-GUARD-1\tpat-guard-1\n",
+			"F1.tsv": "F1\tSession O\tREVIEW-4543-DEEP-1\n", "F2.tsv": "F2\tPAT-GUARD-1\tpat-guard-1\n",
 		},
 		"orphan fragment": {
-			"F1.tsv": "F1\tSession O\tATOMICITY-REVIEW-2693\n", "F2.tsv": "F2\tPAT-GUARD-1\tATOMICITY-REVIEW-2693\n",
+			"F1.tsv": "F1\tSession O\tREVIEW-4543-DEEP-1\n", "F2.tsv": "F2\tPAT-GUARD-1\tREVIEW-4543-DEEP-1\n",
 			"F9.tsv": "F9\tX\tY\n",
 		},
 		"duplicate key across fragments": {
-			"F1.tsv": "F1\tSession O\tATOMICITY-REVIEW-2693\n", "F1b.tsv": "F1\tSession O\tATOMICITY-REVIEW-2693\n",
-			"F2.tsv": "F2\tPAT-GUARD-1\tATOMICITY-REVIEW-2693\n",
+			"F1.tsv": "F1\tSession O\tREVIEW-4543-DEEP-1\n", "F1b.tsv": "F1\tSession O\tREVIEW-4543-DEEP-1\n",
+			"F2.tsv": "F2\tPAT-GUARD-1\tREVIEW-4543-DEEP-1\n",
 		},
 		"wrong column count": {
-			"F1.tsv": "F1\tSession O\n", "F2.tsv": "F2\tPAT-GUARD-1\tATOMICITY-REVIEW-2693\n",
+			"F1.tsv": "F1\tSession O\n", "F2.tsv": "F2\tPAT-GUARD-1\tREVIEW-4543-DEEP-1\n",
 		},
 	} {
 		require.NotEmptyf(t, run(ledger, frags), "%s must be rejected", name)

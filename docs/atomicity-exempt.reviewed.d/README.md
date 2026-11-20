@@ -18,7 +18,10 @@ GUARD-COLLISION-NOV-1). Not new ledger columns, because several readers parse
 the ledger's three columns (internal/core/guards, server/faultops,
 internal/statemap).
 
-ATOMICITY-REVIEW-2693 (2026-11-20, #2693): every row re-read against the code
-at origin/main 4c6117702 by reviewers independent of the row authors.
+REVIEW-4543-DEEP-1 (2026-11-21, #2693, PR #4543): every row was re-read
+against the code by a review session independent of the row authors. It
+checked 9 rows itself and the other 38 through one read-only sub-agent, and it
+re-checked the sub-agent's disputes. It concurs with all 47 rows as they read
+after its two corrections (VerifyMFACredentials, finalizeAccessRequestApproval).
 Corrections, reclassifications and stale-row notes are recorded in the ledger
 row's own reason, prefixed "#2693 review".
