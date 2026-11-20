@@ -14,23 +14,23 @@ import (
 
 // checkAttestationKeyAlg binds the algorithm an attestation statement names to
 // the key that made its signature: the first x5c certificate (the TPM AIK, the
-// packed or android-key attestation certificate, the fido-u2f certificate).
+// packed or android-key attestation certificate).
 //
 // go-webauthn v0.18.2 maps the statement's COSE alg to an x509 signature
 // algorithm and calls Certificate.CheckSignature, which checks the key TYPE
 // (RSA vs ECDSA) but not the CURVE: ES256K (-47) maps to ECDSA-with-SHA256 and
-// verifies against a P-256 key (#4545), ES384 verifies against a P-256 key, and
-// fido-u2f accepts any ECDSA certificate although §8.6 requires P-256. WebAuthn
-// §5.8.5 fixes the curve of each ECDSA alg, and §8.3/§8.2/§8.4 require the
-// signature to be made "using the algorithm specified in alg", so a mismatch is
-// a malformed statement: it is refused, never accepted on the signature alone.
+// verifies against a P-256 key (#4545), and ES256 verifies against a P-384 key.
+// WebAuthn §5.8.5 fixes the curve of each ECDSA alg, and §8.2/§8.3/§8.4 require
+// the signature to be made "using the algorithm specified in alg", so a mismatch
+// is a malformed statement: it is refused, never accepted on the signature alone.
 //
 // It runs after the library accepted the registration, so it only ever turns an
 // acceptance into a refusal. A compound statement is refused if any of its
 // sub-statements mismatches, even when the library's "any" scope would have
-// accepted on another one. apple carries no alg (its nonce binds the key),
-// packed without x5c is self attestation (the library already requires alg to
-// equal the credential key's alg there), and none carries nothing to check.
+// accepted on another one. Left to the library: fido-u2f (no alg; the library
+// already requires a P-256 certificate), apple (no alg; its nonce binds the
+// key), packed without x5c (self attestation; the library requires alg to equal
+// the credential key's alg) and none.
 func checkAttestationKeyAlg(att *protocol.AttestationObject) error {
 	if protocol.AttestationFormat(att.Format) == protocol.AttestationFormatCompound {
 		for _, sub := range att.SubStatements {
@@ -61,8 +61,6 @@ func checkStatementKeyAlg(format string, stmt map[string]any) error {
 			return attAlgError(format, "statement has no integer alg")
 		}
 		alg = webauthncose.COSEAlgorithmIdentifier(a)
-	case protocol.AttestationFormatFIDOUniversalSecondFactor:
-		alg = webauthncose.AlgES256 // §8.6: the attestation key is P-256, the signature ES256
 	default:
 		return nil
 	}
