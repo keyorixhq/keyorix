@@ -1,6 +1,8 @@
 package authzdiff
 
 import (
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -37,11 +39,27 @@ import (
 //	  calls requireActorActive. REST only.
 //	  Curated: same as env.clone.
 //
+// V5EXT7 step 3 — new schedule/classify ops:
+//
+//	secret.schedule.set: secrets.manage. Core: coreGateExcluded (SetSecretSchedule has
+//	  no actorID — cannot check actor state; see HARDENING-2). REST only.
+//	  Curated: manage → allowed; write-only → denied.
+//
+//	secret.schedule.delete: same as schedule.set.
+//
+//	secret.classify: secrets.write. Core: coreGateExcluded (ClassifySecret does not call
+//	  requireActorActive; see HARDENING-1). REST only.
+//	  Curated: write → allowed; read-only → denied.
+//
 // What this oracle does NOT verify:
 //   - share.self.remove: RBAC gate (there is none; the only gate is recipient membership).
 //   - env.clone / env.copy.secrets: dual-scope check (secrets.write at project +
 //     secrets.read at env — the reference model uses project scope for both, so a
 //     write-at-project / read-at-env split actor is not modelled here).
+//   - secret.schedule.*: temporal effect (whether the schedule actually restricts access).
+//     LogSecretScheduleSet / LogSecretScheduleDeleted audit events.
+//   - secret.classify: the restricted-classification downgrade gate
+//     (checkRestrictedSecretReadApproval) — fixture plainID is not classified "restricted".
 //   - WebAuthn or MFA-step-up gate on any of these ops.
 //
 // Strict rule: zero uncalibrated cases and zero "unexplained" cases.
@@ -151,20 +169,76 @@ func curatedV5ext7Variations(spec opSpec, t tgt) []struct {
 			{pkCustom, variation{Mask: writeOnly, Route: "user", Scope: here}},  // write-only → denied (no read)
 			{pkCustom, variation{Mask: readOnly, Route: "user", Scope: here}},   // read-only → denied (no write)
 		}
+	case "secret.schedule.set", "secret.schedule.delete":
+		// Route gate: secrets.manage. Core: coreGateExcluded (no actorID). REST only.
+		manage := maskOf([]string{"secrets.manage"})
+		writeOnly := maskOf([]string{"secrets.write"})
+		return []pv{
+			{pkCustom, variation{Mask: manage, Route: "user", Scope: here}},     // manage → allowed
+			{pkCustom, variation{Mask: writeOnly, Route: "user", Scope: here}},  // write-only (no manage) → denied
+		}
+	case "secret.classify":
+		// Route gate: secrets.write (+ SecretActionClassify). Core: coreGateExcluded.
+		// REST only. Standard write-only user allowed; read-only denied.
+		write := maskOf([]string{"secrets.write"})
+		readOnly := maskOf([]string{"secrets.read"})
+		return []pv{
+			{pkCustom, variation{Mask: write, Route: "user", Scope: here}},     // write → allowed
+			{pkCustom, variation{Mask: readOnly, Route: "user", Scope: here}},  // read-only → denied
+		}
 	}
 	return nil
 }
 
 // isV5ext7Op reports whether name is covered by TestV5ext7StrictSweep.
-// Updated incrementally across V5EXT7 steps.
 func isV5ext7Op(name string) bool {
 	switch name {
 	case
 		// V5EXT7 step 1: phase5 share write ops
 		"share.revoke", "share.update", "share.self.remove",
 		// V5EXT7 step 2: phase5 env-copy ops
-		"env.clone", "env.copy.secrets":
+		"env.clone", "env.copy.secrets",
+		// V5EXT7 step 3: new schedule/classify ops
+		"secret.schedule.set", "secret.schedule.delete", "secret.classify":
 		return true
 	}
 	return false
+}
+
+// TestSecretScheduleRouterGatesPresent asserts that the schedule PUT and DELETE
+// route registrations in server/http/router.go exactly match what this sweep
+// tests. Fails immediately if either gate registration is removed or changed,
+// turning a silent coverage loss into a compile-time-equivalent build failure.
+//
+// What this does NOT verify: that the gate is applied to the correct HTTP method
+// (a method-swap would need an integration test hitting the route).
+func TestSecretScheduleRouterGatesPresent(t *testing.T) {
+	src, err := os.ReadFile("../../server/http/router.go")
+	if err != nil {
+		t.Fatalf("cannot read server/http/router.go: %v", err)
+	}
+	for _, anchor := range []string{
+		`r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Put(pathIDSchedule, secretHandler.SetSecretSchedule)`,
+		`r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Delete(pathIDSchedule, secretHandler.DeleteSecretSchedule)`,
+	} {
+		if n := strings.Count(string(src), anchor); n != 1 {
+			t.Errorf("schedule router gate anchor found %d times (want 1): %q", n, anchor)
+		}
+	}
+}
+
+// TestSecretClassifyRouterGatePresent asserts that the classify PATCH route
+// registration in server/http/router.go exactly matches what this sweep tests.
+//
+// What this does NOT verify: the SecretActionClassify argument value, which is
+// asserted by the core layer's own action-constant tests.
+func TestSecretClassifyRouterGatePresent(t *testing.T) {
+	src, err := os.ReadFile("../../server/http/router.go")
+	if err != nil {
+		t.Fatalf("cannot read server/http/router.go: %v", err)
+	}
+	anchor := `r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionClassify)).Patch("/{id}/classification", secretHandler.ClassifySecret)`
+	if n := strings.Count(string(src), anchor); n != 1 {
+		t.Errorf("classify router gate anchor found %d times (want 1): %q", n, anchor)
+	}
 }
