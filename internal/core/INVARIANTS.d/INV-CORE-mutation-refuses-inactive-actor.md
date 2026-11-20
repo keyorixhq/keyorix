@@ -8,8 +8,13 @@
   invitation acceptance refuses an inactive human inviter (`requireInviterActive`, before the
   account is created and again in `applyInvitationGrants`), so a suspended inviter's pending
   invitation, project-scoped or global, no longer grants. The exported `InviteMember` check is
-  not reached at accept time, which calls `inviteMemberWithMode` directly (#4507; guard
-  `TestCompleteInvitationAccept_SuspendedInviterGrantsNothing`). Why: #4159
+  not reached at accept time, which calls `inviteMemberWithMode` directly (#4507; guards
+  `TestCompleteInvitationAccept_SuspendedInviterGrantsNothing`,
+  `TestCompleteInvitationAccept_SuspendedInviterGlobalAssignmentsGrantNothing` (a global invite
+  with assignments and no system role), `TestApplyInvitationGrants_SuspendedInviterGrantsNothing`
+  (the re-check on its own) and `TestApplyInvitationGrants_MachineInviterIsNotAccountChecked`).
+  The accept is not an authzdiff-bound op (the setup link is unauthenticated, so there is no
+  principal to sweep), so `TestCoreRefusesSuspendedActor` below does not cover it. Why: #4159
   (authzdiff known-02: core granted roles, members, invitations, approvals, machine tokens,
   shares and secret mutations to a suspended actor the transports refuse at authentication).
   Guard: `server/authzdiff/core_suspended_actor_test.go` (`TestCoreRefusesSuspendedActor`: every

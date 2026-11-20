@@ -9,7 +9,10 @@
   Why: #4160 (authzdiff known-03: viewer-owned secret, core allowed, REST and gRPC refused). Guard:
   `server/authzdiff/core_owner_gate_test.go` (`TestCoreOwnerWithoutPermissionIsRefused`, red before
   #4160) and the strict authzdiff sweep (no waiver absorbs the shape any more); tags, description
-  and move (#4508): `internal/core` `TestOwnerWithoutSecretsWrite_CannotSetTagsDescriptionOrMove`.
+  and move (#4508): `internal/core` `TestOwnerWithoutSecretsWrite_CannotSetTagsDescriptionOrMove`
+  and the same authzdiff test, which runs `secret.tags`, `secret.description` and `secret.move`
+  as the viewer-owner (red on the pre-#4508 core: core allowed, REST refused; the strict sweep
+  had not flagged that case).
   **Not covered**: other owner-gated core paths (share, ownership transfer, ACL grant) keep their
   own owner rules; and the project-scope bulk ops `BulkRenameSecrets`,
   `SuspendProjectSecretsWithOptions`, `ResumeProjectSecrets` and `ExtendExpiringSecrets`, whose
