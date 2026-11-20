@@ -70,6 +70,9 @@ excluded from the counts table, which tracks production packages only.
 | `fuzz/thirdparty/compress` | [fuzz/thirdparty/compress/INVARIANTS.md](../fuzz/thirdparty/compress/INVARIANTS.md) | 2 | 2 | 0 |
 | `fuzz/thirdparty/uuid` | [fuzz/thirdparty/uuid/INVARIANTS.md](../fuzz/thirdparty/uuid/INVARIANTS.md) | 2 | 2 | 0 |
 | `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |
+| `fuzz/thirdparty/cors` | [fuzz/thirdparty/cors/INVARIANTS.md](../fuzz/thirdparty/cors/INVARIANTS.md) | 2 | 2 | 0 |
+| `fuzz/thirdparty/kinopenapi` | [fuzz/thirdparty/kinopenapi/INVARIANTS.md](../fuzz/thirdparty/kinopenapi/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/fuzzutil/resguard` | [internal/fuzzutil/resguard/INVARIANTS.md](../internal/fuzzutil/resguard/INVARIANTS.md) | 5 | 5 | 0 |
 
 ## Highest-priority UNGUARDED gaps
 

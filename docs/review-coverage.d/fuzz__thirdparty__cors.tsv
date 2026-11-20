@@ -1,0 +1,1 @@
+fuzz/thirdparty/cors	none	-	test-only hostile-origin fuzz harness for go-chi/cors middleware; not part of any shipped build	test-helper
