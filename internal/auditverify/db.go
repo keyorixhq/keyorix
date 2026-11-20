@@ -30,22 +30,38 @@ const (
 type DB struct {
 	sql     *sql.DB
 	backend Backend
+	// cleanup removes the private copy a WAL-mode SQLite file is verified
+	// from (sqlite_wal_copy.go); nil otherwise.
+	cleanup func()
 }
 
 // OpenSQLiteReadOnly opens a SQLite file read-only (file:<path>?mode=ro) —
 // it never writes to the artifact being verified, and works unmodified
-// against a copy taken from a live deployment.
+// against a copy taken from a live deployment. A WAL-mode file (every
+// keyorix database) is opened from a private copy of it and its -wal, so
+// nothing is created beside the artifact and a read-only directory works
+// (#4350); Close removes that copy.
 func OpenSQLiteReadOnly(path string) (*DB, error) {
-	dsn := "file:" + sqliteURIPath.Replace(path) + "?mode=ro"
+	openPath, cleanup := path, func() {}
+	if sqliteNeedsPrivateCopy(path) {
+		cp, rm, err := copySQLiteToPrivateDir(path)
+		if err != nil {
+			return nil, fmt.Errorf("open sqlite %s: %w", path, err)
+		}
+		openPath, cleanup = cp, rm
+	}
+	dsn := "file:" + sqliteURIPath.Replace(openPath) + "?mode=ro"
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
+		cleanup()
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
 	if err := sqlDB.Ping(); err != nil {
 		_ = sqlDB.Close()
+		cleanup()
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
-	return &DB{sql: sqlDB, backend: BackendSQLite}, nil
+	return &DB{sql: sqlDB, backend: BackendSQLite, cleanup: cleanup}, nil
 }
 
 // sqliteURIPath percent-escapes the bytes SQLite's URI parser gives a meaning
@@ -81,9 +97,15 @@ func OpenPostgresConfig(cc *pgx.ConnConfig) (*DB, error) {
 	return &DB{sql: sqlDB, backend: BackendPostgres}, nil
 }
 
-// Close closes the underlying connection(s).
+// Close closes the underlying connection(s) and removes the private copy a
+// WAL-mode SQLite file was verified from, if any.
 func (d *DB) Close() error {
-	return d.sql.Close()
+	err := d.sql.Close()
+	if d.cleanup != nil {
+		d.cleanup()
+		d.cleanup = nil
+	}
+	return err
 }
 
 // Backend reports which dialect this DB was opened against.

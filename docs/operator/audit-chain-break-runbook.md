@@ -88,6 +88,18 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
    `--db` / `--pg-dsn` take no lock and never write. Without `--db`/`--pg-dsn` the command
    verifies the configured live database under the exclusive admin lock, so the server must
    be stopped (`--force` overrides the refusal; do not use it for evidence).
+
+   A keyorix SQLite database is in WAL mode, and SQLite cannot read a WAL-mode file without
+   creating `-wal`/`-shm` files beside it. So `--db` verifies a private copy instead: the
+   database and its `-wal` (if present) are copied into a new `0700` directory under
+   `$TMPDIR`, verified there, and the copy is deleted when the command ends, also on error.
+   The evidence directory can be read-only (an evidence share, `chmod 0500`), and its
+   listing and bytes stay unchanged. An un-checkpointed `-wal` shipped with the copy is
+   read, never skipped. The copy needs free space under `$TMPDIR` equal to the database
+   plus its `-wal`; if that is not available the command exits 3 and names the shortfall,
+   so set `TMPDIR` to a directory with room. A database whose `-wal` and `-shm` are both
+   present in a writable directory is in use by a SQLite process and is read in place, as
+   before; for evidence, copy it with the server stopped (step 2).
 4. Re-run it with the checkpoint key, which is what makes truncation visible. Derive the key
    with the server stopped and keep the file off the audited host (it is a shared secret:
    with the database it can forge a history):
