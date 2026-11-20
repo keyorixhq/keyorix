@@ -1,0 +1,1 @@
+server/authzdiff/matrix_derived_fresh_test.go	server/authzdiff/matrix.json,server/authzdiff/MATRIX.md	TestMatrixIsCurrent regenerates both files with devtools/authzmatrix and compares them byte for byte; the Go sources it derives from already trigger the Go jobs
