@@ -1,0 +1,2 @@
+### Documentation
+- **Library-surface fuzzing Stage 0 survey.** Tool survey for a planned pipeline that fuzzes a third-party library's full exported surface; `github.com/digitorus/pkcs7` as pilot. Documents recommended tools for API inventory, target generation, risk ranking, and oracle/differential references; inventories the 27-symbol pkcs7 surface and maps the 24 uncovered functions. See `docs/fuzz/library-surface/survey.md`.
