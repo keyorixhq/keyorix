@@ -45,7 +45,8 @@ func TestCopySecret_SourceReadFaultIsNotNotFoundAndWritesNoRefusalRow(t *testing
 	require.NoError(t, err)
 	prod, err := base.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p1.ID})
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p1.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p1.ID}).Error) // membership row the owner checks read
+	seedOwnerWriteRoleForTest(t, db, 1) // #4508: the owner must hold secrets.write
 	src, err := c.CreateSecret(ctx, &CreateSecretRequest{
 		Name: "db-url", Value: []byte("postgres://secret"), ProjectID: p1.ID, EnvironmentID: staging.ID,
 		Type: "connection-string", CreatedBy: "owner", OwnerID: 1,
