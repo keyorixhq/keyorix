@@ -90,6 +90,16 @@ const (
 	// (baseline run), so this comfortably catches a real per-request leak
 	// while staying green on an honest run of any length.
 	soakMaxHeapSlopePer10kBytes = 6 << 20 // 6 MiB
+	// heap noise floor (#4389): HeapInuse after two GCs still moves by a few
+	// hundred KiB between samples (span reuse, a late GC, caches filling). On the
+	// default 1.5k-op run the fit spans ~750 ops, so 0.7-0.9 MiB of that noise
+	// extrapolates to 7-9 MiB/10k and tripped the slope check on main four times
+	// after the 2026-11-17 latency fix, while the same run at 6k ops measured
+	// +1.2 MiB/10k (flat). A heap verdict therefore also needs the fitted rise
+	// over the second half to exceed this floor. A 10 KiB/op leak still fails the
+	// default run (7 MiB over 750 ops); a ~1 KiB/op leak is caught by a long soak
+	// (KEYORIX_SOAK_OPS), not by the short CI run.
+	soakHeapMinRiseBytes = 2 << 20 // 2 MiB
 	// DB+WAL bytes per logical record (bytes-per-record slope per 10k ops). Flat
 	// means storage grows only with legitimate content; a positive slope means
 	// each record is costing more over time (orphan rows, un-checkpointed WAL).
@@ -623,14 +633,27 @@ func fitSlopePer10k(samples []soakSample, get func(soakSample) float64) (per10k 
 // trend is monotonic. Always logs the slope for the report's growth tables.
 func checkGrowth(tb testing.TB, label string, samples []soakSample, threshold float64, get func(soakSample) float64) float64 {
 	tb.Helper()
+	return checkGrowthMinRise(tb, label, samples, threshold, 0, get)
+}
+
+// checkGrowthMinRise is checkGrowth with a noise floor: the fitted rise over the
+// second half (slope times its span in ops) must also reach minRise.
+func checkGrowthMinRise(tb testing.TB, label string, samples []soakSample, threshold, minRise float64, get func(soakSample) float64) float64 {
+	tb.Helper()
 	per10k, monotonic := fitSlopePer10k(samples, get)
+	rise := 0.0
+	if n := len(samples); n >= 4 {
+		half := samples[n/2:]
+		rise = per10k * float64(half[len(half)-1].ops-half[0].ops) / 10000.0
+	}
+	leak := per10k > threshold && monotonic && rise >= minRise
 	verdict := "OK"
-	if per10k > threshold && monotonic {
+	if leak {
 		verdict = "LEAK"
 	}
-	tb.Logf("GROWTH %-26s slope=%+.3f/10k-ops threshold=%.3f monotonic=%v -> %s",
-		label, per10k, threshold, monotonic, verdict)
-	if per10k > threshold && monotonic {
+	tb.Logf("GROWTH %-26s slope=%+.3f/10k-ops threshold=%.3f monotonic=%v rise=%+.0f floor=%.0f -> %s",
+		label, per10k, threshold, monotonic, rise, minRise, verdict)
+	if leak {
 		tb.Errorf("BOUNDED-GROWTH VIOLATION [%s]: slope %+.3f per 10k ops exceeds threshold %.3f and is monotonic over the second half",
 			label, per10k, threshold)
 	}
@@ -777,7 +800,7 @@ func runAndAssert(tb testing.TB, w *soakWorld, cfg soakConfig) {
 	} else {
 		tb.Logf("GROWTH open-fds/%s: not measurable on this platform, skipped", w.backend)
 	}
-	checkGrowth(tb, "heap-inuse/"+w.backend, samples, soakMaxHeapSlopePer10kBytes,
+	checkGrowthMinRise(tb, "heap-inuse/"+w.backend, samples, soakMaxHeapSlopePer10kBytes, soakHeapMinRiseBytes,
 		func(s soakSample) float64 { return float64(s.heapInuse) })
 	checkGrowth(tb, "db-bytes-per-record/"+w.backend, samples, soakMaxDBBytesPerRecordSlopePer10k,
 		func(s soakSample) float64 {
