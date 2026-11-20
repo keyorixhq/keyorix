@@ -48,7 +48,8 @@ type AuditIntegrityPosture struct {
 	// figure is the count verified through it, not a live count (#4186).
 	HeadID uint `json:"head_id,omitempty"`
 	// Stale is true when that check is older than auditPostureFreshWindow (or none
-	// is recorded). Only then is the cheap head lookup made: LatestEventID is the
+	// is recorded), or when the last attempt to refresh it failed and this is the
+	// previous value (compliance_posture_audit_refresh.go). Only then is the cheap head lookup made: LatestEventID is the
 	// newest audit event id now (storage MaxAuditEventID, one indexed read, no walk)
 	// and EventsSinceCheck how many events lie past HeadID, written since the check
 	// and not yet verified. Neither field is a verification result.
@@ -452,16 +453,7 @@ func (c *KeyorixCore) buildComplianceSnapshot(ctx context.Context) (*complianceS
 		accessRequestsErrByProject: make(map[uint]error, len(projects)),
 	}
 
-	// The persisted verification state, not a walk (spec audit-incremental-verification §5).
-	snap.auditChain, snap.auditChainErr = c.AuditVerificationStatus(ctx)
-	if snap.auditChainErr == nil && snap.auditChain != nil && auditCheckStale(snap.auditChain, c.now()) {
-		snap.auditStale = true
-		// Best effort: the lookup only annotates the figure, so a failure leaves
-		// the tile showing the recorded check without the "newer events" note.
-		if id, err := c.storage.MaxAuditEventID(ctx); err == nil {
-			snap.auditLatestID = id
-		}
-	}
+	c.fillAuditSnapshot(ctx, snap)
 	snap.rotationStatuses, snap.rotationErr = c.GetRotationStatus(ctx, nil, nil)
 	if _, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{Page: 1, PageSize: 1}); err == nil {
 		snap.totalSecrets = int(total)
@@ -500,6 +492,23 @@ func (c *KeyorixCore) buildComplianceSnapshot(ctx context.Context) (*complianceS
 		snap.accessRequestsErrByProject[pid] = rErr
 	}
 	return snap, nil
+}
+
+// fillAuditSnapshot sets the audit-chain fields of snap. The chain check is
+// refreshed by a request that finds it older than auditPostureRefreshAfter; a
+// failed refresh shows the persisted verification state and marks it stale
+// (compliance_posture_audit_refresh.go).
+func (c *KeyorixCore) fillAuditSnapshot(ctx context.Context, snap *complianceSnapshot) {
+	var refreshFailed bool
+	snap.auditChain, refreshFailed, snap.auditChainErr = c.auditPostureReport(ctx)
+	if snap.auditChainErr == nil && snap.auditChain != nil && (refreshFailed || auditCheckStale(snap.auditChain, c.now())) {
+		snap.auditStale = true
+		// Best effort: the lookup only annotates the figure, so a failure leaves
+		// the tile showing the recorded check without the "newer events" note.
+		if id, err := c.storage.MaxAuditEventID(ctx); err == nil {
+			snap.auditLatestID = id
+		}
+	}
 }
 
 // applyAccessRequestEffectiveExpiry corrects the in-memory State of any row that is

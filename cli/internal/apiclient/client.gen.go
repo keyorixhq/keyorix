@@ -18006,8 +18006,12 @@ func (r GetCompliancePermissionChangesResponse) StatusCode() int {
 type GetCompliancePostureResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON401      *Error
-	JSON403      *Error
+	JSON200      *struct {
+		// Data The deployment-wide controls-posture snapshot (GET /compliance/posture): one object per control area. degraded is true when a sub-rollup could not be queried, so the zero values it carries are UNKNOWN rather than verified clean; degraded_reasons names each failed rollup. Mirrors core.CompliancePosture; TestCompliancePostureSchemaMatchesHandlerBody fails when the two drift.
+		Data *CompliancePosture `json:"data,omitempty"`
+	}
+	JSON401 *Error
+	JSON403 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -28204,6 +28208,16 @@ func ParseGetCompliancePostureResponse(rsp *http.Response) (*GetCompliancePostur
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Data The deployment-wide controls-posture snapshot (GET /compliance/posture): one object per control area. degraded is true when a sub-rollup could not be queried, so the zero values it carries are UNKNOWN rather than verified clean; degraded_reasons names each failed rollup. Mirrors core.CompliancePosture; TestCompliancePostureSchemaMatchesHandlerBody fails when the two drift.
+			Data *CompliancePosture `json:"data,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
