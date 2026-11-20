@@ -202,6 +202,12 @@ func buildCall(tb testing.TB, fx *fixtures, st seqStep) *seqCall {
 }
 
 func buildCallRaw(fx *fixtures, st seqStep) *seqCall {
+	// Skip legacy global-only role grants/revokes at project scope; every transport
+	// returns 400/InvalidArgument (not an RBAC denial), and the sequence model does
+	// not capture this legacy constraint. Mirrors legacyRoleAtProject in ops_test.go.
+	if legacyRoleAtProject(st.T, st.Role) {
+		return nil
+	}
 	subj := fx.principals[st.Subject]
 	proj := pid(fx, st.T)
 	_, rid := grantRole(fx, st.Role)

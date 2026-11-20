@@ -249,6 +249,11 @@ func runSeq(tb testing.TB, steps []seqStep, f *seqFault, stats *seqStats) []seqF
 			continue
 		}
 		call := buildCall(tb, w.fx, st)
+		if call == nil {
+			// buildCallRaw returned nil (e.g. legacy global-only role at project scope);
+			// skip this step — the state world is unchanged, harness continues.
+			continue
+		}
 		p := w.fx.principals[st.Actor] // userID and kind only; per-layer tokens below
 		before := map[layer]string{}
 		// A grant whose row every leg already holds before the step is a repeated
