@@ -19,7 +19,12 @@ const Canary = "cnrycompat0123456789"
 // key is the required fail-closed behaviour (I1), so a canary the fuzzer typed
 // AS a key name is masked before the canary-leak check; a canary that leaks as a
 // VALUE is still caught.
-var keyEcho = regexp.MustCompile(`unknown key "[^"]*"|field \S+ not found in type [\w.]+`)
+//
+// The "field ... not found in type" branch uses [^\n]+ rather than \S+ so that
+// YAML keys containing spaces (e.g. "cnrycompat0123456789 000000000") are matched
+// in full; \S+ would stop at the first space and leave the rest of the key (which
+// may start with the canary) unmasked.
+var keyEcho = regexp.MustCompile(`unknown key "[^"]*"|field [^\n]+ not found in type [\w.]+`)
 
 // namesAKey reports whether a refusal verdict names at least one key — i.e.
 // matches the masked refusal signature. A keyed file that is refused with a

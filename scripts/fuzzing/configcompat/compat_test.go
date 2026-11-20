@@ -187,6 +187,27 @@ func TestI1Robust_PlantRedGreen(t *testing.T) {
 	}
 }
 
+// TestI1Robust_KeyPrefixNotALeak verifies that a canary echoed as a key NAME that
+// merely starts with the canary (e.g. "cnrycompat0123456789 000000000") is NOT
+// flagged, while a canary echoed as a VALUE still is.
+func TestI1Robust_KeyPrefixNotALeak(t *testing.T) {
+	// GREEN: key name starts with the canary — the echo is a legitimate key-name
+	// report, not a secret-value disclosure.
+	keyPrefixLoader := func(_ []byte) LoadResult {
+		return LoadResult{Verdict: "load: failed to unmarshal config: yaml: construct errors: line 1: field " + Canary + " 000000000 not found in type config.Config"}
+	}
+	if fnd := CheckI1Robust(keyPrefixLoader, []byte(Canary+" 000000000: 00")); len(fnd) != 0 {
+		t.Fatalf("green: key-name-with-canary-prefix should not be flagged, got %v", fnd)
+	}
+	// RED: canary echoed as a secret VALUE in an error (not a key echo) is still flagged.
+	valueLeaker := func(_ []byte) LoadResult {
+		return LoadResult{Verdict: "load: server.http.token: invalid value " + Canary}
+	}
+	if fnd := CheckI1Robust(valueLeaker, []byte("server:\n  http:\n    token: "+Canary+"\n")); len(fnd) == 0 {
+		t.Fatal("red: canary secret VALUE in error must be flagged but was not")
+	}
+}
+
 func TestI2_PlantRedGreen(t *testing.T) {
 	m := mustModel(t)
 	env := newEnv(t)
