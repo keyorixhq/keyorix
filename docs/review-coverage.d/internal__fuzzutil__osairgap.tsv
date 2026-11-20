@@ -1,0 +1,1 @@
+internal/fuzzutil/osairgap	none	-	PR #4439 (fuzz/agp1-airgap-egress): OS-level air-gap egress harness (network-namespace jail, loopback canary, /proc/net classifier) imported only by fuzz and egress tests; internal/fuzzutil/osairgap/osairgap_test.go fails if a non-test file imports it; no production import, no auth or storage decisions in the product	test-helper
