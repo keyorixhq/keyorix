@@ -865,6 +865,9 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 	if err := refuseMachineActor(ctx, userID); err != nil { // #4162
 		return nil, err
 	}
+	if err := c.requireActorActive(ctx, userID); err != nil { // #4159
+		return nil, err
+	}
 	if projectID == 0 || userID == 0 {
 		return nil, fmt.Errorf("project and user IDs are required")
 	}
