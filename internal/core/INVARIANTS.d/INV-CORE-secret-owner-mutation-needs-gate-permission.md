@@ -11,4 +11,8 @@
   #4160) and the strict authzdiff sweep (no waiver absorbs the shape any more); tags, description
   and move (#4508): `internal/core` `TestOwnerWithoutSecretsWrite_CannotSetTagsDescriptionOrMove`.
   **Not covered**: other owner-gated core paths (share, ownership transfer, ACL grant) keep their
-  own owner rules.
+  own owner rules; and the project-scope bulk ops `BulkRenameSecrets`,
+  `SuspendProjectSecretsWithOptions`, `ResumeProjectSecrets` and `ExtendExpiringSecrets`, whose
+  per-item core decision is still `EnforceSecretWritePermission` (owner pass alone). Their REST
+  gate is project-scope `secrets.write`, so only a direct core caller is affected (found by
+  SECURITY-WAVE1-REVIEW, 2026-11-20; follow-up, not fixed here).
