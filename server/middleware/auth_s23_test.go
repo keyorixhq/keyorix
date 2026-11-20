@@ -554,6 +554,8 @@ func TestHandleScopedSecretPermission_SecretNotFound(t *testing.T) {
 // handleScopedPermissionRequest).
 func TestHandleScopedSecretPermission_AllowedViaACL(t *testing.T) {
 	db := newScopedSecretTestDB(t)
+	// GrantSecretACL requires the granting actor (ID 1) to be an active account (#4159).
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "grantor", AccountState: "active"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 5, Username: "aclonly", AccountState: "active"}).Error)
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env"}).Error)
