@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -76,4 +77,42 @@ func TestCompleteInvitationAccept_SuspendedInviterGrantsNothing(t *testing.T) {
 			assert.Equal(t, InvitationPending, reloaded.State)
 		})
 	}
+}
+
+// TestCompleteInvitationAccept_InviterReadFaultIsPostVerdict: a storage fault
+// reading the inviter's account (#4507's check) comes after the token's verdict, so
+// it is typed ErrSetupPostVerdict and audited as an outage, not as a dead link
+// (AUTH-ENDPOINT-OUTAGE-1). Nothing is written either way.
+func TestCompleteInvitationAccept_InviterReadFaultIsPostVerdict(t *testing.T) {
+	t.Parallel()
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	const email = "inviter-read-fault-invitee@example.com"
+	const rawToken = setupPrefix + "invite-accept-inviter-read-fault-1"
+
+	project, err := st.CreateProject(ctx, &models.Project{Name: "inviter-read-fault-project"})
+	require.NoError(t, err)
+	now := c.now()
+	future := now.Add(24 * time.Hour)
+	inv, err := st.CreateProjectInvitation(ctx, &models.ProjectInvitation{
+		ProjectID: project.ID, Email: email, Role: "project_developer", State: InvitationPending,
+		InvitedBy: 1, ValidationModeAtInvite: ValidationModeOpen, ExpiresAt: &future, CreatedAt: now,
+	})
+	require.NoError(t, err)
+	_, err = st.CreateSetupToken(ctx, &models.SetupToken{
+		TokenHash: sha256Hex(rawToken), Purpose: SetupPurposeInvitationAccept, SubjectEmail: email,
+		InvitationID: &inv.ID, State: SetupTokenActive, ExpiresAt: future, CreatedBy: 1,
+	})
+	require.NoError(t, err)
+
+	fs := faultstorage.NewFaultyStorage(c.storage, &faultstorage.FaultSpec{
+		Method: "GetUser", NthCall: 1, Kind: faultstorage.KindError, Err: errors.New("injected: GetUser"),
+	})
+	c.storage = fs
+	_, err = c.CompleteSetup(ctx, rawToken, strongPw, "ua", "1.2.3.4")
+	require.True(t, fs.Fired(), "the inviter read must have been reached")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSetupPostVerdict)
+	_, uerr := st.GetUserByEmail(ctx, email)
+	assert.Error(t, uerr, "no account is created")
 }
