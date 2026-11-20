@@ -93,6 +93,19 @@ func explain(r *caseResult) string {
 		is(rest, Denied) && rest.Detail == "2xx-item-refused" && deniedOrNA(grpc):
 		return "known-11"
 
+	// V5EXT7 known-12: mfa.enroll with a machine-token actor.
+	// MFA enrollment is a user-only self-service operation; the REST endpoint
+	// rejects machine-token requests with 400 Bad Request. The reference model
+	// has no permission requirement for mfa.enroll (noMFARequired: true), so it
+	// returns "allowed" for any principal that does not already have MFA enabled
+	// — including machine identities. This is a model-coverage gap, not an
+	// authorization defect: machine tokens cannot hold personal MFA by design.
+	// No gRPC surface; core excludes machine actors via errNotAuthzLayer.
+	// Tracked: TODO-ISSUE.
+	case pk == pkMachine && r.Op == "mfa.enroll" &&
+		na(core) && restBadStatus && deniedOrNA(grpc):
+		return "known-12"
+
 	}
 	return "unexplained"
 }
@@ -105,6 +118,7 @@ var waivers = []struct{ id, issue, expires string }{
 	{"known-04", "#4161", "2027-02-13"},
 	{"known-10", "#4514", "2027-06-18"},
 	{"known-11", "#4515", "2027-06-18"},
+	{"known-12", "TODO-ISSUE", "2027-06-18"},
 }
 
 // waiverIDs is waivers' ids (the dead-waiver check's population).

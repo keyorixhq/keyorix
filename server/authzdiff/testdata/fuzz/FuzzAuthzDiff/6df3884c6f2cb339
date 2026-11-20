@@ -1,0 +1,8 @@
+go test fuzz v1
+byte('æ')
+byte('F')
+byte('\'')
+byte('V')
+uint16(253)
+byte('\x0e')
+byte('\u0087')
