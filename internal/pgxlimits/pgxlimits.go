@@ -17,9 +17,12 @@ import "github.com/jackc/pgx/v5"
 // container within three dials.
 //
 // The engines using this run DDL and role statements whose replies are a few
-// hundred bytes, so 16 MiB leaves a very wide margin for a legitimate row or
-// notice. It is a ceiling on ONE message, not on a result set.
-const MaxProtocolMessageBodyLen = 16 << 20
+// hundred bytes, so 1 MiB leaves a wide margin for a legitimate row or notice.
+// It is a ceiling on ONE message, not on a result set. It is kept small on
+// purpose: it is also the per-connection allocation a rogue server can still
+// force, so N concurrent connections can reach N times this (16 MiB would let
+// ~32 concurrent calls reach 512 MiB; 1 MiB needs ~500).
+const MaxProtocolMessageBodyLen = 1 << 20
 
 // Apply sets the bound on cfg. Every connection built from an admin_dsn must go
 // through it (internal/dynamic enforces that with
