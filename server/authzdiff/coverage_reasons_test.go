@@ -43,7 +43,6 @@ var reasonRules = []struct{ match, reason string }{
 	{" /api/v1/auth/mfa/", "fixture: needs MFA enrolment state (MFA deferred to the not-yet list)"},
 	{" /api/v1/auth/", "design: self-service on the caller's own account/credentials (no target owned by someone else); not bound"},
 	{" /api/v1/end-impersonation", "fixture: needs an impersonation session (deferred to the not-yet list)"},
-	{" /api/v1/admin/impersonate", "fixture: needs an impersonation session (deferred to the not-yet list)"},
 	{" /system/init", "design: one-time bootstrap of an uninitialised install; the template is already initialised"},
 	{" /scim/v2/", "design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)"},
 	{"DynamicSecretService.", "fixture: needs a dynamic-secret backend (database/cloud) configured"},

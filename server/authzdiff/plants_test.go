@@ -324,6 +324,47 @@ var plants = append([]plant{
 		op:             "breakglass.review",
 		minUnexplained: 2,
 	},
+	{
+		// V5EXT8: removes the impersonation.start REST router gate
+		// (RequirePermission("users.impersonate")). core.StartImpersonation performs
+		// no RBAC permission check (core_refusal:"none"; it enforces session-auth and
+		// admin-rank ceiling only). With the gate gone, non-admin named principals
+		// pass the route and reach requireEqualOrGreaterAdminAuthority, which fails
+		// (fixture u-target holds project_viewer@A and @B; every non-admin lacks @B
+		// coverage) → HTTP 500 → REST=Other. The model (globalPerms:users.impersonate)
+		// denies them → mapping-gap:other-where-model-denies:REST → "unexplained".
+		name: "impersonation-start-rest-gate-removed",
+		file: "server/http/router.go",
+		anchor: "\t\tr.With(customMiddleware.RequirePermission(\"users.impersonate\")).\n" +
+			"\t\t\tPost(\"/admin/impersonate\", impersonationHandler.Start)",
+		repl:           "\t\tr.Post(\"/admin/impersonate\", impersonationHandler.Start) // PLANT: REST gate removed",
+		op:             "impersonation.start",
+		minUnexplained: 5,
+	},
+	{
+		// V5EXT8: removes the admin-role check from CancelMFAReset. The router gate
+		// (RequirePermission users.write@global) is WEAKER than core's
+		// isGlobalAdminRoleName check (HARDENING-V5EXT8-1). With the core check gone,
+		// a custom principal holding users.write@global but no admin role name passes
+		// BOTH the route gate AND core, over-allowing what the globalAdminRole model
+		// rule denies: O2:allowed-but-model-denies:REST → "unexplained". The curated
+		// variation {pkCustom, Mask:users.write, Scope:"global"} is what exposes it.
+		name: "mfareset-cancel-core-gate-removed",
+		file: "internal/core/mfa_reset.go",
+		anchor: "\tif actorIsMachine || actorID == 0 {\n" +
+			"\t\treturn ErrMFAResetAdminRequired\n" +
+			"\t}\n" +
+			"\trole, err := c.isGlobalAdminRoleName(ctx, actorID)\n" +
+			"\tif err != nil {\n" +
+			"\t\treturn fmt.Errorf(\"check admin role: %w\", err)\n" +
+			"\t}\n" +
+			"\tif role == \"\" {\n" +
+			"\t\treturn ErrMFAResetAdminRequired\n" +
+			"\t}",
+		repl:           "\t_ = actorIsMachine // PLANT: MFA-reset admin-role check removed",
+		op:             "mfaReset.cancel",
+		minUnexplained: 1,
+	},
 }, fixRegressionPlants...)
 
 // fixRegressionPlants revert, one each, the authorization fixes merged after

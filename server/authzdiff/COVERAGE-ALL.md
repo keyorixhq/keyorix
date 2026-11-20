@@ -12,8 +12,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
 | secrets | 43 | 38 | 10 | 10 |
-| other | 128 | 35 | 22 | 11 |
-| **total** | **212** | **114** | **47** | **36** |
+| other | 128 | 37 | 22 | 11 |
+| **total** | **212** | **116** | **47** | **36** |
 
 ## groups
 
@@ -198,7 +198,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST PATCH /api/v1/dynamic-secrets/configs/{id}/enabled` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `REST PATCH /scim/v2/Groups/{id}` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
 - [ ] `REST PATCH /scim/v2/Users/{id}` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
-- [ ] `REST POST /api/v1/admin/impersonate` — fixture: needs an impersonation session (deferred to the not-yet list)
+- [x] `REST POST /api/v1/admin/impersonate` — impersonation.start
 - [ ] `REST POST /api/v1/admin/jobs/anomaly-alerts` — design: on-demand job trigger (system.write / alerts.write); outside the requested families; not bound
 - [ ] `REST POST /api/v1/admin/jobs/check-read-quotas` — design: on-demand job trigger (system.write / alerts.write); outside the requested families; not bound
 - [ ] `REST POST /api/v1/admin/jobs/compliance-digest` — design: on-demand job trigger (system.write / alerts.write); outside the requested families; not bound
@@ -240,7 +240,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/legal-hold` — model: legal-hold rules are not in the reference model
 - [ ] `REST POST /api/v1/mfa-reset-requests` — model: MFA-reset approval rules are not in the reference model
 - [ ] `REST POST /api/v1/mfa-reset-requests/{id}/approve` — model: MFA-reset approval rules are not in the reference model
-- [ ] `REST POST /api/v1/mfa-reset-requests/{id}/cancel` — model: MFA-reset approval rules are not in the reference model
+- [x] `REST POST /api/v1/mfa-reset-requests/{id}/cancel` — mfaReset.cancel
 - [ ] `REST POST /api/v1/notification-channels` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/notifications/read-all` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/notifications/{id}/read` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound

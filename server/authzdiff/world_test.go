@@ -249,6 +249,13 @@ type fixtures struct {
 	// scimGroupID is a pre-provisioned SCIM group for PUT/PATCH/DELETE /scim/v2/Groups/{id}.
 	scimUserID  uint
 	scimGroupID uint
+
+	// V5EXT8: MFA reset cancel fixture.
+	// mfaResetRequestID is a pending MFA reset request (target=targetUserID,
+	// requester=u-mfa-reset-requester, a non-probed admin), seeded directly into
+	// the template so CancelMFAReset can be exercised without going through
+	// RequestMFAReset's requireReauth TOTP gate.
+	mfaResetRequestID uint
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -833,6 +840,28 @@ func seed(ctx context.Context, db *gorm.DB, enc *encryption.Service) (fx *fixtur
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the
 	// seeded tokens so the copies are never inside the 60s window.
 	db.Exec("UPDATE setup_tokens SET created_at = ?", time.Now().UTC().Add(-2*time.Hour))
+
+	// ---- V5EXT8 fixtures ----
+	// A pending MFA reset request for mfaReset.cancel. The requester is a
+	// non-probed admin user (never a sweep principal) so CancelMFAReset's
+	// self-cancel check never fires. Inserted directly — bypasses
+	// RequestMFAReset's requireReauth TOTP gate intentionally.
+	mfaResetRequester := mkUser("u-mfa-reset-requester")
+	grant(mfaResetRequester.ID, fx.roleIDs["admin"], 0, nil)
+	mfaResetReq := models.MFAResetRequest{
+		TargetUserID: fx.targetUserID,
+		RequestedBy:  mfaResetRequester.ID,
+		Reason:       "fixture: authorized test request",
+		VerifiedBy:   "ticket",
+		Evidence:     "fixture-ticket-v5ext8",
+		Status:       models.MFAResetStatusPending,
+		CreatedAt:    time.Now().UTC(),
+		ExpiresAt:    time.Now().UTC().Add(24 * time.Hour),
+	}
+	if err := db.Create(&mfaResetReq).Error; err != nil {
+		return nil, fmt.Errorf("seed: create mfa reset request fixture: %w", err)
+	}
+	fx.mfaResetRequestID = mfaResetReq.ID
 
 	return fx, nil
 }
