@@ -21,7 +21,8 @@ import (
 // refusal must not claim relay credentials travel in cleartext, and a relay that
 // offers only PLAIN/LOGIN must fail with the actual cause named.
 
-const plainLoginNoTLSCause = "server offers only PLAIN/LOGIN and TLS is disabled"
+// (Since #4383 SCRAM joins PLAIN and LOGIN as TLS-only: internal/smtpauth.)
+const plainLoginNoTLSCause = "server offers no AUTH mechanism usable without TLS"
 
 func TestNewEmail_TLSNoneRefusalWording(t *testing.T) {
 	t.Setenv(envflag.AllowInsecureSMTP, "")
@@ -36,7 +37,7 @@ func TestNewEmail_TLSNoneRefusalWording(t *testing.T) {
 	}{
 		{"does not claim relay credentials travel in cleartext", func() bool { return !strings.Contains(msg, "relay credentials") }, "go-mail never sends PLAIN/LOGIN without TLS"},
 		{"says the message is sent unencrypted", func() bool { return strings.Contains(msg, "unencrypted") }, "the notification itself does travel in cleartext"},
-		{"names the PLAIN/LOGIN consequence", func() bool { return strings.Contains(msg, "PLAIN or LOGIN") }, "operators must learn why auth will fail"},
+		{"names the PLAIN/LOGIN consequence", func() bool { return strings.Contains(msg, "PLAIN, LOGIN and SCRAM") }, "operators must learn why auth will fail"},
 		{"still names the opt-in env var", func() bool { return strings.Contains(msg, envflag.AllowInsecureSMTP) }, "the refusal must say how to opt in"},
 	}
 	for _, tc := range cases {
