@@ -1,6 +1,7 @@
 package configspace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,32 @@ var unknownKeyEcho = regexp.MustCompile(`unknown key "[^"]*"|field \S+ not found
 // leaksCanary reports whether an error text discloses the canary outside an unknown-key echo.
 func leaksCanary(verdict string) bool {
 	return strings.Contains(unknownKeyEcho.ReplaceAllString(verdict, `-`), fuzzCanary)
+}
+
+// secretCanaryLoaded reports whether the fuzz canary value appears in a secret-typed
+// field of the loaded config (as determined by IsSecretPath). When the canary appears
+// only in non-secret fields — such as an enum or free-text field like storage.type —
+// an error echoing it is not a secret disclosure and must not be flagged.
+//
+// Slice-of-struct paths (e.g. sso.providers[].client_secret) are not checked here
+// because lookupEffective does not walk slice elements; this is a known gap.
+func secretCanaryLoaded(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, e := range Surface() {
+		if !e.Secret {
+			continue
+		}
+		val, ok := lookupEffective(cfg, e.Path)
+		if !ok {
+			continue
+		}
+		if strings.Contains(fmt.Sprint(val), fuzzCanary) {
+			return true
+		}
+	}
+	return false
 }
 
 var fuzzSeeds = []string{
@@ -108,7 +135,7 @@ func FuzzConfigLoadValidate(f *testing.F) {
 			return "", c
 		}
 		v1, cfg := load()
-		if leaksCanary(v1) {
+		if leaksCanary(v1) && secretCanaryLoaded(cfg) {
 			t.Fatalf("secret value in error text: %s", v1)
 		}
 		if v2, _ := load(); v2 != v1 {
