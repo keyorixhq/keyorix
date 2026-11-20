@@ -346,8 +346,8 @@ posture deviations on a default PostgreSQL install
 (`TestCollectAuditDurabilityPosture_DefaultPostgresIsNotADeviation`); the INFO
 line (`TestLogAuditDurability_StartupInfoLine`); the real binary on PostgreSQL
 (`TestAuditDurability_PostgresEndToEnd`) and SQLite
-(`TestAuditDurability_SQLiteRefusesStandardEndToEnd`,
-`TestAuditDurability_SQLiteDefaultBootIsStrict`).
+(`TestAuditDurability_SQLiteDefaultBootIsStrict`; the SQLite refusal test was
+replaced by `TestAuditDurability_SQLiteStandardBootsEndToEnd` with Amendment 7).
 
 ## Amendment 4 (2026-10-15): `insecure_audit_skip_reads`, successful secret reads unaudited
 

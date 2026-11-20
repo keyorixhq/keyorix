@@ -105,23 +105,25 @@ type DatabaseConfig struct {
 	// backend and on the deprecated alias below.
 	//
 	//   - "strict": the audit commit waits for the disk sync. No audit entry
-	//     is lost to any crash or power loss. The only level on SQLite.
+	//     is lost to any crash or power loss. The SQLite default.
 	//   - "standard": the audit row is still INSERTed and COMMITted before the
 	//     secret is returned, and a failed audit write still fails the
-	//     request; only the wait for the disk sync is skipped (`SET LOCAL
+	//     request; only the wait for the disk sync is skipped. A Keyorix
+	//     process crash loses nothing. PostgreSQL (its default): `SET LOCAL
 	//     synchronous_commit = off` on the audit transaction, and only that
-	//     transaction). A Keyorix process crash loses nothing; an OS crash,
-	//     power loss or PostgreSQL crash can lose up to ~600 ms (3 ×
-	//     wal_writer_delay) of audit entries as a TAIL, never a gap or a fork.
-	//     PostgreSQL only, and the PostgreSQL default.
+	//     transaction; an OS crash, power loss or PostgreSQL crash can lose up
+	//     to ~600 ms (3 × wal_writer_delay) of audit entries as a TAIL, never a
+	//     gap or a fork. SQLite (opt-in, ADR-112 Amendment 7): batches made up
+	//     only of successful secret-value read audits commit on one dedicated
+	//     synchronous=NORMAL connection; everything else stays on the FULL
+	//     pool. An OS crash or power loss can lose a TAIL of read-audit rows
+	//     committed since the last WAL sync, with no time bound.
 	//   - "" (unset): the backend default -- standard on PostgreSQL, strict on
 	//     SQLite.
 	//
 	// Non-audit writes (secret writes, revocations, rotations) commit durably
-	// at both levels. SQLite refuses standard at start-up
-	// (auditDurabilityStandardSQLiteUnsupportedError): its synchronous pragma
-	// is per-connection and the pool is shared, so relaxing it would relax
-	// every table, not only audit (Amendment 1's rejection, which stands).
+	// at both levels, on both backends, and so do the audit rows of every
+	// mutation on SQLite.
 	AuditDurability string `yaml:"audit_durability"`
 
 	// InsecureAuditSkipDurableSync is the DEPRECATED alias of AuditDurability,
@@ -200,7 +202,8 @@ const (
 	// AuditDurabilityStrict: the audit commit waits for the disk sync.
 	AuditDurabilityStrict AuditDurabilityLevel = "strict"
 	// AuditDurabilityStandard: the audit row is committed before every
-	// disclosure, without waiting for the disk sync. PostgreSQL only.
+	// disclosure, without waiting for the disk sync. On SQLite, read audits
+	// only (ADR-112 Amendment 7).
 	AuditDurabilityStandard AuditDurabilityLevel = "standard"
 )
 
@@ -210,14 +213,20 @@ const AuditDurabilitySettingName = "storage.database.audit_durability"
 // auditDurabilityDeprecatedAliasName is the dotted path of the deprecated alias.
 const auditDurabilityDeprecatedAliasName = "storage.database.insecure_audit_skip_durable_sync"
 
-// auditDurabilityStandardSQLiteUnsupportedError is the exact start-up refusal
-// for standard on a SQLite backend (ADR-112 Amendment 1's rejection, kept by
-// Amendment 3). A constant so Validate and its tests cannot drift apart.
-const auditDurabilityStandardSQLiteUnsupportedError = "storage.database.audit_durability: standard is only " +
-	"supported with PostgreSQL; SQLite runs strict only -- remove the setting or set it to strict"
+// sqliteStandardAuditDurabilityMeaning is standard's meaning on SQLite (ADR-112
+// Amendment 7): only read audits are relaxed, and no timer bounds the window.
+const sqliteStandardAuditDurabilityMeaning = "committed before every disclosure; secret mutations and their audit " +
+	"rows are synced to disk, successful read audits are not: an OS crash or power loss can lose the read-audit rows " +
+	"written since the last sync (no time bound on SQLite); set audit_durability: strict to wait for the disk sync"
 
-// Meaning returns the one-line, operator-facing meaning of the level, used by
-// the start-up INFO line, admin validate and the posture report.
+// isSQLiteStorageType reports whether storageType names the SQLite backend.
+func isSQLiteStorageType(storageType string) bool {
+	return storageType == "local" || storageType == "sqlite"
+}
+
+// Meaning returns the one-line, operator-facing meaning of the level on
+// PostgreSQL. AuditDurabilityStatus.Meaning is the backend-aware form the
+// start-up INFO line, admin validate and the posture report use.
 func (l AuditDurabilityLevel) Meaning() string {
 	switch l {
 	case AuditDurabilityStandard:
@@ -264,17 +273,12 @@ func (d *DatabaseConfig) explicitAuditDurability() (AuditDurabilityLevel, error)
 	return alias, nil
 }
 
-// validateAuditDurability is Validate's check: a known value, no conflict
-// between the key and its deprecated alias, and standard only on PostgreSQL.
-func (d *DatabaseConfig) validateAuditDurability(storageType string) error {
-	level, err := d.explicitAuditDurability()
-	if err != nil {
-		return err
-	}
-	if level == AuditDurabilityStandard && (storageType == "local" || storageType == "sqlite") {
-		return fmt.Errorf("%s", auditDurabilityStandardSQLiteUnsupportedError)
-	}
-	return nil
+// validateAuditDurability is Validate's check: a known value and no conflict
+// between the key and its deprecated alias. Both levels are valid on
+// PostgreSQL and SQLite (ADR-112 Amendment 7 lifted the SQLite refusal).
+func (d *DatabaseConfig) validateAuditDurability() error {
+	_, err := d.explicitAuditDurability()
+	return err
 }
 
 // AuditDurabilityStatus is the effective audit durability of one loaded
@@ -287,20 +291,30 @@ type AuditDurabilityStatus struct {
 	// Explicit is true when the config file chose the level (audit_durability
 	// or its deprecated alias), false when it is the backend default.
 	Explicit bool
+	// SQLite is true when the backend is SQLite, where standard relaxes read
+	// audits only (ADR-112 Amendment 7) and Meaning says so.
+	SQLite bool
 }
 
 // EffectiveAuditDurability computes the effective level for storageType:
 // the explicit setting when there is one, otherwise standard on PostgreSQL
 // and strict everywhere else.
 //
-// Only postgres/postgresql can ever be standard. An allowlist on purpose: a
-// backend that does not implement the SET LOCAL mechanism (SQLite, remote, an
-// unknown type in a config that skipped Validate) reports strict, which is
-// what it actually does, rather than claiming a relaxation nothing performs.
-// An invalid or conflicting setting (refused by Validate) also reports strict.
+// Only postgres/postgresql and local/sqlite can ever be standard, and SQLite
+// only when the config file says so. An allowlist on purpose: a backend that
+// implements neither mechanism (remote, an unknown type in a config that
+// skipped Validate) reports strict, which is what it actually does, rather
+// than claiming a relaxation nothing performs. An invalid or conflicting
+// setting (refused by Validate) also reports strict.
 func (d *DatabaseConfig) EffectiveAuditDurability(storageType string) AuditDurabilityStatus {
 	level, err := d.explicitAuditDurability()
 	explicit := err == nil && level != ""
+	if isSQLiteStorageType(storageType) {
+		if explicit && level == AuditDurabilityStandard {
+			return AuditDurabilityStatus{Level: AuditDurabilityStandard, Explicit: true, SQLite: true}
+		}
+		return AuditDurabilityStatus{Level: AuditDurabilityStrict, Explicit: explicit, SQLite: true}
+	}
 	if storageType != "postgres" && storageType != "postgresql" {
 		return AuditDurabilityStatus{Level: AuditDurabilityStrict, Explicit: explicit}
 	}
@@ -321,7 +335,15 @@ func (s AuditDurabilityStatus) StartupLine() string {
 	if !s.Explicit && s.Level == AuditDurabilityStandard {
 		source = "PostgreSQL default; "
 	}
-	return fmt.Sprintf("audit durability: %s (%s%s)", s.Level, source, s.Level.Meaning())
+	return fmt.Sprintf("audit durability: %s (%s%s)", s.Level, source, s.Meaning())
+}
+
+// Meaning is the level's operator-facing meaning on this status's backend.
+func (s AuditDurabilityStatus) Meaning() string {
+	if s.SQLite && s.Level == AuditDurabilityStandard {
+		return sqliteStandardAuditDurabilityMeaning
+	}
+	return s.Level.Meaning()
 }
 
 // validateRemoteStorageNotServer enforces ADR-083: storage.type: remote is a
@@ -393,7 +415,7 @@ func validateStorageSection(c *Config) error {
 	}
 	// ADR-112 Amendment 3: a known level, no conflict with the deprecated
 	// alias, and standard only on PostgreSQL (a SQLite backend refuses it).
-	if err := c.Storage.Database.validateAuditDurability(c.Storage.Type); err != nil {
+	if err := c.Storage.Database.validateAuditDurability(); err != nil {
 		return err
 	}
 	// ADR-112 Amendment 4: a compliance profile refuses insecure_audit_skip_reads.
