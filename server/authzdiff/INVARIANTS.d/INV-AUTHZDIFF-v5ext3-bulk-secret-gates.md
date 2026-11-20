@@ -1,4 +1,4 @@
-INV-AUTHZDIFF-v5ext3-bulk-secret-gates The authorization gate of `bulk.delete`,
+- **INV-AUTHZDIFF-v5ext3-bulk-secret-gates** The authorization gate of `bulk.delete`,
 `bulk.rename`, `bulk.suspend`, and `resume.all` is bound into the differential
 and checked against the independent reference model.
 
@@ -30,7 +30,7 @@ outcome classification (both map to `denied`). No case crosses the allowed/denie
 boundary, so the differential harness sees nothing new. This was confirmed
 dynamically (control sweep with gate removed produced 0 new unexplained cases).
 
-Guards:
+Guard:
   1. `TestV5ext3StrictSweep` (server/authzdiff/sweep_v5ext3_test.go, always-on):
      strict sweep over curated variations for all 4 ops; zero uncalibrated,
      zero unexplained. Verifies the RBAC gate boundary (custom with/without

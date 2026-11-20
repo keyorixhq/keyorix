@@ -1,4 +1,4 @@
-INV-AUTHZDIFF-v5ext2-access-review-breakglass-review-gates The authorization
+- **INV-AUTHZDIFF-v5ext2-access-review-breakglass-review-gates** The authorization
 gate of `accessreview.attest`, `accessreview.revoke`, `campaign.decide`,
 `campaign.close` and `breakglass.review` is bound into the differential and
 checked against the independent reference model. `accessreview.attest`:

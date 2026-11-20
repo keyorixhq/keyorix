@@ -1,4 +1,4 @@
-INV-AUTHZDIFF-v5ext-risk-breakglass-gates The authorization gate of
+- **INV-AUTHZDIFF-v5ext-risk-breakglass-gates** The authorization gate of
 `riskexception.approve`, `riskexception.delete` and `breakglass.revoke` is
 bound into the differential and checked against the independent reference
 model: `riskexception.approve` is a router-gate differential on
