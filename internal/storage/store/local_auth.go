@@ -371,6 +371,43 @@ func (ls *LocalStorage) GetPersonalAccessTokenByHash(ctx context.Context, hash s
 	return &t, nil
 }
 
+// patWithOwnerState is one row of GetPersonalAccessTokenWithOwnerByHash: the
+// token's own columns plus its owner's, which are NULL when the LEFT JOIN
+// finds no live users row.
+type patWithOwnerState struct {
+	models.PersonalAccessToken
+	OwnerID           *uint   `gorm:"column:owner_id"`
+	OwnerIsActive     *bool   `gorm:"column:owner_is_active"`
+	OwnerAccountState *string `gorm:"column:owner_account_state"`
+}
+
+// GetPersonalAccessTokenWithOwnerByHash reads the token and its owner's
+// account state in one statement (see the interface comment). The owner is
+// LEFT JOINed with deleted_at IS NULL, the same rows GetUser would return, so
+// a soft-deleted owner reads as not found rather than as its stale state.
+func (ls *LocalStorage) GetPersonalAccessTokenWithOwnerByHash(ctx context.Context, hash string) (*models.PersonalAccessToken, storage.PATOwnerState, error) {
+	var row patWithOwnerState
+	err := ls.db.WithContext(ctx).
+		Table("personal_access_tokens AS p").
+		Select(modelColumns(ls.db, &models.PersonalAccessToken{}, "p")+
+			", u.id AS owner_id, u.is_active AS owner_is_active, u.account_state AS owner_account_state").
+		Joins("LEFT JOIN users AS u ON u.id = p.user_id AND u.deleted_at IS NULL").
+		Where("p.token_hash = ?", hash).
+		Take(&row).Error
+	if err != nil {
+		return nil, storage.PATOwnerState{}, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	var owner storage.PATOwnerState
+	if row.OwnerID != nil {
+		owner.Found = true
+		owner.IsActive = row.OwnerIsActive != nil && *row.OwnerIsActive
+		if row.OwnerAccountState != nil {
+			owner.AccountState = *row.OwnerAccountState
+		}
+	}
+	return &row.PersonalAccessToken, owner, nil
+}
+
 // RevokePersonalAccessToken sets revoked = true; does not delete the record.
 func (ls *LocalStorage) RevokePersonalAccessToken(ctx context.Context, id uint) error {
 	result := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
