@@ -13,3 +13,11 @@
   mirrors the router gate (gate removal changes HTTP status 403→200+empty, not
   the allowed/denied classification). REST coverage: 101 → 105 of 212.
   Deferred: `bulk.rotate` (fixture-blocked), SCIM, MFA step-up.
+- **Core refuses a suspended acting account at 8 more entry points.**
+  Access-review decide/revoke/attest, break-glass review, risk-exception
+  revoke, bulk rename, and suspend/resume of all project secrets now call
+  `requireActorActive` first (INV-CORE-mutation-refuses-inactive-actor),
+  guarded by `TestSuspendedActorRefusedAtEntryPoints` and
+  `TestCoreRefusesSuspendedActor`. The bulk-rename, suspend-all and
+  resume-all handlers answer that refusal 403 and a fault reading the account
+  503 `storage_unavailable` (was 500).
