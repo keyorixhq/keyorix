@@ -81,15 +81,15 @@ func Fuzz_lib_encoding_json_RoundTrip(f *testing.F) {
 		// a real finding. See bwgen/main.go emitRoundTrip.
 		if !bytes.Equal(b1, b2) {
 			var v3 any
-			if lib_encoding_json.Unmarshal(b2, &v3) != nil {
-				return
+			if err := lib_encoding_json.Unmarshal(b2, &v3); err != nil {
+				t.Fatalf("ROUND-TRIP: decoder rejects its own encoder's output (b1=%d b2=%d bytes): %v", len(b1), len(b2), err)
 			}
 			b3, err := lib_encoding_json.Marshal(v3)
 			if err != nil {
 				return
 			}
 			if !bytes.Equal(b2, b3) {
-				t.Fatalf("ROUND-TRIP: decode∘encode not stable (b1=%d b2=%d bytes)", len(b1), len(b2))
+				t.Fatalf("ROUND-TRIP: decode∘encode not stable (b1=%d b2=%d b3=%d bytes)", len(b1), len(b2), len(b3))
 			}
 		}
 	})
