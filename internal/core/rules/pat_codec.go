@@ -98,18 +98,24 @@ func EncodePATCIDRs(cidrs []string) (string, error) { // NOSONAR -- cognitive co
 		if c == "" {
 			continue
 		}
-		// Accept a bare IP by promoting it to a host route.
+		// Accept a bare IP by promoting it to a host route, built from the parsed
+		// address: "::ffff:1.2.3.4" has To4() != nil, and "::ffff:1.2.3.4/32" is the
+		// IPv6 network ::/32 (#4520 sibling).
 		if !strings.Contains(c, "/") {
 			if ip := net.ParseIP(c); ip != nil {
-				if ip.To4() != nil {
-					c += "/32"
+				if ip4 := ip.To4(); ip4 != nil {
+					c = ip4.String() + "/32"
 				} else {
-					c += "/128"
+					c = ip.String() + "/128"
 				}
 			}
 		}
-		if _, _, err := net.ParseCIDR(c); err != nil {
+		n, err := ParseAllowlistCIDR(c)
+		if err != nil {
 			return "", fmt.Errorf("invalid CIDR %q", c)
+		}
+		if isIPv4MappedText(c) {
+			c = n.String() // store the network it means, not the ambiguous text
 		}
 		if _, dup := seen[c]; dup {
 			continue
@@ -154,4 +160,40 @@ func DecodePATCIDRs(raw string) []string {
 		return PATCIDRCorrupted
 	}
 	return out
+}
+
+// ParseAllowlistCIDR parses one CIDR allowlist entry (a PAT or machine-token
+// network restriction). It differs from net.ParseCIDR for an IPv4-mapped address
+// written in IPv6 form: "::ffff:1.2.3.4/32" is, to net.ParseCIDR, the IPv6
+// network ::/32 (it contains ::1 and not 1.2.3.4). Before #4520's sibling fix,
+// EncodePATCIDRs stored exactly that text for a bare "::ffff:1.2.3.4", so a
+// mapped address with a prefix of 32 or less is read as the IPv4 network it
+// was meant to be (1.2.3.4/32). A mapped address with a prefix from 96 up is an
+// ordinary IPv6 network over the mapped range and is kept; a prefix from 33 to
+// 95 has no IPv4 meaning and is refused (a reader skips it: fail closed).
+func ParseAllowlistCIDR(c string) (*net.IPNet, error) {
+	c = strings.TrimSpace(c)
+	ip, n, err := net.ParseCIDR(c)
+	if err != nil {
+		return nil, err
+	}
+	if !isIPv4MappedText(c) {
+		return n, nil
+	}
+	ones, _ := n.Mask.Size()
+	switch {
+	case ones >= 96:
+		return n, nil
+	case ones <= 32:
+		return &net.IPNet{IP: ip.To4().Mask(net.CIDRMask(ones, 32)), Mask: net.CIDRMask(ones, 32)}, nil
+	default:
+		return nil, fmt.Errorf("IPv4-mapped CIDR %q has a prefix with no IPv4 meaning", c)
+	}
+}
+
+// isIPv4MappedText reports whether the address part of a CIDR entry is an IPv4
+// address written in IPv6 form (it holds both ':' and '.').
+func isIPv4MappedText(c string) bool {
+	addr, _, _ := strings.Cut(strings.TrimSpace(c), "/")
+	return strings.Contains(addr, ":") && strings.Contains(addr, ".")
 }
