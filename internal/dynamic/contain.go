@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -67,11 +68,22 @@ func RecoverClientPanic(component, name, op string, errp *error) func() {
 // trust, so only two things are logged: the message of a runtime.Error (a bounds,
 // nil-dereference or type-assertion failure: it carries indices, lengths and type
 // names, never data) and the Go type of anything else. The stack still says where.
+// Only a runtime.Error whose type is declared in package runtime counts: any type can
+// implement the interface's RuntimeError marker method, and a library's own error
+// type would otherwise get its text, reply bytes included, into the log.
 func panicSummary(r any) string {
-	if re, ok := r.(runtime.Error); ok {
+	if re, ok := r.(runtime.Error); ok && declaredInRuntime(re) {
 		return re.Error()
 	}
 	return fmt.Sprintf("%T (value withheld: it may carry target reply bytes)", r)
+}
+
+func declaredInRuntime(v any) bool {
+	t := reflect.TypeOf(v)
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t.PkgPath() == "runtime"
 }
 
 // containedEngine decorates a CredentialEngine so a client-library panic in Issue,

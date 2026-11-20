@@ -34,6 +34,12 @@ type replyError struct{ frame string }
 
 func (e replyError) Error() string { return "malformed frame " + e.frame }
 
+// fakeRuntimeError claims to be a runtime.Error (the interface only needs a
+// RuntimeError marker method) while its text carries reply bytes.
+type fakeRuntimeError struct{ replyError }
+
+func (fakeRuntimeError) RuntimeError() {}
+
 func captureContainLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var logs bytes.Buffer
@@ -51,6 +57,7 @@ func TestContain_LogWithholdsPanicValueThatMayCarryReplyBytes(t *testing.T) {
 		"custom":       replyError{frame: replyMarker},
 		"sprintf":      fmt.Sprintf("%q", []byte(replyMarker)),
 		"stringer-ptr": &replyError{frame: replyMarker},
+		"fake-runtime": fakeRuntimeError{replyError{frame: replyMarker}},
 	}
 	for name, v := range values {
 		t.Run(name, func(t *testing.T) {
