@@ -1,0 +1,1 @@
+ADR-112-A7-SQLITE-STANDARD-SERVER-BOOTS	./server	TestAuditDurability_SQLiteStandardBootsEndToEnd	default-ci	pending	-	the real built server binary boots on a SQLite config set to audit_durability: standard, logs the SQLite meaning of standard and the dedicated synchronous=NORMAL read-audit connection, admin validate reports it, and verify-audit is VALID

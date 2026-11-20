@@ -1225,19 +1225,6 @@ Configuration is invalid: storage.database.pooler "pgbouncer-session" applies on
 
 **Fix.** Remove `pooler` (and `native_read_pool_max`, which has the same rule). **In place:** yes.
 
-### `audit_durability: standard` on SQLite
-
-Real output:
-
-```
-Configuration is invalid: storage.database.audit_durability: standard is only supported with PostgreSQL; SQLite runs strict only -- remove the setting or set it to strict
-```
-
-**Match:** `standard is only supported with PostgreSQL`
-
-**Fix.** Remove the setting or use `strict`. **In place:** yes.
-[UPGRADING.md §6c](../UPGRADING.md#6c-postgresql-audit-durability-now-defaults-to-standard).
-
 ### Undeclared transaction-mode pooler — from code
 
 ```
