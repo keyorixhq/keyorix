@@ -80,7 +80,7 @@ func FuzzCOSEKeyReencodeIsDeterministic(f *testing.F) {
 	f.Add(fzCOSEKey(f, fzKey(f)))
 	// Seed 2: minimal CBOR maps (rejected by ParsePublicKey; parser still exercises
 	// the re-encoding path before returning an error from the ceremony).
-	f.Add([]byte{0xa0})              // empty map  {}
+	f.Add([]byte{0xa0})             // empty map  {}
 	f.Add([]byte{0xa1, 0x01, 0x02}) // {1: 2}  — integer key, integer value
 	// Seed 3: empty input → Unmarshal returns an error; no re-encoding, skip.
 	f.Add([]byte{})
@@ -150,12 +150,12 @@ func FuzzCOSEKeyReencodeIsDeterministic(f *testing.F) {
 // long (RP ID hash 32 + flags 1 + counter 4 + AAGUID 16 + credID len 2).
 func authDataWithKey(coseKey []byte) []byte {
 	out := make([]byte, 0, 55+len(coseKey))
-	out = append(out, make([]byte, 32)...)              // RP ID hash (zeros)
-	out = append(out, 0x41)                             // flags: UP (0x01) | AT (0x40)
-	out = binary.BigEndian.AppendUint32(out, 0)         // sign counter = 0
-	out = append(out, make([]byte, 16)...)              // AAGUID (zeros)
-	out = append(out, 0x00, 0x00)                       // credential ID length = 0
-	return append(out, coseKey...)                      // credential public key
+	out = append(out, make([]byte, 32)...)      // RP ID hash (zeros)
+	out = append(out, 0x41)                     // flags: UP (0x01) | AT (0x40)
+	out = binary.BigEndian.AppendUint32(out, 0) // sign counter = 0
+	out = append(out, make([]byte, 16)...)      // AAGUID (zeros)
+	out = append(out, 0x00, 0x00)               // credential ID length = 0
+	return append(out, coseKey...)              // credential public key
 }
 
 // TestCOSEReencodeOracle_ByteStabilityRedProof shows that the DETERMINISM oracle
