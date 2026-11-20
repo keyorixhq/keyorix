@@ -1,7 +1,7 @@
 // compliance_posture_audit_refresh_test.go — COMPLIANCE-TILE-NOV-1 item 2: the
 // posture's audit-chain check is recomputed by a request that finds it older than
-// five minutes, served from the cache before that, and a failed refresh keeps the
-// previous value marked stale. All on a fake clock; the walk is the real tail
+// five minutes, served from the cache before that, and a failed refresh shows the
+// persisted verification state marked stale. All on a fake clock; the walk is the real tail
 // check against a real store, counted, except where a failure is injected.
 package core
 
@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // newPostureRefreshCore is an incremental-verification core with one tick behind
@@ -96,7 +97,7 @@ func TestPostureAuditCheck_FreshValueIsServedFromCache(t *testing.T) {
 	assert.Equal(t, 2, *walks)
 }
 
-func TestPostureAuditCheck_FailedRefreshKeepsLastValueAndMarksItStale(t *testing.T) {
+func TestPostureAuditCheck_FailedRefreshShowsPersistedStateMarkedStale(t *testing.T) {
 	t.Parallel()
 	c, clk, walks := newPostureRefreshCore(t)
 
@@ -113,12 +114,17 @@ func TestPostureAuditCheck_FailedRefreshKeepsLastValueAndMarksItStale(t *testing
 	}
 
 	clk.t = clk.t.Add(6 * time.Minute)
+	persisted, err := c.AuditVerificationStatus(context.Background())
+	require.NoError(t, err)
+	latest, err := c.storage.MaxAuditEventID(context.Background())
+	require.NoError(t, err)
 	p := postureSnapshot(t, c)
 	got := p.AuditIntegrity
-	assert.Equal(t, before.ChainedEvents, got.ChainedEvents, "the last value is kept")
-	assert.Equal(t, before.VerificationStatus, got.VerificationStatus)
+	assert.Equal(t, persisted.ChainedEvents, got.ChainedEvents, "the persisted state is shown, not the older walk")
+	assert.Equal(t, persisted.Status, got.VerificationStatus)
 	assert.True(t, got.Stale, "and marked stale")
-	assert.EqualValues(t, 20, got.EventsSinceCheck)
+	assert.EqualValues(t, latest-persisted.HeadID, got.EventsSinceCheck)
+	assert.GreaterOrEqual(t, got.EventsSinceCheck, int64(20))
 	assert.False(t, p.Degraded, "a stale tile is not a degraded snapshot: its value is known, only old")
 	failedWalks := *walks
 
@@ -175,4 +181,108 @@ func TestPostureAuditCheck_AbandonedRequestDoesNotPoisonTheCache(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, refreshFailed)
 	assert.Equal(t, 3, *walks, "the abandoned attempt was not remembered")
+}
+
+// newPostureBreakCore is a one-segment incremental core (every tick walks the
+// whole chain) with a valid posture already cached.
+func newPostureBreakCore(t *testing.T) (*KeyorixCore, *gorm.DB, *incrClock, *int) {
+	t.Helper()
+	c, db, clk := newIncrementalTestCore(t, 1)
+	logIncrEvents(t, c, clk, 5)
+	tickOK(t, c)
+	walks := new(int)
+	c.auditPostureWalk = func(ctx context.Context) (*AuditVerifyReport, error) {
+		*walks++
+		return c.VerifyAuditChainIncremental(ctx)
+	}
+	first := postureAudit(t, c)
+	require.True(t, first.ChainVerified)
+	require.Equal(t, AuditVerifyStatusValid, first.VerificationStatus)
+	return c, db, clk, walks
+}
+
+func failPostureWalk(c *KeyorixCore, walks *int) {
+	c.auditPostureWalk = func(context.Context) (*AuditVerifyReport, error) {
+		*walks++
+		return nil, errors.New("database is locked")
+	}
+}
+
+// REVIEW-4539 MEDIUM-1: a failing refresh must not keep serving the last walk's
+// "verified" once the scheduler has recorded a modified row.
+func TestPostureAuditCheck_FailedRefreshShowsRecordedBreak(t *testing.T) {
+	t.Parallel()
+	c, db, clk, walks := newPostureBreakCore(t)
+	failPostureWalk(c, walks)
+
+	tamperDescription(t, db, 2)
+	_, _ = c.RunAuditVerificationTick(context.Background())
+	persisted, err := c.AuditVerificationStatus(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, AuditVerifyStatusBroken, persisted.Status, "fixture: the tick records the break")
+
+	clk.t = clk.t.Add(6 * time.Minute)
+	got := postureAudit(t, c)
+	assert.False(t, got.ChainVerified, "a recorded break wins over the cached walk")
+	assert.Equal(t, AuditVerifyStatusBroken, got.VerificationStatus)
+	assert.NotEmpty(t, got.Reason)
+	assert.True(t, got.Stale)
+}
+
+// REVIEW-4539 MEDIUM-1: with the walk failing for days, the tile must age to
+// not_proven like the persisted state does, not freeze the last "valid".
+func TestPostureAuditCheck_FailedRefreshAgesToNotProven(t *testing.T) {
+	t.Parallel()
+	c, _, clk, walks := newPostureBreakCore(t)
+	failPostureWalk(c, walks)
+
+	clk.t = clk.t.Add(72 * time.Hour)
+	got := postureAudit(t, c)
+	assert.False(t, got.ChainVerified)
+	assert.Equal(t, AuditVerifyStatusNotProven, got.VerificationStatus)
+	assert.NotEmpty(t, got.Reason)
+}
+
+// REVIEW-4539 LOW-4: inside the five-minute window a break the scheduler records
+// is not hidden behind the cached "valid": the posture walks again.
+func TestPostureAuditCheck_RecordedBreakBypassesTheCache(t *testing.T) {
+	t.Parallel()
+	c, db, clk, walks := newPostureBreakCore(t)
+
+	tamperDescription(t, db, 2)
+	_, _ = c.RunAuditVerificationTick(context.Background())
+	clk.t = clk.t.Add(time.Minute)
+
+	got := postureAudit(t, c)
+	assert.Equal(t, 2, *walks, "the recorded break forces a walk inside the window")
+	assert.False(t, got.ChainVerified)
+	assert.Equal(t, AuditVerifyStatusBroken, got.VerificationStatus)
+
+	// The broken value itself is cached as usual.
+	postureAudit(t, c)
+	assert.Equal(t, 2, *walks)
+}
+
+// REVIEW-4539 LOW-3: a clock that steps backwards does not make the cached value
+// look fresh until the clock catches up.
+func TestPostureAuditCheck_BackwardsClockRefreshes(t *testing.T) {
+	t.Parallel()
+	c, _, clk, walks := newPostureBreakCore(t)
+
+	clk.t = clk.t.Add(-time.Hour)
+	postureAudit(t, c)
+	assert.Equal(t, 2, *walks)
+}
+
+// REVIEW-4539 LOW-2: a caller whose context ended while it waited does not walk.
+func TestPostureAuditCheck_CancelledCallerDoesNotWalk(t *testing.T) {
+	t.Parallel()
+	c, _, clk, walks := newPostureBreakCore(t)
+	clk.t = clk.t.Add(6 * time.Minute)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := c.auditPostureReport(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, *walks)
 }

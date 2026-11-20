@@ -496,7 +496,7 @@ func (c *KeyorixCore) buildComplianceSnapshot(ctx context.Context) (*complianceS
 
 // fillAuditSnapshot sets the audit-chain fields of snap. The chain check is
 // refreshed by a request that finds it older than auditPostureRefreshAfter; a
-// failed refresh keeps the previous value and marks it stale
+// failed refresh shows the persisted verification state and marks it stale
 // (compliance_posture_audit_refresh.go).
 func (c *KeyorixCore) fillAuditSnapshot(ctx context.Context, snap *complianceSnapshot) {
 	var refreshFailed bool
