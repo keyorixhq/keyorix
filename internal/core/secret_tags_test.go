@@ -29,7 +29,7 @@ func TestSecretTags(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "mallory", Email: "m@t.com"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error) // membership row the owner checks read
-	seedOwnerWriteRoleForTest(t, db, 1) // #4508: the owner must hold secrets.write
+	seedOwnerWriteRoleForTest(t, db, 1)                                                       // #4508: the owner must hold secrets.write
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()
