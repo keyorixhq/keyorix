@@ -106,7 +106,7 @@ func calibrateMySQL(t testing.TB, name string, corpus [][]byte, drive func(*test
 	// Every MySQL packet's allocation is set by the 3-byte length its header
 	// CLAIMS, not by how many bytes the server sent: go-sql-driver sizes a read
 	// buffer before the body arrives, bounded by the protocol's per-packet
-	// maximum. Measured for the maximum claim: 16.8 MB per attempt, peak RSS flat
+	// maximum. Measured for the maximum claim: 16.8 MB (decimal; = 16 MiB - 1 B) per attempt, peak RSS flat
 	// at ~30 MB over 20 repeats (unlike pgx). See
 	// INV-RES-bounded-absolute-from-product-cap.
 	b.UseBoundedAbsolute("alloc_bytes", mysqlMaxPacket)
