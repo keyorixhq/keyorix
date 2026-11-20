@@ -10,10 +10,11 @@ import (
 	"testing"
 )
 
-// A 2xx other than 200 is not scrubbed by errorBodyScrubRoundTripper (it only
-// rewrites error statuses) and azsecrets reports it as a *azcore.ResponseError whose
-// Error() text embeds the response headers and body verbatim. GetSecret must turn
-// that into a fixed message plus the status code (#4061).
+// A 2xx other than 200 is now scrubbed by errorBodyScrubRoundTripper (the scrub
+// was extended from >=300 to !=200 to prevent azcore's NewResponseError from
+// allocating massively on a deeply-nested body). GetSecret additionally catches the
+// *azcore.ResponseError and returns a fixed message plus the status code (#4061),
+// so server-supplied headers never reach the caller either.
 func TestAzureKV_Non200SuccessReplyDoesNotEchoServerText(t *testing.T) {
 	const marker = "LEAKMARKER-4061"
 	for _, status := range []int{201, 202, 203, 206} {
