@@ -90,7 +90,7 @@ func copySQLiteToPrivateDir(path string) (copyPath string, cleanup func(), err e
 			"but no temporary directory could be created (%w): set TMPDIR to a writable directory", err)
 	}
 	cleanup = func() { _ = os.RemoveAll(dir) }
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := os.Chmod(dir, 0o700); err != nil { // #nosec G302 -- a directory needs the owner x bit; 0700 is the strictest usable mode
 		cleanup()
 		return "", nil, fmt.Errorf("restrict temporary copy directory %s: %w", dir, err)
 	}
@@ -142,7 +142,7 @@ func availableBytes(dir string) (int64, bool) {
 	if bsize <= 0 {
 		return 0, false
 	}
-	if st.Bavail > uint64(math.MaxInt64/bsize) {
+	if st.Bavail > uint64(math.MaxInt64/bsize) { // #nosec G115 -- bsize > 0 is checked above, so the quotient is positive
 		return math.MaxInt64, true
 	}
 	return int64(st.Bavail) * bsize, true // #nosec G115 -- bounded above
