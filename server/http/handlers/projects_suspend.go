@@ -38,11 +38,6 @@ func (h *SecretHandler) SuspendProjectSecrets(w http.ResponseWriter, r *http.Req
 	n, err := h.coreService.SuspendProjectSecretsWithOptions(r.Context(), uint(id), userCtx.UserID, reqBody.Reason,
 		core.SuspendOptions{ClearSyncedCopies: reqBody.ClearSyncedCopies})
 	if err != nil {
-		if errors.Is(err, core.ErrPermissionDenied) {
-			// a typed core refusal (#4514: a machine actor) is a 403, not a 400/500
-			h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
-			return
-		}
 		if partial, ok := errors.AsType[*core.BulkSuspendPartialError](err); ok {
 			// Already-suspended secrets stay suspended; the counts let the operator retry.
 			counts := map[string]int{"suspended": partial.Suspended, "failed": partial.Failed}
@@ -58,7 +53,7 @@ func (h *SecretHandler) SuspendProjectSecrets(w http.ResponseWriter, r *http.Req
 			h.sendError(w, core.SuspendAuditUnavailableCode, core.SuspendAuditUnavailableMessage, http.StatusInternalServerError, nil)
 			return
 		}
-		if sendActorGateError(w, err) {
+		if sendActorGateError(w, err) { // a typed refusal (#4514 machine actor, #4159 inactive actor) is a 403
 			return
 		}
 		h.sendError(w, "InternalError", "Failed to suspend project secrets", http.StatusInternalServerError, nil)
