@@ -114,6 +114,7 @@ func osStrictReproducers(w *osWorld) map[string]func(t *testing.T) int {
 	sA := strconv.FormatUint(uint64(w.seedPools["secrets"][0]), 10)
 	mach := w.tokens[osPrincMachine]
 	admin := w.tokens[osPrincGlobalAdmin]
+	projA := strconv.FormatUint(uint64(w.seedPools["projects"][0]), 10)
 	projB := strconv.FormatUint(uint64(w.seedPools["projects"][1]), 10)
 	envA := strconv.FormatUint(uint64(w.seedPools["environments"][0]), 10)
 
@@ -142,6 +143,10 @@ func osStrictReproducers(w *osWorld) map[string]func(t *testing.T) int {
 		"listAccessors":                 machineRead("access"),
 		"createSecretTemplate":          dupCreate("/api/v1/secret-templates", `{"name":"osf-strict-dup"}`),
 		"createRejectionReasonTemplate": dupCreate("/api/v1/rejection-reason-templates", `{"name":"osf-strict-dup","reason":"because"}`),
+		// OPENAPI-STATEFUL-9 (createFolder): duplicate folder name in the same project/environment
+		// hits the secret_nodes unique index; the raw constraint error is not wrapped in a Conflict
+		// sentinel, so answerCoreError classifies it errclass.Internal -> undeclared 500.
+		"createFolder": dupCreate("/api/v1/folders", fmt.Sprintf(`{"name":"osf-strict-dup","project_id":%s,"environment_id":%s}`, projA, envA)),
 		// An environment-scoped rotation policy whose environment (project A) does not
 		// belong to the supplied project (B) hits core's PLAIN cross-tenant error, which
 		// the handler's ErrInvalidInput-only check maps to an undeclared 500.
