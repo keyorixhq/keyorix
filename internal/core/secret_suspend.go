@@ -180,6 +180,9 @@ var ErrBulkSuspendAuditUnavailable = errors.New("bulk suspend audit event could 
 // other clusters is never taken without a trail. A plain suspend keeps its historical
 // best-effort audit. The per-secret events (secret.suspended) are unchanged.
 func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, projectID, actorID uint, reason string, opts SuspendOptions) (int, error) {
+	if err := refuseMachineActor(ctx, actorID); err != nil { // #4514
+		return 0, err
+	}
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return 0, err
 	}
@@ -296,6 +299,9 @@ func (e *BulkSuspendPartialError) Unwrap() error {
 // ResumeProjectSecrets restores value reads of every suspended secret in a project and
 // returns how many it resumed. See SuspendProjectSecrets for semantics.
 func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actorID uint) (int, error) {
+	if err := refuseMachineActor(ctx, actorID); err != nil { // #4514
+		return 0, err
+	}
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return 0, err
 	}

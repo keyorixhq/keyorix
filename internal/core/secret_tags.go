@@ -45,7 +45,7 @@ func (c *KeyorixCore) SetSecretTags(ctx context.Context, secretID, actorID uint,
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return nil, err
 	}
-	if _, err := c.EnforceSecretActionPermission(ctx, secretID, actorID, SecretActionUpdateMetadata); err != nil {
+	if err := c.enforceSecretWriteGate(ctx, secretID, actorID, SecretActionUpdateMetadata, SecretActionUpdateMetadata); err != nil { // #4508
 		return nil, err
 	}
 	normalized, err := normalizeTags(tags)
