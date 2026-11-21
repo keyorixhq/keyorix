@@ -166,8 +166,15 @@ func TestSCIM_GroupStorageError_Is500NotNotFound(t *testing.T) {
 					require.True(t, fs.Fired(), "the armed %s fault must have fired", site.method)
 					fs.Arm(nil)
 
-					body := assertSCIMErrorBody(t, w, http.StatusInternalServerError)
-					assert.Equal(t, clientSafe(ferr), body["detail"])
+					// ERRMAP-TAILS-NOV-6: GET reads the group through core.GetGroup, which types a
+					// read fault ErrStorageReadUnavailable: a retryable 503, not a bare 500.
+					// The write operations read it straight from storage and stay 500.
+					wantStatus, wantDetail := http.StatusInternalServerError, clientSafe(ferr)
+					if op.name == "GET" && site.method == "GetGroup" {
+						wantStatus, wantDetail = http.StatusServiceUnavailable, scimBusyDetail
+					}
+					body := assertSCIMErrorBody(t, w, wantStatus)
+					assert.Equal(t, wantDetail, body["detail"])
 					assert.Nil(t, body["scimType"])
 					assert.Contains(t, logBuf.String(), scimInjectedDetail, "the real error must be logged for the operator")
 					if op.mutates {

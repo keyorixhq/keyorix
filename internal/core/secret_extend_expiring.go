@@ -9,8 +9,10 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"log"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
 const defaultExtendWindowDays = 90
@@ -51,8 +53,13 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 		// Re-check per-secret write authorization (owner/share). The project-wide
 		// secrets.write route gate is not sufficient on its own — the single-secret PUT
 		// path enforces this too, so a caller who can't update a secret individually must
-		// not be able to via the bulk op. Skip (don't abort) on denial.
-		if _, err := c.EnforceSecretWritePermission(ctx, s.ID, actorID); err != nil {
+		// not be able to via the bulk op. Skip (don't abort) on denial. An OWNER who
+		// holds no secrets.write is skipped too (#4508 sibling, CORE-AUTHZ-RACE-NOV-1
+		// item 2): the route gate refuses them.
+		if err := c.enforceSecretWriteGate(ctx, s.ID, actorID, SecretActionUpdateLifecycle, SecretActionUpdateLifecycle); err != nil {
+			if IsStorageReadUnavailable(err) {
+				log.Printf("bulk extend: secret %d skipped, permission re-check read failed: %s", s.ID, StorageReadFaultDetail(err))
+			}
 			continue
 		}
 		// Only push expiry out, never in — skip a secret already dated past the new window.

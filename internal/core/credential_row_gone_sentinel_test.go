@@ -56,7 +56,10 @@ func newPATWorld(t *testing.T) (*core.KeyorixCore, string, *gorm.DB) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "pat.db") + "?_busy_timeout=10000&_journal_mode=WAL"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.PersonalAccessToken{}))
+	// The owner row is part of the world: CurrentPATRestriction re-checks the
+	// owning account in the same read as the token.
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.PersonalAccessToken{}))
+	require.NoError(t, db.Create(&models.User{ID: 7, Username: "patowner", Email: "patowner@example.com", IsActive: true, AccountState: core.AccountActive}).Error)
 	const raw = "kx_pat_rowgonetoken"
 	sum := sha256.Sum256([]byte(raw))
 	require.NoError(t, db.Create(&models.PersonalAccessToken{

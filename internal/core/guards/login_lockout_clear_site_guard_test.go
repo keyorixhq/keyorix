@@ -74,6 +74,8 @@ var allowedLockoutAccountingSites = []clearSite{
 		why: "re-check only; the clear is after CreateMFAStepUpGrant."},
 	{fn: "VerifyMFAStepUp", callee: "recheckLockAfterCredentialMatched",
 		why: "re-check only; the clear is after CreateMFAStepUpGrant."},
+	{fn: "requireReauth", callee: "recheckLockAfterCredentialMatched",
+		why: "re-check only (#2888), immediately before requireReauth's clear. A recheck storage fault is counted inside recheckLockAfterCredentialMatched and refused like a wrong code; a recheck that finds the account locked is refused without clearing."},
 	{fn: "verifyCurrentPassword", callee: "recheckLockAfterCredentialMatched",
 		why: "AUTH-PW-BUDGET: re-check only; ChangePassword / UpdateOwnProfile clear after their change commits. A recheck storage fault is counted inside recheckLockAfterCredentialMatched and refused like a wrong password."},
 	{fn: "recheckLockAfterCredentialMatched", callee: "recheckLoginLockFailClosed",

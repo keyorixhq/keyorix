@@ -107,7 +107,7 @@ func TestDeleteProject_SuspendsMachineIdentitiesHeldOnlyThere(t *testing.T) {
 func psDeleteRestore(t *testing.T, backend string) {
 	w := newC4World(t, backend)
 	c, db, ctx := w.core, w.db, context.Background()
-	admin := w.user()
+	admin := psRestoringAdmin(t, w)
 
 	doomed, live, dead := w.project(), w.project(), w.project()
 	require.NoError(t, c.storage.DeleteProject(ctx, dead.ID)) // already deleted before the case under test
@@ -231,7 +231,7 @@ func TestDeleteProject_NonForce_SuspendsOnlyWhenDeleted(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			w := newC4World(t, backend)
 			c, db, ctx := w.core, w.db, context.Background()
-			admin := w.user()
+			admin := psRestoringAdmin(t, w)
 
 			blocked := w.project()
 			env := w.env(blocked.ID)
@@ -259,7 +259,7 @@ func TestDeleteProject_MachineSuspendStepIsAtomicWithTheCascade(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			w := newC4World(t, backend)
 			db, ctx := w.db, context.Background()
-			admin := w.user()
+			admin := psRestoringAdmin(t, w)
 			faulty := faultstorage.NewFaultyStorage(w.core.storage, nil)
 			c := NewKeyorixCore(faulty)
 
@@ -294,4 +294,17 @@ func TestDeleteProject_MachineSuspendStepIsAtomicWithTheCascade(t *testing.T) {
 
 func psDeleteProject(c *KeyorixCore, ctx context.Context, actorID, id uint, force bool) error {
 	return c.DeleteProject(ctx, actorID, id, force)
+}
+
+// psRestoringAdmin is the acting user of these tests: it deletes projects (no core
+// gate of its own) and restores them, which since #4161 decides the route gate
+// (roles.assign at the project) in core, so the user holds roles.assign globally
+// through an ordinary role — nothing admin-tier; the reinstatement ceiling is not
+// what these tests are about.
+func psRestoringAdmin(t *testing.T, w *c4World) *models.User {
+	t.Helper()
+	u := w.user()
+	r := w.role(false, w.permission(permRolesAssign))
+	require.NoError(t, w.db.Create(&models.UserRole{UserID: u.ID, RoleID: r.ID}).Error)
+	return u
 }

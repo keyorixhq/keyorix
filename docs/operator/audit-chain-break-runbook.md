@@ -19,7 +19,7 @@ triage, containment and evidence. Section 5 lists what does exist and what is mi
 | Where | Command / signal | Verdicts |
 |---|---|---|
 | Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`, `SEALED` (prints the seal's `state_reason`); non-zero exit unless `VALID`, and `SEALED` exits 4 like `keyorix-server admin verify-audit` |
-| Prometheus | `keyorix_audit_verify_failure_recorded` (1 while a break is recorded: page on it), `keyorix_audit_verify_state_discontinuity` (1 while a sticky state discontinuity is recorded), `keyorix_audit_verify_state_rejected`, `keyorix_audit_verify_last_success_timestamp_seconds{check="tail"\|"full"}` | |
+| Prometheus (these series are on the authenticated `GET /api/v1/admin/scheduler-metrics`, **not** on `/metrics`: a scrape of `/metrics` on a server with a recorded break has none of them, RUNBOOK-CAPTURE-2) | `keyorix_audit_verify_failure_recorded` (1 while a break is recorded: page on it), `keyorix_audit_verify_state_discontinuity` (1 while a sticky state discontinuity is recorded), `keyorix_audit_verify_state_rejected`, `keyorix_audit_verify_last_success_timestamp_seconds{check="tail"\|"full"}` | |
 | Compliance posture | `GET /api/v1/compliance/posture`, field `audit_integrity` | reads the persisted state, walks nothing |
 | Offline, independent code | `keyorix-server admin verify-audit` | exit `0` VALID, `1` BROKEN, `2` INDETERMINATE, `3` usage/input error |
 | Restore | `keyorix-server admin restore` runs `verify-audit` on the restored database | fails (non-zero) on BROKEN |
@@ -88,6 +88,31 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
    `--db` / `--pg-dsn` take no lock and never write. Without `--db`/`--pg-dsn` the command
    verifies the configured live database under the exclusive admin lock, so the server must
    be stopped (`--force` overrides the refusal; do not use it for evidence).
+
+   A keyorix SQLite database is in WAL mode, and SQLite cannot read a WAL-mode file without
+   creating `-wal`/`-shm` files beside it. So `--db` verifies a private copy instead: the
+   database and its `-wal` (if present) are copied into a new `0700` directory under
+   `$TMPDIR`, verified there, and the copy is deleted when the command ends, also on error
+   and on Ctrl-C or SIGTERM (exit 130 or 143, no verdict). The copy is the whole vault
+   database (secret ciphertext, password and token hashes, user data, the audit trail), so
+   point `TMPDIR` at the evidence volume, or another volume with the same protection, not
+   at a shared or unencrypted `/tmp`. A SIGKILL, an out-of-memory kill or a crash cannot
+   run that cleanup: after one, delete any `keyorix-audit-verify-*` directory left under
+   `$TMPDIR`. Only `--db` copies: `verify-audit` without `--db` (the configured database,
+   under the admin lock) and the automatic verify after `admin restore` read the
+   server's own database in place and need no `$TMPDIR`. A `-wal` beside the `--db` file
+   that is not a regular file (a directory, a FIFO, a symlink) is refused (exit 3) rather
+   than left out of the copy.
+   The evidence directory can be read-only (an evidence share, `chmod 0500`), and its
+   listing and bytes stay unchanged. An un-checkpointed `-wal` shipped with the copy is
+   read, never skipped. The copy needs free space under `$TMPDIR` equal to the database
+   plus its `-wal`; if that is not available the command exits 3 and names the shortfall,
+   so set `TMPDIR` to a directory with room. A database whose `-wal` and `-shm` are both
+   present in a writable directory may be in use by a SQLite process, so it is read in place
+   (a copy taken under a live writer could be torn): no entry is added and the database and
+   `-wal` bytes stay as they were, but SQLite may rewrite the `-shm`, its shared-memory index.
+   To keep the `-shm` of an evidence copy untouched as well, make its directory read-only
+   (`chmod 0500`); it is then verified from a private copy.
 4. Re-run it with the checkpoint key, which is what makes truncation visible. Derive the key
    with the server stopped and keep the file off the audited host (it is a shared secret:
    with the database it can forge a history):
@@ -119,10 +144,10 @@ INDETERMINATE beats VALID). Strings are from `internal/auditverify/verify.go`.
 |---|---|---|
 | `event #N was hashed with the old audit-hash format ... not evidence of tampering` (JSON `reason_code`: `legacy_hash_encoding`) | content | Benign: the chain predates the 2026-08-16 encoding change. Section 4a. |
 | `event #N's recorded entry_hash does not match the row's contents — the row was changed after it was written` | content | The row changed after it was written: tampering, or storage corruption. |
-| `event #N's prev_hash does not link to the preceding event (row inserted, deleted, or reordered)` | linkage | Tampering, a manual `DELETE`, or a database restored/merged from two sources. |
+| `event #N's prev_hash does not link to the preceding event (row inserted, deleted, or reordered)` | linkage | Tampering, a manual `DELETE`, or a database restored/merged from two sources. `#N` is the first row **after** the hole (deleting #16 reports #17), or the first of two swapped rows. |
 | `event #N has no entry_hash (chain data removed after a chained region began)` | content | Hash columns blanked or rows replaced by unchained rows. |
 | `audit trail truncated below signed checkpoint #N: it certified X chained events, only Y remain` | truncation | Rows removed from the tail, **or** the database is an older state (restore, stale copy, PITR). Section 4. |
-| `audit trail truncated below the certified high-water mark` | truncation | Same as above, against the separate signed high-water row. |
+| `audit trail truncated below the certified high-water mark: N events were previously certified, only M remain` (captured, section 3a; no `first broken id` line) | truncation | Same as above, against the separate signed high-water row. |
 | `audit event #N certified by checkpoint #M is missing (tail-truncation or genesis re-seed)` | truncation | Same; "genesis re-seed" means a whole replacement chain. |
 | `audit event #N hash differs from signed checkpoint #M (certified head was rewritten)` | content | Tampering of the certified head row. |
 | `audit checkpoint #N does not verify under the supplied checkpoint key (tampered, or the wrong key was supplied)` | key | Check the key version first (section 4c); tampering only if the key is right. |
@@ -133,6 +158,143 @@ INDETERMINATE beats VALID). Strings are from `internal/auditverify/verify.go`.
 
 The online report adds `Checkpoint:` (authenticated or not, key version) and `Retention gap:`
 (none / SANCTIONED / UNAUTHENTICATED) lines that help here.
+
+### 3a. What a real break looks like (captured, not derived)
+
+Everything in this section is the unedited output of the native binaries (`keyorix-server admin
+verify-audit`, `keyorix audit verify`), run on 2026-11-18 against a fresh install with 19 audit
+events (#1-#13 from setup and the first server start, `user.created` #14, `project.created` #15,
+`auth.login` #16, three `secret.created` #17-#19), built from main at `c60a499ff`. Only the repeated closing blocks
+(`Retention gap`, `Anchor source`, `Owed break-glass`, `What this run does NOT prove`,
+`Generated at`) are cut, marked `[...]`. Each tamper was done directly in the database, with the server stopped
+(SQLite, on a copy) or running (PostgreSQL, rows changed in place, then restored).
+
+**Untouched chain, no key** (SQLite, `--db`, exit 0):
+
+```text
+Offline audit-chain verification
+=================================
+Verdict: VALID
+  range:            id 1..19
+  chained events:   19
+  unchained legacy: 0
+
+Checkpoint:
+  present but UNAUTHENTICATED -- no --checkpoint-key-file was supplied, or it did not verify
+[...]
+```
+
+**(a) One row's payload edited** (`UPDATE audit_events SET description=... WHERE id=17`). Exit 1,
+identical on SQLite (`--db`) and PostgreSQL (`--pg-dsn`):
+
+```text
+Offline audit-chain verification
+=================================
+Verdict: BROKEN
+  reason:           event #17's recorded entry_hash does not match the row's contents — the row was changed after it was written
+  first broken id:  17
+  range:            id 1..19
+  chained events:   16
+  unchained legacy: 0
+
+Checkpoint:
+  present but UNAUTHENTICATED -- no --checkpoint-key-file was supplied, or it did not verify
+[...]
+Error: audit chain verification: BROKEN
+```
+
+**(b) A middle row deleted** (`DELETE ... WHERE id=16`). Exit 1. The report names the row **after** the
+hole, not the deleted one (SQLite and PostgreSQL alike):
+
+```text
+Verdict: BROKEN
+  reason:           event #17's prev_hash does not link to the preceding event (row inserted, deleted, or reordered)
+  first broken id:  17
+  range:            id 1..19
+  chained events:   15
+  unchained legacy: 0
+```
+
+**(c) Two rows swapped** (rows 17 and 18 exchanged ids). Exit 1, the same reason and id as (b),
+with `chained events: 16`. The report cannot tell a delete from a swap; the row contents
+(`SELECT id, event_type, description FROM audit_events WHERE id BETWEEN 15 AND 19`) can.
+
+**With the checkpoint key** a break reads the same (run for (a) on SQLite and for (c) on PostgreSQL),
+because the walk stops at the first linkage or content failure. `chained events` counts the rows that verified *before* the break,
+not the rows in the table. `Checkpoint:` still prints `present but UNAUTHENTICATED -- no
+--checkpoint-key-file was supplied, or it did not verify` even though a key was supplied: the checkpoint was never
+reached, so do not read that line as "wrong key". An untouched chain with the key prints
+`Checkpoint: authenticated, key version "ack-...", certifies 12 chained events` and `Verdict: VALID`.
+
+**Tail truncation** (`DELETE ... WHERE id>=11`, leaving 10 rows; the signed checkpoint certified 12).
+Without the key this is invisible, exit 0 (SQLite and PostgreSQL alike):
+
+```text
+Verdict: VALID
+  range:            id 1..10
+  chained events:   10
+  unchained legacy: 0
+
+Checkpoint:
+  present but UNAUTHENTICATED -- no --checkpoint-key-file was supplied, or it did not verify
+[...]
+  - no checkpoint signing key was supplied: tail-truncation and genesis re-seed are not detected by a bare linkage re-walk alone (a shorter, self-consistent chain still verifies) — only the linkage of rows still present in the table was checked
+```
+
+With `--checkpoint-key-file`, exit 1, and there is **no `first broken id` line** (nothing is
+broken, rows are missing); read the count in the reason:
+
+```text
+Verdict: BROKEN
+  reason:           audit trail truncated below the certified high-water mark: 12 events were previously certified, only 10 remain
+  range:            id 1..10
+  chained events:   10
+  unchained legacy: 0
+
+Checkpoint:
+  present but UNAUTHENTICATED -- no --checkpoint-key-file was supplied, or it did not verify
+[...]
+  - no signed checkpoint was found to authenticate: a tail truncation that also deleted every checkpoint row, the high-water mark and the verification state looks exactly like a deployment that never wrote a checkpoint; pass an --anchor exported earlier to rule it out
+```
+
+The `--json` form carries the same fields (`"verdict": "BROKEN"`, `"first_broken_id": 17`,
+`"chained_events": 16`, `"reason"`, `"not_proven"`); for a truncation `first_broken_id` is absent.
+
+**The running server** (`keyorix audit verify --full`, PostgreSQL, break (a); exit 1, so does
+`keyorix audit verify` without `--full` and with `--json`). The online wording is shorter than the
+offline one and differs per kind:
+
+```text
+Full audit verification running on the server (job a64c6e7a70257037a079b53d3f81683d)...
+Audit chain: BROKEN
+  chained events:   16
+  unchained events: 0
+  head id:          0
+  head hash:        
+  checkpoint:       checked against a signed in-DB checkpoint (on-box truncation detection)
+  first broken id:  17
+  reason:           the recorded entry_hash does not match this row's contents, so the row was changed after it was written (event modified)
+Error: audit chain verification FAILED (first broken id 17): the recorded entry_hash does not match this row's contents, so the row was changed after it was written (event modified)
+```
+
+The online reasons for (b) and (c) read `prev_hash does not link to the preceding event (row inserted,
+deleted, or reordered)`. `head id: 0` and an empty `head hash` on a BROKEN report mean "no verified head",
+not an empty chain. In the `--json` result of an edit (a) the field `checkpoint_reason` also read
+`audit trail truncated below the certified high-water mark: 19 events were previously certified, only 16 are
+reachable from signed checkpoint #1`: it is the same walk stopping at #17, not a second finding; go by
+`first_broken_id`. The first detection appended the event (`keyorix audit logs --event-type
+system.audit_chain_verification_failed`):
+
+```text
+ID     TIME (UTC)           ACTOR            KIND      EVENT                                  DESCRIPTION
+20     2026-11-18 05:42:48  system           system    system.audit_chain_verification_failed audit chain verification failed (job, state generation 6): the recorded entry_hash does not match this row's contents, so the row was changed after it was written (event modified)
+```
+
+and a checkpoint is refused while the break stands (`keyorix audit checkpoint`, exit 1):
+
+```text
+Error: write audit checkpoint failed: refusing to checkpoint a chain that does not verify: the recorded entry_hash does not match this row's contents, so the row was changed after it was written (event modified) (HTTP 409)
+```
 
 ## 4. Benign causes first
 
@@ -436,6 +598,10 @@ after the break is not notarised: decide soon.
   reads rewritten and the command refuses; seal before restarting the server when you can.
 - `verify-audit` has no key-version awareness, so a pre-rotation checkpoint under a rotated KEK
   reads BROKEN offline (section 4c).
+- **Known limitation (product decision pending):** there is no marked chain-segment restart after a
+  verified break. `accept-loss` seals rows that are gone; a break caused by a **modified** row
+  stays broken in every report and every checkpoint stays refused, so the only ways forward are the
+  options in section 7 (keep running on the broken chain, or restore a known-good archive).
 - No documented way to take a consistent evidence snapshot of a broken chain with the product's
   own tooling: this runbook uses file copies and `pg_dump`. Whether `admin backup` accepts a
   broken chain has not been checked, so it is not recommended here.

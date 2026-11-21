@@ -21,6 +21,7 @@ func TestAddUserToGroup_GetRoleFaultRefusesJoin(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	attacker := seedUserWithRole(t, st, "grf-attacker", "project_viewer", storage.Scope{ProjectID: 1})
+	grantGateHolder(t, st.DB(), attacker, Scope{}, permUsersRead, permRolesAssign) // #4161: core decides the route gate before the ceiling under test
 
 	adminRole, err := st.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
@@ -49,6 +50,7 @@ func TestAddUserToGroup_DeletedGroupRoleStillSkipped(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	actor := seedUserWithRole(t, st, "grf-actor", "project_viewer", storage.Scope{ProjectID: 1})
+	grantGateHolder(t, st.DB(), actor, Scope{}, permUsersRead, permRolesAssign) // #4161: core decides the route gate before the skip under test
 
 	gone := &models.Role{Name: "grf-gone", NameFolded: "grf-gone"}
 	require.NoError(t, st.DB().Create(gone).Error)

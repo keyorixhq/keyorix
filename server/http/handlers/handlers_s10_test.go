@@ -296,7 +296,10 @@ func TestResumeProjectSecrets_BadID_S10(t *testing.T) {
 // ── SuspendProjectSecrets / ResumeProjectSecrets: happy path ─────────────────
 
 func TestSuspendProjectSecrets_HappyPath_S10(t *testing.T) {
-	h := newSecretHandlerS4(t)
+	cs := newHandlerCoreS4(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // the withUserCtx user acts through core (#4159)
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
 	body := `{"reason":"s10 test"}`
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/9999/secrets/suspend-all",
 		strings.NewReader(body))
@@ -310,7 +313,10 @@ func TestSuspendProjectSecrets_HappyPath_S10(t *testing.T) {
 }
 
 func TestResumeProjectSecrets_HappyPath_S10(t *testing.T) {
-	h := newSecretHandlerS4(t)
+	cs := newHandlerCoreS4(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // the withUserCtx user acts through core (#4159)
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/9999/secrets/resume-all", nil)
 	r = withUserCtx(r)
 	r = withChiParam(r, "id", "9999")

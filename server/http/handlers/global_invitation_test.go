@@ -122,8 +122,10 @@ func TestCreateGlobalInvitation_EnforcesAssignCeiling(t *testing.T) {
 	require.NoError(t, db.Where("name = ?", "default").First(&proj).Error)
 	require.NoError(t, db.Create(&models.Role{Name: "system_admin", BypassesPermissionChecks: true}).Error)
 
-	// Strip the actor's admin authority — user 1 now holds no role-granting power.
+	// Strip the actor's admin authority — user 1 now holds no role-granting power,
+	// only the route gate's users.write (#4161: core decides that gate too).
 	require.NoError(t, db.Where("user_id = ?", 1).Delete(&models.UserRole{}).Error)
+	grantGlobalPermissions(t, h.coreService, 1, "users.write")
 
 	t.Run("inviting a system role without roles.assign → 403", func(t *testing.T) {
 		w := postGlobalInvite(t, h, `{"email":"a@b.io","role":"system_admin"}`)

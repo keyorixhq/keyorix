@@ -1,0 +1,1 @@
+ADR-112-A7-SQLITE-STANDARD-ACCEPTED	./internal/config	TestConfigValidate_AcceptsStandardAuditDurabilityOnSQLite	default-ci	pending	-	a SQLite backend set to audit_durability: standard (by name or via the deprecated alias) validates and reports standard (Amendment 7, which replaced Amendment 1/3's SQLite refusal); with nothing set SQLite stays strict

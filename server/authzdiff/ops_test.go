@@ -58,6 +58,13 @@ type opSpec struct {
 	// transport-enforced (intended difference ID-2): the core leg is recorded
 	// but excluded from Oracle 1.
 	coreEnforced bool
+	// coreGateExcluded, when true, excludes the core leg from BOTH oracles even
+	// though coreEnforced is true. Use when core_refusal is "typed" but core does
+	// NOT re-check the router's permission gate — it enforces only business rules
+	// (reviewer-independence, human-only, state machine). The core leg is still
+	// run and recorded, but its outcome is not compared against the model or the
+	// other layers. Set by hand on the opSpec; not derived from matrix.json.
+	coreGateExcluded bool
 	// selfMachineGranter: the transports tag a machine actor with
 	// core.WithSelfMachineGranter before calling core for this op (grep of
 	// server/ at bd16d6921: groups_members.go, rbac.go:830, machine_identities.go:600,
@@ -149,7 +156,7 @@ func actorCtx(ctx context.Context, p *principal) context.Context {
 // ops is every bound operation: the hand-bound Phase 2 set plus the Phase 4
 // family bindings. The sweep orders them by family (coverage_test.go).
 func ops() []opSpec {
-	return append(append(append(append(append(baseOps(), familyOps()...), phase5Ops()...), v5Ops()...), v8Ops()...), v5bOps()...)
+	return append(append(append(append(append(append(append(append(append(baseOps(), familyOps()...), phase5Ops()...), v5Ops()...), v8Ops()...), v5bOps()...), v5extOps()...), v5ext2Ops()...), v5ext3Ops()...), v5ext4Ops()...)
 }
 
 func baseOps() []opSpec {

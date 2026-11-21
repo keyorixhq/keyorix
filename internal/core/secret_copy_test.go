@@ -34,6 +34,7 @@ func TestCopySecret(t *testing.T) {
 	otherEnv, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p2.ID})
 	// IsProjectMember gates CheckSecretPermission (RBAC-001); owner must be a member of p1.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p1.ID}).Error)
+	grantGateHolder(t, db, 1, Scope{ProjectID: p1.ID}, permSecretsWrite) // #4161: CopySecret decides the route gate in core
 
 	src, err := c.CreateSecret(ctx, &CreateSecretRequest{
 		Name: "db-url", Value: []byte("postgres://secret"), ProjectID: p1.ID, EnvironmentID: staging.ID,

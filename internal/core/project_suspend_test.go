@@ -25,9 +25,10 @@ func TestSuspendResumeProjectSecrets(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{},
 		&models.SecretAccessLog{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
-		&models.GroupRole{}, &models.SecretACL{},
+		&models.GroupRole{}, &models.SecretACL{}, &models.User{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	ensureActiveActor(t, c.storage, 1) // the acting user must be an active account (#4159)
 	ctx := context.Background()
 
 	// Two projects, each with an environment (the secret list query joins environments).
@@ -43,6 +44,7 @@ func TestSuspendResumeProjectSecrets(t *testing.T) {
 	// Actor 1 is a live project member (and owner of its own secrets) in p1 — the
 	// standard "full authority" caller for the happy-path assertions below.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p1.ID}).Error)
+	grantProjectSecretsWrite(t, db, 1, p1.ID) // the owner also holds the route's gate (CORE-AUTHZ-RACE-NOV-1 item 2)
 
 	// Project p1: three secrets (one already suspended). Project p2: one (must be untouched).
 	mk := func(name string, projectID, envID, ownerID uint, status string) uint {

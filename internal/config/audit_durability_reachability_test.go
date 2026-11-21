@@ -94,7 +94,7 @@ func walkMainModuleGoFiles(t *testing.T, root string, fn func(rel string, data [
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "node_modules", "cli", "operator":
+			case ".git", ".claude", "node_modules", "cli", "operator":
 				return filepath.SkipDir
 			}
 			return nil

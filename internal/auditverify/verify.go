@@ -323,6 +323,15 @@ func Verify(ctx context.Context, db *DB, opts Options) (*Result, error) {
 	if err := walkChain(ctx, db, batchSize, result, anchor, anchorAuthenticated, gaps); err != nil {
 		return nil, err
 	}
+	// A restart anchor (no entry_hash: a purge removed every row before RowID,
+	// and the chain started again at genesis, #4351) is bound to this chain by
+	// its RowID: no row below it may exist.
+	if anchor != nil && anchor.EntryHash == "" && !empty && fromID < anchor.RowID && result.Verdict != VerdictBroken {
+		id := fromID
+		result.FirstBrokenID = &id
+		result.escalate(VerdictBroken, fmt.Sprintf("audit event #%d is below #%d, the first id the signed retention anchor says survived a purge "+
+			"that removed every earlier row (rows put back, or the anchor belongs to another chain)", fromID, anchor.RowID))
+	}
 	if seals.problem != "" {
 		// Not stepped over: the walk broke at the gap (and the checkpoints
 		// written since are bound to the seal), so this explains it.
@@ -678,13 +687,17 @@ func enforceCheckpoint(ctx context.Context, db *DB, opts Options, result *Result
 		if err != nil {
 			return err
 		}
-		if !found {
+		// A head below the authenticated retention anchor's RowID (the first id
+		// no sanctioned purge removed) was purged, not truncated (#4351); one at
+		// or above it must still be there.
+		purgedHead := result.retentionAnchorRowID != 0 && cp.HeadID < result.retentionAnchorRowID
+		if !found && !purgedHead {
 			result.escalate(VerdictBroken, fmt.Sprintf(
 				"audit event #%d certified by checkpoint #%d is missing (tail-truncation or genesis re-seed)",
 				cp.HeadID, cp.ID))
 			return nil
 		}
-		if hash != cp.HeadHash {
+		if found && hash != cp.HeadHash {
 			result.escalate(VerdictBroken, fmt.Sprintf(
 				"audit event #%d hash differs from signed checkpoint #%d (certified head was rewritten)",
 				cp.HeadID, cp.ID))

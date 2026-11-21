@@ -57,6 +57,7 @@ func TestAddUserToGroup_RejectsDisallowedDomain_ProjectScopedGrant(t *testing.T)
 	// actor 99 must be an authorized granter (admin bundles roles.assign) for
 	// the allowlist gate under test to be reached.
 	h.AssignUserRole(t, 99, testhelper.RoleProjectAdmin /* project_admin, bundles roles.assign */, &projID)
+	h.AssignUserRole(t, 99, testhelper.RoleProjectAdmin, nil) // #4161: core also decides the /groups route gate (users.read + roles.assign, GLOBAL)
 
 	h.EnsureActiveUser(t, 99) // the acting user is active (#4159)
 	err := h.CoreService.AddUserToGroup(ctx, 99, false, mallory.ID, 60, proj)
@@ -93,6 +94,7 @@ func TestAddUserToGroup_RejectsDisallowedDomain_GlobalMembershipReachesProjectGr
 	h.CoreService.SetMembershipDomainAllowlist([]string{"allowed.com"})
 	// OWNERSHIP-ORACLE-1: an authorized granter, see the test above.
 	h.AssignUserRole(t, 99, testhelper.RoleProjectAdmin /* project_admin, bundles roles.assign */, &projID)
+	h.AssignUserRole(t, 99, testhelper.RoleProjectAdmin, nil) // #4161: core also decides the /groups route gate (users.read + roles.assign, GLOBAL)
 
 	// projectID 0 == a GLOBAL membership, not a project-scoped one.
 	h.EnsureActiveUser(t, 99) // the acting user is active (#4159)
@@ -126,6 +128,7 @@ func TestAddUserToGroup_AllowsAllowedDomain(t *testing.T) {
 	// Actor 99 is meant to be an ordinary authorized granter here; the
 	// allowlist behavior under test is orthogonal to that baseline.
 	h.AssignUserRole(t, 99, testhelper.RoleProjectAdmin /* project_admin, bundles roles.assign */, &projID)
+	h.AssignUserRole(t, 99, testhelper.RoleProjectAdmin, nil) // #4161: core also decides the /groups route gate (users.read + roles.assign, GLOBAL)
 
 	h.EnsureActiveUser(t, 99) // the acting user is active (#4159)
 	err := h.CoreService.AddUserToGroup(ctx, 99, false, peggy.ID, 62, proj)
@@ -159,6 +162,9 @@ func TestAddUserToGroup_NoRoleGrant_NotGatedByDomainAllowlist(t *testing.T) {
 
 	h.CoreService.SetMembershipDomainAllowlist([]string{"allowed.com"})
 
+	// #4161: core also decides the /groups route gate (users.read + roles.assign at
+	// the GLOBAL scope); the allowlist behaviour under test is orthogonal to it.
+	h.AssignUserRole(t, 99, testhelper.RoleProjectAdmin, nil)
 	h.EnsureActiveUser(t, 99) // the acting user is active (#4159)
 	err := h.CoreService.AddUserToGroup(ctx, 99, false, oscar.ID, 63, 0)
 	require.NoError(t, err, "joining a group with no role grants confers no access and must not be gated")

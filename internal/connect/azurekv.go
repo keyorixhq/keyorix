@@ -66,7 +66,7 @@ func (c *AzureKeyVaultConnector) client(ctx context.Context) (azSecretGetter, er
 	// stdlib default redirect-following policy applies), no size cap, and no
 	// host-classification on the dialer -- confirmed live in
 	// docs/findings/2026-09-19-FINDING-connect-response-trust-gaps.md §2/§3.
-	// newAzureHardenedTransport also replaces every non-success response body with
+	// newAzureHardenedTransport also replaces every non-200 response body with
 	// a short fixed one before azcore parses it (errorBodyScrubRoundTripper): the
 	// SDK's error parsing amplifies a small, deeply nested body into a very large
 	// allocation, which a size cap cannot prevent.
@@ -114,10 +114,10 @@ func (c *AzureKeyVaultConnector) GetSecret(ctx context.Context, ref string) (str
 	}
 	out, err := cl.GetSecret(ctx, name, version, nil)
 	if err != nil {
-		// A 2xx other than 200 is not rewritten by errorBodyScrubRoundTripper (it only
-		// scrubs error statuses), so azcore's ResponseError text would carry the
-		// response headers and body verbatim. Report a fixed message and the status
-		// code only (#4061).
+		// errorBodyScrubRoundTripper already replaces the body of every non-200
+		// response (including a 2xx other than 200) with a fixed one, but azcore's
+		// ResponseError text would still carry the response headers verbatim. Report
+		// a fixed message and the status code only (#4061).
 		var re *azcore.ResponseError
 		if errors.As(err, &re) && re.StatusCode >= 200 && re.StatusCode < 300 {
 			return "", fmt.Errorf("azure-key-vault: get %q: unexpected success status %d", ref, re.StatusCode)

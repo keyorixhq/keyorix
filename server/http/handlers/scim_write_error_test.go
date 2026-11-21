@@ -46,6 +46,9 @@ func TestSCIMWriteErrorStatus_Classes(t *testing.T) {
 		{wrap(core.ErrUserAccountStateConflict), http.StatusServiceUnavailable, ""},
 		// #3225: a create that may have committed is retryable, not a plain 500.
 		{wrap(fmt.Errorf("%w: %w", core.ErrUserCreateOutcomeUnknown, errors.New("conn reset"))), http.StatusServiceUnavailable, ""},
+		// ERRMAP-TAILS-NOV-6: an audit-log or storage-read outage is retryable too.
+		{wrap(core.ErrMutationAuditUnavailable), http.StatusServiceUnavailable, ""},
+		{wrap(core.ErrStorageReadUnavailable), http.StatusServiceUnavailable, ""},
 		{context.Canceled, http.StatusInternalServerError, ""},
 		{context.DeadlineExceeded, http.StatusInternalServerError, ""},
 		{errors.New("anything else"), http.StatusInternalServerError, ""},

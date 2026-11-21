@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/keyorixhq/keyorix/internal/pgxlimits"
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
 )
@@ -55,6 +56,8 @@ func connectWithSSLMode(t *testing.T, addr, sslmode string) error {
 	if err != nil {
 		t.Fatalf("parse config: %v", err)
 	}
+	// Fuzz the configuration that ships: the same per-message bound the production dial path sets.
+	pgxlimits.Apply(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	conn, err := pgx.ConnectConfig(ctx, cfg)

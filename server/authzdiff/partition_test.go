@@ -24,9 +24,15 @@ import (
 // The waiver families, what each matches, and what it does not detect:
 //
 //   - Core allows (known-04): the core leg allows, REST denies and gRPC
-//     denies or is absent. A transport that allows never matches. Not
-//     detected: a core leg that allows while every present transport denies
-//     (see below). The former known-02 (core let a suspended actor act, #4159)
+//     denies or is absent, on bulk.suspend only, for the viewer principal: core
+//     decides that op per secret (owner, share, ACL) and has no project-level
+//     secrets.write gate of its own (#4508's tags, description and move were
+//     closed by #4536, the bulk suspend owner pass by #4559). A transport
+//     that allows never matches. Every OTHER core-only over-allow is
+//     "unexplained" since #4161 moved the route gates into core
+//     (internal/core/authz_core_gate.go, TestCoreGateParity_*): a dropped core
+//     check now fails a strict sweep even while both transports still gate
+//     the op. The former known-02 (core let a suspended actor act, #4159)
 //     was fixed in core at every bound core-enforced op, the value reads
 //     included (#4336; TestCoreRefusesSuspendedActor, which fails an op it has
 //     no checked case for). The former known-03 (core let a secret's
@@ -51,10 +57,12 @@ import (
 // condition was fixed is removed instead of silently absorbing a regression
 // of that fix.
 //
-// What this partition does NOT detect: known-04 accepts "core allows, every
-// present transport denies, the model denies". The removal of a core-level
-// check (a defence-in-depth regression) is therefore invisible while both
-// transports still gate the op; only a transport that stops gating surfaces.
+// What this partition does NOT detect: on bulk.suspend, for the viewer
+// principal only, "core allows, every present transport denies, the model
+// denies" is still absorbed, so a dropped core check on exactly that shape is
+// invisible until core decides the project gate there and the waiver goes.
+// Everywhere else a core-only over-allow is "unexplained" and fails a strict
+// sweep (the reassign-owner plant proves it, plants_test.go).
 //
 // Returns "" for a case with nothing to explain.
 func explain(r *caseResult) string {
@@ -65,10 +73,24 @@ func explain(r *caseResult) string {
 	is := func(lo *legOutcome, o Outcome) bool { return lo != nil && lo.NA == "" && lo.Outcome == o }
 	na := func(lo *legOutcome) bool { return lo == nil || lo.NA != "" }
 	deniedOrNA := func(lo *legOutcome) bool { return na(lo) || is(lo, Denied) }
+	pk := r.Principal
 	modelDenies := r.Model == Denied || r.Model == ModelNA
 
-	if is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies {
+	switch {
+	// known-04, narrowed by #4161 to what is left of it: bulk.suspend for the
+	// viewer. Core decides suspend-all per secret only (owner, share, ACL), with
+	// no project-level secrets.write gate of its own, so the viewer passes core on
+	// the secrets it holds a per-secret write grant on (the ACL on s3, the write
+	// share on s2) and is refused by the route gate (secrets.write@project).
+	// #4559 closed the owner pass on this op but not that shape; checked on main
+	// a65bf34b6 merged with #4161: this case still matches once (V5EXT3 sweep).
+	// (secret.tags, secret.description and secret.move were #4508, closed by
+	// #4536.) Remove the case and the waiver row when core decides the project
+	// gate there (a dead waiver fails the full strict sweep).
+	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies &&
+		pk == pkViewer && r.Op == "bulk.suspend":
 		return "known-04"
+
 	}
 	return "unexplained"
 }

@@ -25,7 +25,17 @@ import (
 // TestRewrite_CreateTempFails verifies that rewrite() handles a failure of
 // os.CreateTemp gracefully by making the spool dir read-only, which prevents
 // temp-file creation. It must log the error and return without panicking.
+// skipIfRoot skips a test that forces a file error with permission bits: root
+// bypasses them, so the error the test provokes never happens.
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permission checks, so the forced failure cannot happen")
+	}
+}
+
 func TestRewrite_CreateTempFails(t *testing.T) {
+	skipIfRoot(t)
 	dir := t.TempDir()
 	d := &fakeDelivery{failing: true}
 	s, err := newSpool(dir, time.Hour, d.deliver)
@@ -86,6 +96,7 @@ func TestRewrite_RenameFails(t *testing.T) {
 // TestSpool_AddOpenFileFails verifies that add() logs an error and returns when
 // os.OpenFile fails (the spool dir is read-only so no file can be created).
 func TestSpool_AddOpenFileFails(t *testing.T) {
+	skipIfRoot(t)
 	dir := t.TempDir()
 	d := &fakeDelivery{failing: true}
 	s, err := newSpool(dir, time.Hour, d.deliver)
@@ -116,6 +127,7 @@ func TestSpool_AddOpenFileFails(t *testing.T) {
 // the spool file fails. We pre-create the file as read-only so the O_WRONLY
 // open succeeds but the write fails.
 func TestSpool_AddWriteFails(t *testing.T) {
+	skipIfRoot(t)
 	dir := t.TempDir()
 	d := &fakeDelivery{failing: true}
 	s, err := newSpool(dir, time.Hour, d.deliver)

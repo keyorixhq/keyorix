@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/keyorixhq/keyorix/internal/pgxlimits"
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
 )
@@ -39,26 +40,32 @@ func FuzzPgxCopyResponse(f *testing.F) {
 	f.Add([]byte{'G', 0, 0, 0, 7, 0, 0, 1, 0, 0, 'E', 0, 0, 0, 11, 'S', 'E', 'R', 'R', 0, 0})
 	// CopyData with an over-declared length (server-declared huge length).
 	f.Add([]byte{'d', 0x7f, 0xff, 0xff, 0xff, 'x'})
+	probe, budget, haveBudget := pgxResguardProbe(f, pgxBudgetCopy)
 	f.Fuzz(func(t *testing.T, server []byte) {
-		srv := hostile.NewServer(t, func(c net.Conn) {
-			if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
-				return
-			}
-			writeAll(c, cannedHandshake)
-			drainBriefly(c)
-			writeAll(c, server)
-			drainBriefly(c)
-		})
-		defer srv.Close()
-		cfg := newConfig(t, srv.Addr())
-		runWithOracles(t, func(ctx context.Context) {
-			conn, err := pgx.ConnectConfig(ctx, cfg)
-			if err != nil {
-				return
-			}
-			defer func() { _ = conn.Close(ctx) }()
-			_, _ = conn.Exec(ctx, "ALTER ROLE kx_dyn WITH PASSWORD 'x'")
-		})
+		measurePgx(t, probe, budget, haveBudget, server, drivePgxCopy)
+	})
+}
+
+// drivePgxCopy runs one FuzzPgxCopyResponse input under the oracles.
+func drivePgxCopy(t *testing.T, server []byte) {
+	srv := hostile.NewServer(t, func(c net.Conn) {
+		if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
+			return
+		}
+		writeAll(c, cannedHandshake)
+		drainBriefly(c)
+		writeAll(c, server)
+		drainBriefly(c)
+	})
+	defer srv.Close()
+	cfg := newConfig(t, srv.Addr())
+	runWithOracles(t, func(ctx context.Context) {
+		conn, err := pgx.ConnectConfig(ctx, cfg)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(ctx) }()
+		_, _ = conn.Exec(ctx, "ALTER ROLE kx_dyn WITH PASSWORD 'x'")
 	})
 }
 
@@ -126,6 +133,8 @@ func newTLSConfig(tb testing.TB, addr string) *pgx.ConnConfig {
 	if err != nil {
 		tb.Fatalf("parse tls config: %v", err)
 	}
+	// Fuzz the configuration that ships: the same per-message bound the production dial path sets.
+	pgxlimits.Apply(cfg)
 	return cfg
 }
 
@@ -139,22 +148,28 @@ func FuzzPgxSSLNegotiation(f *testing.F) {
 	f.Add([]byte{'S', 0x16, 0x03, 0x03, 0, 0}) // accept, then truncated TLS record
 	f.Add([]byte{'S'})                         // accept, then nothing
 	f.Add([]byte{0x00})                        // junk negotiation byte
+	probe, budget, haveBudget := pgxResguardProbe(f, pgxBudgetSSL)
 	f.Fuzz(func(t *testing.T, server []byte) {
-		srv := hostile.NewServer(t, func(c net.Conn) {
-			// pgx sends SSLRequest first (8 bytes, no type byte). Drain it.
-			if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
-				return
-			}
-			writeAll(c, server)
-			drainBriefly(c)
-		})
-		defer srv.Close()
-		cfg := newTLSConfig(t, srv.Addr())
-		runWithOracles(t, func(ctx context.Context) {
-			conn, err := pgx.ConnectConfig(ctx, cfg)
-			if err == nil {
-				_ = conn.Close(ctx)
-			}
-		})
+		measurePgx(t, probe, budget, haveBudget, server, drivePgxSSL)
+	})
+}
+
+// drivePgxSSL runs one FuzzPgxSSLNegotiation input under the oracles.
+func drivePgxSSL(t *testing.T, server []byte) {
+	srv := hostile.NewServer(t, func(c net.Conn) {
+		// pgx sends SSLRequest first (8 bytes, no type byte). Drain it.
+		if _, err := hostile.ReadClientStartup(c, capBytes); err != nil {
+			return
+		}
+		writeAll(c, server)
+		drainBriefly(c)
+	})
+	defer srv.Close()
+	cfg := newTLSConfig(t, srv.Addr())
+	runWithOracles(t, func(ctx context.Context) {
+		conn, err := pgx.ConnectConfig(ctx, cfg)
+		if err == nil {
+			_ = conn.Close(ctx)
+		}
 	})
 }

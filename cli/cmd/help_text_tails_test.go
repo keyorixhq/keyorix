@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // findCommand returns the command at the given path ("secret import"), or fails.
@@ -55,5 +56,68 @@ func TestSecretImportHelpPointsAtKeyorixMigrate(t *testing.T) {
 	}
 	if strings.Contains(long, "old CLI") {
 		t.Errorf("secret import --help still points at the old CLI")
+	}
+}
+
+// helpTextOf is everything `keyorix <cmd> --help` prints that a person wrote: the short
+// and long description, the examples and the usage line of every flag shown.
+func helpTextOf(c *cobra.Command) string {
+	var b strings.Builder
+	b.WriteString(c.Short + "\n" + c.Long + "\n" + c.Example + "\n")
+	c.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		if !f.Hidden {
+			b.WriteString(f.Usage + "\n")
+		}
+	})
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// removedFlagNames are the flag names no command accepts any more: every flag the CLI
+// refuses (refusedSecretFlags), unless some command still exposes a flag of that name.
+func removedFlagNames(t *testing.T) []string {
+	t.Helper()
+	applySecretFlagPolicy()
+	live := map[string]bool{}
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			if !f.Hidden {
+				live[f.Name] = true
+			}
+		})
+		for _, s := range c.Commands() {
+			walk(s)
+		}
+	}
+	walk(rootCmd)
+	seen := map[string]bool{}
+	var out []string
+	for _, sf := range refusedSecretFlags {
+		if !live[sf.Flag] && !seen[sf.Flag] {
+			seen[sf.Flag] = true
+			out = append(out, sf.Flag)
+		}
+	}
+	return out
+}
+
+// Family guard (PILOT-BOOTSTRAP-CLI-1, #4280 follow-up): no command's help may name a
+// flag the CLI no longer accepts. A reader who copies "--mfa-code" from `login --help`
+// gets a refusal, so the help names the environment variable instead.
+func TestNoHelpNamesARemovedFlag(t *testing.T) {
+	removed := removedFlagNames(t)
+	if len(removed) == 0 {
+		t.Fatal("no removed flag names found; the guard is vacuous")
+	}
+	for _, c := range leafCommands(rootCmd) {
+		text := helpTextOf(c)
+		for _, name := range removed {
+			if i := strings.Index(text, "--"+name); i >= 0 {
+				rest := text[i+len(name)+2:]
+				if rest == "" || !(rest[0] == '-' || rest[0] >= 'a' && rest[0] <= 'z' || rest[0] >= '0' && rest[0] <= '9') {
+					t.Errorf("%s --help names the removed flag --%s", commandKey(c), name)
+				}
+			}
+		}
 	}
 }

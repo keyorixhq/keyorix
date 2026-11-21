@@ -26,6 +26,14 @@ const (
 	AccessReviewDecisionSourceRole        AccessReviewDecisionSource = "role"
 )
 
+// Defines values for AuditIntegrityPostureVerificationStatus.
+const (
+	Broken    AuditIntegrityPostureVerificationStatus = "broken"
+	NotProven AuditIntegrityPostureVerificationStatus = "not_proven"
+	Sealed    AuditIntegrityPostureVerificationStatus = "sealed"
+	Valid     AuditIntegrityPostureVerificationStatus = "valid"
+)
+
 // Defines values for BlastRadiusNodeRiskLevel.
 const (
 	BlastRadiusNodeRiskLevelCritical BlastRadiusNodeRiskLevel = "critical"
@@ -39,6 +47,14 @@ const (
 	BreakGlassActivationStateActive  BreakGlassActivationState = "active"
 	BreakGlassActivationStateExpired BreakGlassActivationState = "expired"
 	BreakGlassActivationStateRevoked BreakGlassActivationState = "revoked"
+)
+
+// Defines values for ComplianceTrendDirection.
+const (
+	Improving  ComplianceTrendDirection = "improving"
+	NoData     ComplianceTrendDirection = "no_data"
+	Regressing ComplianceTrendDirection = "regressing"
+	Stable     ComplianceTrendDirection = "stable"
 )
 
 // Defines values for DynamicSecretConfigBackendType.
@@ -309,6 +325,38 @@ const (
 	Inactive ListUsersParamsFilter = "inactive"
 )
 
+// AccessGovernancePosture Access recertification and dormant standing access.
+type AccessGovernancePosture struct {
+	// DormantRoleGrants Grants with no or old activity at the capability they confer.
+	DormantRoleGrants int `json:"dormant_role_grants"`
+	OpenCampaigns     int `json:"open_campaigns"`
+
+	// PendingItems Undecided items across open campaigns.
+	PendingItems          int `json:"pending_items"`
+	Projects              int `json:"projects"`
+	ProjectsNeverReviewed int `json:"projects_never_reviewed"`
+
+	// ProjectsOverdue Overdue for recertification (A.5.18 cadence).
+	ProjectsOverdue          int `json:"projects_overdue"`
+	ProjectsWithOpenCampaign int `json:"projects_with_open_campaign"`
+
+	// SodViolations Principals holding a forbidden permission pair (A.5.3).
+	SodViolations int `json:"sod_violations"`
+}
+
+// AccessRequestPosture The dual-control access-request workflow (ADR-024, A.5.3), counted by state.
+type AccessRequestPosture struct {
+	Approved int `json:"approved"`
+	Expired  int `json:"expired"`
+	Pending  int `json:"pending"`
+	Rejected int `json:"rejected"`
+
+	// RequiredApprovals The configured N-of-M dual-control threshold.
+	RequiredApprovals int `json:"required_approvals"`
+	TotalRequests     int `json:"total_requests"`
+	Withdrawn         int `json:"withdrawn"`
+}
+
 // AccessReviewDecision Identifies one access-review entry for a recertification decision (attest or revoke). Mirrors an entry from GET .../access-review.
 type AccessReviewDecision struct {
 	// EnvironmentId Environment scope of a role grant (0 = whole project).
@@ -335,6 +383,43 @@ type AccessReviewDecisionPrincipalType string
 
 // AccessReviewDecisionSource Which mechanism conferred the grant.
 type AccessReviewDecisionSource string
+
+// AnomaliesPosture Detected access anomalies (NIS2 detection).
+type AnomaliesPosture struct {
+	HighSeverityOpen int `json:"high_severity_open"`
+	Unacknowledged   int `json:"unacknowledged"`
+}
+
+// AuditIntegrityPosture The tamper-evident audit trail (ADR-029). chained_events is the count verified at the last check, through head_id, not a live count: when stale is true the check is older than a minute and latest_event_id / events_since_check say how many events lie past it (#4186). Neither of those is a verification result.
+type AuditIntegrityPosture struct {
+	// ChainVerified True only when verification_status is valid.
+	ChainVerified bool  `json:"chain_verified"`
+	ChainedEvents int64 `json:"chained_events"`
+	Checkpointed  bool  `json:"checkpointed"`
+
+	// EventsSinceCheck Events past head_id written since the check and not yet verified; set only when stale.
+	EventsSinceCheck *int64 `json:"events_since_check,omitempty"`
+
+	// HeadId Id of the chain head as of the last check.
+	HeadId *int `json:"head_id,omitempty"`
+
+	// LastCheckedAt When the chain tail was last checked.
+	LastCheckedAt          *time.Time `json:"last_checked_at,omitempty"`
+	LastFullVerificationAt *time.Time `json:"last_full_verification_at,omitempty"`
+
+	// LatestEventId Newest audit event id now; set only when stale.
+	LatestEventId *int `json:"latest_event_id,omitempty"`
+
+	// Reason Why the chain is not fully verified, when it is not.
+	Reason *string `json:"reason,omitempty"`
+
+	// Stale The last check is older than the freshness window, or its refresh failed and the previous value is shown.
+	Stale              *bool                                    `json:"stale,omitempty"`
+	VerificationStatus *AuditIntegrityPostureVerificationStatus `json:"verification_status,omitempty"`
+}
+
+// AuditIntegrityPostureVerificationStatus defines model for AuditIntegrityPosture.VerificationStatus.
+type AuditIntegrityPostureVerificationStatus string
 
 // BillingProjectStat One project's usage breakdown for a billing period.
 type BillingProjectStat struct {
@@ -485,6 +570,110 @@ type CertificateInfo struct {
 	Subject            *string    `json:"subject,omitempty"`
 }
 
+// CertificatePosture Certificate hygiene from the cached expiry (ADR-056).
+type CertificatePosture struct {
+	Expired int `json:"expired"`
+
+	// ExpiringSoon Within 30 days.
+	ExpiringSoon int `json:"expiring_soon"`
+
+	// NotEvaluated Certificate secrets whose certificate has not been parsed yet.
+	NotEvaluated      int `json:"not_evaluated"`
+	TotalCertificates int `json:"total_certificates"`
+}
+
+// ClassificationCounts A per-level tally of classifiable entities.
+type ClassificationCounts struct {
+	Confidential int `json:"confidential"`
+	Internal     int `json:"internal"`
+	Public       int `json:"public"`
+	Restricted   int `json:"restricted"`
+	Total        int `json:"total"`
+	Unclassified int `json:"unclassified"`
+}
+
+// ClassificationPosture Data-classification coverage (A.5.12). The flat counts are static secrets.
+type ClassificationPosture struct {
+	Confidential int `json:"confidential"`
+
+	// DynamicConfigs A per-level tally of classifiable entities.
+	DynamicConfigs ClassificationCounts `json:"dynamic_configs"`
+	Internal       int                  `json:"internal"`
+
+	// MachineCredentials A per-level tally of classifiable entities.
+	MachineCredentials ClassificationCounts `json:"machine_credentials"`
+
+	// MachineIdentities A per-level tally of classifiable entities.
+	MachineIdentities ClassificationCounts `json:"machine_identities"`
+	Public            int                  `json:"public"`
+	Restricted        int                  `json:"restricted"`
+	TotalSecrets      int                  `json:"total_secrets"`
+	Unclassified      int                  `json:"unclassified"`
+}
+
+// CompliancePosture The deployment-wide controls-posture snapshot (GET /compliance/posture): one object per control area. degraded is true when a sub-rollup could not be queried, so the zero values it carries are UNKNOWN rather than verified clean; degraded_reasons names each failed rollup. Mirrors core.CompliancePosture; TestCompliancePostureSchemaMatchesHandlerBody fails when the two drift.
+type CompliancePosture struct {
+	// AccessGovernance Access recertification and dormant standing access.
+	AccessGovernance AccessGovernancePosture `json:"access_governance"`
+
+	// AccessRequests The dual-control access-request workflow (ADR-024, A.5.3), counted by state.
+	AccessRequests AccessRequestPosture `json:"access_requests"`
+
+	// Anomalies Detected access anomalies (NIS2 detection).
+	Anomalies AnomaliesPosture `json:"anomalies"`
+
+	// AuditIntegrity The tamper-evident audit trail (ADR-029). chained_events is the count verified at the last check, through head_id, not a live count: when stale is true the check is older than a minute and latest_event_id / events_since_check say how many events lie past it (#4186). Neither of those is a verification result.
+	AuditIntegrity AuditIntegrityPosture `json:"audit_integrity"`
+
+	// Certificates Certificate hygiene from the cached expiry (ADR-056).
+	Certificates CertificatePosture `json:"certificates"`
+
+	// Classification Data-classification coverage (A.5.12). The flat counts are static secrets.
+	Classification ClassificationPosture `json:"classification"`
+
+	// Degraded One or more sub-rollups could not be queried; treat the snapshot as incomplete, not passing.
+	Degraded bool `json:"degraded"`
+
+	// DegradedReasons Each failed sub-rollup with its underlying error. Absent when degraded is false.
+	DegradedReasons *[]string `json:"degraded_reasons,omitempty"`
+
+	// EmergencyAccess Break-glass usage (NIS2/DORA). degraded_activations counts activations committed while the audit log refused their rows whose owed audit rows are not yet in the hash chain: their audit record is incomplete and their review is owed. Non-zero also sets the snapshot's degraded flag.
+	EmergencyAccess EmergencyAccessPosture `json:"emergency_access"`
+	GeneratedAt     time.Time              `json:"generated_at"`
+
+	// Identity Second-factor (MFA / passkey) coverage.
+	Identity IdentityPosture `json:"identity"`
+
+	// LegalHold Whether a litigation or investigation hold is in effect (A.5.34).
+	LegalHold LegalHoldPosture `json:"legal_hold"`
+
+	// Retention Configured retention windows in days; 0 keeps that record type forever (A.5.33).
+	Retention RetentionPosture `json:"retention"`
+
+	// Risk The risk register (A.5.8).
+	Risk RiskPosture `json:"risk"`
+
+	// Rotation Secret-rotation hygiene (ISO A.5.15 / NIS2).
+	Rotation RotationPosture `json:"rotation"`
+
+	// SupplyChain Software-supply-chain integrity (ADR-062/064/065).
+	SupplyChain SupplyChainPosture `json:"supply_chain"`
+
+	// Trend Week-over-week direction against the latest snapshot at least 20 hours old. Absent on the first call.
+	Trend *ComplianceTrend `json:"trend,omitempty"`
+}
+
+// ComplianceTrend Week-over-week direction against the latest snapshot at least 20 hours old. Absent on the first call.
+type ComplianceTrend struct {
+	Direction    ComplianceTrendDirection `json:"direction"`
+	FailedDelta  *int                     `json:"failed_delta,omitempty"`
+	PassedDelta  *int                     `json:"passed_delta,omitempty"`
+	PreviousDate *time.Time               `json:"previous_date,omitempty"`
+}
+
+// ComplianceTrendDirection defines model for ComplianceTrend.Direction.
+type ComplianceTrendDirection string
+
 // DeletedSecretEntry One row of a project's recycle bin (GET /projects/{id}/secrets/deleted) -- a snake_case DTO, not the raw Secret model.
 type DeletedSecretEntry struct {
 	Classification *string `json:"classification,omitempty"`
@@ -565,6 +754,23 @@ type DynamicSecretLease struct {
 // DynamicSecretLeaseStatus defines model for DynamicSecretLease.Status.
 type DynamicSecretLeaseStatus string
 
+// EmergencyAccessPosture Break-glass usage (NIS2/DORA). degraded_activations counts activations committed while the audit log refused their rows whose owed audit rows are not yet in the hash chain: their audit record is incomplete and their review is owed. Non-zero also sets the snapshot's degraded flag.
+type EmergencyAccessPosture struct {
+	ActiveActivations   int `json:"active_activations"`
+	DegradedActivations int `json:"degraded_activations"`
+
+	// IndependentReviewImpossible At most one active global admin-tier holder, so no one but the activator could review.
+	IndependentReviewImpossible bool `json:"independent_review_impossible"`
+
+	// OldestUnreviewedAgeHours 0 when there are none.
+	OldestUnreviewedAgeHours int `json:"oldest_unreviewed_age_hours"`
+	ReviewWindowHours        int `json:"review_window_hours"`
+	TotalActivations         int `json:"total_activations"`
+
+	// UnreviewedActivations Activations with no recorded review that are older than review_window_hours (ADR-112).
+	UnreviewedActivations int `json:"unreviewed_activations"`
+}
+
 // EnvCloneResult The result of cloning one environment's secrets into another (internal/core.EnvCloneResult). Handler-level snake_case wire type (server/http/handlers/catalog_wire.go's envCloneResultWire) -- internal/core.EnvCloneResult itself carries no `json:` tags and is never serialized directly.
 type EnvCloneResult struct {
 	DestEnv        *string   `json:"dest_env,omitempty"`
@@ -626,6 +832,20 @@ type GroupRoleGrant struct {
 
 	// ProjectId Project the grant applies to; 0 = not project-scoped (global when environment_id is also 0).
 	ProjectId *int `json:"project_id,omitempty"`
+}
+
+// IdentityPosture Second-factor (MFA / passkey) coverage.
+type IdentityPosture struct {
+	ActiveUsers           int `json:"active_users"`
+	SecondFactorPercent   int `json:"second_factor_percent"`
+	UsersWithSecondFactor int `json:"users_with_second_factor"`
+}
+
+// LegalHoldPosture Whether a litigation or investigation hold is in effect (A.5.34).
+type LegalHoldPosture struct {
+	Active   bool       `json:"active"`
+	PlacedAt *time.Time `json:"placed_at,omitempty"`
+	Reason   *string    `json:"reason,omitempty"`
 }
 
 // LoginSuccessData defines model for LoginSuccessData.
@@ -914,6 +1134,24 @@ type RBACAuditLogEntry struct {
 	TargetUserId  *int       `json:"target_user_id"`
 }
 
+// RetentionPosture Configured retention windows in days; 0 keeps that record type forever (A.5.33).
+type RetentionPosture struct {
+	AnomalyAlertsDays          int  `json:"anomaly_alerts_days"`
+	BreakGlassDays             int  `json:"break_glass_days"`
+	ClosedAccessReviewsDays    int  `json:"closed_access_reviews_days"`
+	Enabled                    bool `json:"enabled"`
+	ResolvedAccessRequestsDays int  `json:"resolved_access_requests_days"`
+}
+
+// RiskPosture The risk register (A.5.8).
+type RiskPosture struct {
+	ActiveExceptions int `json:"active_exceptions"`
+
+	// Expired Past their expiry but still not revoked.
+	Expired      int `json:"expired"`
+	ExpiringSoon int `json:"expiring_soon"`
+}
+
 // Role A role (internal/storage/models.Role), via the handler-level roleWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
 type Role struct {
 	// AssignableScope Where the role may be granted (#3546): global = no project only, project = a project (optionally an environment of it) only, any = either.
@@ -1036,6 +1274,17 @@ type RotationPolicyEvaluation struct {
 	ProjectId     *uint32    `json:"project_id,omitempty"`
 	SecretId      *uint32    `json:"secret_id,omitempty"`
 	SecretName    *string    `json:"secret_name,omitempty"`
+}
+
+// RotationPosture Secret-rotation hygiene (ISO A.5.15 / NIS2).
+type RotationPosture struct {
+	// CoveredSecrets Those with a rotation schedule.
+	CoveredSecrets int `json:"covered_secrets"`
+	DueSoon        int `json:"due_soon"`
+	Overdue        int `json:"overdue"`
+
+	// TotalSecrets All static secrets in scope.
+	TotalSecrets int `json:"total_secrets"`
 }
 
 // Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
@@ -1374,6 +1623,15 @@ type Share struct {
 
 // SharePermission defines model for Share.Permission.
 type SharePermission string
+
+// SupplyChainPosture Software-supply-chain integrity (ADR-062/064/065).
+type SupplyChainPosture struct {
+	// LicenseState Offline-license state, e.g. active, expiring_soon, none.
+	LicenseState         string `json:"license_state"`
+	LicenseValid         bool   `json:"license_valid"`
+	TrustedUpdateKeys    int    `json:"trusted_update_keys"`
+	UpdateSigningTrusted bool   `json:"update_signing_trusted"`
+}
 
 // UsageReport defines model for UsageReport.
 type UsageReport struct {

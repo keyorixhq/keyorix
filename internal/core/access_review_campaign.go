@@ -322,6 +322,9 @@ func (c *KeyorixCore) claimItemDecisionOn(ctx context.Context, st storage.Storag
 }
 
 func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, projectID, campaignID, itemID uint, action, reason string) error {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	// A recertification decision must come from an attributable HUMAN reviewer. A
 	// machine identity authenticates with UserID==0 (authz uses its PrincipalID), so a
 	// non-zero actorID is required — otherwise an automation token holding roles.assign

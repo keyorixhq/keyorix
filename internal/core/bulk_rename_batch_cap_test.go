@@ -11,7 +11,9 @@ import (
 // maxBulkRenameBatchSize before any per-item storage work starts (#G44), like the
 // other bulk operations' batch caps.
 func TestBulkRenameSecrets_ExceedsMaxBatchSize(t *testing.T) {
-	c := &KeyorixCore{now: time.Now} // no storage: the cap must refuse before touching it
+	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting user is active (#4159); nothing else may be read before the cap refuses
+	c := &KeyorixCore{storage: ms, now: time.Now}
 	renames := make([]SecretRename, maxBulkRenameBatchSize+1)
 	for i := range renames {
 		renames[i] = SecretRename{ID: uint(i + 1), NewName: "X"}

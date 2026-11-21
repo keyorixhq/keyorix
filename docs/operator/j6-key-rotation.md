@@ -192,6 +192,16 @@ copy of the new DEK); start the server so boot recovery settles it. Boot never r
 either file itself. All of this was run on a throwaway SQLite install with a leftover
 `kek.salt.pending`; the DEK variant of the `diagnose` line is covered by a test only.
 
+The running server reports it too, for a monitor to poll: while a staging file is in its key
+directory, `GET /api/v1/system/info` (for a caller with `system.write`) carries
+`security.backup_refused` with `reason` `key-rotation-staging-file` (the same token as the
+stderr line), the `files`, `staging_salt_only` (true when only the salt's staging file is
+there) and a one-line `remedy`. Each replica reports its own key directory. The field is
+absent while backups are not refused, and goes away on the next request once the file has
+been moved. Alert on its presence. Reading it only checks whether the files exist; it never
+moves or deletes one. Covered by `TestJourney_BackupRefusedSignalWhileStagingSaltPresent`
+(real server, SQLite).
+
 ## Rehearse it: `scripts/drills/key-rotation.sh`
 
 The script runs this page's offline operations on a throwaway instance (SQLite or

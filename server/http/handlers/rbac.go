@@ -452,6 +452,8 @@ func rbacAnswer(op, internal string, err error) coreErrorAnswer {
 		texts[errclass.Conflict] = "Role already assigned to user"
 	case errors.Is(err, storage.ErrDuplicateRolePermission):
 		texts[errclass.Conflict] = "Permission already assigned to role"
+	case errors.Is(err, storage.ErrUserNotFound):
+		texts[errclass.NotFound] = "User not found"
 	case errors.Is(err, storage.ErrRoleNotFound):
 		texts[errclass.NotFound] = errRoleNotFound
 	case errors.Is(err, storage.ErrPermissionNotFound):

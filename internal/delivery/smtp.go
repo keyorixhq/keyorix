@@ -28,6 +28,7 @@ import (
 	mail "github.com/wneessen/go-mail"
 
 	"github.com/keyorixhq/keyorix/internal/envflag"
+	"github.com/keyorixhq/keyorix/internal/smtpauth"
 )
 
 // smtpDialTimeout bounds a single send so a wedged relay cannot stall the request.
@@ -63,7 +64,7 @@ func newSMTPDelivery(cfg SMTPSettings) (*SMTPDelivery, error) {
 	case "", smtpTLSStartTLS, smtpTLSImplicit:
 	case smtpTLSNone:
 		if !envflag.Enabled(EnvAllowInsecureSMTP) {
-			return nil, fmt.Errorf("delivery: smtp.tls=none sends the message (including the setup link) and the relay username unencrypted; the mail library never sends a PLAIN or LOGIN password without TLS, so a relay that offers only PLAIN or LOGIN will fail authentication; refusing unless the operator explicitly opts in by setting %s=true", EnvAllowInsecureSMTP)
+			return nil, fmt.Errorf("delivery: smtp.tls=none sends the message (including the setup link) and the relay username unencrypted; PLAIN, LOGIN and SCRAM are never used without TLS, so a relay that offers only those will fail authentication; refusing unless the operator explicitly opts in by setting %s=true", EnvAllowInsecureSMTP)
 		}
 		log.Printf("delivery: WARNING smtp.tls=none is ACTIVE — setup-link email will be sent over CLEARTEXT SMTP; dev/test only, never use in production")
 	default:
@@ -111,12 +112,12 @@ func (d *SMTPDelivery) DeliverSetupLink(ctx context.Context, req SetupLinkReques
 }
 
 // smtpPlainLoginNoTLSCause names why a tls=none send with a username fails at auth
-// discovery: go-mail's SMTPAuthAutoDiscover drops PLAIN and LOGIN on an unencrypted
-// connection (it will not send a password in cleartext), so a relay offering only
-// those has no mechanism left.
-const smtpPlainLoginNoTLSCause = "server offers only PLAIN/LOGIN and TLS is disabled (smtp.tls=none); use starttls or implicit TLS, or a relay that offers CRAM-MD5/SCRAM"
+// selection: smtpauth offers only CRAM-MD5 and NTLM on an unencrypted connection (no
+// password on the wire, no relay-chosen CPU cost), so a relay offering only PLAIN,
+// LOGIN or SCRAM has no mechanism left.
+const smtpPlainLoginNoTLSCause = "server offers no AUTH mechanism usable without TLS (smtp.tls=none): PLAIN, LOGIN and SCRAM are only used over TLS; use starttls or implicit TLS, or a relay that offers CRAM-MD5 or NTLM"
 
-// plainLoginOnlyWithoutTLS reports whether a send error is go-mail's auth-discovery
+// plainLoginOnlyWithoutTLS reports whether a send error is the no-usable-mechanism
 // failure under tls=none with auth configured — the one case the generic error
 // does not explain.
 func (d *SMTPDelivery) plainLoginOnlyWithoutTLS(err error) bool {
@@ -125,8 +126,8 @@ func (d *SMTPDelivery) plainLoginOnlyWithoutTLS(err error) bool {
 }
 
 // newClient builds a go-mail client from the SMTP settings, selecting the TLS policy
-// and auth mechanism. Auth is auto-discovered when credentials are present and
-// disabled otherwise (e.g. an internal relay that authenticates by network).
+// and auth. When credentials are present internal/smtpauth picks the mechanism; auth
+// is disabled otherwise (e.g. an internal relay that authenticates by network).
 func (d *SMTPDelivery) newClient() (*mail.Client, error) {
 	opts := []mail.Option{
 		mail.WithTimeout(smtpDialTimeout),
@@ -143,11 +144,9 @@ func (d *SMTPDelivery) newClient() (*mail.Client, error) {
 		opts = append(opts, mail.WithTLSPolicy(mail.TLSMandatory))
 	}
 	if d.cfg.Username != "" {
-		opts = append(opts,
-			mail.WithSMTPAuth(mail.SMTPAuthAutoDiscover),
-			mail.WithUsername(d.cfg.Username),
-			mail.WithPassword(d.cfg.Password),
-		)
+		// The mechanism is chosen by smtpauth, not by go-mail's auto-discovery: SCRAM,
+		// PLAIN and LOGIN only over TLS, SCRAM with a bounded iteration count (#4383).
+		opts = append(opts, mail.WithSMTPAuthCustom(smtpauth.New(d.cfg.Username, d.cfg.Password, d.cfg.Host)))
 	}
 	return mail.NewClient(d.cfg.Host, opts...)
 }

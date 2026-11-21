@@ -30,6 +30,11 @@ func TestSuspendedActorRefusedAtEntryPoints(t *testing.T) {
 		"SetUserRoles": func(c *KeyorixCore) error {
 			return c.SetUserRoles(context.Background(), actor, 2, []uint{7}, Scope{}, false)
 		},
+		// Refused before the grant-target lookup (ERRMAP-TAILS-NOV-4), so a suspended
+		// actor learns nothing about which user ids exist.
+		"AssignUserRole": func(c *KeyorixCore) error {
+			return c.AssignUserRole(context.Background(), actor, 2, 7, Scope{}, false)
+		},
 		"AssignPermissionToRole": func(c *KeyorixCore) error {
 			return c.AssignPermissionToRole(context.Background(), actor, 7, 3, false)
 		},
@@ -70,6 +75,44 @@ func TestSuspendedActorRefusedAtEntryPoints(t *testing.T) {
 		},
 		"RestoreGroup": func(c *KeyorixCore) error {
 			_, err := c.RestoreGroup(context.Background(), actor, 5)
+			return err
+		},
+		"DecideAccessReviewItem": func(c *KeyorixCore) error {
+			return c.DecideAccessReviewItem(context.Background(), actor, 1, 2, 3, "revoke", "r")
+		},
+		"RevokeAccessReviewGrant": func(c *KeyorixCore) error {
+			return c.RevokeAccessReviewGrant(context.Background(), actor, 1, AccessReviewDecision{})
+		},
+		"AttestAccessReviewGrant": func(c *KeyorixCore) error {
+			return c.AttestAccessReviewGrant(context.Background(), actor, 1, AccessReviewDecision{})
+		},
+		"ReviewBreakGlass": func(c *KeyorixCore) error {
+			return c.ReviewBreakGlass(context.Background(), actor, 1, 2, "note")
+		},
+		"RevokeRiskException": func(c *KeyorixCore) error {
+			return c.RevokeRiskException(context.Background(), actor, 1)
+		},
+		"BulkRenameSecrets": func(c *KeyorixCore) error {
+			_, err := c.BulkRenameSecrets(context.Background(), 1, nil, false, "u", actor, "", "")
+			return err
+		},
+		"SuspendProjectSecretsWithOptions": func(c *KeyorixCore) error {
+			_, err := c.SuspendProjectSecretsWithOptions(context.Background(), 1, actor, "r", SuspendOptions{})
+			return err
+		},
+		"ResumeProjectSecrets": func(c *KeyorixCore) error {
+			_, err := c.ResumeProjectSecrets(context.Background(), 1, actor)
+			return err
+		},
+		"RequestProjectAccess": func(c *KeyorixCore) error {
+			_, err := c.RequestProjectAccess(context.Background(), 1, actor, "", "r")
+			return err
+		},
+		"GrantSecretACL": func(c *KeyorixCore) error {
+			return c.GrantSecretACL(context.Background(), actor, 1, 2, []string{"secrets.read"})
+		},
+		"BulkRotateSecrets": func(c *KeyorixCore) error {
+			_, err := c.BulkRotateSecrets(context.Background(), actor, BulkRotateRequest{ProjectID: 1, SecretIDs: []uint{1}})
 			return err
 		},
 	}
