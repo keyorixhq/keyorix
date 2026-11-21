@@ -42,22 +42,19 @@ import (
 
 const auditUnavailableReachingMethodsFile = "../../../internal/core/testdata/audit_unavailable_reaching_methods.txt"
 
-var auditUnavailableMappers = map[string]bool{"sendAuditUnavailable": true}
+// writeSCIMWriteError is the SCIM handlers' mapper: it answers the sentinel through
+// classifySCIMError in an RFC 7644 body (TestSCIM_AuditOutage_Is503RetryAfter,
+// TestSCIMWriteErrorStatus_Classes), so a SCIM handler that calls it is mapped.
+var auditUnavailableMappers = map[string]bool{"sendAuditUnavailable": true, "writeSCIMWriteError": true}
 
 // auditUnavailableMappingExempt names handlers ("file.go:Func") that call a
 // reaching method without mapping the outage, each for a stated reason.
 var auditUnavailableMappingExempt = map[string]string{
 	"auth.go:ConsumeSetup": "unauthenticated setup-link endpoint: every refusal is the same generic 400 by design " +
 		"(no internal-error oracle); setup handlers are owned by FIX-3277",
-	"auth.go:UpdateProfile":       "auth.go is owned by FIX-3277 while it is in flight; map it there (LEFTOVERS)",
-	"sso.go:CompleteSSO":          "login callback: answers with a redirect, not a status; login handlers are owned by FIX-3277",
-	"saml.go:CompleteSAML":        "login callback: answers with a redirect, not a status; login handlers are owned by FIX-3277",
-	"scim.go:CreateUser":          "SCIM answers in RFC 7644 error bodies; the SCIM handlers are owned by SCIM-TAILS-1",
-	"scim.go:PatchUser":           "SCIM answers in RFC 7644 error bodies; the SCIM handlers are owned by SCIM-TAILS-1",
-	"scim.go:ReplaceUser":         "SCIM answers in RFC 7644 error bodies; the SCIM handlers are owned by SCIM-TAILS-1",
-	"scim_groups.go:CreateGroup":  "SCIM answers in RFC 7644 error bodies; the SCIM handlers are owned by SCIM-TAILS-1",
-	"scim_groups.go:PatchGroup":   "SCIM answers in RFC 7644 error bodies; the SCIM handlers are owned by SCIM-TAILS-1",
-	"scim_groups.go:ReplaceGroup": "SCIM answers in RFC 7644 error bodies; the SCIM handlers are owned by SCIM-TAILS-1",
+	"auth.go:UpdateProfile": "auth.go is owned by FIX-3277 while it is in flight; map it there (LEFTOVERS)",
+	"sso.go:CompleteSSO":    "login callback: answers with a redirect, not a status; login handlers are owned by FIX-3277",
+	"saml.go:CompleteSAML":  "login callback: answers with a redirect, not a status; login handlers are owned by FIX-3277",
 	// MSG-ACCURACY-1 (#3912): core.BulkDeleteSecrets never returns the sentinel as a request
 	// error; bulkDeleteFailureMessage turns it into a per-item entry with
 	// core.MutationAuditUnavailableMessage and the code audit_unavailable. The handler tags

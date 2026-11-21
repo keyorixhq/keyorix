@@ -27,6 +27,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
 	keyorixgrpc "github.com/keyorixhq/keyorix/server/grpc"
 	httpserver "github.com/keyorixhq/keyorix/server/http"
+	"github.com/pquerna/otp/totp"
 )
 
 // World construction. A TEMPLATE SQLite file is seeded once per test binary
@@ -69,6 +70,12 @@ const (
 	// probed principal: it is the positive control for requester-only ops
 	// (accessrequest.withdraw), whose rule no other principal can satisfy.
 	pkRequester principalKind = "requester-A"
+
+	// pkMFAUser is a user with MFA enrolled and enabled in the fixture (TOTP).
+	// It is the positive control for mfa.stepup (VerifyMFAStepUp), which
+	// requires the caller to have MFA enabled — no other namedPrincipalKind does.
+	// The TOTP secret is stored in fixtures.mfaUserTOTPSecret for use in core/REST legs.
+	pkMFAUser principalKind = "mfa-user"
 )
 
 // namedPrincipalKinds are the fixed principals, each testing a mechanism a
@@ -76,10 +83,12 @@ const (
 // 0, account state, PAT restriction). The custom-role and machine principals
 // are NOT here: their permission sets are generated per operation
 // (genVariations), replacing the old hand-picked subsets.
-var namedPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkActor0, pkExpired, pkSuspended, pkPAT, pkPATFull}
+// pkMFAUser is included because mfa.stepup requires MFA enrolment state that no
+// RBAC permission set can express — it is a named principal kind, not a variation.
+var namedPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkActor0, pkExpired, pkSuspended, pkPAT, pkPATFull, pkMFAUser}
 
 // allPrincipalKinds is every principal the fuzz target may pick.
-var allPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkCustom, pkMachine, pkActor0, pkExpired, pkSuspended, pkPAT, pkPATFull}
+var allPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkCustom, pkMachine, pkActor0, pkExpired, pkSuspended, pkPAT, pkPATFull, pkMFAUser}
 
 type principal struct {
 	kind            principalKind
@@ -197,6 +206,23 @@ type fixtures struct {
 	// target (V5EXT). riskexception.approve is bound by V8b on
 	// pendingRiskExceptionID.
 	riskExceptionID uint
+
+	// V5EXT4: MFA step-up fixture.
+	//
+	// mfaUserTOTPSecret is the base32 TOTP secret seeded directly in the template
+	// DB for pkMFAUser. BeginMFAEnrollment is not used (it requires authEncryptor
+	// which is nil in test mode); instead, models.MFASecret is written directly
+	// and users.mfa_enabled is set to true. decryptAuthSecret is a passthrough
+	// when encryption is off, so loadTOTPSecret reads the plaintext base32 back.
+	mfaUserTOTPSecret string
+
+	// V5EXT4: SCIM fixture.
+	//
+	// scimUserID is a pre-provisioned SCIM user (ExternalID=ext-scim-seed-1) for
+	// PUT/PATCH/DELETE /scim/v2/Users/{id} operations.
+	// scimGroupID is a pre-provisioned SCIM group for PUT/PATCH/DELETE /scim/v2/Groups/{id}.
+	scimUserID  uint
+	scimGroupID uint
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -687,6 +713,56 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 		}
 		pp.suspendedSecretID = suspSec.ID
 	}
+
+	// ---- V5EXT4 fixtures ----
+
+	// bulk.rotate: enable auto-rotation on the main fixture secret (secretID) in
+	// each project. BulkRotateSecrets skips secrets with AutoRotate=false with
+	// reason "no rotation config"; without this the admin positive control returns
+	// Triggered=[] (zero rotated), which the restOK check reads as "denied" —
+	// miscalibrated. Backend="" (Keyorix-only rotation, no external executor
+	// required) keeps the fixture self-contained.
+	for _, pp := range []*perProject{&fx.A, &fx.B} {
+		if err := c.SetSecretAutoRotate(ctx, pp.secretID, core.AutoRotateSpec{Enabled: true, Length: 20}, admin.ID); err != nil {
+			return nil, fmt.Errorf("seed: SetSecretAutoRotate project %d: %w", pp.projectID, err)
+		}
+	}
+
+	// mfa.stepup: seed an enrolled, activated TOTP device for pkMFAUser.
+	//
+	// BeginMFAEnrollment is not used because it checks c.authEncryptor != nil,
+	// which always fails in test mode (no encryptor configured). Instead:
+	//   1. Generate a standard TOTP secret key (issuer+account are cosmetic only).
+	//   2. Write models.MFASecret{Activated: true, SecretEnc: []byte(base32)} directly
+	//      to the DB — decryptAuthSecret is a passthrough when encryption is off, so
+	//      loadTOTPSecret reads the base32 back without change.
+	//   3. Set users.mfa_enabled = true so VerifyMFAStepUp's MFAEnabled guard passes.
+	mfaUser := mkUser("p-mfa-user")
+	mfaTok, _ := mustLogin(ctx, c, "p-mfa-user")
+	mfaKey, err := totp.Generate(totp.GenerateOpts{Issuer: "keyorix-authzdiff-test", AccountName: mfaUser.Email})
+	if err != nil {
+		return nil, fmt.Errorf("seed: totp.Generate: %w", err)
+	}
+	if e := db.Create(&models.MFASecret{UserID: mfaUser.ID, SecretEnc: []byte(mfaKey.Secret()), Activated: true}).Error; e != nil {
+		return nil, fmt.Errorf("seed: create MFASecret: %w", e)
+	}
+	db.Exec("UPDATE users SET mfa_enabled = true WHERE id = ?", mfaUser.ID)
+	fx.mfaUserTOTPSecret = mfaKey.Secret()
+	fx.principals[pkMFAUser] = &principal{kind: pkMFAUser, userID: mfaUser.ID, token: mfaTok, username: "p-mfa-user"}
+
+	// SCIM: pre-provision a SCIM user and group so the PUT/PATCH/DELETE operations
+	// have a target. ProvisionSCIMUser and ProvisionSCIMGroup are called directly
+	// (they have no RBAC check; the SCIM token auth gate is at the router layer).
+	scimUser, err := c.ProvisionSCIMUser(ctx, 0, "scim-seed@example.invalid", "SCIM Seed User", "scim-seed@example.invalid", "ext-scim-seed-1", true)
+	if err != nil {
+		return nil, fmt.Errorf("seed: ProvisionSCIMUser: %w", err)
+	}
+	fx.scimUserID = scimUser.ID
+	scimGroup, err := c.ProvisionSCIMGroup(ctx, 0, "scim-seed-group", []uint{scimUser.ID})
+	if err != nil {
+		return nil, fmt.Errorf("seed: ProvisionSCIMGroup: %w", err)
+	}
+	fx.scimGroupID = scimGroup.ID
 
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the
 	// seeded tokens so the copies are never inside the 60s window.

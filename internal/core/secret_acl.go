@@ -63,6 +63,9 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 	if err := refuseMachineActor(ctx, actorID); err != nil { // #4162
 		return err
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	if actorID == 0 {
 		return invalidACLRequest(fmt.Errorf("%s: actor ID is required", i18n.T("ErrorValidation", nil)))
 	}

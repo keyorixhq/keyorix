@@ -271,6 +271,11 @@ func (m model) allowed(p *principal, req requirement) bool {
 			}
 		}
 	}
+	if req.mfaRequired && !m.mfaEnabled(p) {
+		// VerifyMFAStepUp: "MFA is not enabled on this account; enrol first"
+		// Machines never have MFA; this check covers both user and machine paths.
+		return false
+	}
 	return true
 }
 
@@ -349,6 +354,23 @@ type requirement struct {
 	// caller is held to the same rule since #4332 (fuzz-corpus#91), and a USER
 	// caller on a restricted PAT is refused outright (see allowed).
 	tokenForMachineID uint
+	// mfaRequired: the op checks that the calling user has MFA enrolled and
+	// enabled (VerifyMFAStepUp: "MFA is not enabled on this account"). The check
+	// is on the CALLER's own account property (users.mfa_enabled), not a
+	// permission or scope. Machines never have MFA; actor-0 is excluded by
+	// systemActor. The model reads users.mfa_enabled from the grant DB.
+	mfaRequired bool
+}
+
+// mfaEnabled: p has MFA enrolled and enabled (users.mfa_enabled = true).
+// Machines and actor-0 always return false (machines cannot have MFA).
+func (m model) mfaEnabled(p *principal) bool {
+	if p.userID == 0 || p.machineID != 0 {
+		return false
+	}
+	var n int64
+	m.db.Raw(`SELECT COUNT(*) FROM users WHERE id = ? AND mfa_enabled = true`, p.userID).Scan(&n)
+	return n > 0
 }
 
 // holdsAdminRoleAt: p holds a live, unexpired admin role granted exactly at proj.

@@ -13,7 +13,7 @@ import (
 // principal below has a case the active principal would be allowed (so there is
 // nothing to refuse), each with the reason. A new op lands here only with a
 // reason; an op missing from it with no checked case fails the guard.
-// Empty today: every core-enforced op has a checked case.
+// Every other core-enforced op has a checked case.
 var suspendedUncheckableOps = map[string]string{}
 
 // TestCoreRefusesSuspendedActor: for every bound op whose core method is an
