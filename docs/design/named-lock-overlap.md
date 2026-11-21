@@ -145,11 +145,12 @@ the lock-key expression exactly as written at the call site.
 | internal/core/secrets.go | withEnvironmentSecretGuard | storage.EnvironmentSecretGuardLockKey(environmentID) | no secret or folder created in, or resumed into, a deleted environment (check-then-insert) | the environment key, then the existence check through tx | fixed (-2) |
 | internal/core/secrets.go | RestoreSecret | storage.EnvironmentSecretGuardLockKey(secret.EnvironmentID) | as above (restore) | the environment key, then the storage restore's `requireLiveEnvironment` through tx | fixed (-2) |
 | internal/core/catalog.go | DeleteEnvironment | storage.EnvironmentSecretGuardLockKey(id) | no active secret left in a deleted environment (count-then-delete) | the environment key, then the storage count and delete through tx | fixed (-2) |
+| internal/core/rbac_reconcile.go | ReconcileRBACPermissions | rbacReconcileLockKey | a startup catalog reconcile never re-saves a pending-grants row another replica cleared, and never re-grants a (permission, role) pair it is no longer owed (REVIEW-4542-M1) | nothing: the grants run in `AssignPermissionToRole`'s own transactions, the row write is a plain upsert | open (startup only; see "Not fixed") |
 
-Totals: 39 sites. 31 fixed (6 by NAMEDLOCK-OVERLAP-1, 25 by NAMEDLOCK-OVERLAP-2);
+Totals: 40 sites. 31 fixed (6 by NAMEDLOCK-OVERLAP-1, 25 by NAMEDLOCK-OVERLAP-2);
 6 safe; 2 with two invariants, each now kept (`RevokeBreakGlassActivationAtomic`,
-`inviteMemberWithMode`: safe for the first, fixed for the second). None needs a
-check, none waits on a decision.
+`inviteMemberWithMode`: safe for the first, fixed for the second); 1 open
+(`ReconcileRBACPermissions`, see "Not fixed").
 
 ## Fixed by NAMEDLOCK-OVERLAP-1: user deactivation (6 sites)
 
@@ -258,7 +259,16 @@ transaction committed while the first was open).
 
 ## Not fixed
 
-Nothing in the inventory, and nothing found outside it.
+`ReconcileRBACPermissions` (REVIEW-4542-M1, added after the audit above). The lock
+serialises the startup reconcile of the RBAC catalog across replicas, so one
+replica cannot save a stale pending-grants row over one another replica cleared.
+Inside the window, a second replica starting at the same moment can run it too:
+both may then grant the same still-owed pair (harmless, the second finds it held
+or gets a duplicate), and the first may save its own copy of the row. A pair is
+re-granted only if an operator removes that exact baseline grant inside the same
+window of at most about 10 s, during a simultaneous restart of two replicas whose
+lock connection also died. No fence is added: the grants run in
+`AssignPermissionToRole`'s own audited transactions, which take no named key.
 
 ## Guard
 
