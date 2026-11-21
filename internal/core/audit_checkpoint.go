@@ -290,11 +290,14 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
 	}
-	if !raw.Valid {
-		return nil, fmt.Errorf("%w a chain that does not verify: %s", ErrAuditCheckpointRefused, raw.Reason)
-	}
 	if raw.Reanchored != nil {
 		anchor = raw.Reanchored
+	}
+	if err := c.checkRestartAnchorBoundary(ctx, raw, anchor); err != nil {
+		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
+	}
+	if !raw.Valid {
+		return nil, fmt.Errorf("%w a chain that does not verify: %s", ErrAuditCheckpointRefused, raw.Reason)
 	}
 	// #3257: chained rows removed by sanctioned purges, from the anchor the walk
 	// was just seeded from (authenticated, or nil → 0).
@@ -311,7 +314,7 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 	}
 	if cp != nil {
 		if c.checkpointSignatureValid(cp) {
-			if reason, tampered, err := c.checkpointTruncationPurged(ctx, raw.ChainedEvents, purged, cp); err != nil {
+			if reason, tampered, err := c.checkpointTruncationPurged(ctx, raw.ChainedEvents, anchor, cp); err != nil {
 				return nil, err
 			} else if tampered {
 				return nil, fmt.Errorf("%w: %s", ErrAuditCheckpointRefused, reason)
@@ -392,9 +395,11 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 // re-baselines under the new key (it does not block on an unverifiable checkpoint),
 // clearing the state on the next checkpoint write.
 //
-// purged is the authenticated cumulative purged count from the retention anchor
-// the walk was seeded from (0 without one); see the package comment (#3257).
-func (c *KeyorixCore) enforceAuditCheckpoint(ctx context.Context, v *storage.AuditChainVerification, purged int64) error {
+// anchor is the authenticated retention anchor the walk was seeded from (nil
+// without one): its cumulative purged count is credited (#3257), and a
+// certified head below its RowID may be gone (#4351).
+func (c *KeyorixCore) enforceAuditCheckpoint(ctx context.Context, v *storage.AuditChainVerification, anchor *storage.AuditChainAnchor) error {
+	purged := anchorPurgedEvents(anchor)
 	if !c.AuditCheckpointsAvailable() {
 		return nil
 	}
@@ -439,7 +444,7 @@ func (c *KeyorixCore) enforceAuditCheckpoint(ctx context.Context, v *storage.Aud
 			fmt.Sprintf("audit checkpoint #%d does not verify under the current signing key — the checkpoint was tampered, or a KEK-provider migration occurred and no fresh checkpoint has been written yet", cp.ID))
 		return nil
 	}
-	reason, tampered, err := c.checkpointTruncationPurged(ctx, v.ChainedEvents, purged, cp)
+	reason, tampered, err := c.checkpointTruncationPurged(ctx, v.ChainedEvents, anchor, cp)
 	if err != nil {
 		return err
 	}
@@ -470,15 +475,19 @@ func (c *KeyorixCore) enforceAuditCheckpoint(ctx context.Context, v *storage.Aud
 // been truncated below it or its certified head row was removed/rewritten. The
 // caller MUST have validated cp's signature first.
 func (c *KeyorixCore) checkpointTruncation(ctx context.Context, chainedEvents int64, cp *models.AuditCheckpoint) (string, bool, error) {
-	return c.checkpointTruncationPurged(ctx, chainedEvents, 0, cp)
+	return c.checkpointTruncationPurged(ctx, chainedEvents, nil, cp)
 }
 
 // checkpointTruncationPurged is checkpointTruncation for a trail from which
-// sanctioned retention purges removed purged chained rows (the authenticated
-// count from the retention anchor, #3257): the count check compares
-// chainedEvents + purged with the certified count. The head row checks are
-// unchanged.
-func (c *KeyorixCore) checkpointTruncationPurged(ctx context.Context, chainedEvents, purged int64, cp *models.AuditCheckpoint) (string, bool, error) {
+// sanctioned retention purges removed chained rows. anchor is the
+// authenticated retention anchor (nil when there is none): the count check
+// compares chainedEvents + its purged count (#3257) with the certified count,
+// and a certified head row that is gone is a sanctioned purge only when its id
+// is below the anchor's RowID, the first id no purge removed (#4351, like the
+// verification state's pin in auditVerifyStateTruncation). A head row that
+// exists must still carry the certified hash.
+func (c *KeyorixCore) checkpointTruncationPurged(ctx context.Context, chainedEvents int64, anchor *storage.AuditChainAnchor, cp *models.AuditCheckpoint) (string, bool, error) {
+	purged := anchorPurgedEvents(anchor)
 	if chainedEvents+purged < cp.ChainedEvents {
 		return fmt.Sprintf("audit trail truncated below signed checkpoint #%d: it certified %d chained events, only %s",
 			cp.ID, cp.ChainedEvents, describeAuditCount(chainedEvents, purged, "remain")), true, nil
@@ -494,6 +503,9 @@ func (c *KeyorixCore) checkpointTruncationPurged(ctx context.Context, chainedEve
 		return "", false, err
 	}
 	if !found {
+		if anchor != nil && cp.HeadID < anchor.RowID {
+			return "", false, nil
+		}
 		return fmt.Sprintf("audit event #%d certified by checkpoint #%d is missing (tail-truncation or genesis re-seed)", cp.HeadID, cp.ID), true, nil
 	}
 	if hash != cp.HeadHash {
