@@ -1,0 +1,18 @@
+{
+  "target": "digitorus_timestamp",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 48,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 1688,
+      "per_byte": 337.6,
+      "abs_max": 6752
+    },
+    "mallocs": {
+      "floor": 14,
+      "per_byte": 2.8,
+      "abs_max": 56
+    }
+  }
+}
