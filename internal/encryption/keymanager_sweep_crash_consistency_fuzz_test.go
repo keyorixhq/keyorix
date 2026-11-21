@@ -56,6 +56,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
 )
@@ -134,9 +135,8 @@ func FuzzDEKSweepCrashConsistency(f *testing.F) {
 				defer close(done)
 				runSweepCrashCase(w, dir, pass, valPrefix, rows, target)
 			}()
-			select {
-			case <-done:
-			case <-time.After(sweepGuardDeadline):
+			if _, ok, fz := fuzzutil.Wait(done, sweepGuardDeadline); !ok {
+				t.Logf("stall monitor: process frozen %s of the wait window", fz)
 				t.Fatalf("[%s] dek-sweep-crash-consistency exceeded %s — possible hang", w.Backend, sweepGuardDeadline)
 			}
 		}

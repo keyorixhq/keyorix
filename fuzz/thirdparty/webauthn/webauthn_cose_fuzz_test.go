@@ -32,6 +32,8 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
@@ -61,8 +63,8 @@ func FuzzWebAuthnParsePublicKey(f *testing.F) {
 		c := rgProbe.Measure(len(data), func() { _, _ = parseKey(data) }) // reject is fine; assert no panic + bounded time
 		resguard.FeedCoverage(c)
 		rgBudget.Check(t.Fatalf, c)
-		if elapsed := time.Since(start); elapsed > parseDeadline {
-			t.Fatalf("ParsePublicKey took %v (> %v) on %d bytes — unbounded work", elapsed, parseDeadline, len(data))
+		if over, why := fuzzutil.OverDeadline(start, parseDeadline); over {
+			t.Fatalf("ParsePublicKey %s on %d bytes — unbounded work", why, len(data))
 		}
 	})
 }
