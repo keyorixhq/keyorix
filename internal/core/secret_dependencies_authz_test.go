@@ -55,6 +55,8 @@ func newDepAuthzCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	grantGateHolder(t, db, 1, Scope{ProjectID: 1}, permSecretsManage)
 	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+	// GrantSecretACL (grantDepACL) refuses an acting account that is not active (#4159).
+	ensureActiveActor(t, c.storage, 1)
 	return c, db
 }
 

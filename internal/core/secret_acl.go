@@ -63,6 +63,9 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 	if err := refuseMachineActor(ctx, actorID); err != nil { // #4162
 		return err
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	if actorID == 0 {
 		return invalidACLRequest(fmt.Errorf("%s: actor ID is required", i18n.T("ErrorValidation", nil)))
 	}
@@ -79,9 +82,6 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 		if !slices.Contains(validACLPermissions, p) {
 			return invalidACLRequest(fmt.Errorf("%s: invalid ACL permission %q — must be one of %v", i18n.T("ErrorValidation", nil), p, validACLPermissions))
 		}
-	}
-	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
-		return err
 	}
 
 	// Verify the target node exists (this is defence-in-depth; the HTTP layer also
