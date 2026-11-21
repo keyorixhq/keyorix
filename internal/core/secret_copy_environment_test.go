@@ -33,6 +33,9 @@ func TestCopyEnvironmentSecrets(t *testing.T) {
 	p2, _ := c.storage.CreateProject(ctx, &models.Project{Name: "p2"})
 	otherEnv, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p2.ID})
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	// #4161: CopyEnvironmentSecrets decides the route gate in core (secrets.write on
+	// the project, secrets.read on the source environment).
+	grantGateHolder(t, db, 1, Scope{ProjectID: p.ID}, permSecretsWrite, permSecretsRead)
 
 	mk := func(envID uint, name string) {
 		_, err := c.CreateSecret(ctx, &CreateSecretRequest{

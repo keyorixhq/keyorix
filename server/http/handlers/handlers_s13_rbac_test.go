@@ -624,7 +624,8 @@ func TestUpdateUserRoles_InvalidRoleID_S13(t *testing.T) {
 // GetUserRolesByID returns an empty slice — no error path is triggered).
 func TestUpdateUserRoles_NonExistentUser_S13(t *testing.T) {
 	cs := freshCoreS12(t)
-	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
+	ensureActiveActorUser(t, cs.Storage(), 1)                      // withUserCtx's user acts through core (#4159)
+	grantGlobalPermissions(t, cs, 1, "users.read", "roles.assign") // the route gate, decided in core too (#4161)
 	h := NewUsersRolesHandler(cs)
 	body := bytes.NewBufferString(`{"role_ids":[]}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/9999/roles", body)

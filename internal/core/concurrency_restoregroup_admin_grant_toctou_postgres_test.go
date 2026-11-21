@@ -116,6 +116,18 @@ func TestConcurrency_RestoreGroup_AdminGrantRace_CrossReplicaPostgres(t *testing
 	require.NoError(t, setupDB.Create(&adminRole).Error)
 	nonAdmin := models.User{Username: "rg-nonadmin", UsernameFolded: "rg-nonadmin", IsActive: true, AccountState: AccountActive}
 	require.NoError(t, setupDB.Create(&nonAdmin).Error)
+	// #4161: core decides the route gate itself (users.read for the /groups group,
+	// roles.assign for the restore). The non-admin actor holds exactly those two,
+	// nothing admin-tier, so it reaches the ceiling check and the paused write.
+	usersRead := models.Permission{Name: "users.read"}
+	require.NoError(t, setupDB.Create(&usersRead).Error)
+	var rolesAssign models.Permission
+	require.NoError(t, setupDB.Where("name = ?", "roles.assign").First(&rolesAssign).Error)
+	restorer := models.Role{Name: "rg-restorer", NameFolded: "rg-restorer", AssignableScope: models.RoleAssignableAny}
+	require.NoError(t, setupDB.Create(&restorer).Error)
+	require.NoError(t, setupDB.Create(&models.RolePermission{RoleID: restorer.ID, PermissionID: rolesAssign.ID}).Error)
+	require.NoError(t, setupDB.Create(&models.RolePermission{RoleID: restorer.ID, PermissionID: usersRead.ID}).Error)
+	require.NoError(t, setupDB.Create(&models.UserRole{UserID: nonAdmin.ID, RoleID: restorer.ID}).Error)
 	softDeleted := models.Group{Name: "rg-target", NameFolded: "rg-target", DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true}}
 	require.NoError(t, setupDB.Create(&softDeleted).Error)
 	closePG(setupDB) // free the setup connection before the replicas open theirs

@@ -37,6 +37,11 @@ func newRestoreCeilingCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "nonadmin", IsActive: true}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "globaladmin", IsActive: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 1}).Error) // user 2 = global admin
+	// #4161: RestoreGroup (users.read + roles.assign, global) and RestoreProject
+	// (roles.assign at the project) decide the route gate in core. The non-admin
+	// holds exactly that through an ordinary role, so the admin ceiling these tests
+	// are about is what decides, not the gate.
+	grantGateHolder(t, db, 1, Scope{}, permUsersRead, permRolesAssign)
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 

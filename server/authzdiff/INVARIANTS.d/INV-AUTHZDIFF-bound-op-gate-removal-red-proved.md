@@ -18,16 +18,19 @@
   the #284-era bug — so core, REST and gRPC (neither transport has a gate of its
   own) over-allow every non-member the `memberOnly` model rule denies, and a
   strict sweep fails. The reassign-owner plant (`reassign-owner-core-gate-removed`,
-  bucket `known-04`) removes `ReassignOwnedSecrets`' own `roles.assign@project`
-  gate, the #G10 "denial masked as a silent no-op" regression; REST still gates
-  that route at the router, so the core-only over-allow lands in the known-04
-  waiver. The harness records that regression but does NOT fail a strict sweep
-  on it.
+  bucket `unexplained` since #4161) removes `ReassignOwnedSecrets`' own
+  `roles.assign@project` gate, the #G10 "denial masked as a silent no-op"
+  regression; REST still gates that route at the router, so only the core leg
+  over-allows — the shape the known-04 waiver used to absorb. #4161 moved the
+  route gates into core on every op that relied on the transport alone
+  (`internal/core/authz_core_gate.go`, `TestCoreGateParity_*`) and narrowed
+  known-04 to bulk.suspend (decided per secret in core, no project gate), so a core-only
+  over-allow is now `unexplained` and a strict sweep fails on it.
   Guard: `TestPlantsAreDetected` (CI job `authzdiff-plants`, opt-in
   `AUTHZDIFF_PLANTS=1`); `TestV5StrictSweep` (default `go test`, skipped under
   `-short`) runs the deterministic strict sweep over the V5 bindings and fails on
   any uncalibrated or `unexplained` case; `TestInvalidArgsFailAdminControl` and the
   `uncalibrated` failure path of `TestAuthzDiffSweep`/`FuzzAuthzDiff`. Does NOT
-  fail on a gate removed at a layer all present transports still gate (a
-  defence-in-depth-only regression, such as reassign-owner's core gate): that
-  case is recorded as known-04, see `partition_test.go`'s known-04 note.
+  fail on a core gate dropped on bulk.suspend for the viewer principal
+  (the one op still under known-04) until that waiver is removed; see
+  `partition_test.go`.

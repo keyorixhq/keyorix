@@ -99,7 +99,10 @@ func TestEveryGrantRouteMapsTheCeilingRefusalTo403(t *testing.T) {
 		require.NoError(t, perr)
 		return p
 	}
-	for _, name := range []string{"roles.assign", "users.write", "projects.write", "groups.write"} {
+	// users.read: the /users and /groups route groups' read gate, which core now
+	// decides too (#4161); without it the restore routes refuse at the gate, not the
+	// reinstate ceiling this test is about.
+	for _, name := range []string{"roles.assign", "users.read", "users.write", "projects.write", "groups.write"} {
 		require.NoError(t, local.AssignPermissionToRole(ctx, assigner.ID, perm(name).ID))
 	}
 	// The role being granted carries a permission the actor does not hold.

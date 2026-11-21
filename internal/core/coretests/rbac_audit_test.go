@@ -166,6 +166,7 @@ func TestRBACAuditTrail_GroupRole(t *testing.T) {
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 	seedRolesAssignGrant(t, db, 5, 100, 100, core.Scope{ProjectID: 3})
+	seedGroupRouteGate(t, db, 5) // #4161: AssignRoleToGroup decides the GLOBAL route gate (users.read + roles.assign) in core too
 
 	require.NoError(t, c.AssignRoleToGroup(ctx, 5, 7, 2, core.Scope{ProjectID: 3}, false))
 
