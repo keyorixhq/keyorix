@@ -1,9 +1,9 @@
 package libconformance
 
-// DF1 Oracle D — gopkg.in/yaml.v3 vs encoding/json on input that is valid JSON.
+// DF1 Oracle D — go.yaml.in/yaml/v4 vs encoding/json on input that is valid JSON.
 //
 // Every JSON document is a YAML document (JSON is a YAML 1.2 subset). Keyorix parses
-// config/policy with yaml.v3 (internal/config/config.go:447, internal/k8ssync/config.go:112)
+// config/policy with yaml v4 (internal/config/config.go:447, internal/k8ssync/config.go:112)
 // and parses request/API bodies and many artefacts with encoding/json. Where the same
 // bytes can be read by either — a config value echoed into a JSON API, a JSON body a tool
 // later re-reads as YAML, `cli/cmd/output.go`'s YAML/JSON duality — a value that the two
@@ -16,7 +16,7 @@ package libconformance
 //     YAML-only syntax (anchors `&`/`*`, merge keys `<<`, tags `!!`, flow/block scalars,
 //     multi-doc `---`): those are not valid JSON, so there is no "same bytes, two readings"
 //     at a JSON consumer. The anchors/merge/duplicate-key strict-vs-lax axis is partially
-//     covered — duplicate keys ARE reachable as JSON and ARE tested (yaml.v3 rejects, json
+//     covered — duplicate keys ARE reachable as JSON and ARE tested (yaml v4 rejects, json
 //     last-wins) — but anchor/merge expansion is out of scope here.
 //   - It compares DECODED VALUES canonicalised through Go's own types, not the raw token
 //     streams. A difference that both libraries normalise away before returning an
@@ -34,13 +34,13 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // containsYAMLBreakRunes reports whether s holds a character YAML treats as a line break
 // and folds in scalar content — CR, NEL (U+0085), LINE SEPARATOR (U+2028), PARAGRAPH
 // SEPARATOR (U+2029). Rune constants keep the source ASCII. encoding/json preserves these
-// verbatim; yaml.v3 folds them (to a space in a quoted scalar, to \n otherwise). The
+// verbatim; yaml v4 folds them (to a space in a quoted scalar, to \n otherwise). The
 // signature "json kept the break, yaml did not" is exactly that documented folding, not an
 // arbitrary value divergence.
 func containsYAMLBreakRunes(s string) bool {
@@ -55,7 +55,7 @@ func containsYAMLBreakRunes(s string) bool {
 
 // yamlWSFoldEqual reports whether a and b are equal once every space, tab, newline, CR and
 // Unicode line-break rune (NEL/LS/PS) is removed. Because both strings are decoded from the
-// SAME bytes, a difference that vanishes under this stripping is purely yaml.v3's
+// SAME bytes, a difference that vanishes under this stripping is purely yaml v4's
 // whitespace / line-break folding (it folds breaks and strips whitespace adjacent to a fold
 // point) against encoding/json's verbatim preservation — documented YAML behaviour, not an
 // arbitrary value divergence.
@@ -75,7 +75,7 @@ func stripYAMLWS(s string) string {
 func yamlWSFoldEqual(a, b string) bool { return stripYAMLWS(a) == stripYAMLWS(b) }
 
 // hasDuplicateJSONKey reports whether any JSON object in data declares the same member
-// name twice (the construct encoding/json silently accepts last-wins and yaml.v3 rejects).
+// name twice (the construct encoding/json silently accepts last-wins and yaml v4 rejects).
 func hasDuplicateJSONKey(data []byte) bool {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	type frame struct {
@@ -226,7 +226,7 @@ func treeCompare(j, y any) *yamlJSONMismatch {
 		if ys, ok := y.(string); !ok || ys != jv {
 			ystr := fmt.Sprint(y)
 			key := "string-differs"
-			// yaml.v3 folds Unicode line breaks (NEL U+0085, LS U+2028, PS U+2029, CR) in
+			// yaml v4 folds Unicode line breaks (NEL U+0085, LS U+2028, PS U+2029, CR) in
 			// scalar content; encoding/json preserves them verbatim. If normalising those to
 			// \n on both sides reconciles the strings, this is that documented line-folding,
 			// not an arbitrary value divergence.
@@ -270,8 +270,8 @@ func yamlJSONCompare(data []byte) *yamlJSONMismatch {
 	var yv any
 	if err := yaml.Unmarshal(data, &yv); err != nil {
 		// yaml rejected a value encoding/json accepted. The reachable, documented case is
-		// a duplicate mapping key (JSON: last-wins; yaml.v3: error). Classify precisely.
-		return &yamlJSONMismatch{key: classifyYAMLReject(data), detail: "yaml.v3 rejected input encoding/json accepted", jsonV: "accepted", yml: err.Error()}
+		// a duplicate mapping key (JSON: last-wins; yaml v4: error). Classify precisely.
+		return &yamlJSONMismatch{key: classifyYAMLReject(data), detail: "yaml v4 rejected input encoding/json accepted", jsonV: "accepted", yml: err.Error()}
 	}
 	return treeCompare(jv, yv)
 }
@@ -280,7 +280,7 @@ func classifyYAMLReject(data []byte) string {
 	switch {
 	case !utf8.Valid(data):
 		// encoding/json is lenient about invalid UTF-8 in a string (accepts it, substitutes
-		// U+FFFD on unmarshal); yaml.v3 requires valid UTF-8 and rejects.
+		// U+FFFD on unmarshal); yaml v4 requires valid UTF-8 and rejects.
 		return "yaml-rejects-invalid-utf8"
 	case hasDuplicateJSONKey(data):
 		return "yaml-rejects-json-dup-key"
@@ -295,7 +295,7 @@ var yamlDiffAllow = func() *allowlist {
 			key: "yaml-rejects-json-dup-key",
 			reason: "A JSON object with a duplicate member name (`{\"a\":1,\"a\":2}`). RFC 8259 " +
 				"permits it and encoding/json takes LAST-wins (`{\"a\":2}`); YAML 1.2 forbids " +
-				"duplicate mapping keys and yaml.v3 returns an error. This is a real, documented " +
+				"duplicate mapping keys and yaml v4 returns an error. This is a real, documented " +
 				"accept-vs-reject split and a genuine security concern where one config reader is " +
 				"JSON-based and another YAML-based (report Finding D-1), but it is a library/spec " +
 				"difference, not a bug in either parser. RED-PROVEN by seed `{\"a\":1,\"a\":2}`.",
@@ -304,7 +304,7 @@ var yamlDiffAllow = func() *allowlist {
 			key: "yaml-line-break-normalization",
 			reason: "A string containing a Unicode line break YAML folds — NEL (U+0085), LINE " +
 				"SEPARATOR (U+2028), PARAGRAPH SEPARATOR (U+2029), or a bare CR. encoding/json keeps " +
-				"the character verbatim; yaml.v3 normalises it (per the YAML line-break rules) so the " +
+				"the character verbatim; yaml v4 normalises it (per the YAML line-break rules) so the " +
 				"SAME bytes decode to DIFFERENT string values. This is a SILENT value divergence (both " +
 				"accept) — the dangerous shape — but it is documented YAML behaviour. RED-PROVEN by " +
 				"seed `\"\\u0085\"`. Report Finding D-5: a config/identity string with these separators " +
@@ -312,7 +312,7 @@ var yamlDiffAllow = func() *allowlist {
 		},
 		expectedDiff{
 			key: "yaml-rejects-json-accepts",
-			reason: "General class: a byte sequence encoding/json accepts but yaml.v3's " +
+			reason: "General class: a byte sequence encoding/json accepts but yaml v4's " +
 				"indentation-sensitive grammar rejects — a TAB used as leading whitespace (YAML " +
 				"forbids tabs in indentation; JSON treats tab as whitespace), and assorted control " +
 				"characters. Unlike the number/type/value classes, this is a VISIBLE hard reject on " +
@@ -324,7 +324,7 @@ var yamlDiffAllow = func() *allowlist {
 		expectedDiff{
 			key: "yaml-rejects-invalid-utf8",
 			reason: "A JSON string containing an invalid UTF-8 byte (e.g. \"\\xba\"). encoding/json is " +
-				"lenient — it accepts the bytes and substitutes U+FFFD on unmarshal; yaml.v3 requires " +
+				"lenient — it accepts the bytes and substitutes U+FFFD on unmarshal; yaml v4 requires " +
 				"valid UTF-8 and returns `invalid leading UTF-8 octet`. Documented accept-vs-reject " +
 				"library difference, not a bug in either. RED-PROVEN by seed `\"\\xba\"`. Security note " +
 				"(report Finding D-3): a value with smuggled invalid UTF-8 is silently mangled by a " +
@@ -333,7 +333,7 @@ var yamlDiffAllow = func() *allowlist {
 		expectedDiff{
 			key: "number-precision",
 			reason: "A JSON number too large for an IEEE-754 double (e.g. 12345678901234567890). " +
-				"encoding/json decodes numbers as float64 by DEFAULT and rounds; yaml.v3 decodes an " +
+				"encoding/json decodes numbers as float64 by DEFAULT and rounds; yaml v4 decodes an " +
 				"integer that fits uint64 without loss. Same token, different numeric value. " +
 				"Documented: encoding/json's float64 default (callers who care use json.Number / " +
 				"Decimal). Security note in report Finding D-2. RED-PROVEN by seed " +
@@ -375,7 +375,7 @@ func FuzzYAMLVsJSON(f *testing.F) {
 		if allow.allows(m.key) {
 			return
 		}
-		t.Fatalf("DIFFERENTIAL [yaml.v3 vs encoding/json] (key=%s): %s\n  input=%q\n  json=%s\n  yaml=%s",
+		t.Fatalf("DIFFERENTIAL [yaml v4 vs encoding/json] (key=%s): %s\n  input=%q\n  json=%s\n  yaml=%s",
 			m.key, m.detail, data, m.jsonV, m.yml)
 	})
 }
