@@ -37,6 +37,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -45,38 +46,43 @@ func FuzzBcryptRoundTripHostileHash(f *testing.F) {
 	f.Add([]byte(""), []byte("not-a-hash"))
 	f.Add([]byte("p"), []byte("$2a$31$this.declares.cost.31.cpu.bomb.xxxxxxxxxxxxxxxxxxxxxx"))
 
+	// PK2: resguard resource oracle (see resguard_bcrypt_test.go). Records cost
+	// every input; the FATAL meter is alloc (a tripwire). cpu_ns/wall_ns are
+	// advisory; the cost-bomb stays guarded by rgRun's cost-skip. The body asserts
+	// on rgRun's results, so each input's bcrypt work runs once.
+	rgBudget := rgLoadBudget(f) // fails closed: no budget, no fuzzing
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, password, hostileHash []byte) {
-		// bcrypt refuses passwords > 72 bytes; keep within its domain for the
-		// round-trip oracle (longer inputs just get an error on Generate).
+		n := len(password) + len(hostileHash)
+		var r rgResult
+		c := rgProbe.Measure(n, func() { r = rgRun(password, hostileHash) })
+		resguard.FeedCoverage(c)
+		rgBudget.Check(t.Fatalf, c)
+
+		// bcrypt refuses passwords > 72 bytes; rgRun stays within its domain for
+		// the round-trip oracle by truncating the same way.
 		if len(password) > 72 {
 			password = password[:72]
 		}
 
 		// --- Oracle 1: round-trip + fail-closed ---
-		h, err := bcrypt.GenerateFromPassword(password, bcrypt.MinCost)
-		if err != nil {
-			t.Fatalf("GenerateFromPassword(MinCost) failed for %q: %v", password, err)
+		if r.genErr != nil {
+			t.Fatalf("GenerateFromPassword(MinCost) failed for %q: %v", password, r.genErr)
 		}
-		if err := roundTripVerify(h, password); err != nil {
-			t.Fatalf("round-trip: correct password %q did NOT verify: %v", password, err)
+		if r.roundTripErr != nil {
+			t.Fatalf("round-trip: correct password %q did NOT verify: %v", password, r.roundTripErr)
 		}
-		// A different password must be rejected (fail-closed). Flip the first
-		// byte (or append) to guarantee a distinct password.
-		wrong := wrongPassword(password)
-		if !bytes.Equal(wrong, password) {
-			if err := bcrypt.CompareHashAndPassword(h, wrong); err == nil {
-				t.Fatalf("fail-closed: wrong password %q was ACCEPTED for hash of %q", wrong, password)
-			}
+		// A different password must be rejected (fail-closed). wrongPassword
+		// flips the first byte (or returns "x" for empty) to guarantee a
+		// distinct password.
+		if wrong := wrongPassword(password); !bytes.Equal(wrong, password) && r.wrongErr == nil {
+			t.Fatalf("fail-closed: wrong password %q was ACCEPTED for hash of %q", wrong, password)
 		}
 
 		// --- Oracle 2: hostile hash must not panic / must return, bounded ---
-		// Guard against the cost-bomb: only compare hashes whose declared cost
-		// is sane, else bcrypt would spin 2^cost rounds.
-		if cost, cerr := bcrypt.Cost(hostileHash); cerr == nil && cost <= bcrypt.DefaultCost {
-			// Return value intentionally ignored: a garbage hash normally
-			// errors, but could legitimately match; we only assert no panic.
-			_ = bcrypt.CompareHashAndPassword(hostileHash, password)
-		}
+		// rgRun compared it only when its declared cost is sane (else bcrypt
+		// would spin 2^cost rounds); reaching this line means it returned.
 	})
 }
 

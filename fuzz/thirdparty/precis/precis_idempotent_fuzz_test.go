@@ -36,6 +36,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 	"golang.org/x/text/secure/precis"
 	"golang.org/x/text/unicode/norm"
 )
@@ -56,21 +57,26 @@ func FuzzPrecisProfileIdempotent(f *testing.F) {
 	f.Add("Å")                 // A + combining ring -> Å under NFC
 	f.Add(string([]byte{0xff})) // invalid UTF-8
 
-	profiles := map[string]*precis.Profile{
-		"folded":  foldedProfile,
-		"address": addressProfile,
-	}
+	// PK2: resguard resource oracle (see resguard_precis_test.go). Meters the
+	// first String enforcement under each rgProfiles entry; the checks below
+	// build on that result instead of re-running it.
+	rgBudget := rgLoadBudget(f) // fails closed: no budget, no fuzzing
+	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
+
 	f.Fuzz(func(t *testing.T, s string) {
+		var first [len(rgProfiles)]rgEnforced
+		c := rgProbe.Measure(len(s), func() { first = rgRun(s) })
+		resguard.FeedCoverage(c)
+		rgBudget.Check(t.Fatalf, c)
 		if !utf8.ValidString(s) {
 			// precis legitimately errors on invalid UTF-8; such inputs can't
-			// exercise idempotence. Still assert no panic by calling once.
-			for _, p := range profiles {
-				_, _ = p.String(s)
-			}
+			// exercise idempotence. rgRun already called every profile once,
+			// so reaching here asserts no panic.
 			return
 		}
-		for name, p := range profiles {
-			out, err := p.String(s)
+		for i, pp := range rgProfiles {
+			name, p := pp.name, pp.p
+			out, err := first[i].out, first[i].err
 			if err != nil {
 				// Rejected input: fine. A rejected string must stay rejected
 				// (determinism of the error decision).

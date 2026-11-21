@@ -1,0 +1,23 @@
+{
+  "target": "webauthn_cose",
+  "platform": "unsupported",
+  "factor": 4,
+  "seeds": 16,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 4632,
+      "per_byte": 60.15584415584416,
+      "abs_max": 18528
+    },
+    "mallocs": {
+      "floor": 79,
+      "per_byte": 1.025974025974026,
+      "abs_max": 316
+    },
+    "wall_ns": {
+      "floor": 95000,
+      "per_byte": 1458,
+      "abs_max": 380000
+    }
+  }
+}
