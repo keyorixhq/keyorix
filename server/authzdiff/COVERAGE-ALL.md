@@ -11,9 +11,9 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | invitations | 4 | 4 | 0 | 0 |
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
-| secrets | 43 | 34 | 10 | 10 |
-| other | 128 | 30 | 22 | 11 |
-| **total** | **212** | **105** | **47** | **36** |
+| secrets | 43 | 35 | 10 | 10 |
+| other | 128 | 31 | 22 | 11 |
+| **total** | **212** | **107** | **47** | **36** |
 
 ## groups
 
@@ -117,7 +117,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [x] `REST PATCH /api/v1/secrets/{id}/retention` — secret.retention
 - [x] `REST POST /api/v1/projects/{id}/secrets/bulk-delete` — bulk.delete
 - [x] `REST POST /api/v1/projects/{id}/secrets/bulk-rename` — bulk.rename
-- [ ] `REST POST /api/v1/projects/{id}/secrets/bulk-rotate` — design: bulk secret operation outside the initially bound secret set; not bound
+- [x] `REST POST /api/v1/projects/{id}/secrets/bulk-rotate` — bulk.rotate
 - [x] `REST POST /api/v1/projects/{id}/secrets/extend-expiring` — secret.extend.expiring
 - [x] `REST POST /api/v1/projects/{id}/secrets/reassign-owner` — secret.reassign.owner
 - [ ] `REST POST /api/v1/projects/{id}/secrets/render` — fixture: needs a template referencing secrets
@@ -188,16 +188,16 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST DELETE /api/v1/sod/policies/{id}` — model: separation-of-duties conflict rules are not in the reference model
 - [x] `REST DELETE /api/v1/user-roles` — userrole.remove
 - [x] `REST DELETE /api/v1/users/{id}` — user.delete
-- [ ] `REST DELETE /scim/v2/Groups/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
-- [ ] `REST DELETE /scim/v2/Users/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
+- [ ] `REST DELETE /scim/v2/Groups/{id}` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
+- [ ] `REST DELETE /scim/v2/Users/{id}` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
 - [ ] `REST GET /auth/saml/{provider}/login` — fixture: needs a configured SAML identity provider
 - [ ] `REST GET /auth/sso/{provider}/callback` — fixture: needs a configured OIDC identity provider
 - [ ] `REST GET /auth/sso/{provider}/login` — fixture: needs a configured OIDC identity provider
 - [ ] `REST PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `REST PATCH /api/v1/dynamic-secrets/configs/{id}/classification` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `REST PATCH /api/v1/dynamic-secrets/configs/{id}/enabled` — fixture: needs a dynamic-secret backend (database/cloud) configured
-- [ ] `REST PATCH /scim/v2/Groups/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
-- [ ] `REST PATCH /scim/v2/Users/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
+- [ ] `REST PATCH /scim/v2/Groups/{id}` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
+- [ ] `REST PATCH /scim/v2/Users/{id}` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
 - [ ] `REST POST /api/v1/admin/impersonate` — fixture: needs an impersonation session (deferred to the not-yet list)
 - [ ] `REST POST /api/v1/admin/jobs/anomaly-alerts` — design: on-demand job trigger (system.write / alerts.write); outside the requested families; not bound
 - [ ] `REST POST /api/v1/admin/jobs/check-read-quotas` — design: on-demand job trigger (system.write / alerts.write); outside the requested families; not bound
@@ -220,7 +220,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/auth/mfa/disable` — fixture: needs MFA enrolment state (MFA deferred to the not-yet list)
 - [ ] `REST POST /api/v1/auth/mfa/enroll` — fixture: needs MFA enrolment state (MFA deferred to the not-yet list)
 - [ ] `REST POST /api/v1/auth/mfa/recovery-codes/regenerate` — fixture: needs MFA enrolment state (MFA deferred to the not-yet list)
-- [ ] `REST POST /api/v1/auth/mfa/stepup` — fixture: needs MFA enrolment state (MFA deferred to the not-yet list)
+- [x] `REST POST /api/v1/auth/mfa/stepup` — mfa.stepup
 - [ ] `REST POST /api/v1/auth/tokens` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
 - [ ] `REST POST /api/v1/auth/webauthn/reauth/begin` — fixture: needs a WebAuthn authenticator
 - [ ] `REST POST /api/v1/auth/webauthn/reauth/finish` — fixture: needs a WebAuthn authenticator
@@ -282,8 +282,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /auth/webauthn/login/finish` — fixture: needs a WebAuthn authenticator
 - [ ] `REST POST /auth/webauthn/passwordless/begin` — fixture: needs a WebAuthn authenticator
 - [ ] `REST POST /auth/webauthn/passwordless/finish` — fixture: needs a WebAuthn authenticator
-- [ ] `REST POST /scim/v2/Groups` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
-- [ ] `REST POST /scim/v2/Users` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
+- [ ] `REST POST /scim/v2/Groups` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
+- [ ] `REST POST /scim/v2/Users` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
 - [ ] `REST POST /system/init` — design: one-time bootstrap of an uninitialised install; the template is already initialised
 - [ ] `REST PUT /api/v1/admin/anomaly-config` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST PUT /api/v1/alert-escalation-policies/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
@@ -295,6 +295,6 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST PUT /api/v1/secret-templates/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [x] `REST PUT /api/v1/users/{id}` — user.update
 - [x] `REST PUT /api/v1/users/{id}/roles` — user.roles.set
-- [ ] `REST PUT /scim/v2/Groups/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
-- [ ] `REST PUT /scim/v2/Users/{id}` — fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)
+- [ ] `REST PUT /scim/v2/Groups/{id}` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
+- [ ] `REST PUT /scim/v2/Users/{id}` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
 

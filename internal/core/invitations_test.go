@@ -404,6 +404,7 @@ func TestApproveAccessRequest_RejectsOtherProject(t *testing.T) {
 func TestRequestProjectAccess_RejectsUnknownProject(t *testing.T) {
 	t.Parallel()
 	store := new(MockStorage)
+	stubActiveActors(store)
 	c := newInviteCore(store)
 	ctx := context.Background()
 	store.On("GetProject", ctx, uint(404)).Return(nil, fmt.Errorf("project not found: %w", storage.ErrProjectNotFound))

@@ -8010,7 +8010,7 @@
       "guards": [
         "Authorize"
       ],
-      "core_refusal": "untyped"
+      "core_refusal": "typed+untyped"
     },
     {
       "core": "CancelMFAReset",
@@ -9260,7 +9260,7 @@
       "reached_by_all_ops": 2,
       "infra": false,
       "guards": null,
-      "core_refusal": "none"
+      "core_refusal": "typed"
     },
     {
       "core": "InspectCertificate",
@@ -10465,7 +10465,7 @@
       "reached_by_all_ops": 1,
       "infra": false,
       "guards": null,
-      "core_refusal": "none"
+      "core_refusal": "typed"
     },
     {
       "core": "RequestSecretAccess",
@@ -10850,7 +10850,7 @@
       "guards": [
         "Authorize"
       ],
-      "core_refusal": "untyped"
+      "core_refusal": "typed+untyped"
     },
     {
       "core": "RotateSecretOnDemand",
@@ -10865,7 +10865,7 @@
       "guards": [
         "Authorize"
       ],
-      "core_refusal": "untyped"
+      "core_refusal": "typed+untyped"
     },
     {
       "core": "RunAlertEscalation",
@@ -11018,7 +11018,7 @@
       "guards": [
         "requireAdminAuthorityAt"
       ],
-      "core_refusal": "untyped"
+      "core_refusal": "typed+untyped"
     },
     {
       "core": "SetSecretDescription",
