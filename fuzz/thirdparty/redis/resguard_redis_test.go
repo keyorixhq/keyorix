@@ -5,8 +5,8 @@ package redishostile
 // no-panic/bounded-time oracles are UNCHANGED (in driveRedisReply); a resguard.Probe
 // meters alloc_bytes/mallocs (RAM-spike signal) + CPU (advisory) per input, checked
 // against a per-byte-slope budget (RESP replies are a parser, small input → bounded
-// alloc is the invariant; a huge declared bulk length that drives super-linear alloc
-// is the defect — the `$9999999\r\nshort\r\n` seed shape).
+// alloc is the invariant). A huge declared length (the `$9999999\r\nshort\r\n` shape)
+// is not policed by the budget: FuzzRedisReply skips it, see redisDeclaredAllowance.
 //
 // What this oracle does NOT verify: correctness (only alloc proportion); alloc is
 // sampled; CPU is process-wide advisory; cannot separate the test server's alloc
@@ -50,8 +50,8 @@ func measureRedis(t *testing.T, probe *resguard.Probe, budget resguard.Budget, h
 }
 
 // redisBenignReply: valid RESP2/RESP3 replies of modest size. A bulk string whose
-// declared length MATCHES its data is benign; the fuzzer explores the over-declared
-// shape ($9999999\r\nshort) against this slope budget.
+// declared length MATCHES its data is benign; over-declared lengths above
+// redisDeclaredAllowance are skipped by FuzzRedisReply, not budgeted.
 func redisBenignReply() [][]byte {
 	return [][]byte{
 		[]byte("+OK\r\n"),
@@ -134,16 +134,24 @@ func TestResguardRedisRedGreen(t *testing.T) {
 // elements) stays under the budget.
 const redisDeclaredAllowance = 4096
 
-// redisDeclaredLenExceeds reports whether any RESP header line in reply declares a
-// length above redisDeclaredAllowance (or one too large to parse). It is
-// deliberately conservative: a "$..." line inside a bulk body is treated as a header
-// too, which only ever skips more, never less.
+// redisDeclaredLenExceeds reports whether any RESP header in reply declares a
+// length above redisDeclaredAllowance (or one too large to parse). It tries every
+// byte offset as a header start, not just CRLF-split line starts: go-redis reads
+// exactly n+2 bulk-body bytes without checking they end in CRLF, so a body can
+// desync the parser and the next header can start mid-"line" (for example
+// "$1\r\nxyz*1000000\r\n"). That makes it a superset of what go-redis can read. It
+// is deliberately conservative: it also skips an input that merely contains a
+// header-looking "$5000\r\n" inside a bulk body.
 func redisDeclaredLenExceeds(reply []byte) bool {
-	for line := range bytes.SplitSeq(reply, []byte("\r\n")) {
-		if len(line) < 2 || !strings.ContainsRune("$*%~>|=!", rune(line[0])) {
+	for i := range reply {
+		if !strings.ContainsRune("$*%~>|=!", rune(reply[i])) {
 			continue
 		}
-		n, err := strconv.ParseInt(string(line[1:]), 10, 64)
+		hdr, _, found := bytes.Cut(reply[i+1:], []byte("\r\n"))
+		if !found {
+			continue
+		}
+		n, err := strconv.ParseInt(string(hdr), 10, 64)
 		if err != nil {
 			if ne, ok := err.(*strconv.NumError); ok && ne.Err == strconv.ErrRange {
 				return true
@@ -175,6 +183,9 @@ func TestRedisDeclaredLenExceeds(t *testing.T) {
 		{"$-1\r\n", false},
 		{",3.14\r\n", false},
 		{"", false},
+		// bulk-body desync: the next header starts mid-line
+		{"*2\r\n$1\r\nxyz*1000000\r\n:1\r\n", true},
+		{"*2\r\n$1\r\nxyz$9999999\r\nshort\r\n", true},
 	} {
 		if got := redisDeclaredLenExceeds([]byte(tc.in)); got != tc.want {
 			t.Errorf("redisDeclaredLenExceeds(%q) = %v, want %v", tc.in, got, tc.want)
