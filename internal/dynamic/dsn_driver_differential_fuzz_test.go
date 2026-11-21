@@ -87,6 +87,11 @@ func FuzzDSNHostsCoverDriverHosts(f *testing.F) {
 			if strings.TrimSpace(host) == "" || strings.HasPrefix(host, "/") {
 				return // whitespace-only (resolves to nothing) or a unix socket (refused at dial time)
 			}
+			if strings.ContainsAny(stripBrackets(strings.TrimSpace(host)), "[]") {
+				// Brackets left after one layer is stripped (nested or unbalanced): the driver
+				// resolves the name literally and never connects (TestPgxNeverDialsMalformedBracketHosts).
+				return
+			}
 			if (host == "localhost" || host == "127.0.0.1") && !strings.Contains(s, host) {
 				return // the driver's default (pgx localhost, mysql 127.0.0.1), not named by the string
 			}
