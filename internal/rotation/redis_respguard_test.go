@@ -18,6 +18,9 @@ func TestRedisRotateRejectsHostileDeclaredLengths(t *testing.T) {
 		"$1000000000\r\nshort\r\n",
 		"*100000000\r\n:1\r\n",
 		"%50000000\r\n+k\r\n+v\r\n",
+		// Zero-padded length header: in budget by value, but an unbounded line
+		// go-redis would buffer whole (about 4x the bytes on the wire).
+		"$" + strings.Repeat("0", 8<<20) + "1\r\nx\r\n",
 	} {
 		addr := fakeRedisHostileOnCommand(t, reply)
 

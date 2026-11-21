@@ -72,6 +72,11 @@ func TestRESPScannerVerdicts(t *testing.T) {
 		{"CR without LF", "$5\rX", true},
 		{"negative below -1", "$-2\r\n", true},
 		{"line over the cap", "+" + strings.Repeat("a", 100) + "\r\n", true},
+		{"length header padded with zeros", "$" + strings.Repeat("0", 25) + "1\r\n", true},
+		{"length header digit run, no CR yet", "*" + strings.Repeat("0", 200), true},
+		{"length header digit run of nines, no CR yet", "$" + strings.Repeat("9", 200), true},
+		{"length header 20 digits", "$" + strings.Repeat("0", 19) + "5\r\nhello\r\n", true},
+		{"length header 19 digits", "$" + strings.Repeat("0", 18) + "5\r\nhello\r\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l := RESPLimits{MaxDeclaredBytes: 1 << 20, MaxLineBytes: 64}
@@ -144,6 +149,9 @@ func refViolation(l RESPLimits, buf []byte) bool {
 				return true
 			}
 			num := string(line[:len(line)-1])
+			if len(strings.TrimLeft(num, "+-")) > respMaxHeaderDigits {
+				return true
+			}
 			n, err := strconv.ParseInt(num, 10, 64)
 			if err != nil {
 				if ne, ok := err.(*strconv.NumError); ok && ne.Err == strconv.ErrRange && !strings.HasPrefix(num, "-") {
@@ -191,6 +199,9 @@ func refPartialBad(rest []byte) bool {
 		switch {
 		case b >= '0' && b <= '9':
 			nd++
+			if nd > respMaxHeaderDigits {
+				return true
+			}
 		case (b == '-' || b == '+') && !sign && nd == 0:
 			sign = true
 		case b == '\r' && nd > 0:
@@ -207,7 +218,8 @@ func TestRESPScannerMatchesReference(t *testing.T) {
 	l := RESPLimits{MaxDeclaredBytes: 4096, MaxLineBytes: 32}
 	frags := []string{"+OK\r\n", "-ERR x\r\n", ":1\r\n", "$3\r\nabc\r\n", "$0\r\n\r\n", "$-1\r\n", "*2\r\n", "*0\r\n", "%1\r\n",
 		"~1\r\n", ">1\r\n", "|1\r\n", "=7\r\ntxt:abc\r\n", "!3\r\nERR\r\n", "$100\r\n", "*300\r\n", "$99999\r\n", "%99\r\n", "_\r\n",
-		",1.5\r\n", "#t\r\n", "$5\r\n$9\r\n", "?\r\n", "$x\r\n", "$-2\r\n", "$\r\n"}
+		",1.5\r\n", "#t\r\n", "$5\r\n$9\r\n", "?\r\n", "$x\r\n", "$-2\r\n", "$\r\n",
+		"$0000000000000000003\r\nabc\r\n", "*00000000000000000001\r\n", "$-0000000000000000001\r\n"}
 	for range 20000 {
 		var b bytes.Buffer
 		for i, n := 0, 1+rng.Intn(6); i < n; i++ {
@@ -229,6 +241,7 @@ func FuzzRESPScannerChunking(f *testing.F) {
 	f.Add([]byte("*2\r\n:1\r\n:2\r\n"), uint8(1))
 	f.Add([]byte("$99999999\r\nshort\r\n"), uint8(2))
 	f.Add([]byte("+OK\r\n$-1\r\n%1\r\n+k\r\n+v\r\n"), uint8(5))
+	f.Add([]byte("$000000000000000000001\r\nx\r\n"), uint8(4))
 	f.Fuzz(func(t *testing.T, stream []byte, step uint8) {
 		l := RESPLimits{MaxDeclaredBytes: 1 << 16, MaxLineBytes: 64}
 		whole := feedChunks(l, stream, nil) != nil
@@ -287,6 +300,31 @@ func TestRESPGuardConnRejectsOversizedHeaderAndWithholdsIt(t *testing.T) {
 	_ = c.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
 	if _, err := srv.Write([]byte("x")); err == nil {
 		t.Fatal("the guard must close the underlying connection on a violation")
+	}
+}
+
+// A length header is capped by digit count, not only by its value: a run of
+// leading zeros with no CR must not stream through to the client's line buffer.
+func TestRESPGuardConnRejectsUnboundedLengthHeaderLine(t *testing.T) {
+	c, srv := guardedPipe(t, RESPLimits{})
+	go func() { _, _ = srv.Write([]byte("$" + strings.Repeat("0", 2<<20))) }()
+	buf := make([]byte, 4096)
+	passed := 0
+	for {
+		n, err := c.Read(buf)
+		passed += n
+		if err != nil {
+			if !errors.Is(err, ErrRESPLimit) {
+				t.Fatalf("Read error = %v, want ErrRESPLimit", err)
+			}
+			if n != 0 {
+				t.Fatalf("the violating chunk must be withheld, Read returned n=%d", n)
+			}
+			break
+		}
+		if passed > respMaxHeaderDigits+1 {
+			t.Fatalf("%d bytes of one length header reached the client", passed)
+		}
 	}
 }
 

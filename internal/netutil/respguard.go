@@ -36,8 +36,13 @@ const (
 	// error, integer, double, ...), which go-redis buffers without limit.
 	DefaultRESPMaxLineBytes = 1 << 20
 
+	// respMaxHeaderDigits caps the digits of a length header's number (the digits of
+	// max int64), which also caps the header line at a few bytes.
+	respMaxHeaderDigits = 19
+
 	// respNumSaturate stops the header-number accumulator from overflowing int64;
-	// anything past it is over every limit anyway.
+	// anything past it is over every limit anyway. With respMaxHeaderDigits in place
+	// it is belt and braces.
 	respNumSaturate int64 = 1 << 50
 
 	// Allocation weight per announced unit: a bulk byte costs one byte, an array
@@ -136,6 +141,13 @@ func (s *respScanner) feed(p []byte) error {
 			switch {
 			case b >= '0' && b <= '9':
 				s.nd++
+				// The header line is otherwise unbounded (MaxLineBytes covers only
+				// non-length lines) and go-redis buffers a whole line without limit,
+				// so "$000…0" would bypass every cap. max int64 has 19 digits and a
+				// conforming server never pads with leading zeros.
+				if s.nd > respMaxHeaderDigits {
+					return &respLimitError{"length header too long"}
+				}
 				if !s.saturated {
 					s.n = s.n*10 + int64(b-'0')
 					if s.n > respNumSaturate {
@@ -213,6 +225,10 @@ func (s *respScanner) finishHeader() (int64, error) {
 // respGuardConn applies a respScanner to everything read from the server and resets
 // the window on every write. After a violation it is closed and every later Read
 // returns the same error.
+//
+// It deliberately does not expose syscall.Conn: go-redis' pool health check would
+// then read the socket beneath the scanner. The cost is that the pool cannot detect
+// a stale plaintext connection, which is small for the short-lived clients here.
 type respGuardConn struct {
 	net.Conn
 	mu  sync.Mutex
