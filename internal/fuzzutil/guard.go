@@ -44,6 +44,21 @@ func Guard(fatalf func(format string, args ...any), label string, fn func()) {
 		putRunner(r)
 	case <-t.C:
 		putTimer(t)
+		// Deadline miss. Before calling it a hang, ask whether the PROCESS was frozen
+		// (see stall.go): if a third or more of the window was a freeze, give the call
+		// one more full timeout after recovery. The window start is reconstructed from the
+		// timeout so the hot path above pays nothing for it.
+		if frozenSinceFn(time.Now().Add(-timeout)) >= timeout/3 {
+			g := time.NewTimer(timeout)
+			select {
+			case <-r.done:
+				g.Stop()
+				StallsRecovered.Add(1)
+				putRunner(r)
+				return
+			case <-g.C:
+			}
+		}
 		// Abandon the runner: closing work ends its loop once the hung fn
 		// returns (done is buffered, so its final send cannot block).
 		r.stop()
@@ -71,6 +86,7 @@ func getRunner() *runner {
 	if r, ok := runnerPool.Get().(*runner); ok {
 		return r
 	}
+	startStallMonitor() // before the first guarded call, so its window is already recorded
 	c := &runnerCore{work: make(chan func()), done: make(chan struct{}, 1)}
 	go func() {
 		for fn := range c.work {

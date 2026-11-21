@@ -34,6 +34,8 @@ import (
 	"time"
 
 	yaml "go.yaml.in/yaml/v4"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 const decodeDeadline = 2 * time.Second
@@ -93,7 +95,7 @@ func FuzzYAMLDecodeBoundedWork(f *testing.F) {
 		start := time.Now()
 		var v any
 		err := decode(data, &v)
-		if elapsed := time.Since(start); elapsed > decodeDeadline {
+		if elapsed, _ := fuzzutil.EffectiveElapsed(start); elapsed > decodeDeadline {
 			t.Fatalf("yaml decode took %v (> %v) on %d bytes — unbounded work", elapsed, decodeDeadline, len(data))
 		}
 		if err != nil {

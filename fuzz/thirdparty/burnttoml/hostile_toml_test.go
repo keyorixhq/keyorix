@@ -34,6 +34,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // containsTime reports whether v (a decoded TOML value) contains any time.Time,
@@ -103,13 +105,13 @@ func FuzzBurntTOML(f *testing.F) {
 		}
 		res := make(chan string, 1)
 		go func() { res <- stability(data) }()
-		select {
-		case msg := <-res:
-			if msg != "" {
-				t.Fatal(msg)
-			}
-		case <-time.After(15 * time.Second):
+		msg, ok, fz := fuzzutil.Wait(res, 15*time.Second)
+		if !ok {
+			t.Logf("stall monitor: process frozen %s of the wait window", fz)
 			t.Fatalf("bounded-work: toml did not return in 15s for %d-byte input", len(data))
+		}
+		if msg != "" {
+			t.Fatal(msg)
 		}
 	})
 }

@@ -48,6 +48,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
@@ -217,15 +218,13 @@ func runWithWatchdog(t *testing.T, label string, fn func() (any, error)) (out an
 		}()
 		out, err = fn()
 	}()
-	select {
-	case <-done:
-		if err != nil && strings.HasPrefix(err.Error(), "PANIC") {
-			t.Fatalf("%v", err)
-		}
-		return out, err, false
-	case <-time.After(20 * time.Second):
+	if _, ok, _ := fuzzutil.Wait(done, 20*time.Second); !ok {
 		return nil, nil, true
 	}
+	if err != nil && strings.HasPrefix(err.Error(), "PANIC") {
+		t.Fatalf("%v", err)
+	}
+	return out, err, false
 }
 
 func FuzzAzureGetSecret(f *testing.F) {

@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // rewrapGuardDeadline is a HANG backstop, not the shared fuzzutil 3s amplification guard.
@@ -98,9 +99,8 @@ func FuzzDEKRewrapCrashConsistency(f *testing.F) {
 			defer close(done)
 			runRewrapCrashCase(dir, oldPass, newPass, target)
 		}()
-		select {
-		case <-done:
-		case <-time.After(rewrapGuardDeadline):
+		if _, ok, fz := fuzzutil.Wait(done, rewrapGuardDeadline); !ok {
+			t.Logf("stall monitor: process frozen %s of the wait window", fz)
 			t.Fatalf("dek-rewrap-crash-consistency exceeded %s — possible hang", rewrapGuardDeadline)
 		}
 	})
