@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"math/rand"
+	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- seeded, reproducible test-input generator, not a secret
 	"net"
 	"strconv"
 	"strings"

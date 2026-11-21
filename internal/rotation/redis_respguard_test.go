@@ -34,13 +34,13 @@ func TestRedisRotateRejectsHostileDeclaredLengths(t *testing.T) {
 		runtime.ReadMemStats(&after)
 
 		if err == nil {
-			t.Fatalf("%q: Rotate succeeded against a hostile server", reply)
+			t.Fatalf("%.40q: Rotate succeeded against a hostile server", reply)
 		}
 		if !strings.Contains(err.Error(), "RESP reply rejected") {
-			t.Fatalf("%q: error = %v, want the RESP guard's rejection", reply, err)
+			t.Fatalf("%.40q: error = %v, want the RESP guard's rejection", reply, err)
 		}
 		if grew := after.TotalAlloc - before.TotalAlloc; grew > 64<<20 {
-			t.Fatalf("%q: allocated %d MiB; the guard should stop it near zero", reply, grew>>20)
+			t.Fatalf("%.40q: allocated %d MiB; the guard should stop it near zero", reply, grew>>20)
 		}
 	}
 }
