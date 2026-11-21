@@ -28,17 +28,22 @@
 //     are durable: every reader probed while the fsync is stalled returns within a
 //     small bound, returns the OLD keys (nothing is published before the rename and
 //     directory fsync), and the NEW keys once the rotation returns. Red on a tree
-//     where the rotation holds mu across the fsync.
+//     where the rotation holds mu across the fsync. The same holds for a DEK
+//     re-wrap (migrate-provider) stalled in its directory fsync.
 //   - NO FD / GOROUTINE LEAK (gate): the slow-disk rotation leaves the open-fd and
 //     goroutine counts where it found them.
 package encryption
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/crypto"
 )
 
 // armSlowSyncOnce installs a fileFaultHook that, on the FIRST call for seam,
@@ -231,6 +236,65 @@ func TestSlowDiskSync_ReadersNotBlockedAcrossKEKSync(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if after := runtime.NumGoroutine(); after > goroutinesBefore+1 {
 		t.Fatalf("GOROUTINE-LEAK oracle: goroutines grew %d -> %d across %d slow-disk rotations",
+			goroutinesBefore, after, trials)
+	}
+}
+
+// TestSlowDiskSync_ReadersNotBlockedAcrossRewrapSync is the acceptance test for
+// #4376 item 2 (3× replay): while a DEK re-wrap's directory fsync is stalled,
+// every key-manager reader returns within readerProbeBound; the re-wrap keeps
+// the DEK, and the last provider unwraps it from a fresh key manager.
+func TestSlowDiskSync_ReadersNotBlockedAcrossRewrapSync(t *testing.T) {
+	dir := t.TempDir()
+	keks := make([]string, 4)
+	for i := range keks {
+		keks[i] = filepath.Join(dir, fmt.Sprintf("kek-%d.hex", i))
+		writeHexKEK(t, keks[i])
+	}
+	km := NewKeyManager(dir, "dek.key", "kek.salt")
+	km.SetKeyProvider(crypto.NewFileKeyProvider(keks[0]))
+	if err := km.Initialize(""); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	dek0 := km.GetDEK()
+
+	goroutinesBefore := runtime.NumGoroutine()
+
+	const trials = 3
+	for i := range trials {
+		next := crypto.NewFileKeyProvider(keks[i+1])
+		reached := make(chan struct{})
+		restore := armSlowSyncOnce("rewrap:syncdir", slowSyncDelay, reached)
+		done := make(chan error, 1)
+		go func() { done <- km.RewrapDEK(next) }()
+
+		<-reached // re-wrap is now inside the slow directory fsync
+		probeReaders(t, km, i)
+		requireStillStalled(t, done, i)
+
+		rewrapErr := <-done
+		restore()
+		if rewrapErr != nil {
+			t.Fatalf("trial %d: re-wrap failed: %v", i, rewrapErr)
+		}
+		if !bytes.Equal(km.GetDEK(), dek0) {
+			t.Fatalf("trial %d: DEK changed across a re-wrap", i)
+		}
+	}
+
+	reopened := NewKeyManager(dir, "dek.key", "kek.salt")
+	reopened.SetKeyProvider(crypto.NewFileKeyProvider(keks[trials]))
+	if err := reopened.Initialize(""); err != nil {
+		t.Fatalf("RECOVERY oracle: reopen under the last provider after slow-disk re-wraps: %v", err)
+	}
+	if !bytes.Equal(reopened.GetDEK(), dek0) {
+		t.Fatal("RECOVERY oracle: reopened DEK differs from the original")
+	}
+
+	runtime.GC()
+	time.Sleep(20 * time.Millisecond)
+	if after := runtime.NumGoroutine(); after > goroutinesBefore+1 {
+		t.Fatalf("GOROUTINE-LEAK oracle: goroutines grew %d -> %d across %d slow-disk re-wraps",
 			goroutinesBefore, after, trials)
 	}
 }

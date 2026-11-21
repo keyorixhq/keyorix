@@ -3,13 +3,13 @@
 //
 // Locks, in the only order they are ever nested:
 //
-//	rotateMu → <dek_path>.lock (flock)   RotateKEKPassphraseWithPrepare
+//	rotateMu → <dek_path>.lock (flock)   RotateKEKPassphraseWithPrepare, RewrapDEKWithPrepare
 //	rotateMu → mu                        Initialize, Wipe, the wipe step after a KEK rotation
-//	mu → <dek_path>.lock (flock)         RotateDEKWithSweep, RewrapDEKWithPrepare (until item 2)
+//	mu → <dek_path>.lock (flock)         RotateDEKWithSweep
 //
 // No code takes mu while holding the flock, and no code takes rotateMu while
 // holding mu or the flock, so the three cannot deadlock. A rotation that keeps
-// mu off its disk I/O (RotateKEKPassphraseWithPrepare) builds the whole next
+// mu off its disk I/O (RotateKEKPassphraseWithPrepare, RewrapDEKWithPrepare) builds the whole next
 // keyState in locals and publishes it with one state.Store after its rename and
 // directory fsync are durable; readers take mu.RLock only for the Load and the
 // copy, so they wait on such a rotation's fsync never. They still wait on the

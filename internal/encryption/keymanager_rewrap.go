@@ -35,12 +35,17 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 // RewrapDEKWithPrepare is RewrapDEK calling prepare (when non-nil) with the
 // audit-checkpoint key the new KEK derives, after the staleness check and
 // before the new wrapped DEK is written (see AuditKeyChangePrepare).
+//
+// It holds rotateMu and the DEK flock for the whole re-wrap but never mu, so
+// readers keep running while the pending DEK is written, renamed and fsynced;
+// the new dekSnapshot is published with one state.Store once the rename and
+// directory fsync are durable (#4376). The DEK and the KEK-derived keys in
+// memory do not change here, so nothing is superseded and nothing is wiped.
 func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepare AuditKeyChangePrepare) error {
-	km.mu.Lock()
-	defer km.mu.Unlock()
+	km.rotateMu.Lock()
+	defer km.rotateMu.Unlock()
 
-	cur := km.published()
-	if cur.dek == nil {
+	if km.published().dek == nil {
 		return fmt.Errorf("key manager not initialized — cannot re-wrap DEK")
 	}
 	if newProvider == nil {
@@ -70,6 +75,9 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 		return fmt.Errorf("re-wrap DEK: %w", err)
 	}
 	defer lock.release()
+	// Loaded under the flock: from here until the release, no other writer
+	// changes dek or dekSnapshot (keymanager_state.go).
+	cur := km.published()
 
 	// Mutual exclusion alone is not sufficient: the in-memory DEK was captured
 	// whenever this process's own Initialize() ran, which may be long before

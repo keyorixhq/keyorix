@@ -64,7 +64,7 @@ type KeyManager struct {
 	// one Load under mu.RLock, writers Store a whole new keyState.
 	state atomic.Pointer[keyState]
 	// rotateMu serialises a rotation that keeps mu off its disk I/O
-	// (RotateKEKPassphraseWithPrepare) against every other in-process writer
+	// (RotateKEKPassphraseWithPrepare, RewrapDEKWithPrepare) against every other in-process writer
 	// of state; readers never take it. Lock order: keymanager_state.go.
 	rotateMu sync.Mutex
 	mu       sync.RWMutex

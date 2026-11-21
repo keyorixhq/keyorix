@@ -5,9 +5,14 @@ package encryption
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/crypto"
 )
 
 // setTestDEK publishes dek as the current DEK, keeping the rest of the state.
@@ -185,5 +190,67 @@ func TestKeyState_ConcurrentKEKRotationsSerialise(t *testing.T) {
 	}
 	if !bytes.Equal(reopened.GetDEK(), dek0) {
 		t.Fatal("reopened DEK differs from the original")
+	}
+}
+
+// TestKeyState_ReadersRacingRewrapSeeUnchangedKeys runs readers against a chain
+// of DEK re-wraps (run it under -race): a re-wrap changes only the on-disk
+// wrapping, so every read returns the original DEK, key version and KEK-derived
+// keys, and the in-memory dekSnapshot ends up equal to the file on disk.
+func TestKeyState_ReadersRacingRewrapSeeUnchangedKeys(t *testing.T) {
+	dir := t.TempDir()
+	keks := make([]string, 6)
+	for i := range keks {
+		keks[i] = filepath.Join(dir, fmt.Sprintf("kek-%d.hex", i))
+		writeHexKEK(t, keks[i])
+	}
+	km := NewKeyManager(dir, "dek.key", "kek.salt")
+	km.SetKeyProvider(crypto.NewFileKeyProvider(keks[0]))
+	if err := km.Initialize(""); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	dek0, version0 := km.GetDEK(), km.GetKeyVersion()
+	esk0, eskID0, _ := km.GetEvidenceSignKey()
+
+	stop := make(chan struct{})
+	var torn []string
+	var tornMu sync.Mutex
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				esk, eskID, ok := km.GetEvidenceSignKey()
+				if !bytes.Equal(km.GetDEK(), dek0) || km.GetKeyVersion() != version0 ||
+					!ok || eskID != eskID0 || !bytes.Equal(esk, esk0) {
+					tornMu.Lock()
+					torn = append(torn, "a reader saw a changed key during a re-wrap")
+					tornMu.Unlock()
+				}
+			}
+		})
+	}
+	var rewrapErr error
+	for i := 1; i < len(keks) && rewrapErr == nil; i++ {
+		rewrapErr = km.RewrapDEK(crypto.NewFileKeyProvider(keks[i]))
+	}
+	close(stop)
+	wg.Wait()
+	if rewrapErr != nil {
+		t.Fatalf("re-wrap: %v", rewrapErr)
+	}
+	if len(torn) > 0 {
+		t.Fatalf("%d bad reads, first: %s", len(torn), torn[0])
+	}
+	onDisk, err := os.ReadFile(filepath.Join(dir, "dek.key"))
+	if err != nil {
+		t.Fatalf("read dek.key: %v", err)
+	}
+	if !bytes.Equal(km.published().dekSnapshot, onDisk) {
+		t.Fatal("published dekSnapshot differs from dek.key after the re-wraps")
 	}
 }

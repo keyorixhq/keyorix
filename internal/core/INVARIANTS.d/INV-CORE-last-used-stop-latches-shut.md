@@ -35,6 +35,7 @@
   that the server's shutdown *ordering* reaches `StopLastUsed` before any real store
   teardown (verified by reading `server/main.go` + `server/shutdown.go`, not executed);
   and the KeyManager fsync-under-lock blocking (issue 114 item 2), a separate concern:
-  narrowed for KEK rotation by #4376 and guarded by `internal/encryption`'s
-  `TestSlowDiskSync_ReadersNotBlockedAcrossKEKSync` (`RotateDEKWithSweep` still holds
+  narrowed for KEK rotation and DEK re-wrap by #4376 and guarded by `internal/encryption`'s
+  `TestSlowDiskSync_ReadersNotBlockedAcrossKEKSync` and
+  `TestSlowDiskSync_ReadersNotBlockedAcrossRewrapSync` (`RotateDEKWithSweep` still holds
   `KeyManager.mu` across its sweep by design).

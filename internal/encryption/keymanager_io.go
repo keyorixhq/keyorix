@@ -14,8 +14,8 @@ import (
 )
 
 // The getters below take mu.RLock only around one state Load and the copy:
-// a KEK rotation publishes with state.Store and never holds mu across its disk
-// I/O, so they do not wait on its fsync; RLock still orders them against the
+// a KEK rotation or DEK re-wrap publishes with state.Store and never holds mu
+// across its disk I/O, so they do not wait on its fsync; RLock still orders them against the
 // writers that hold mu for their whole run (Initialize, Wipe,
 // RotateDEKWithSweep) and against the wipe of a superseded key
 // (keymanager_state.go).
