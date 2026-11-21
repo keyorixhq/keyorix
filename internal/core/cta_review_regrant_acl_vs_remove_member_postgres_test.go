@@ -65,10 +65,23 @@ func (f *ctaReview) aroundALockingRead(after bool, table string, concurrent func
 	return func() bool { return hit }
 }
 
+// rowLockWaiters is lockWaiters narrowed to row-lock waits (a tuple or another
+// transaction's id). An advisory-lock wait does not count: the fixtures of parallel
+// tests share one database, and their named locks (project guard keys) collide, so a
+// plain Lock wait can be B queueing behind another test rather than behind A.
+func (f *ctaReview) rowLockWaiters() int64 {
+	f.t.Helper()
+	var n int64
+	require.NoError(f.t, f.setupDB.Raw(
+		"SELECT count(*) FROM pg_stat_activity WHERE application_name = ? AND wait_event_type = 'Lock' AND wait_event IN ('transactionid', 'tuple')",
+		f.appName).Scan(&n).Error)
+	return n
+}
+
 // startUntilBlocked runs b (replica B's operation) on its own goroutine and returns as
-// soon as one of this fixture's backends is waiting on a lock, or b has finished, or
-// 10s have passed. Use it from inside A's hook where B must queue behind a lock A
-// holds: running B synchronously there would hang. wait returns whether B was seen
+// soon as one of this fixture's backends is waiting on a row lock, or b has finished,
+// or 10s have passed. Use it from inside A's hook where B must queue behind a row lock
+// A holds: running B synchronously there would hang. wait returns whether B was seen
 // blocked and B's error, after B finishes.
 func (f *ctaReview) startUntilBlocked(b func() error) (wait func() (blocked bool, err error)) {
 	f.t.Helper()
@@ -81,7 +94,7 @@ func (f *ctaReview) startUntilBlocked(b func() error) (wait func() (blocked bool
 			return func() (bool, error) { return false, err }
 		default:
 		}
-		if f.lockWaiters() > 0 {
+		if f.rowLockWaiters() > 0 {
 			blocked = true
 			break
 		}
