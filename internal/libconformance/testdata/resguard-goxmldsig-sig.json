@@ -1,0 +1,18 @@
+{
+  "target": "goxmldsig_sig",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 24,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 240872,
+      "per_byte": 9407.04,
+      "abs_max": 963488
+    },
+    "mallocs": {
+      "floor": 2466,
+      "per_byte": 88,
+      "abs_max": 9864
+    }
+  }
+}
