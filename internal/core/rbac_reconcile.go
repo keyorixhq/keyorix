@@ -219,8 +219,13 @@ func sortedRBACNames[V any](set map[string]V) []string {
 }
 
 // loadRBACReconcilePending reads the pending-grants row. A missing row is an
-// empty debt; an unreadable one is an error, so the run stops before creating
-// anything rather than losing track of what it owes.
+// empty debt. A failed read is an error, so the run stops before creating
+// anything rather than losing track of what it owes. An unreadable row is
+// dropped like an unreadable v1 row (fail closed): it is logged by length,
+// replaced with an empty debt, and nothing is granted from it, so the rest of
+// the reconcile still runs on this and every later startup (review L1 of
+// REVIEW-4542-M1). A pair it held is not retried; the log says to grant a
+// missed baseline permission by hand.
 func (c *KeyorixCore) loadRBACReconcilePending(ctx context.Context) (map[string]map[string]bool, error) {
 	raw, found, err := c.storage.GetSystemMetadata(ctx, rbacReconcilePendingRow)
 	if err != nil {
@@ -232,7 +237,12 @@ func (c *KeyorixCore) loadRBACReconcilePending(ctx context.Context) (map[string]
 	}
 	var owed map[string][]string
 	if err := json.Unmarshal([]byte(raw), &owed); err != nil {
-		return nil, fmt.Errorf("rbac reconcile: decode pending grants (%d bytes): %w", len(raw), err)
+		log.Printf("RBAC reconcile: dropping an unreadable pending-grants row (%d bytes); nothing is granted from it. Grant any missed baseline permission by hand.", len(raw))
+		if err := c.saveRBACReconcilePending(ctx, pending); err != nil {
+			// Nothing is granted from the row either way; the next startup drops it again.
+			log.Printf("rbac reconcile: %v", err)
+		}
+		return pending, nil
 	}
 	for perm, roles := range owed {
 		for _, role := range roles {
