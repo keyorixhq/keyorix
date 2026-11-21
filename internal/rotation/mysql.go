@@ -11,8 +11,9 @@ import (
 	"fmt"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql" // registers the "mysql" sql driver
+	"github.com/go-sql-driver/mysql"
 
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/rotation/quote"
 )
 
@@ -47,11 +48,18 @@ func (e *MySQLExecutor) conn(ctx context.Context) (mysqlConn, error) {
 	if e.newConn != nil {
 		return e.newConn(ctx, e.dsn)
 	}
-	db, err := sql.Open("mysql", e.dsn)
+	cfg, err := mysql.ParseDSN(e.dsn)
 	if err != nil {
 		return nil, fmt.Errorf("mysql: open: %w", err)
 	}
-	return &mysqlDBConn{db: db}, nil
+	// Refuse an absurd announced column count on the wire (the driver sizes its column
+	// slice from it); does not cover TLS connections, see netutil/mysqlguard.go.
+	cfg.DialFunc = netutil.MySQLGuardDialer(cfg.DialFunc, netutil.MySQLLimits{})
+	connector, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("mysql: open: %w", err)
+	}
+	return &mysqlDBConn{db: sql.OpenDB(connector)}, nil
 }
 
 // Rotate sets account `ref`'s password to newValue via ALTER USER. ref is the account
