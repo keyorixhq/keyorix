@@ -223,8 +223,7 @@ func TestFullIdentity_EvilAssertionPassesLibraryValidation(t *testing.T) {
 	}
 	a, err := fx.p.sp.ParseXMLResponse(resp, nil, *acs)
 	if err != nil {
-		var ire *csaml.InvalidResponseError
-		if errors.As(err, &ire) {
+		if ire, ok := errors.AsType[*csaml.InvalidResponseError](err); ok {
 			err = ire.PrivateErr
 		}
 		t.Fatalf("forged assertion signed by the IdP key was refused by the library, so the groups check is unreachable for ops 21-23: %v", err)
