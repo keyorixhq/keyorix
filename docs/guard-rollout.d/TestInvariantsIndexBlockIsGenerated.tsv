@@ -1,0 +1,1 @@
+TestInvariantsIndexBlockIsGenerated	internal/docsdrift	#4572	new drift guard: the generated block of docs/INVARIANTS.md must equal scripts/gen-invariants-index.sh output; open PRs #4570, #4526, #4500 and #4567 add INVARIANTS.d fragments under the old hand-written rule and must rerun the generator after #4572 lands

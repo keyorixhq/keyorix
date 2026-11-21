@@ -59,7 +59,7 @@ func TestRenderYAML_NeutralizesFlowMappingInjection(t *testing.T) {
 	assert.False(t, hasAdmin, "RenderYAML must not allow the secret value to inject a sibling admin field")
 }
 
-// EscapeYAMLString must fall back to its defensive replacer when yaml.v3 doesn't
+// EscapeYAMLString must fall back to its defensive replacer when yaml v4 doesn't
 // encode the value as a plain double-quoted scalar: a value containing invalid
 // UTF-8 makes yaml.Marshal emit a `!!binary "...."` tagged scalar instead (since a
 // double-quoted style can't represent arbitrary binary), so the function's
