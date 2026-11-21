@@ -22,6 +22,16 @@ import (
 // DeleteSecret committing between the caller's liveness check and this upsert ran its
 // CWE-284 ACL cascade before the grant existed, and the grant then committed on the
 // deleted secret and reactivated on RestoreSecret (INV-STORE-21).
+//
+// #4533: the same transaction then re-checks that the grantee is still a member of the
+// node's project (storage.ErrSecretACLGranteeNotMember when not), after taking FOR SHARE
+// on the grantee's direct grants at that project (lockDirectProjectGrants). The second
+// variant of #2649: RemoveProjectMember's CWE-284 cascade
+// (DeleteSecretACLsByUserAndProject) committing between the caller's membership check
+// and this upsert never saw the grant, which then committed for a removed member and
+// came back live on re-add. Write first, then lock-and-check, for the reason
+// lockLiveParent's doc gives: a check before the write misses a removal that runs
+// entirely between the two.
 func (ls *LocalStorage) CreateOrUpdateSecretACL(ctx context.Context, acl *models.SecretACL) error {
 	// UTC: the model has no BeforeSave hook, so a caller-set time would be stored in its own zone.
 	acl.CreatedAt, acl.UpdatedAt = acl.CreatedAt.UTC(), acl.UpdatedAt.UTC()
@@ -42,8 +52,65 @@ func (ls *LocalStorage) CreateOrUpdateSecretACL(ctx context.Context, acl *models
 		if !live {
 			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
 		}
+		// The node row is locked FOR SHARE above, so its project_id cannot move under
+		// this read (MoveSecret is a project-internal move, but the lock makes the
+		// argument not depend on that).
+		var projectIDs []uint
+		if err := tx.Model(&models.SecretNode{}).Where(sqlWhereID, acl.SecretID).Limit(1).
+			Pluck("project_id", &projectIDs).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		if len(projectIDs) != 1 {
+			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		}
+		if err := lockDirectProjectGrants(tx, acl.UserID, projectIDs[0]); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		member, err := ls.isProjectMemberOn(tx, acl.UserID, projectIDs[0])
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		if !member {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), storage.ErrSecretACLGranteeNotMember)
+		}
 		return nil
 	})
+}
+
+// lockDirectProjectGrants takes SELECT ... FOR SHARE on every user_roles row of
+// (userID, projectID) inside tx — the membership counterpart of lockLiveParent, for
+// a child (an ACL grant) whose "parent" is the grantee's project membership rather
+// than a soft-deletable row. On SQLite there is no row lock and the write transaction
+// alone serializes (single process), the same split lockLiveParent makes.
+//
+// Why it is sound (READ COMMITTED): RemoveProjectMember's transaction DELETEs these
+// rows (RemoveAllProjectRoleGrants) BEFORE its ACL cascade
+// (DeleteSecretACLsByUserAndProject). Called AFTER the caller's own ACL write in the
+// same transaction:
+//   - the removal's DELETE ran first: this read blocks until the removal commits, then
+//     sees no live rows (Postgres re-checks the WHERE against the committed version),
+//     and the caller rolls its ACL write back;
+//   - this read ran first: the removal's DELETE blocks until this transaction
+//     commits, so its later cascade statement (a fresh snapshot) sees the committed
+//     ACL row and sweeps it.
+//
+// What it does NOT cover: a grantee who is a member only through a group. Those rows
+// are not touched by RemoveProjectMember (which refuses a group-only member as not a
+// member), and a group-membership removal has no ACL cascade at all; that is a
+// separate, pre-existing gap, not this race. Expired rows are locked too (harmless);
+// the membership question itself is asked by isProjectMemberOn.
+func lockDirectProjectGrants(tx *gorm.DB, userID, projectID uint) error {
+	if tx.Dialector.Name() != "postgres" {
+		return nil
+	}
+	var ids []uint
+	if err := tx.Model(&models.UserRole{}).
+		Where("user_id = ? AND project_id = ?", userID, projectID).
+		Clauses(clause.Locking{Strength: "SHARE"}).
+		Pluck("role_id", &ids).Error; err != nil {
+		return fmt.Errorf("failed to lock the grantee's project grants: %w", err)
+	}
+	return nil
 }
 
 // ListSecretACLs returns all ACL grants for the given secret.

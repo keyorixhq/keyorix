@@ -1,9 +1,28 @@
 // cta_review_grant_acl_vs_remove_member_postgres_test.go — #4533, the second variant
 // #2649 names: GrantSecretACL racing RemoveProjectMember(grantee). #2785 closed the
-// DeleteSecret half; this half is open, so the test is skipped with its issue.
+// DeleteSecret half; this half is closed by the membership re-check in
+// LocalStorage.CreateOrUpdateSecretACL (write first, then FOR SHARE on the grantee's
+// direct project grants and the membership question again, in the upsert's own
+// transaction). The two forced tests pin the window before and after the upsert;
+// the unforced loop at the end lets the database pick the ordering, including the
+// one where A's lock lands first and B's DELETE waits for it.
+//
+// Bug origin (#4533):
+//
+//	Introduced-by: GrantSecretACL's IsProjectMember-then-upsert, never serialized
+//	  against RemoveProjectMember's RemoveAllProjectRoleGrants + CWE-284 ACL cascade
+//	  (project_members.go), which deletes only the grants visible to its own transaction.
+//	Detected-by: LIVENESS-IN-TX-NOV-1 (#4534), REVIEW-4534-DEEP-1 (listing impact)
+//	Class: cross-replica check-then-act (race)
+//	Severity: low-medium (a removed member keeps listing the secret's metadata; the
+//	  grant is live again on re-add)
+//	Guard: the three tests here, TestGrantSecretACL_MembershipRemovedBeforeUpsert_RefusedWithoutARow
+//	  (SQLite, default CI) and TestLocalACL_RefusesNonMemberGrantee; the storage
+//	  re-check itself is the mechanism, in the same transaction as the write.
 package core
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,7 +46,6 @@ import (
 // A's upsert, this hangs to the timeout instead of failing: switch to beforeA plus a
 // goroutine for B then.
 func TestCTAReview_GrantSecretACL_vs_RemoveProjectMember_CrossReplicaPostgres(t *testing.T) {
-	t.Skip("#4533: GrantSecretACL's membership check is not serialized against RemoveProjectMember's ACL cascade")
 	t.Parallel()
 	f := newCTAReview(t)
 	grantee := f.user("cta-aclmember", "project_viewer")
@@ -59,4 +77,78 @@ func TestCTAReview_GrantSecretACL_vs_RemoveProjectMember_CrossReplicaPostgres(t 
 	ok, err := f.setup.HasSecretACL(f.ctx, grantee.ID, s.ID, "secrets.read")
 	require.NoError(t, err)
 	assert.False(t, ok, "re-adding a removed member reactivated an ACL grant the removal revoked")
+}
+
+// TestCTAReview_GrantSecretACL_RemoveProjectMemberAfterUpsert_CrossReplicaPostgres:
+// B's RemoveProjectMember commits after A's ACL upsert ran but before A commits, so
+// B's cascade cannot see A's row. A membership check before the upsert would pass
+// here; only the write-then-check in CreateOrUpdateSecretACL refuses it. B does not
+// block on anything A holds at that point (A's uncommitted secret_acls row is
+// invisible to B's DELETE; A takes its user_roles FOR SHARE only after this hook),
+// so B can run synchronously inside the hook.
+func TestCTAReview_GrantSecretACL_RemoveProjectMemberAfterUpsert_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	grantee := f.user("cta-aclmember-after", "project_viewer")
+	s := f.secret("cta-aclmember-after-secret", f.adminID)
+
+	var errB error
+	fired := f.afterA("create", "secret_acls", func() {
+		errB = f.coreB.RemoveProjectMember(f.ctx, f.adminID, f.projectID, grantee.ID)
+	})
+	errA := f.coreA.GrantSecretACL(f.ctx, f.adminID, s.ID, grantee.ID, []string{"secrets.read"})
+	t.Logf("GrantSecretACL (A) err=%v, RemoveProjectMember (B) err=%v", errA, errB)
+	require.True(t, fired(), "the hook must have run B's RemoveProjectMember after A's ACL upsert")
+	require.NoError(t, errB)
+
+	assert.Error(t, errA, "A must fail closed: its grantee was removed before it committed")
+	assert.Zero(t, f.countLive(&models.SecretACL{}, "secret_id = ? AND user_id = ?", s.ID, grantee.ID),
+		"CWE-284: an ACL grant survives for a user removed from the project")
+}
+
+// TestLivenessRace_GrantSecretACL_vs_RemoveProjectMember_Postgres: the unforced
+// half (see cta_review_liveness_race_loop_postgres_test.go for the method). A fresh
+// member per round; A grants, B removes the member, released from a barrier with
+// B's start swept across A's solo duration. The invariant under every legal
+// interleaving: once B's removal has committed, no ACL row exists for the removed
+// member. A may win (and be swept by B's cascade, which then waited on A's FOR SHARE)
+// or fail closed; both must occur or the loop raced nothing.
+func TestLivenessRace_GrantSecretACL_vs_RemoveProjectMember_Postgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	s := f.secret("race-aclmember-secret", f.adminID)
+	grant := func(userID uint) error {
+		return f.coreA.GrantSecretACL(f.ctx, f.adminID, s.ID, userID, []string{"secrets.read"})
+	}
+	n := 0
+	solo := timeSolo(func() {
+		n++
+		require.NoError(t, grant(f.user(fmt.Sprintf("race-aclmember-solo-%d", n), "project_viewer").ID))
+	})
+	// B's removal (named lock, last-admin guard, assignment listing, then the
+	// transaction) runs far longer before its DELETE than A's whole grant, so the
+	// default quarter-of-A lead never let B's removal land before A's lock: 50 of
+	// 50 rounds A won (measured at introduction). Lead B by its own solo duration
+	// instead, so the early rounds see B commit around A's start and the sweep
+	// crosses A's window from the other side too.
+	m := 0
+	soloB := timeSolo(func() {
+		m++
+		u := f.user(fmt.Sprintf("race-aclmember-rm-solo-%d", m), "project_viewer")
+		require.NoError(t, f.coreB.RemoveProjectMember(f.ctx, f.adminID, f.projectID, u.ID))
+	})
+	var tally raceTally
+	for i := range livenessRaceRounds {
+		grantee := f.user(fmt.Sprintf("race-aclmember-%d", i), "project_viewer")
+		var errA, errB error
+		raceFromBarrier(raceOffsetFrom(i, solo, soloB),
+			func() { errA = grant(grantee.ID) },
+			func() { errB = f.coreB.RemoveProjectMember(f.ctx, f.adminID, f.projectID, grantee.ID) },
+		)
+		require.NoError(t, errB, "round %d: RemoveProjectMember", i)
+		tally.add(errA)
+		require.Zero(t, f.countLive(&models.SecretACL{}, "secret_id = ? AND user_id = ?", s.ID, grantee.ID),
+			"round %d (GrantSecretACL err=%v): CWE-284, an ACL grant exists for a removed member", i, errA)
+	}
+	tally.requireBothOutcomes(t, "GrantSecretACL")
 }

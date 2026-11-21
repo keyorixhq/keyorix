@@ -1051,6 +1051,14 @@ func opACL(e *ifaceExec, p opParams) {
 		sid, uid := s.secret(e, pick(p.a, 2)), s.user(e, pick(p.b, 3))
 		switch p.mode % 6 {
 		case 0: // upsert on (secret_id, user_id)
+			// #4533: the grantee must be a member of the secret's project (every
+			// differential secret lives in project 0) or the upsert is refused on
+			// both sides; the grant keeps the upsert, read-back and delete modes
+			// comparing a stored row rather than a refusal.
+			if err := s.db.Where(&models.UserRole{UserID: uid, ProjectID: s.project(e, 0)}).
+				FirstOrCreate(&models.UserRole{UserID: uid, RoleID: 1, ProjectID: s.project(e, 0)}).Error; err != nil {
+				return "member:" + ifaceClass(err)
+			}
 			acl := &models.SecretACL{SecretID: sid, UserID: uid, Permissions: p.name, GrantedBy: diffFixedOwnerID}
 			if err := s.ls.CreateOrUpdateSecretACL(e.ctx, acl); err != nil {
 				return "upsert:" + ifaceClass(err)
