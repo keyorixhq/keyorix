@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,8 +57,17 @@ func (h *SecretHandler) BulkRotateSecrets(w http.ResponseWriter, r *http.Request
 		RotatedBy:      userCtx.Username,
 	}
 
-	result, err := h.coreService.BulkRotateSecrets(r.Context(), req)
+	result, err := h.coreService.BulkRotateSecrets(r.Context(), userCtx.UserID, req)
 	if err != nil {
+		// An inactive acting account is a refusal (403), and a failed read of
+		// that account is a storage fault (503), not a server error.
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, core.ErrPermissionDenied) {
+			h.sendError(w, "Forbidden", errorMessageFor(http.StatusForbidden, err), http.StatusForbidden, nil)
+			return
+		}
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "exceeds the maximum batch size") {
 			status = http.StatusBadRequest
