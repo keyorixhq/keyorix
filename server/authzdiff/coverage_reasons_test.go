@@ -39,6 +39,7 @@ var reasonRules = []struct{ match, reason string }{
 	{" /auth/saml/", "fixture: needs a configured SAML identity provider"},
 	{" /auth/webauthn/", "fixture: needs a WebAuthn authenticator"},
 	{" /api/v1/auth/webauthn/", "fixture: needs a WebAuthn authenticator"},
+	{" /api/v1/auth/mfa/verify", "fixture: needs an MFA-enrolled principal mid-login (MFA deferred to the not-yet list)"},
 	{" /api/v1/auth/mfa/", "fixture: needs MFA enrolment state (MFA deferred to the not-yet list)"},
 	{" /api/v1/auth/", "design: self-service on the caller's own account/credentials (no target owned by someone else); not bound"},
 	{" /api/v1/end-impersonation", "fixture: needs an impersonation session (deferred to the not-yet list)"},
@@ -123,4 +124,10 @@ var uncoveredReasons = map[string]string{
 	// admin-tier is refused by core). Binding it needs the owner-style model
 	// extension, analyzed-not-bound in V8b — see the report's LEFTOVERS.
 	"REST DELETE /api/v1/risk-exceptions/{id}": "model: revoke authority (creator-or-admin-tier) is a typed core gate beyond the system.write@global router gate; needs the owner-style model extension (analyzed-not-bound)",
+
+	// mfa.enroll: BeginMFAEnrollment requires c.authEncryptor != nil, which is nil
+	// in test mode. Every principal receives an error before any authorization check.
+	// The authorization gate (BlockWhenImpersonating) is verified structurally by
+	// TestMFARouteGatesPresent (sweep_v5ext5_test.go).
+	"REST POST /api/v1/auth/mfa/enroll": "structural: BlockWhenImpersonating only; BeginMFAEnrollment requires authEncryptor (unavailable in test mode); covered by TestMFARouteGatesPresent",
 }
