@@ -61,6 +61,12 @@ import (
 // Distinct signed identity: every field is a different string so a mutation that swaps one
 // field's source is unambiguous in the failure message and cannot accidentally match another.
 const (
+	// Fixture entity IDs, shared with fidEvilAssertion so the forged assertion matches the
+	// signed one's issuer and audience (a mismatch would be stopped by those checks and
+	// never reach the identity comparison).
+	fidIDPEntityID = "https://fid-idp.example/entity"
+	fidSPEntityID  = "https://keyorix.internal/saml/fid/metadata"
+
 	fidSubject = "subject-user@corp.example"
 	fidEmail   = "mail-addr@corp.example"
 	fidName    = "Full Identity User"
@@ -72,6 +78,9 @@ const (
 
 // fidMutate applies diffMutate for ops 0..14 and attribute-targeted mutations for ops >=15.
 func fidMutate(signed []byte, op uint8, off uint16, blob []byte) []byte {
+	if op%fidNumOps == 4 { // NameID splice on THIS fixture's subject (diffMutate's op 4 targets another fixture's)
+		return spliceCommentInto(signed, fidSubject, blob)
+	}
 	if op%fidNumOps < diffNumOps {
 		return diffMutate(signed, op%fidNumOps, off, blob)
 	}
@@ -88,12 +97,85 @@ func fidMutate(signed []byte, op uint8, off uint16, blob []byte) []byte {
 		return injectAttributeStatement(signed, false)
 	case 20: // duplicate the signed assertion's own groups AttributeValue, then rewrite the copy to the evil group
 		return dupGroupValueAsEvil(signed)
+	case 21: // matched evil assertion as the FIRST child of Response (sibling XSW)
+		return injectFidEvilAssertion(signed, fidEvilFirst)
+	case 22: // matched evil assertion appended AFTER the signed assertion
+		return injectFidEvilAssertion(signed, fidEvilLast)
+	case 23: // matched evil assertion wrapping the signed one in its Advice
+		return injectFidEvilAssertion(signed, fidEvilWrap)
 	}
 	return signed
 }
 
-// fidNumOps = diffNumOps structural ops (0..14) + 6 attribute-targeted ops (15..20).
-const fidNumOps = diffNumOps + 6
+// fidNumOps = diffNumOps structural ops (0..14) + 9 attribute-targeted ops (15..23).
+const fidNumOps = diffNumOps + 9
+
+// fidEvilAssertion is an UNSIGNED assertion that matches the signed one on everything an SP
+// checks before reading identity (issuer, audience, validity window) AND on the signed
+// NameID, email and name, but grants fidEvilGroup. Subject-only oracles cannot see it, and
+// diffEvilAssertion (another fixture's issuer/audience, a different NameID, no
+// AttributeStatement) is stopped by the issuer/audience/subject checks before the groups
+// comparison is reached. An SP that read identity from this assertion would pass the
+// subject check and fail only on groups, which is the shape this oracle exists for.
+const fidEvilAssertion = `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" Version="2.0" ID="_fidevil" IssueInstant="2024-01-01T00:00:00Z">` +
+	`<saml:Issuer>` + fidIDPEntityID + `</saml:Issuer>` +
+	`<saml:Subject><saml:NameID>` + fidSubject + `</saml:NameID></saml:Subject>` +
+	`<saml:Conditions NotBefore="2024-01-01T00:00:00Z" NotOnOrAfter="2099-01-01T00:00:00Z">` +
+	`<saml:AudienceRestriction><saml:Audience>` + fidSPEntityID + `</saml:Audience></saml:AudienceRestriction></saml:Conditions>` +
+	`<saml:AuthnStatement AuthnInstant="2024-01-01T00:00:00Z"><saml:AuthnContext>` +
+	`<saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Password</saml:AuthnContextClassRef>` +
+	`</saml:AuthnContext></saml:AuthnStatement>` +
+	`<saml:AttributeStatement>` +
+	`<saml:Attribute FriendlyName="mail" Name="mail"><saml:AttributeValue>` + fidEmail + `</saml:AttributeValue></saml:Attribute>` +
+	`<saml:Attribute FriendlyName="cn" Name="cn"><saml:AttributeValue>` + fidName + `</saml:AttributeValue></saml:Attribute>` +
+	`<saml:Attribute FriendlyName="eduPersonAffiliation" Name="eduPersonAffiliation">` +
+	`<saml:AttributeValue>` + fidGroup1 + `</saml:AttributeValue><saml:AttributeValue>` + fidEvilGroup + `</saml:AttributeValue>` +
+	`</saml:Attribute></saml:AttributeStatement></saml:Assertion>`
+
+type fidEvilPlacement int
+
+const (
+	fidEvilFirst fidEvilPlacement = iota // first child of Response
+	fidEvilLast                          // last child of Response
+	fidEvilWrap                          // outer assertion; the signed one moves into its Advice
+)
+
+// injectFidEvilAssertion places fidEvilAssertion relative to the signed assertion. A parse
+// failure or missing target returns the input unchanged (TestFullIdentity_AllOpsChangeTheDocument
+// pins that this does not happen on the fixture).
+func injectFidEvilAssertion(signed []byte, where fidEvilPlacement) []byte {
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(signed); err != nil || doc.Root() == nil {
+		return signed
+	}
+	root := doc.Root()
+	signedAssertion := root.FindElement(".//Assertion")
+	if signedAssertion == nil {
+		return signed
+	}
+	switch where {
+	case fidEvilFirst:
+		root.InsertChildAt(0, parseFragment(fidEvilAssertion))
+	case fidEvilLast:
+		root.AddChild(parseFragment(fidEvilAssertion))
+	case fidEvilWrap:
+		evil := parseFragment(strings.Replace(fidEvilAssertion,
+			`</saml:AttributeStatement></saml:Assertion>`,
+			`</saml:AttributeStatement><saml:Advice></saml:Advice></saml:Assertion>`, 1))
+		adv := evil.FindElement(".//Advice")
+		if adv == nil {
+			return signed
+		}
+		adv.AddChild(signedAssertion.Copy())
+		root.RemoveChild(signedAssertion)
+		root.AddChild(evil)
+	}
+	out, err := doc.WriteToBytes()
+	if err != nil {
+		return signed
+	}
+	return out
+}
 
 // spliceCommentInto inserts an XML comment into the middle of the first occurrence of
 // target's text. Exclusive-C14N-without-comments strips it so an enveloped signature over
@@ -184,8 +266,8 @@ type fidFixture struct {
 func newFIDFixture(tb testing.TB) *fidFixture {
 	tb.Helper()
 	const (
-		idpEntityID = "https://fid-idp.example/entity"
-		spEntityID  = "https://keyorix.internal/saml/fid/metadata"
+		idpEntityID = fidIDPEntityID
+		spEntityID  = fidSPEntityID
 		acsURL      = "https://keyorix.internal/auth/saml/fid/acs"
 	)
 
@@ -330,6 +412,7 @@ func FuzzSAMLFullIdentity(f *testing.F) {
 	f.Add(uint8(15), uint16(0), []byte("Z"))
 	f.Add(uint8(16), uint16(0), []byte("Z"))
 	f.Add(uint8(18), uint16(0), []byte(""))
+	f.Add(uint8(21), uint16(0), []byte(""))
 
 	f.Fuzz(func(t *testing.T, op uint8, off uint16, blob []byte) {
 		mutated := fidMutate(fx.signedXML, op, off, blob)

@@ -7,15 +7,18 @@
   `(*Provider).ParseResponse`, requires the WHOLE derived identity — `Subject`,
   `Email`, `Name` and `Groups` (as a set) — to equal the signed one. It adds
   attribute-targeted mutations on top of the shared structural engine:
-  comment-truncation inside the signed email/group/name `AttributeValue` text, and
-  injection of an unsigned `AttributeStatement` granting an elevated group. This
-  closes the privilege-escalation XSW gap the Subject-only oracles leave: the real
-  ACS handler (`internal/core.(*KeyorixCore).CompleteSAML`) maps `info.Groups` to
-  Keyorix roles, so an accepted response that keeps the signed NameID but carries an
-  injected group would be an escalation the prior oracles pass clean. Deterministic
+  comment-truncation inside the signed email/group/name `AttributeValue` text,
+  injection of an unsigned `AttributeStatement` granting an elevated group, and
+  (ops 21-23) an unsigned assertion that matches the signed issuer, audience, NameID,
+  email and name but grants an extra group, placed first, last, or wrapping the signed
+  assertion in its `Advice`. Ops 21-23 generate the shape the Subject-only oracles pass
+  clean: the real ACS handler (`internal/core.(*KeyorixCore).CompleteSAML`) maps
+  `info.Groups` to Keyorix roles, so an accepted response that keeps the signed NameID
+  but carries a different group set would be a privilege escalation. Deterministic
   tests (`full_identity_xsw_test.go`) pin the oracle: it fires on forged results in
   every field (subject, email, name, groups added/swapped/dropped) and stays silent on
   the pristine signed identity and on a rejection; the pristine fixture must verify;
-  the attribute mutators (ops 15-20) must change the document; and each of those ops,
-  run through the real parser, is rejected or yields exactly the signed identity.
+  every op must change the document; ops 21-23 fed through a deliberately naive
+  first/last-assertion reader reach the oracle's groups check; and every op, run
+  through the real parser, is rejected or yields exactly the signed identity.
   Registered in `scripts/fuzzing/targets.d/`.
