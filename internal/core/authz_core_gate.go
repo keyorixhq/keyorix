@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -107,7 +108,8 @@ const permRolesWrite = "roles.write"
 // gRPC role service pre-authorize each permission being granted) and
 // AssignPermissionToRole applies in core — a role author cannot bundle a permission
 // they do not hold. A permission that does not exist is reported as not found, as
-// the transports do.
+// the transports do; any other failure of that read is classified like the role
+// reads (gateResolutionError), so a read fault answers retry, not not-found.
 func (c *KeyorixCore) requireActorHoldsPermissions(ctx context.Context, actorID uint, permissionIDs []uint) error {
 	actorType, principalID, exempt, err := gateActor(ctx, actorID)
 	if err != nil || exempt {
@@ -116,7 +118,10 @@ func (c *KeyorixCore) requireActorHoldsPermissions(ctx context.Context, actorID 
 	for _, id := range permissionIDs {
 		perm, err := c.storage.GetPermission(ctx, id)
 		if err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+			if isPositiveNotFound(err) || errors.Is(err, storage.ErrPermissionNotFound) {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+			}
+			return gateResolutionError(err)
 		}
 		ok, err := c.AuthorizePrincipal(ctx, actorType, principalID, perm.Name, Scope{})
 		if err != nil {
