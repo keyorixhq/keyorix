@@ -37,6 +37,33 @@
 // expensive path on this host is logged by the package test
 // (TestExpensiveSampleOverhead).
 //
+// # Live-heap meter semantics: a per-input DELTA, not an absolute (RG3)
+//
+// The live-heap meter reports Cost.LiveHeap as a per-input DELTA: the live
+// (post-GC) heap AFTER fn minus the live (post-GC) heap captured immediately
+// BEFORE fn, clamped at 0. It answers "how much live heap did THIS input retain",
+// never "how big is the process heap right now". That distinction is the whole
+// point: a fuzz worker accumulates reachable heap across iterations (the engine's
+// corpus and coverage maps, plus any caches in the code under test), so an
+// ABSOLUTE live-heap reading charges every later input for memory it did not
+// cause. RG3's reported crasher was exactly that — a 2-byte input measured at
+// ~107 MB absolute live heap against a ~7.4 MB per-byte budget (amp 14.5×),
+// where the 107 MB was accumulation, not amplification; replaying the input in a
+// fresh process passed. The delta removes the accumulation via the pre-fn
+// baseline, so a tiny input scores ~0 while an input that genuinely retains a lot
+// of live heap still scores high and still fails both the per-byte slope and the
+// absolute AbsMax ceiling (resguard_test.go's planted-defect proof).
+//
+// Two carve-outs follow from this:
+//   - The pre-fn GC baseline is taken only on an ON-CADENCE sample (index %
+//     SampleEvery == 0). A slow-wall-PROMOTED input (a cheap input that ran over
+//     SlowWall) has no pre-fn baseline, so its LiveHeap delta is 0 — not
+//     attributable — exactly as AllocBytes/Mallocs are already 0 on that path.
+//   - Cost.LiveHeapAbs carries the ABSOLUTE post-GC live heap for the one
+//     consumer that genuinely needs it: Drift, which watches the absolute floor
+//     creep up over many inputs (a leak), a shape no single-input delta can see.
+//     A per-input budget must never read LiveHeapAbs.
+//
 // # Application meters are seams, not magic
 //
 // Network, virtual-sleep, log-byte and DB meters can only see what the harness
@@ -92,7 +119,25 @@ type Cost struct {
 	// Sampled (they force a ReadMemStats/GC).
 	AllocBytes uint64
 	Mallocs    uint64
-	LiveHeap   uint64 // HeapAlloc after a forced GC
+	// LiveHeap is the per-input live-heap DELTA: HeapAlloc after a forced GC at
+	// the end of this input MINUS HeapAlloc after a forced GC taken immediately
+	// before fn ran, clamped at 0. It attributes to THIS input only the live
+	// (reachable, post-GC) heap it retained — not the heap the fuzz worker
+	// accumulated across earlier iterations (corpus, coverage maps, caches),
+	// which an absolute reading folds in and which produced the RG3 false
+	// positive. This is the value the per-input `live_heap` budget meter judges.
+	//
+	// It is 0 on a slow-wall-PROMOTED input (a cheap-cadence input that ran over
+	// SlowWall): no pre-fn GC baseline was taken for it, so a per-input delta is
+	// not attributable — exactly as AllocBytes/Mallocs are 0 on that path. Such
+	// inputs still populate LiveHeapAbs for Drift. See the package doc "live-heap
+	// meter semantics" section.
+	LiveHeap uint64
+	// LiveHeapAbs is the ABSOLUTE live heap (HeapAlloc after a forced GC) at the
+	// end of this input. It is what Drift watches for a slow cross-input leak (a
+	// floor that creeps up over many inputs, which a per-input delta never sees).
+	// It is NOT a per-input cost and must never be fed to a per-input budget.
+	LiveHeapAbs uint64
 
 	// Cheap every-input meters. WriteBytes is /proc/self/io write_bytes delta
 	// (Linux) and reads ~0 on a tmpfs TMPDIR; the disk fields are the TempDir
@@ -184,9 +229,22 @@ func New(tb testing.TB, opts Options) *Probe {
 func (p *Probe) Measure(inputLen int, fn func()) Cost {
 	n := p.n
 	p.n++
-	expensive := n%int64(p.opts.SampleEvery) == 0
+	// cadence is the on-schedule expensive sample; expensive may ALSO become
+	// true below when a cheap input turns out slow (slow-wall promotion). Only a
+	// cadence input gets a pre-fn GC baseline, so only it can report a live-heap
+	// DELTA; a promoted input reports LiveHeapAbs for Drift but a 0 delta.
+	cadence := n%int64(p.opts.SampleEvery) == 0
+	expensive := cadence
 
 	p.resetSeams()
+
+	// Post-GC live-heap baseline for THIS input, taken before fn and before the
+	// proc-stat baseline so the baseline GC's own CPU is not charged to the input.
+	// Only on a cadence sample: the GC is the expensive part we pay on schedule.
+	var baseHeap uint64
+	if cadence {
+		baseHeap = liveHeapGC()
+	}
 
 	before := readProcStats()
 	g0 := runtime.NumGoroutine()
@@ -235,7 +293,16 @@ func (p *Probe) Measure(inputLen int, fn func()) Cost {
 
 	c.Sampled = expensive
 	if expensive {
-		c.LiveHeap = liveHeap()
+		afterHeap := liveHeapGC()
+		c.LiveHeapAbs = afterHeap
+		if cadence {
+			// Per-input delta: live heap retained BY this input, with the heap
+			// accumulated by earlier iterations removed by the pre-fn baseline.
+			c.LiveHeap = heapDelta(afterHeap, baseHeap)
+		}
+		// Promoted (expensive && !cadence): no pre-fn baseline exists, so the
+		// delta is not attributable and LiveHeap stays 0 (documented gap, same
+		// as AllocBytes/Mallocs on the promoted path).
 	}
 
 	p.readSeams(&c)
@@ -278,14 +345,26 @@ func (p *Probe) readSeams(c *Cost) {
 	}
 }
 
-// liveHeap forces a GC and returns the live heap. Expensive; sampled callers
-// only. A single GC settles finalizer-reachable garbage from the previous input
-// so cross-input drift (see Drift) is measured against truly-live memory.
-func liveHeap() uint64 {
+// liveHeapGC forces a GC and returns the live (reachable) heap. Expensive;
+// sampled callers only. A single GC settles finalizer-reachable garbage so the
+// reading is truly-live memory, not transient allocation. Measure reads it twice
+// per cadence sample (before and after fn) to attribute a per-input live-heap
+// delta; once per promoted input (after fn only) to feed Drift the absolute.
+func liveHeapGC() uint64 {
 	runtime.GC()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	return m.HeapAlloc
+}
+
+// heapDelta is after-before clamped at 0: a single input can only ADD live heap;
+// a GC that freed more than fn retained (after < before, e.g. earlier garbage
+// collected during this input's GC) is a 0 delta, never a negative cost.
+func heapDelta(after, before uint64) uint64 {
+	if after <= before {
+		return 0
+	}
+	return after - before
 }
 
 // WatchDir points the disk meter at dir for subsequent Measure calls. Use it

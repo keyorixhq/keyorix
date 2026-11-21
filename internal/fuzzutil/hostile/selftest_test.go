@@ -255,8 +255,20 @@ var plantedDefects = []planted{
 	{"P6 partial body accepted", "O5", p6PartialOK, Program{Frame: 1}, Config{}},
 	{"P7 ignores context", "O2", p7NoCtx, Program{Fault: 4}, Config{}},
 	{"P8 goroutine leak", "O3", p8GoroutineLeak, Program{Status: 10}, Config{}},
-	{"P9 unbounded decompression", "O4", p9Bomb, Program{Enc: 2}, Config{CallTimeout: 4 * time.Second}},
+	{"P9 unbounded decompression", "O4", p9Bomb, Program{Enc: 2}, Config{CallTimeout: p9CallTimeout}},
 }
+
+// p9CallTimeout is P9's context deadline. P9 proves the allocation oracle (O4):
+// the toy inflates a 256 MiB gzip bomb through io.ReadAll, and Run checks the
+// allocation delta only if the call returns before the O2 hang window
+// (CallTimeout + hangSlack). Run's O2 path returns early, so a call that merely
+// ran slow reported "O2 HANG" and never reached O4. The inflate takes seconds
+// under -race, and 15.6 s on a saturated queue runner (a 4 s deadline, 8 s hang
+// window), which failed this test in the merge queue (#4369). The deadline is
+// therefore far above any plausible inflate time, so the verdict no longer
+// depends on host speed. O2 is proved by P7, whose 150 ms deadline needs a
+// genuinely hung call, not a slow one.
+const p9CallTimeout = 90 * time.Second
 
 func TestPlantedDefectsDetectedByDirectedPrograms(t *testing.T) {
 	for _, d := range plantedDefects {

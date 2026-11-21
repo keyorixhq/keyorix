@@ -263,8 +263,14 @@ var plantedDefects = []planted{
 	{"P6 partial body accepted", "O5", p6PartialOK, Program{Frame: 1}, Config{}},
 	{"P7 ignores context", "O2", p7NoCtx, Program{Fault: 4}, Config{}},
 	{"P8 goroutine leak", "O3", p8GoroutineLeak, Program{Status: 10}, Config{}},
-	{"P9 unbounded decompression", "O4", p9Bomb, Program{Enc: 2}, Config{CallTimeout: 4 * time.Second}},
+	{"P9 unbounded decompression", "O4", p9Bomb, Program{Enc: 2}, Config{CallTimeout: p9CallTimeout}},
 }
+
+// p9CallTimeout is P9's context deadline; see the same constant in
+// internal/fuzzutil/hostile/selftest_test.go (#4369). P9 proves O4, and Run
+// returns early with "O2 HANG" when the 256 MiB inflate is merely slow, so the
+// deadline sits far above any plausible inflate time.
+const p9CallTimeout = 90 * time.Second
 
 func TestPlantedDefectsDetectedByDirectedPrograms(t *testing.T) {
 	for _, d := range plantedDefects {

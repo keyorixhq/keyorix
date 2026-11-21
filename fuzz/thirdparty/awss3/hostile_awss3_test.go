@@ -58,6 +58,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/cloudfuzz"
+	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
 const (
@@ -79,6 +80,7 @@ func FuzzS3PutObjectResponse(f *testing.F) {
 	f.Add(308, []byte(``))
 	f.Add(200, []byte(`<?xml version="1.0"?><CompleteMultipartUploadResult><ETag>"x"</ETag></CompleteMultipartUploadResult>`))
 
+	probe, budget, haveBudget := s3ResguardProbe(f)
 	f.Fuzz(func(t *testing.T, status int, body []byte) {
 		code := cloudfuzz.ClampHTTPStatus(status)
 
@@ -117,14 +119,17 @@ func FuzzS3PutObjectResponse(f *testing.F) {
 		defer cancel()
 
 		var err error
-		cloudfuzz.RunGuarded(t, "s3.PutObject", func() {
-			_, err = cl.PutObject(ctx, &s3.PutObjectInput{
-				Bucket:      aws.String("evidence-bucket"),
-				Key:         aws.String("packs/evidence-2026.json"),
-				Body:        bytes.NewReader([]byte(`{"evidence":"pack"}`)),
-				ContentType: aws.String("application/json"),
+		cost := probe.Measure(len(body), func() {
+			cloudfuzz.RunGuarded(t, "s3.PutObject", func() {
+				_, err = cl.PutObject(ctx, &s3.PutObjectInput{
+					Bucket:      aws.String("evidence-bucket"),
+					Key:         aws.String("packs/evidence-2026.json"),
+					Body:        bytes.NewReader([]byte(`{"evidence":"pack"}`)),
+					ContentType: aws.String("application/json"),
+				})
 			})
 		})
+		resguard.FeedCoverage(cost)
 
 		if (code < 200 || code >= 300) && err == nil {
 			t.Fatalf("BYPASS: s3.PutObject treated non-2xx status %d as a successful upload", code)
@@ -137,5 +142,8 @@ func FuzzS3PutObjectResponse(f *testing.F) {
 			t.Fatalf("REDIRECT FOLLOWED: s3.PutObject reached the cross-host attacker target (hits=%d)", h)
 		}
 		cloudfuzz.CheckNoLeak(t, "s3.PutObject")
+		if haveBudget {
+			budget.Check(t.Fatalf, cost)
+		}
 	})
 }

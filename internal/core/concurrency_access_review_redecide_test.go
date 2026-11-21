@@ -46,10 +46,11 @@ func TestConcurrency_DecideAccessReviewItem_OnlyOneDecisionWins(t *testing.T) {
 	item := &models.AccessReviewItem{CampaignID: campaign.ID, PrincipalType: "role", PrincipalID: 999, RoleID: 1, Source: "role", Decision: core.ReviewItemPending}
 	require.NoError(t, db.Create(item).Error)
 
+	const reviewers = 24
+	seedActiveActors(t, db, reviewerIDs(100, reviewers)...) // the reviewers must be active accounts (#4159)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
-	const reviewers = 24
 	var succeeded atomic.Int64
 	var rejected atomic.Int64
 	unexpected := make(chan error, reviewers)

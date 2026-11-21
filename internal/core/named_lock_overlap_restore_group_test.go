@@ -33,6 +33,9 @@ func TestNamedLockOverlap_RestoreGroup_CeilingSeesConcurrentAdminGrant(t *testin
 	require.NoError(t, db.Create(&models.Role{ID: 9, Name: "admin", BypassesPermissionChecks: true, AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "assigner", AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 10, PermissionID: 1}).Error)
+	// #4161: RestoreGroup decides the route gate (users.read + roles.assign, global) in core.
+	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "users.read"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 10, PermissionID: 2}).Error)
 	for _, u := range []models.User{
 		{ID: 98, Username: "assigner", IsActive: true, AccountState: core.AccountActive},
 		{ID: 99, Username: "admin", IsActive: true, AccountState: core.AccountActive},

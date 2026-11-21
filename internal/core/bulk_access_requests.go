@@ -38,6 +38,17 @@ func approverPrincipal(approverID, approverMachineID uint) (actorType string, pr
 	return ActorTypeUser, approverID
 }
 
+// The bulk routes' own gate — roles.assign at the GLOBAL scope,
+// RequirePermission(permRolesAssign) on /access-requests/bulk-approve and
+// bulk-reject — is deliberately NOT decided here (#4161, authzdiff known-04).
+// Core's own rule is finer and per item: roles.assign at each request's project
+// (bulkAccessRequestRefusal below), the same ceiling the single-request path
+// applies, and it is what lets a machine approver (which never holds a global
+// role, ADR-030) approve in bulk at core level (#2495). The router's global gate is
+// a transport policy on top of that, not a rule core should re-derive, so the
+// differential classifies these two ops coreGateExcluded (server/authzdiff) instead
+// of comparing the core leg against the router's gate.
+
 // bulkAccessRequestNotFound is the per-item answer for a request ID that does not
 // exist AND for one in a project where the approver lacks roles.assign
 // (AUTHZ-ORACLE-1): the bulk routes are gated on roles.assign anywhere, so a

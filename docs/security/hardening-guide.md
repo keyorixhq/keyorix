@@ -166,19 +166,25 @@ a failed audit write fails the request.
 | Server process crash (`kill -9`, OOM, panic) | loses nothing | loses nothing | loses nothing |
 | OS crash, power loss, PostgreSQL crash | loses nothing | up to ~600 ms (3 × `wal_writer_delay`) of audit entries, as a tail | up to ~30 s of audit entries on Linux defaults (dirty page writeback) |
 | Hash chain after a crash | intact | intact: a lost tail, never a gap or a fork | no hash chain |
-| Backends | PostgreSQL, SQLite (SQLite's only level) | PostgreSQL only | — |
+| Backends | PostgreSQL, SQLite (the SQLite default) | PostgreSQL (default); SQLite opt-in, read audits only (below) | — |
 
 Non-audit writes (secret writes, revocations, rotations) commit durably at both
 levels: `standard` relaxes only the audit transaction's own commit
 (`SET LOCAL synchronous_commit = off`).
 
 **Defaults.** PostgreSQL: `standard` (allowed: `standard`, `strict`). SQLite:
-`strict` only; `audit_durability: standard` on SQLite refuses to start with
-`storage.database.audit_durability: standard is only supported with PostgreSQL;
-SQLite runs strict only -- remove the setting or set it to strict`. SQLite's
-`synchronous` pragma is per-connection and Keyorix shares one pool across every
-query, so relaxing it would relax every table, not only audit (Amendment 1's
-rejection, which stands).
+`strict` (allowed: `strict`, `standard`). On SQLite, `standard` is narrower than
+on PostgreSQL (ADR-112 Amendment 7): only batches made up entirely of successful
+secret-value read audits commit on one dedicated connection opened with
+`synchronous=NORMAL`. Every secret mutation and every mutation's audit row stays
+on the shared `synchronous=FULL` pool. A server process crash loses nothing. An
+OS crash or power loss can lose a tail of read-audit rows committed since the
+last disk sync (the next mutation, non-read audit row or checkpoint), never a
+gap or fork in the chain and never a committed mutation. SQLite has no
+background WAL writer, so unlike PostgreSQL's ~600 ms **no timer bounds that
+window**: on a read-only workload it lasts until the next write or checkpoint.
+The power-loss behaviour rests on SQLite's WAL design and is pending a
+power-cut test.
 
 **Choose `strict`** when your compliance position rests on "every disclosed
 secret has an audit record that survives power loss" (DORA, NIS2, ENS evidence

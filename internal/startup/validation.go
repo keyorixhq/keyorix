@@ -493,13 +493,23 @@ const autoFixPermsNotice = "Automatic file-permission fixing is on (security.aut
 func validateEncryption(cfg *config.Config, result *ValidationResult, tolerateUnprovisionedKeys bool) error {
 	enc := cfg.Storage.Encryption
 
+	// #4395: no configured provider reads a KEK salt (env/file/... without a
+	// password fallback), so there is no salt file to require: nothing ever
+	// creates one. A leftover salt_path is ignored with one warning.
+	if !enc.UsesSalt() {
+		if w := enc.UnusedSaltPathWarning(); w != "" {
+			result.Warnings = append(result.Warnings, w)
+		}
+		return validateWrappedDEKOnly(resolveKeyPath(enc.DEKPath), tolerateUnprovisionedKeys, result)
+	}
+
 	saltPath := resolveKeyPath(enc.SaltPath)
 	if strings.Contains(saltPath, "..") {
 		return fmt.Errorf("KEK salt path is unsafe: %s", saltPath)
 	}
 	dekPath := resolveKeyPath(enc.DEKPath)
-	if strings.Contains(dekPath, "..") {
-		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
+	if err := checkDEKPathSafe(dekPath); err != nil {
+		return err
 	}
 
 	saltInfo, saltErr := os.Stat(saltPath)
@@ -518,6 +528,33 @@ func validateEncryption(cfg *config.Config, result *ValidationResult, tolerateUn
 		return fmt.Errorf("KEK salt file %s has invalid size %d bytes (expected 32)", saltPath, saltInfo.Size())
 	}
 
+	return checkWrappedDEK(dekPath, dekInfo, dekErr)
+}
+
+// validateWrappedDEKOnly is validateEncryption for a key set with no salt file.
+func validateWrappedDEKOnly(dekPath string, tolerateUnprovisionedKeys bool, result *ValidationResult) error {
+	if err := checkDEKPathSafe(dekPath); err != nil {
+		return err
+	}
+	dekInfo, dekErr := os.Stat(dekPath)
+	if tolerateUnprovisionedKeys && os.IsNotExist(dekErr) {
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"wrapped DEK (%s) does not exist yet — treating as first boot; it will be generated before this check runs again", dekPath))
+		return nil
+	}
+	return checkWrappedDEK(dekPath, dekInfo, dekErr)
+}
+
+// checkDEKPathSafe and checkWrappedDEK are the DEK checks validateEncryption
+// and validateWrappedDEKOnly share, so the two cannot drift.
+func checkDEKPathSafe(dekPath string) error {
+	if strings.Contains(dekPath, "..") {
+		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
+	}
+	return nil
+}
+
+func checkWrappedDEK(dekPath string, dekInfo os.FileInfo, dekErr error) error {
 	if dekErr != nil {
 		return fmt.Errorf("wrapped DEK file not found: %s", dekPath)
 	}
@@ -590,7 +627,7 @@ func PrintValidationResult(result *ValidationResult) {
 	printStatus("Encryption", result.EncryptionOK)
 	printStatus("Database", result.DatabaseOK)
 	if result.EffectiveAuditDurability.Level != "" {
-		fmt.Printf("%-13s: %s (%s)\n", "Audit durability", result.EffectiveAuditDurability.Level, result.EffectiveAuditDurability.Level.Meaning())
+		fmt.Printf("%-13s: %s (%s)\n", "Audit durability", result.EffectiveAuditDurability.Level, result.EffectiveAuditDurability.Meaning())
 	}
 
 	if len(result.Warnings) > 0 {

@@ -190,7 +190,7 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 	}
 	var keyPaths, tlsPaths []string
 	if cfg.Storage.Encryption.Enabled {
-		keyPaths = append(keyPaths, resolve(cfg.Storage.Encryption.DEKPath), resolve(cfg.Storage.Encryption.SaltPath))
+		keyPaths = append(keyPaths, resolve(cfg.Storage.Encryption.DEKPath), resolve(cfg.Storage.Encryption.EffectiveSaltPath()))
 	}
 	if cfg.Server.HTTP.TLS.Enabled {
 		tlsPaths = append(tlsPaths, cfg.Server.HTTP.TLS.KeyFile)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/secretenv"
@@ -359,7 +360,8 @@ func validateBindHost(field, host string) error {
 // validateAllowedOrigins rejects a misconfigured CORS allowlist (server.http.
 // allowed_origins) at startup rather than letting it sit silently until it's
 // proven wrong in the field. A bare "*" — which matches every origin — must not
-// be configurable here: the caller must list explicit origins. Every entry must
+// be configurable here, nor a '*' inside an entry (a go-chi/cors pattern such as
+// https://*.example.com): the caller must list explicit origins. Every entry must
 // also be a well-formed origin: an http(s) scheme, a host, and nothing else (no
 // path, query, fragment, userinfo, or trailing slash) — the exact shape
 // Access-Control-Allow-Origin expects an Origin header to have.
@@ -374,6 +376,13 @@ func validateAllowedOrigins(origins []string) error {
 		}
 		if u.Scheme != "http" && u.Scheme != "https" {
 			return fmt.Errorf("server.http.allowed_origins entry %q must use http or https", o)
+		}
+		// go-chi/cors treats a '*' anywhere in an entry as a wildcard, so "https://*"
+		// grants every https origin a credentialed response (the effect the bare "*"
+		// ban exists to prevent) and "https://*.example.com" turns the exact-origin
+		// list into a subdomain pattern (#4382).
+		if strings.Contains(o, "*") {
+			return fmt.Errorf("server.http.allowed_origins entry %q must not contain \"*\" — list each origin explicitly; a wildcard pattern defeats the CORS allowlist", o)
 		}
 	}
 	return nil
@@ -439,6 +448,12 @@ func validateServerSection(c *Config) error {
 
 	if err := validateAllowedOrigins(c.Server.HTTP.AllowedOrigins); err != nil {
 		return err
+	}
+	// With allowed_origins empty, the CORS allowlist defaults to https://<domain>
+	// (server/http/router.go getAllowedOrigins), so a '*' here is the same
+	// credentialed wildcard pattern validateAllowedOrigins refuses (#4382 sibling).
+	if strings.Contains(c.Server.HTTP.Domain, "*") {
+		return fmt.Errorf("server.http.domain must not contain \"*\" — it is the default CORS origin (https://<domain>); a wildcard pattern defeats the CORS allowlist")
 	}
 
 	if err := validateAutoCertForProfile(c, airgapProfile); err != nil {

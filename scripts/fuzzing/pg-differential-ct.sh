@@ -27,7 +27,7 @@ GO_VERSION="${GO_VERSION:-1.27.4}" # must match go.mod's toolchain line (checked
 GO_SHA256_1_27_4=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
 if [ "$GO_VERSION" = "1.27.4" ]; then GO_SHA256="${GO_SHA256:-$GO_SHA256_1_27_4}"; fi
 GO_SHA256="${GO_SHA256:-}"
-PG_PASSWORD="${PG_PASSWORD:-difffuzz}"
+PG_PASSWORD="${PG_PASSWORD:?set PG_PASSWORD, e.g. export PG_PASSWORD=\$(openssl rand -hex 16)}"
 
 if [ -z "$GO_SHA256" ]; then
   echo "GO_VERSION=$GO_VERSION has no pinned checksum: set GO_SHA256 to the value go.dev/dl publishes" >&2
@@ -87,4 +87,4 @@ if [ ! -x /usr/local/go/bin/go ]; then
 fi
 echo "collation: $(su postgres -c "psql -tAc \"select datcollate from pg_database where datname='difffuzz'\"")"
 INNER
-echo "Ready. Inside the CT: export PATH=\$PATH:/usr/local/go/bin KEYORIX_TEST_PG_DSN='postgres://difffuzz:${PG_PASSWORD}@127.0.0.1:5432/difffuzz?sslmode=disable'"
+echo "Ready. Inside the CT: export PATH=\$PATH:/usr/local/go/bin KEYORIX_TEST_PG_DSN='postgres://difffuzz:<PG_PASSWORD>@127.0.0.1:5432/difffuzz?sslmode=disable'"

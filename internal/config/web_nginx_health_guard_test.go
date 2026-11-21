@@ -114,6 +114,85 @@ func checkWebNginxHealth(conf string) []string {
 	return problems
 }
 
+// checkWebNginxReadyz: the server has GET /readyz (database reachable). Behind the
+// web container it must be backend-aware and status only like /health; otherwise
+// it falls through to the SPA `location /` and answers 200 with index.html while
+// the backend is down.
+func checkWebNginxReadyz(conf string) []string {
+	var problems []string
+	ready, ok := nginxLocationBody(conf, "= /readyz")
+	switch {
+	case !ok:
+		problems = append(problems, "no `location = /readyz` block (it would fall through to the SPA and answer 200 with the backend down)")
+	case strings.Contains(ready, "proxy_pass"):
+		problems = append(problems, "`location = /readyz` must not proxy_pass: that sends the backend's body to the client (status only)")
+	case !strings.Contains(ready, "auth_request /_backend_readyz;"):
+		problems = append(problems, "`location = /readyz` must `auth_request /_backend_readyz;`")
+	case strings.Contains(ready, "return "):
+		problems = append(problems, "`location = /readyz` must not `return` (rewrite phase runs before auth_request)")
+	case !strings.Contains(ready, "= @health_unavailable;"):
+		problems = append(problems, "`location = /readyz` must map a failed subrequest to `@health_unavailable`")
+	case !strings.Contains(ready, "@health_ok"):
+		problems = append(problems, "`location = /readyz` must reach `@health_ok` with try_files")
+	}
+	for _, code := range []string{"401", "403", "500", "502", "503", "504"} {
+		if ok && !regexp.MustCompile(`error_page[^;]*\b`+code+`\b[^;]*=`).MatchString(ready) {
+			problems = append(problems, "`location = /readyz` error_page must cover "+code)
+		}
+	}
+	backend, ok := nginxLocationBody(conf, "= /_backend_readyz")
+	switch {
+	case !ok:
+		problems = append(problems, "no `location = /_backend_readyz` block")
+	case !strings.Contains(backend, "internal;"):
+		problems = append(problems, "`location = /_backend_readyz` must be `internal;`")
+	case !strings.Contains(backend, "proxy_pass $keyorix_backend/readyz;"):
+		problems = append(problems, "`location = /_backend_readyz` must `proxy_pass $keyorix_backend/readyz;`")
+	case !strings.Contains(backend, "include /etc/nginx/keyorix-backend.conf;"):
+		problems = append(problems, "`location = /_backend_readyz` must include keyorix-backend.conf")
+	}
+	return problems
+}
+
+func TestWebNginxReadyzIsBackendAwareStatusOnly(t *testing.T) {
+	data, err := os.ReadFile("../../web/nginx.conf") // #nosec G304 -- fixed relative path to a repo file
+	require.NoError(t, err)
+	assert.Empty(t, checkWebNginxReadyz(string(data)))
+}
+
+func TestCheckWebNginxReadyz_DetectsRegressions(t *testing.T) {
+	good := `server {
+    location = /readyz {
+        auth_request /_backend_readyz;
+        error_page 401 403 500 502 503 504 = @health_unavailable;
+        try_files /.none @health_ok;
+    }
+    location = /_backend_readyz {
+        internal;
+        include /etc/nginx/keyorix-backend.conf;
+        proxy_pass $keyorix_backend/readyz;
+    }
+}`
+	assert.Empty(t, checkWebNginxReadyz(good))
+
+	// No /readyz location at all: the SPA fallback answers 200.
+	assert.NotEmpty(t, checkWebNginxReadyz(`server { location / { try_files $uri /index.html; } }`))
+	// Static answer.
+	assert.NotEmpty(t, checkWebNginxReadyz(strings.Replace(good, "try_files /.none @health_ok;", `return 200 "ok";`, 1)))
+	// Backend body proxied to the client.
+	assert.NotEmpty(t, checkWebNginxReadyz(strings.Replace(good, "auth_request /_backend_readyz;", "proxy_pass $keyorix_backend/readyz;", 1)))
+	// Subrequest target reachable by clients.
+	assert.NotEmpty(t, checkWebNginxReadyz(strings.Replace(good, "        internal;\n", "", 1)))
+}
+
+// The operator text must say which endpoint a load balancer probes.
+func TestOperatorDocsNameTheLoadBalancerProbe(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/SELF_HOSTING.md") // #nosec G304 -- fixed relative path
+	require.NoError(t, err)
+	assert.Contains(t, string(doc), "A load balancer must probe `/health`",
+		"docs/SELF_HOSTING.md must say which endpoint a load balancer probes")
+}
+
 func TestWebNginxHealthIsBackendAwareStatusOnly(t *testing.T) {
 	data, err := os.ReadFile("../../web/nginx.conf") // #nosec G304 -- fixed relative path to a repo file
 	require.NoError(t, err)

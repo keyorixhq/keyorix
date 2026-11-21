@@ -166,6 +166,9 @@ func TestCreateUserWithOneTimePassword_RecordsExpiry(t *testing.T) {
 			ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, assertNotFoundErr())
 
 			ms.On("GetUser", ctx, uint(7)).Return(&models.User{ID: 7, IsActive: true, AccountState: AccountActive}, nil).Maybe() // the creating admin is active (#4159)
+			// #4161: CreateUserAudited decides the route gate (users.read + users.write, global) in core.
+			stubAuthorizedPrincipal(ms, 7, Scope{}, permUsersRead)
+			stubAuthorizedPrincipal(ms, 7, Scope{}, permUsersWrite)
 			_, otp, err := c.CreateUserWithOneTimePassword(ctx, &CreateUserRequest{Username: "dana", Email: "dana@acme.io", DisplayName: "Dana"}, 7, false)
 			require.NoError(t, err)
 

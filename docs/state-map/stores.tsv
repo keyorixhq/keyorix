@@ -102,6 +102,7 @@ cmd/statemapgen/main.go (os.WriteFile)	file_write	cmd/statemapgen	2
 devtools/authzmatrix/main.go (os.WriteFile)	file_write	devtools/authzmatrix	2
 fuzzkit/certdiff/certdiff.go (os.WriteFile)	file_write	fuzzkit/certdiff	2
 internal/audit/siem/spool.go (os.OpenFile)	file_write	internal/audit/siem	1
+internal/auditverify/sqlite_wal_copy.go (os.OpenFile)	file_write	internal/auditverify	1
 internal/auditverify/witness.go (os.OpenFile)	file_write	internal/auditverify	1
 internal/backupfmt/reader.go (os.OpenFile)	file_write	internal/backupfmt	1
 internal/backupfmt/reader.go (os.WriteFile)	file_write	internal/backupfmt	1
@@ -164,6 +165,7 @@ scripts/metrics/surfacewalk/startup.go (os.Create)	file_write	scripts/metrics/su
 scripts/migrate/rssrun/main.go (os.Create)	file_write	scripts/migrate/rssrun	1
 scripts/migrate/rssrun/main.go (os.WriteFile)	file_write	scripts/migrate/rssrun	1
 scripts/mutation-testing/survivor-fuzz/mutate/main.go (os.WriteFile)	file_write	scripts/mutation-testing/survivor-fuzz/mutate	2
+scripts/powercut-pg/main.go (os.OpenFile)	file_write	scripts/powercut-pg	1
 scripts/powercut/main.go (os.OpenFile)	file_write	scripts/powercut	1
 scripts/refactor/coretestclass/main.go (os.WriteFile)	file_write	scripts/refactor/coretestclass	1
 server/admin/audit_export_checkpoint.go (os.OpenFile)	file_write	server/admin	1

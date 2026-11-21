@@ -141,8 +141,14 @@ func emergencyAccessStatus(p *CompliancePosture) ControlStatus {
 }
 
 // emergencyAccessDetail says "all audited" only when no activation has owed
-// audit rows.
-func emergencyAccessDetail(e EmergencyAccessPosture) string {
+// audit rows and every project's activations were read; after a failed read
+// the counts are partial and say so.
+func emergencyAccessDetail(p *CompliancePosture) string {
+	e := p.EmergencyAccess
+	if p.DegradedArea("emergency_access:project=", "evidence:break_glass:") {
+		return fmt.Sprintf("UNKNOWN — the break-glass activations of at least one project could not be read this run (see the degraded reasons); of those read: %d active, %d total, %d with audit rows still owed, %d unreviewed past the window",
+			e.ActiveActivations, e.TotalActivations, e.DegradedActivations, e.UnreviewedActivations)
+	}
 	audited := "all audited"
 	if e.DegradedActivations > 0 {
 		audited = fmt.Sprintf("%d with audit rows still owed", e.DegradedActivations)
@@ -232,7 +238,7 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			// failed collection still needs to surface as unknown, not a default
 			// Pass or a false Gap.
 			Status:     emergencyAccessStatus(p),
-			Detail:     emergencyAccessDetail(p.EmergencyAccess),
+			Detail:     emergencyAccessDetail(p),
 			Frameworks: FrameworkRefs{ISO27001: []string{ctrlA515}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{ctrlOpAcc4, "op.exp.7"}},
 		},
 		{
@@ -243,7 +249,7 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			// activation must say so as its own distinct finding -- never silently
 			// read identical to "reviewed" or to an ordinary unreviewed backlog.
 			Status:     controlStatus(p.DegradedArea("emergency_access:", "evidence:break_glass:"), p.EmergencyAccess.IndependentReviewImpossible),
-			Detail:     independentReviewerDetail(p.EmergencyAccess),
+			Detail:     independentReviewerDetail(p),
 			Frameworks: FrameworkRefs{ISO27001: []string{ctrlA515}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{ctrlOpAcc4}},
 		},
 		{
@@ -403,8 +409,11 @@ func classificationDetail(p *CompliancePosture) string {
 // finding in
 // human-readable form -- it must say outright that independent review is
 // impossible, not leave an auditor to infer it from a count being 1.
-func independentReviewerDetail(e EmergencyAccessPosture) string {
-	if e.IndependentReviewImpossible {
+func independentReviewerDetail(p *CompliancePosture) string {
+	if p.DegradedArea("emergency_access:independent_reviewer") {
+		return "UNKNOWN — whether a reviewer other than the activator is available could not be determined this run (see the degraded reasons)"
+	}
+	if p.EmergencyAccess.IndependentReviewImpossible {
 		return "no reviewer other than the activator is available in this deployment -- independent post-activation review is not currently possible"
 	}
 	return "an independent reviewer is available"

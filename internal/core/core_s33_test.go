@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // ── oidc_jwks.go — parseJWK EC branches ─────────────────────────────────
@@ -143,6 +144,8 @@ func TestRevokeAssignmentGrants_ValidJSON_RemoveFails(t *testing.T) {
 	// With empty existing roles, RemoveProjectMember returns "user is not a member"
 	// which feeds the auditProjectScoped path.
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	// No membership row either (revokeInvitationMembershipRow).
+	ms.On("GetActiveProjectMembership", mock.Anything, mock.Anything, uint(5)).Return(nil, gorm.ErrRecordNotFound)
 	c := NewKeyorixCore(ms)
 	inv := &models.ProjectInvitation{
 		ID:              1,
@@ -216,6 +219,7 @@ func TestAssignRoleToUser_Success(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetUserByEmail", mock.Anything, "alice@example.com").Return(&models.User{ID: 5}, nil)
+	ms.On("GetUser", mock.Anything, uint(5)).Return(&models.User{ID: 5}, nil) // the grant target must exist (ERRMAP-TAILS-NOV-4)
 	ms.On("GetRoleByName", mock.Anything, "viewer").Return(&models.Role{ID: 3, Name: "viewer"}, nil)
 	// requireNoSoDViolation: ListSoDPolicies smart stub = nil → OK
 	// assignUserRoleSystemGrant calls AssignRole

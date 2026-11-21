@@ -36,15 +36,17 @@
   ([AIRGAP_RUNBOOK.md](AIRGAP_RUNBOOK.md)). Features that talk to other systems
   (SSO, SIEM, webhooks, connectors) are off until you configure them.
 
-## 2. SQLite on the edge: strict audit durability only
+## 2. SQLite on the edge: strict audit durability by default
 
-On SQLite the audit commit always waits for the disk sync (`strict`). There is
-no setting that relaxes it, and `audit_durability: standard` on SQLite refuses
-to start. The reason is structural: SQLite's `synchronous` pragma is
-per-connection and Keyorix shares one connection pool across every query, so
-relaxing it would relax every table, not only the audit table
+On SQLite the audit commit waits for the disk sync (`strict`) unless you set
+`audit_durability: standard`. That setting relaxes only successful secret-read
+audits, which then commit on one dedicated `synchronous=NORMAL` connection;
+secret writes, revocations, rotations and their audit rows always wait for the
+disk sync. On an edge box that can lose power, `standard` can lose a tail of
+read-audit rows written since the last disk sync, with no time bound, so keep
+`strict` unless reads are the bottleneck
 ([hardening guide §5a](security/hardening-guide.md#5a-audit-durability-levels),
-ADR-112 Amendment 3, [spec](specs/fast-audit-mode.md)).
+ADR-112 Amendment 7, [spec](specs/fast-audit-mode.md)).
 
 For an edge device this is the right trade. Power is the failure you actually
 expect, and `strict` is the level where an audit entry that was committed

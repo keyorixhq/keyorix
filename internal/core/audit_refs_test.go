@@ -40,7 +40,8 @@ func TestAuditDescriptionsCarryNames(t *testing.T) {
 		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
-	ensureActiveActor(t, c.storage, 42) // the acting user of the restores is active (#4159)
+	ensureActiveActor(t, c.storage, 42)                  // the acting user of the restores is active (#4159)
+	grantGateHolder(t, db, 42, Scope{}, permRolesAssign) // #4161: RestoreProject decides the route gate in core
 	ctx := context.Background()
 
 	lastDescription := func(eventType string) string {

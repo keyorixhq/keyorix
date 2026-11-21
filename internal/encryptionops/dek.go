@@ -460,7 +460,12 @@ func StatusWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) error
 	fmt.Println("==================")
 	fmt.Printf("Enabled: %v\n", cfg.Storage.Encryption.Enabled)
 	fmt.Printf("DEK Path: %s\n", cfg.Storage.Encryption.DEKPath)
-	fmt.Printf("Salt Path: %s\n", cfg.Storage.Encryption.SaltPath)
+	if cfg.Storage.Encryption.UsesSalt() {
+		fmt.Printf("Salt Path: %s\n", cfg.Storage.Encryption.SaltPath)
+	} else if cfg.Storage.Encryption.SaltPath != "" {
+		fmt.Printf("Salt Path: %s (ignored: provider %s reads no KEK salt)\n",
+			cfg.Storage.Encryption.SaltPath, cfg.Storage.Encryption.KeyProvider.Type)
+	}
 
 	if !cfg.Storage.Encryption.Enabled {
 		return nil

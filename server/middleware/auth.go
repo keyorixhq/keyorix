@@ -619,7 +619,12 @@ func serveAuthCacheHit(next http.Handler, w http.ResponseWriter, r *http.Request
 		case strings.HasPrefix(token, patTokenPrefix):
 			fresh, err := coreService.CurrentPATRestriction(r.Context(), token)
 			switch {
-			case errors.Is(err, core.ErrPATRevoked) || errors.Is(err, core.ErrPATExpired):
+			// ErrPATOwnerNotActive: the owning account was suspended,
+			// deactivated or deleted after this entry was cached. The same
+			// definitive deny as a revoked token, as ErrMachineIdentityNotActive
+			// is for a machine token below.
+			case errors.Is(err, core.ErrPATRevoked) || errors.Is(err, core.ErrPATExpired) ||
+				errors.Is(err, core.ErrPATOwnerNotActive):
 				denyRevokedCacheHit(w, token)
 				return
 			case err != nil:

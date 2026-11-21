@@ -57,8 +57,9 @@ func TestBackupArchive_NeverContainsAuditHighWaterWitness(t *testing.T) {
 	witnessBytes, err := os.ReadFile(witnessPath)
 	require.NoError(t, err)
 
+	// No salt_path: a tpm provider does not use a KEK salt (#4395), so the
+	// registry would not list one even if it were configured.
 	enc := &config.EncryptionConfig{
-		SaltPath:    "kek.salt",
 		DEKPath:     "dek.key",
 		KeyProvider: config.KeyProviderConfig{Type: "tpm", WrappedKeyPath: "kek.tpm"},
 	}
@@ -81,7 +82,7 @@ func TestBackupArchive_NeverContainsAuditHighWaterWitness(t *testing.T) {
 		keyBlobs[i] = data
 		require.NotEqual(t, filepath.Clean(witnessPath), filepath.Clean(spec.Path), "the witness must never be a key-file entry")
 	}
-	require.Len(t, specs, 3, "test bug: expected salt, DEK and wrapped KEK")
+	require.Len(t, specs, 2, "test bug: expected DEK and wrapped KEK")
 
 	// The archive's own high-water mark (from the DB) is lower than the
 	// witness, as it would be for an old backup.

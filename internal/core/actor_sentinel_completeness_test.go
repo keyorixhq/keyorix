@@ -118,6 +118,10 @@ var actorSentinelAllowlist = map[string]actorSentinelEntry{
 		class: classPerActorCeiling, status: statusEnforced,
 		note: "#4162: actorID==0 together with a machine actor type on ctx is REFUSED (typed ErrPermissionDenied) at the human-only entry points that call it; actorID==0 without a machine tag (local/system caller) falls through to the operation's own validation, unchanged.",
 	},
+	"authz_core_gate.go:gateActor": {
+		class: classPerActorCeiling, status: statusEnforced,
+		note: "#4161: a machine actor is never identified by actorID here — it is resolved from the machine identity the auth middleware tagged on ctx (WithMachineActor) and FAILS CLOSED (typed ErrPermissionDenied) when a machine-typed ctx carries none; actorID==0 is exempt only for an UNTAGGED (human-typed) ctx, the internal pseudo-actor every other core ceiling exempts (requireGranterHoldsRolePermissions, requireBaselineRoleGrantAuthority). TestCoreGateParity_InternalPseudoActorIsExempt drives the exemption; the machine cases of every TestCoreGateParity_* table drive the refusal.",
+	},
 	"anomaly_alerting.go:AcknowledgeAnomalyAlert": {
 		class: classAuditOnly,
 		note:  "attribution-only audit pointer; the write-permission gate at the transport already authorized the call.",

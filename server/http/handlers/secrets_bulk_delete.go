@@ -40,7 +40,10 @@ func (h *SecretHandler) BulkDeleteSecrets(w http.ResponseWriter, r *http.Request
 	}
 
 	ip, ua := clientIP(r), r.Header.Get("User-Agent")
-	result, err := h.coreService.BulkDeleteSecrets(r.Context(), req, uint(projectID), userCtx.Username, userCtx.UserID, ip, ua)
+	// Tagged, so each item commits its secret.deleted row in its own transaction and an
+	// audit-log outage fails that item, changing nothing, with code audit_unavailable
+	// (retryable) instead of the delete committing with a best-effort row.
+	result, err := h.coreService.BulkDeleteSecrets(secretMutationAuditContext(r, userCtx), req, uint(projectID), userCtx.Username, userCtx.UserID, ip, ua)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "exceeds the maximum batch size") {

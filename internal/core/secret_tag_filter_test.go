@@ -31,7 +31,8 @@ func TestListSecretsInScope_TagFilter(t *testing.T) {
 	require.NoError(t, err)
 	e, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
 	require.NoError(t, err)
-	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error) // membership row the owner checks read
+	seedOwnerWriteRoleForTest(t, db, 1)                                                          // #4508: the owner must hold secrets.write
 
 	mk := func(name string, tags ...string) uint {
 		s, err := c.storage.CreateSecret(ctx, &models.SecretNode{

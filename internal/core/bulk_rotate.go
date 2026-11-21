@@ -76,10 +76,19 @@ const maxBulkRotateBatchSize = 500
 // BulkRotateResult.Failed with reason "no rotation config" — it is never treated
 // as a fatal error. Otherwise, rotation is triggered via RotateSecretOnDemand.
 //
+// actorID is the authenticated caller. Authorization (secrets.write at project
+// scope) stays at the transport; core only refuses an actor whose account is no
+// longer active (requireActorActive), and treats actorID 0 and machine actors as
+// not checked. req.RotatedBy remains an audit label and is never trusted as an
+// identity.
+//
 // Returns partial results; individual secret failures do not abort the run.
 // Returns an error only if the request is structurally invalid or the initial
 // secret load fails entirely.
-func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, req BulkRotateRequest) (*BulkRotateResult, error) {
+func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, actorID uint, req BulkRotateRequest) (*BulkRotateResult, error) {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	if req.ProjectID == 0 {
 		return nil, fmt.Errorf("project ID is required")
 	}

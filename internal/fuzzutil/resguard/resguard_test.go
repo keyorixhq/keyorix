@@ -195,6 +195,50 @@ func TestBudgetAbsMaxFallsBackToSlopeWhenUncalibrated(t *testing.T) {
 	}
 }
 
+// TestBudgetUseBoundedAbsolute: a target whose cost is set by a CLAIMED size
+// (not by input bytes) gets AbsMax = calibrated AbsMax + the product's enforced
+// bound. GREEN: a tiny input costing one bounded buffer passes. RED: an input
+// costing more than bound + the calibrated ceiling fires, naming the meter, and
+// the boundary is exact (just below passes, just above fires). The per-byte slope
+// alone would have failed the GREEN case.
+func TestBudgetUseBoundedAbsolute(t *testing.T) {
+	const bound = 1 << 20
+	corpus := []Cost{{InputLen: 10, Sampled: true, AllocSampled: true, AllocBytes: 100000}}
+	b := Calibrate("claimed", corpus, DefaultFactor)
+	slope := b
+	slope.Meters = map[string]MeterBudget{"alloc_bytes": b.Meters["alloc_bytes"]}
+	tiny := Cost{InputLen: 9, Sampled: true, AllocSampled: true, AllocBytes: bound}
+	if !slope.Check(func(string, ...any) {}, tiny) {
+		t.Fatalf("precondition: the per-byte slope must reject a 9-byte input costing one bounded buffer")
+	}
+
+	b.UseBoundedAbsolute("alloc_bytes", bound)
+	b.UseBoundedAbsolute("no_such_meter", bound) // ignored
+	b.UseBoundedAbsolute("alloc_bytes", 0)       // ignored: no bound, no change
+	ceiling := b.Meters["alloc_bytes"].AbsMax
+	if want := 100000*DefaultFactor + bound; ceiling != want {
+		t.Fatalf("AbsMax = %v, want calibrated + bound = %v", ceiling, want)
+	}
+	if b.Meters["alloc_bytes"].Mode != ModeAbsolute {
+		t.Fatalf("meter must be absolute")
+	}
+
+	if b.Check(func(string, ...any) {}, tiny) {
+		t.Fatalf("GREEN: one bounded buffer for a 9-byte input must pass")
+	}
+	below := tiny
+	below.AllocBytes = uint64(ceiling) - 1
+	if b.Check(func(string, ...any) {}, below) {
+		t.Fatalf("GREEN: just below the ceiling must pass")
+	}
+	above := tiny
+	above.AllocBytes = uint64(ceiling) + 1
+	var msg string
+	if !b.Check(func(f string, a ...any) { msg = fmt.Sprintf(f, a...) }, above) || !strings.Contains(msg, "alloc_bytes") {
+		t.Fatalf("RED: just above the ceiling must fire naming alloc_bytes, got %q", msg)
+	}
+}
+
 // TestBudgetSkipsUnsampledSampleOnlyMeters guards that a cheap (unsampled)
 // input never fails on a sampled-only meter whose fields are zero.
 func TestBudgetSkipsUnsampledSampleOnlyMeters(t *testing.T) {
@@ -216,7 +260,7 @@ func TestMeasureSlowPromotionMarksAllocUnmeasured(t *testing.T) {
 		allocSink = make([]byte, 1<<20)
 		time.Sleep(50 * time.Millisecond)
 	})
-	if !slow.Sampled || slow.LiveHeap == 0 {
+	if !slow.Sampled || slow.LiveHeapAbs == 0 {
 		t.Fatalf("slow input must be promoted to a live-heap sample: %+v", slow)
 	}
 	if slow.AllocSampled || slow.AllocBytes != 0 || slow.Mallocs != 0 {
@@ -404,22 +448,23 @@ func TestDiskMeterGrowth(t *testing.T) {
 func TestDriftFlagsSustainedHeapGrowth(t *testing.T) {
 	d := newDrift()
 	base := uint64(10 << 20)
-	// warmup + baseline
+	// warmup + baseline. Drift watches the ABSOLUTE heap (LiveHeapAbs), not the
+	// per-input delta, so a leak that creeps up the absolute floor is caught.
 	for range driftWarmupSamples + 1 {
-		if r := d.Observe(Cost{Sampled: true, LiveHeap: base}); r != "" {
+		if r := d.Observe(Cost{Sampled: true, LiveHeapAbs: base}); r != "" {
 			t.Fatalf("warmup/baseline must not flag: %s", r)
 		}
 	}
 	// GREEN: stable heap never flags.
 	for range driftK + 2 {
-		if r := d.Observe(Cost{Sampled: true, LiveHeap: base}); r != "" {
+		if r := d.Observe(Cost{Sampled: true, LiveHeapAbs: base}); r != "" {
 			t.Fatalf("stable heap flagged: %s", r)
 		}
 	}
 	// RED: a heap that stays 10× baseline flags within driftK samples.
 	var reason string
 	for range driftK {
-		reason = d.Observe(Cost{Sampled: true, LiveHeap: base * 10})
+		reason = d.Observe(Cost{Sampled: true, LiveHeapAbs: base * 10})
 	}
 	if reason == "" || !contains(reason, "live-heap") {
 		t.Fatalf("sustained growth should flag live-heap, got %q", reason)
@@ -429,9 +474,166 @@ func TestDriftFlagsSustainedHeapGrowth(t *testing.T) {
 func TestDriftIgnoresUnsampled(t *testing.T) {
 	d := newDrift()
 	for range 100 {
-		if r := d.Observe(Cost{Sampled: false, LiveHeap: 1 << 40}); r != "" {
+		if r := d.Observe(Cost{Sampled: false, LiveHeapAbs: 1 << 40}); r != "" {
 			t.Fatalf("unsampled cost must be ignored, got %q", r)
 		}
+	}
+}
+
+// --- live-heap is a per-input DELTA, not an absolute (RG3) ----------------
+
+// heapRetain holds allocations alive ACROSS Measure calls so they count as live
+// (post-GC) heap — the exact shape of a fuzz worker accumulating reachable
+// memory across iterations (corpus/coverage maps/caches) that produced the RG3
+// live_heap false positive (a 2-byte input charged ~107 MB of accumulation).
+var heapRetain [][]byte
+
+// retainChunk allocates n bytes, TOUCHES every page so the pages are resident
+// (not zero-page-elided), appends them to heapRetain so they stay live past GC,
+// and returns. Used as the body of a Measure call that genuinely retains heap.
+func retainChunk(n int) {
+	b := make([]byte, n)
+	for i := 0; i < len(b); i += 4096 {
+		b[i] = byte(i)
+	}
+	b[len(b)-1] = 1
+	heapRetain = append(heapRetain, b)
+}
+
+// TestLiveHeapIsPerInputDeltaNotAbsolute is the direct reproduction of the RG3
+// artefact and the proof it is fixed: a tiny input measured while tens of MiB of
+// heap the worker accumulated earlier are still live must NOT be charged that
+// accumulation. The absolute heap (LiveHeapAbs) still SEES it (for Drift); the
+// per-input budget meter (LiveHeap) does not.
+func TestLiveHeapIsPerInputDeltaNotAbsolute(t *testing.T) {
+	heapRetain = nil
+	t.Cleanup(func() { heapRetain = nil })
+
+	p := New(t, Options{SampleEvery: 1}) // every input is a cadence sample
+	const chunk = 64 << 20               // 64 MiB retained by an earlier iteration
+
+	heavy := p.Measure(16, func() { retainChunk(chunk) })
+	if heavy.LiveHeap < chunk/2 {
+		t.Fatalf("the heavy input genuinely retained ~64 MiB; its per-input delta should reflect it, got %d", heavy.LiveHeap)
+	}
+
+	// The tiny input allocates ~nothing. The 64 MiB is still live (heapRetain
+	// holds it), so an ABSOLUTE meter charges this 2-byte input the whole 64 MiB.
+	tiny := p.Measure(2, func() { _ = 1 })
+
+	if tiny.LiveHeapAbs < chunk/2 {
+		t.Fatalf("accumulation must remain visible in the absolute heap (for Drift), abs=%d", tiny.LiveHeapAbs)
+	}
+	if tiny.LiveHeap > 8<<20 {
+		t.Fatalf("RG3 regression: per-input delta charged accumulated heap: delta=%d abs=%d", tiny.LiveHeap, tiny.LiveHeapAbs)
+	}
+	t.Logf("tiny 2-byte input: per-input delta=%d (bounded), absolute=%d (accumulation, Drift-only)", tiny.LiveHeap, tiny.LiveHeapAbs)
+}
+
+// TestLiveHeapDeltaDefeatsAccumulationFalsePositive is the RED/GREEN proof that
+// the delta semantics fix the FP WITHOUT loosening the budget: against a budget
+// calibrated on clean small iterations, judging the ABSOLUTE heap as a per-input
+// cost (the old behaviour) FIRES on a tiny input polluted by accumulation (RED,
+// reproducing cb1a9523e20b9df6's shape), while the per-input DELTA does not
+// (GREEN). The same budget is used for both; only the measured field differs.
+func TestLiveHeapDeltaDefeatsAccumulationFalsePositive(t *testing.T) {
+	heapRetain = nil
+	t.Cleanup(func() { heapRetain = nil })
+
+	// Clean calibration corpus: small per-input retained heap (~256 KiB), exactly
+	// what calibration sees early in a fresh process. Synthetic Costs keep it
+	// deterministic (no GC noise in the ceiling itself).
+	var clean []Cost
+	for range 8 {
+		clean = append(clean, Cost{InputLen: 16, Sampled: true, LiveHeap: 256 << 10})
+	}
+	b := Calibrate("live_heap_fp", clean, DefaultFactor)
+	if _, ok := b.Meters["live_heap"]; !ok {
+		t.Fatalf("live_heap must be calibrated for this proof; meters=%s", b.Summary())
+	}
+
+	// Produce the accumulation shape with a real Probe: a tiny input after a
+	// heavy one whose 64 MiB is still live.
+	p := New(t, Options{SampleEvery: 1})
+	const chunk = 64 << 20
+	_ = p.Measure(16, func() { retainChunk(chunk) })
+	tiny := p.Measure(2, func() { _ = 1 })
+
+	// RED: the OLD absolute reading (what liveHeap() used to place in LiveHeap)
+	// trips the clean budget — this IS the false positive being fixed.
+	absCost := tiny
+	absCost.LiveHeap = tiny.LiveHeapAbs
+	if !b.Check(func(string, ...any) {}, absCost) {
+		t.Fatalf("precondition: the absolute live heap (%d) must trip the clean budget — that is the RG3 FP", tiny.LiveHeapAbs)
+	}
+	// GREEN: the per-input delta passes. The FP is gone and no budget was moved.
+	var greenMsg string
+	if b.Check(func(f string, a ...any) { greenMsg = fmt.Sprintf(f, a...) }, tiny) {
+		t.Fatalf("per-input delta (%d) must NOT trip the budget; FP should be gone (%s)", tiny.LiveHeap, greenMsg)
+	}
+}
+
+// TestLiveHeapDeltaStillCatchesTrueAmplification is the planted-defect proof that
+// the delta keeps a real detection path: a SINGLE small input that genuinely
+// retains tens of MiB of live heap still fails — under BOTH the per-byte slope
+// AND the absolute AbsMax ceiling. This is the counterpart to the FP proof:
+// the fix must not silently disarm the meter.
+func TestLiveHeapDeltaStillCatchesTrueAmplification(t *testing.T) {
+	heapRetain = nil
+	t.Cleanup(func() { heapRetain = nil })
+
+	var clean []Cost
+	for range 8 {
+		clean = append(clean, Cost{InputLen: 1 << 10, Sampled: true, LiveHeap: 256 << 10})
+	}
+	b := Calibrate("live_heap_amp", clean, DefaultFactor)
+
+	p := New(t, Options{SampleEvery: 1})
+	const chunk = 64 << 20
+	// A 64-byte input that expands to 64 MiB of retained live heap: a ~1,000,000×
+	// amplification, the pkcs7-style memory bomb shape.
+	c := p.Measure(64, func() { retainChunk(chunk) })
+	if c.LiveHeap < chunk/2 {
+		t.Fatalf("the amplifying input must register a large per-input delta, got %d", c.LiveHeap)
+	}
+
+	// Slope (default mode): fires.
+	if !b.Check(func(string, ...any) {}, c) {
+		mb := b.Meters["live_heap"]
+		t.Fatalf("SLOPE must fire on a true amplification: delta=%d slope=%.0f", c.LiveHeap, mb.slopeAllowed(c.InputLen, b.Factor))
+	}
+	// Absolute mode: still fires against AbsMax.
+	b.UseAbsolute("live_heap")
+	if !b.Check(func(string, ...any) {}, c) {
+		t.Fatalf("ABSMAX must still fire on a true amplification: delta=%d absmax=%.0f", c.LiveHeap, b.Meters["live_heap"].AbsMax)
+	}
+}
+
+// TestLiveHeapPromotedInputHasNoDelta documents the one carve-out: a slow-wall
+// PROMOTED input (cheap cadence, but ran over SlowWall) has no pre-fn GC baseline
+// so its per-input delta is 0, while its absolute is still captured for Drift.
+func TestLiveHeapPromotedInputHasNoDelta(t *testing.T) {
+	heapRetain = nil
+	t.Cleanup(func() { heapRetain = nil })
+
+	// SampleEvery huge so only input 0 is an on-cadence sample; SlowWall tiny so
+	// a LATER input is promoted by running longer than it. Input 0 (index 0) is
+	// always a cadence sample (0 % N == 0), so measure a throwaway first, then
+	// assert on index 1 — a genuinely off-cadence, promoted input.
+	p := New(t, Options{SampleEvery: 1 << 30, SlowWall: time.Nanosecond})
+	_ = p.Measure(8, func() { _ = 1 }) // index 0: cadence, consumed
+	c := p.Measure(16, func() {
+		retainChunk(32 << 20)
+		time.Sleep(2 * time.Millisecond) // guarantee > SlowWall → promoted
+	})
+	if !c.Sampled {
+		t.Fatalf("a slow input over SlowWall must be promoted to sampled")
+	}
+	if c.LiveHeap != 0 {
+		t.Fatalf("a promoted input has no pre-fn baseline, so its per-input delta must be 0, got %d", c.LiveHeap)
+	}
+	if c.LiveHeapAbs < 16<<20 {
+		t.Fatalf("a promoted input must still capture the absolute heap for Drift, got %d", c.LiveHeapAbs)
 	}
 }
 

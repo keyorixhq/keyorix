@@ -40,7 +40,7 @@ func newProjectSuspendWorld(t *testing.T) *projectSuspendWorld {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{},
 		&models.SecretAccessLog{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
-		&models.GroupRole{}, &models.SecretACL{}, &models.SecretAccessSchedule{},
+		&models.GroupRole{}, &models.SecretACL{}, &models.SecretAccessSchedule{}, &models.User{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()
@@ -50,6 +50,11 @@ func newProjectSuspendWorld(t *testing.T) *projectSuspendWorld {
 	require.NoError(t, err)
 	// Actor 1 is a live project member and owns the secrets it creates.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	// The owner also holds the route's gate (CORE-AUTHZ-RACE-NOV-1 item 2) — at THIS
+	// environment only, so a secret the fixture puts in another environment stays
+	// outside the actor's authority (the denied-caller case below).
+	grantSecretsWriteAt(t, db, 1, Scope{ProjectID: p.ID, EnvironmentID: e.ID})
+	ensureActiveActor(t, c.storage, 1) // the acting user must be an active account (#4159)
 	return &projectSuspendWorld{c: c, db: db, projectID: p.ID, envID: e.ID}
 }
 
@@ -62,6 +67,21 @@ func (w *projectSuspendWorld) secret(t *testing.T, name string, owner uint, stat
 	require.NoError(t, err)
 	_, err = w.c.storage.CreateSecretVersion(context.Background(), &models.SecretVersion{
 		SecretNodeID: s.ID, VersionNumber: 1, EncryptedValue: []byte("v"),
+	})
+	require.NoError(t, err)
+	return s.ID
+}
+
+// secretInOtherEnv is secret() in a second environment of the project, which the
+// acting user holds no secrets.write at (see newProjectSuspendWorld): an active
+// secret owned by someone else there is outside their authority.
+func (w *projectSuspendWorld) secretInOtherEnv(t *testing.T, name string, owner uint) uint {
+	t.Helper()
+	e, err := w.c.storage.CreateEnvironment(context.Background(), &models.Environment{Name: "staging-" + name, ProjectID: w.projectID})
+	require.NoError(t, err)
+	s, err := w.c.storage.CreateSecret(context.Background(), &models.SecretNode{
+		Name: name, ProjectID: w.projectID, EnvironmentID: e.ID, Type: "password", OwnerID: owner, IsSecret: true,
+		Status: SecretStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	})
 	require.NoError(t, err)
 	return s.ID
@@ -167,7 +187,7 @@ func TestSuspendProjectSecrets_ClearSyncedCopies(t *testing.T) {
 	t.Run("a caller without write authority over a secret neither suspends nor marks it", func(t *testing.T) {
 		w := newProjectSuspendWorld(t)
 		mine := w.secret(t, "mine", 1, SecretStatusActive, false)
-		theirs := w.secret(t, "theirs", 99, SecretStatusActive, false) // owned by someone else, no share/ACL for actor 1
+		theirs := w.secretInOtherEnv(t, "theirs", 99) // owned by someone else, in an environment actor 1 holds no write at; no share/ACL
 
 		n, err := w.c.SuspendProjectSecretsWithOptions(ctx, w.projectID, 1, "", SuspendOptions{ClearSyncedCopies: true})
 		require.NoError(t, err)
@@ -183,7 +203,7 @@ func TestSuspendProjectSecrets_ClearSyncedCopies(t *testing.T) {
 
 		// An actor with no authority over anything: nothing happens, the attempt is still on record.
 		w2 := newProjectSuspendWorld(t)
-		only := w2.secret(t, "only", 99, SecretStatusActive, false)
+		only := w2.secretInOtherEnv(t, "only", 99)
 		n, err = w2.c.SuspendProjectSecretsWithOptions(ctx, w2.projectID, 1, "", SuspendOptions{ClearSyncedCopies: true})
 		require.NoError(t, err)
 		assert.Zero(t, n)

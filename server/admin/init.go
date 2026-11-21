@@ -367,12 +367,14 @@ func initializeAdminEncryption(cfg *config.Config) error {
 	// The KEK is passphrase-derived and never on disk (ADR-004); only the salt
 	// and the wrapped DEK need directories.
 	dekDir := filepath.Dir(cfg.Storage.Encryption.DEKPath)
-	saltDir := filepath.Dir(cfg.Storage.Encryption.SaltPath)
 	if err := os.MkdirAll(dekDir, 0750); err != nil {
 		return fmt.Errorf("failed to create DEK directory: %w", err)
 	}
-	if err := os.MkdirAll(saltDir, 0750); err != nil {
-		return fmt.Errorf("failed to create salt directory: %w", err)
+	// #4395: no salt directory for a provider that never reads a salt.
+	if saltPath := cfg.Storage.Encryption.EffectiveSaltPath(); saltPath != "" {
+		if err := os.MkdirAll(filepath.Dir(saltPath), 0750); err != nil {
+			return fmt.Errorf("failed to create salt directory: %w", err)
+		}
 	}
 	return nil
 }

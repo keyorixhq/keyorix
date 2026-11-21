@@ -34,11 +34,11 @@ call sites of source 1 from the code on every run. A new insert site with no row
 | Path (core function) | Reached from | Today's behaviour on a lost ack | Verdict |
 |---|---|---|---|
 | `createUser` (`users.go`) | `CreateUser`, `CreateUserAudited`, REST `POST /api/v1/users/` (no role/assignments), `CreateUserWithSetupLink`, `CreateUserWithOneTimePassword` (REST and gRPC) | read back; a landed row is answered as success and the password history is seeded | already correct (#4208) |
-| invitation accept, project and global (`completeInvitationAccept`, `setup_consume.go`) | `POST /auth/setup/consume`, purpose `invitation_accept` | goes through `c.CreateUser`, so the #4208 read-back applies; the accept then continues (`LogUserCreated`, token consume, grants) | already correct (#4208). Both invitation kinds use the same function; the global one only differs in `applyInvitationGrants` |
+| invitation accept, project and global (`completeInvitationAccept`, `setup_consume.go`) | `POST /auth/setup/consume`, purpose `invitation_accept` | goes through `c.CreateUser`, so the #4208 read-back applies; the accept then continues (`LogUserCreated`, token consume, grants) | already correct (#4208), now driven under faults by the `REST POST /auth/setup/consume#invitation_accept` faultops op (PARTIAL-COMMIT-TAILS-NOV-3 item 2, `TestPartialCommit_InvitationAccept*`). Both invitation kinds use the same function; the global one only differs in `applyInvitationGrants`. The sweep's other findings on this path are #4409 (a panic after the account exists skips the undo) and #4410 (residue of a compensated failure) |
 | `CreateUserWithAssignments` (`users.go`) | gRPC `UserService.CreateUser` (admin-set password), REST `POST /api/v1/users/` with `role` or `project_assignments` | answered `Internal`/500 while the user, its role grants and `user.created` committed; password history not seeded; a retry gets "already exists" (oracle (d) flags it) | **fixed by this PR** |
 | `ProvisionSCIMUser` (`scim.go`) | SCIM `POST /scim/v2/Users` | answered 500 while the user, its baseline role and `scim.user_provisioned` committed; the IdP's retry gets 409 uniqueness and never learns the id. No oracle flagged it (the state equals the fault-free one) | **fixed by this PR**: a landed row answers 201 with the user; an unreadable outcome answers 503 + `Retry-After` with the SCIM error body |
 | `provisionSSOUser` (`sso.go`) | OIDC `CompleteSSO` (`ensureSSOUser`) and SAML `CompleteSAML` JIT | login refused while the account and its default role committed; the post-commit `auth.sso_jit_provisioned` row was never written, and the next login resolves the account by its `sso:` external id as an existing one, so that row never appears. No oracle flagged it | **fixed by this PR**: a landed row writes `auth.sso_jit_provisioned` and the login continues |
-| `bootstrapSystemLocked` (`auth_bootstrap.go`) | `POST /system/init` (`handlers.AuthHandler.InitSystem`) | answered failure while the admin, the catalog and the initialised marker committed; the post-commit `user.created` / `project.created` rows and the password-history seed are skipped; the bootstrap token stays in memory (harmless: the marker refuses a second bootstrap, and a retry answers `AlreadyInitialized`) | **out of scope**: verify only here, `auth_bootstrap.go` is being changed by DEMO-COPY-TAILS (#4218). Left as a LEFTOVER for after #4218 merges |
+| `bootstrapSystemLocked` (`auth_bootstrap.go`) | `POST /system/init` (`handlers.AuthHandler.InitSystem`) | answered failure while the admin, the catalog and the initialised marker committed; the post-commit `user.created` / `project.created` rows and the password-history seed were skipped and the bootstrap token stayed in memory (the marker refused a second bootstrap) | **fixed by PARTIAL-COMMIT-TAILS-NOV-3 item 1**: a landed admin finishes the success path (audit rows, history, token cleared) while the bootstrap lock is still held; an unreadable outcome stays an error with the token armed, and the committed marker refuses a retry. Driven by the `REST POST /system/init` faultops op |
 
 ## What "fixed" means on each path
 
@@ -57,12 +57,12 @@ call sites of source 1 from the code on every run. A new insert site with no row
 
 ## Not covered
 
-- `bootstrapSystemLocked`, see the table.
-- The off-box audit forward. A create through `withAuditedMutation`
-  (`CreateUserAudited`, `CreateUserWithAssignments`, `ProvisionSCIMUser`) forwards
-  its committed audit rows (`auditForwardSink.Flush`) only after a clean commit, so on
-  a delivered lost ack the row is in the database but was not forwarded. This is the
-  same for every audited mutation, not only creates, and belongs to the audit flusher.
+- The off-box audit forward of a `withAuditedMutation` mutation that is NOT read back. A
+  delivered create (`CreateUserAudited`, `CreateUserWithAssignments`, `ProvisionSCIMUser`) now
+  forwards its committed rows: `withAuditedMutation` returns the unflushed sink on a
+  commit-phase error (`errAuditCommitUnacknowledged`) and `userCreateLanded` flushes it once
+  the row is confirmed (PARTIAL-COMMIT-TAILS-NOV-3 item 3). Every other audited mutation still
+  answers a lost ack as an error and drops the forward, like the rest of its success path.
 
 ## knownOpenTolerances
 

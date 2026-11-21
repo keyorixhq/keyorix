@@ -65,6 +65,16 @@ func (c *KeyorixCore) CloneEnvironment(ctx context.Context, projectID, srcEnvID,
 	if srcEnv.ProjectID != projectID || dstEnv.ProjectID != projectID {
 		return nil, validationErrorf("%s: %s", i18n.T("ErrorValidation", nil), "both environments must belong to the given project")
 	}
+	// #4161: the route gate — secrets.write on the project (creates in the
+	// destination) and secrets.read on the source environment (reads values) — is
+	// decided here as well. The per-secret read check inside CopySecret stays; this
+	// is the role-based requirement the transports put in front of it.
+	if err := c.requireScopedGates(ctx, actorID,
+		scopedGate{permSecretsWrite, Scope{ProjectID: projectID}},
+		scopedGate{permSecretsRead, Scope{ProjectID: projectID, EnvironmentID: srcEnvID}},
+	); err != nil {
+		return nil, err
+	}
 
 	result := &EnvCloneResult{
 		SourceEnv: srcEnv.Name,

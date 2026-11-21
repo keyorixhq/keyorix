@@ -610,6 +610,12 @@ func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValu
 	if err != nil {
 		return nil, fmt.Errorf("secret not found: %w", err)
 	}
+	// #4161: the route gate (secrets.write with SecretActionRotate on this secret)
+	// is decided here as well. actorID 0 (BulkRotateSecrets, which the transport
+	// gated at project scope) is the exempt internal pseudo-actor, as elsewhere.
+	if err := c.requireSecretActionGate(ctx, actorID, secret, permSecretsWrite, SecretActionRotate); err != nil {
+		return nil, err
+	}
 	if secret.RotationBackend == "" {
 		return c.RotateSecret(ctx, id, newValue, actorID, rotatedBy)
 	}
@@ -748,7 +754,16 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
+		// A read FAULT is a retry answer, not "secret not found" (ERRMAP-TAILS-NOV-4).
+		if fault := ReadFault(err); fault != nil {
+			return fault
+		}
 		return fmt.Errorf("secret not found: %w", err)
+	}
+	// #4161: the route gate (secrets.write with SecretActionSetAutoRotate on this
+	// secret) is decided here as well, so core refuses what the transports refuse.
+	if err := c.requireSecretActionGate(ctx, actorID, secret, permSecretsWrite, SecretActionSetAutoRotate); err != nil {
+		return err
 	}
 	// Binding a backend is a materially bigger grant than scoped secrets.write alone:
 	// the backend often carries an org-wide, admin-credentialed connection (AWS/GCP/

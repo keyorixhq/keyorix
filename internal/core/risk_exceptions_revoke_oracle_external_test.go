@@ -60,6 +60,7 @@ func TestRevokeRiskException_AdminTier_NonExistentGetsRealNotFound(t *testing.T)
 	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
+	h.EnsureActiveUser(t, 1) // the acting user must be an active account (#4159)
 	require.NoError(t, h.DB.AutoMigrate(&models.RiskException{}, &models.AuditEvent{}))
 	ctx := context.Background()
 

@@ -128,6 +128,7 @@ func secretLifecycleProgram(t *testing.T, w *fuzzworld.World, prog []byte) {
 	if err := db.Create(&models.User{ID: 1, Username: "u1", UsernameFolded: "u1", Email: "u1@x.io", EmailFolded: "u1@x.io", IsActive: true}).Error; err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
+	grantGateHolder(t, db, 1, Scope{}, permSecretsWrite) // #4161: RollbackSecret decides the route gate in core
 	c := NewKeyorixCore(ls)
 
 	// Reference instant for the controllable purge dates. Only used as a base
