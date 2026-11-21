@@ -266,6 +266,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
 )
@@ -637,9 +638,8 @@ func FuzzFaultInjectedOperations(f *testing.F) {
 			defer close(done)
 			runFaultInjectedCase(t, dbWorlds, opSel, seamSel, kindSel, shortWriteK, oldPass, newPass, canary)
 		}()
-		select {
-		case <-done:
-		case <-time.After(faultOpGuardDeadline):
+		if _, ok, fz := fuzzutil.Wait(done, faultOpGuardDeadline); !ok {
+			t.Logf("stall monitor: process frozen %s of the wait window", fz)
 			t.Fatalf("fault-injected-operations exceeded %s — possible hang", faultOpGuardDeadline)
 		}
 	})
