@@ -903,5 +903,5 @@ func printPostureReport(report *postureReport) {
 // reports zero deviations.
 func collectAuditDurabilityPosture(cfg *config.Config, report *postureReport) {
 	st := cfg.Storage.Database.EffectiveAuditDurability(cfg.Storage.Type)
-	report.info(fmt.Sprintf("%s: %s (%s)", config.AuditDurabilitySettingName, st.Level, st.Level.Meaning()))
+	report.info(fmt.Sprintf("%s: %s (%s)", config.AuditDurabilitySettingName, st.Level, st.Meaning()))
 }

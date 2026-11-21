@@ -39,6 +39,11 @@ func newACLCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	}
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+	// GrantSecretACL refuses an acting account that is not active (#4159): the
+	// granting actors these tests use (1, 99) must exist and be active.
+	for _, actor := range []uint{1, 99} {
+		ensureActiveActor(t, c.storage, actor)
+	}
 	return c, db
 }
 

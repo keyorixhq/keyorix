@@ -19,7 +19,15 @@ const Canary = "cnrycompat0123456789"
 // key is the required fail-closed behaviour (I1), so a canary the fuzzer typed
 // AS a key name is masked before the canary-leak check; a canary that leaks as a
 // VALUE is still caught.
-var keyEcho = regexp.MustCompile(`unknown key "[^"]*"|field \S+ not found in type [\w.]+`)
+//
+// The "field ... not found in type" branch allows spaces in the key (YAML keys
+// may contain them, e.g. "cnrycompat0123456789 000000000"; \S+ stopped at the
+// first space and left the rest of the key unmasked) but stops at ';' and
+// newlines: yaml v4 joins several construct errors with "; ", and a greedy match
+// would mask a value echo sitting between two key echoes. A key containing ';'
+// therefore stays unmasked, which fails closed. Same pattern as configspace's
+// unknownKeyEcho.
+var keyEcho = regexp.MustCompile(`unknown key "[^"]*"|field [^;\n]+ not found in type [\w.]+`)
 
 // namesAKey reports whether a refusal verdict names at least one key — i.e.
 // matches the masked refusal signature. A keyed file that is refused with a

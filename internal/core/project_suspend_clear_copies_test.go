@@ -40,7 +40,7 @@ func newProjectSuspendWorld(t *testing.T) *projectSuspendWorld {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{},
 		&models.SecretAccessLog{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
-		&models.GroupRole{}, &models.SecretACL{}, &models.SecretAccessSchedule{},
+		&models.GroupRole{}, &models.SecretACL{}, &models.SecretAccessSchedule{}, &models.User{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()
@@ -50,6 +50,7 @@ func newProjectSuspendWorld(t *testing.T) *projectSuspendWorld {
 	require.NoError(t, err)
 	// Actor 1 is a live project member and owns the secrets it creates.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	ensureActiveActor(t, c.storage, 1) // the acting user must be an active account (#4159)
 	return &projectSuspendWorld{c: c, db: db, projectID: p.ID, envID: e.ID}
 }
 

@@ -488,6 +488,7 @@ func TestSuspendProjectSecrets_BadID_S13(t *testing.T) {
 func TestSuspendProjectSecrets_HappyPath_S13(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS12(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // the withUserCtx user acts through core (#4159)
 	h, err := NewSecretHandler(cs)
 	require.NoError(t, err)
 	proj, err := cs.CreateProject(context.Background(), "s13suspend", "")
@@ -524,6 +525,7 @@ func TestResumeProjectSecrets_BadID_S13(t *testing.T) {
 func TestResumeProjectSecrets_HappyPath_S13(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS12(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // the withUserCtx user acts through core (#4159)
 	h, err := NewSecretHandler(cs)
 	require.NoError(t, err)
 	proj, err := cs.CreateProject(context.Background(), "s13resume", "")

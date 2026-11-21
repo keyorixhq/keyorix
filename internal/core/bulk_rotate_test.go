@@ -97,7 +97,7 @@ func TestBulkRotateSecrets_ByIDs(t *testing.T) {
 	require.NoError(t, err)
 	projectID := s.ProjectID
 
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: projectID,
 		SecretIDs: []uint{id1, id2, id3},
 		RotatedBy: "alice",
@@ -131,7 +131,7 @@ func TestBulkRotateSecrets_ByProject(t *testing.T) {
 	projectID := s.ProjectID
 
 	// No SecretIDs — rotate all in the project.
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: projectID,
 		RotatedBy: "ops",
 	})
@@ -158,7 +158,7 @@ func TestBulkRotateSecrets_ByClassification(t *testing.T) {
 	projectID := s.ProjectID
 
 	// Filter by classification — only "confidential" should be rotated.
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID:      projectID,
 		Classification: "confidential",
 		RotatedBy:      "incident-response",
@@ -184,7 +184,7 @@ func TestBulkRotateSecrets_SkipsNoConfig(t *testing.T) {
 	require.NoError(t, err)
 	projectID := s.ProjectID
 
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: projectID,
 		RotatedBy: "ops",
 	})
@@ -217,7 +217,7 @@ func TestBulkRotateSecrets_PartialFailure(t *testing.T) {
 
 	// Mix of valid IDs + an ID that doesn't exist + one with no rotation config.
 	const missingID = uint(99999)
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: projectID,
 		SecretIDs: []uint{valid1, valid2, noconf, missingID},
 		RotatedBy: "responder",
@@ -254,7 +254,7 @@ func TestBulkRotateSecrets_MissingProjectID(t *testing.T) {
 	c, _ := bulkRotateDB(t)
 	ctx := context.Background()
 
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: 0,
 		RotatedBy: "ops",
 	})
@@ -274,7 +274,7 @@ func TestBulkRotateSecrets_DefaultRotatedBy(t *testing.T) {
 	require.NoError(t, err)
 
 	// RotatedBy is intentionally empty — the code should fill it in with "system:bulk-rotate".
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: s.ProjectID,
 		SecretIDs: []uint{id1},
 		RotatedBy: "",
@@ -296,7 +296,7 @@ func TestBulkRotateSecrets_GetSecretsByIDsError(t *testing.T) {
 	storageErr := errors.New("db unavailable")
 	ms.On("GetSecretsByIDs", ctx, []uint{1, 2}).Return(nil, storageErr)
 
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: 1,
 		SecretIDs: []uint{1, 2},
 		RotatedBy: "ops",
@@ -345,7 +345,7 @@ func TestBulkRotateSecrets_CrossProjectGuard(t *testing.T) {
 	id2 := mkSecret("SENSITIVE-OTHER-TENANT-NAME", p2.ID, env2.ID) // belongs to p2, not p1
 
 	// Request both IDs but scoped to project 1 — id2 must be rejected.
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: p1.ID,
 		SecretIDs: []uint{id1, id2},
 		RotatedBy: "security-team",
@@ -398,7 +398,7 @@ func TestBulkRotateSecrets_FolderNodeSkipped(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: p.ID,
 		SecretIDs: []uint{folder.ID, real.ID},
 		RotatedBy: "ops",
@@ -423,7 +423,7 @@ func TestBulkRotateSecrets_ListSecretsError(t *testing.T) {
 	storageErr := errors.New("connection refused")
 	ms.On("ListSecrets", ctx, mock.AnythingOfType("*storage.SecretFilter")).Return(nil, int64(0), storageErr)
 
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: 42,
 		RotatedBy: "ops",
 	})
@@ -467,7 +467,7 @@ func TestBulkRotateSecrets_ByEnvID(t *testing.T) {
 	_ = mkInEnv("prod-secret", envB.ID)
 
 	// Rotate only staging environment.
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: p.ID,
 		EnvID:     envA.ID,
 		RotatedBy: "ops",
@@ -501,7 +501,7 @@ func TestBulkRotateSecrets_RotateOnDemandError(t *testing.T) {
 	// RotateSecretOnDemand calls GetSecret first — return an error to make it fail.
 	ms.On("GetSecret", ctx, secretID).Return(nil, errors.New("secret locked"))
 
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: projectID,
 		SecretIDs: []uint{secretID},
 		RotatedBy: "ops",
@@ -548,7 +548,7 @@ func TestBulkRotateSecrets_ValueGenError(t *testing.T) {
 	}
 	t.Cleanup(func() { bulkValueGen = origGen })
 
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: projectID,
 		SecretIDs: []uint{secretID},
 		RotatedBy: "ops",
@@ -589,7 +589,7 @@ func TestBulkRotateSecrets_ProjectWideRotateOnDemandError(t *testing.T) {
 	// RotateSecretOnDemand → GetSecret returns error.
 	ms.On("GetSecret", ctx, secretID).Return(nil, errors.New("disk full"))
 
-	result, err := c.BulkRotateSecrets(ctx, BulkRotateRequest{
+	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: projectID,
 		RotatedBy: "ops",
 	})

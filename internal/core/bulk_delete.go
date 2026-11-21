@@ -141,10 +141,11 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 	// all, matching the singular CLI `secret delete` command's use of the
 	// bare, unguarded GetSecret/DeleteSecret (delete.go): physical access to
 	// the local DB file is the authorization boundary there, not a userID.
-	// Every authenticated HTTP/gRPC caller always supplies a real actorID
-	// (secrets_bulk_delete.go's handler uses userCtx.UserID), so this
-	// fallback never weakens the multi-tenant per-ID re-authorization #G31
-	// added for that path.
+	// Authenticated HTTP/gRPC users supply a real actorID
+	// (secrets_bulk_delete.go's handler uses userCtx.UserID). A machine token
+	// has UserID 0 and also takes this branch: for it the router gate
+	// (secrets.delete@project) is the only authorization, plus the project
+	// match below; whether that is enough is tracked in #4546.
 	//
 	// A storage FAULT is not a "not found": the item is reported as "storage
 	// temporarily unavailable, please retry" (distinct text), because the

@@ -35,10 +35,10 @@ Every command the old, thick CLI (`internal/cli`, deleted entirely in ADR-108 Ph
 | `audit migrate-chain-encoding` | `keyorix audit migrate-chain-encoding` | PR 7, #2069 |  |
 | `audit search` | `keyorix audit search` | PR 7, #2069 |  |
 | `audit verify` | `keyorix audit verify` | PR 7, #2069 | REST-only; distinct from keyorix-server admin's new verify-audit (B4, #2039), which verifies OFFLINE without trusting the running server |
-| `auth login` | `keyorix auth login` | PR 0, #2019 | renamed to top-level `login` |
-| `auth logout` | `keyorix auth logout` | PR 2, #2030 | renamed to top-level `logout` |
-| `auth mfa stepup` | `keyorix auth mfa stepup` | PR 2, #2030 | renamed to top-level `mfa stepup` |
-| `auth status` | `keyorix auth status` | PR 0, #2019 | folded into top-level `status`, which now shows server/login state directly |
+| `auth login` | `keyorix login` | PR 0, #2019 | renamed to top-level `login` |
+| `auth logout` | `keyorix logout` | PR 2, #2030 | renamed to top-level `logout` |
+| `auth mfa stepup` | `keyorix mfa stepup` | PR 2, #2030 | renamed to top-level `mfa stepup` |
+| `auth status` | `keyorix status` | PR 0, #2019 | folded into top-level `status`, which now shows server/login state directly |
 | `billing report` | `keyorix billing report` | FINISH-SPLIT census-gaps | ported the REST/remote branch only (cli/cmd/billing.go); local/embedded branch dropped, not carried forward -- Finding S17 |
 | `break-glass activate` | `keyorix break-glass activate` | PR 1, #2043 |  |
 | `break-glass list` | `keyorix break-glass list` | PR 1, #2043 |  |
@@ -120,7 +120,7 @@ Every command the old, thick CLI (`internal/cli`, deleted entirely in ADR-108 Ph
 | `machine token list` | `keyorix machine token list` | PR 2, #2030 |  |
 | `machine token revoke` | `keyorix machine token revoke` | PR 2, #2030 |  |
 | `machine token-hygiene` | `keyorix machine token-hygiene` | PR 2, #2030 |  |
-| `migrate user-to-machine` | `keyorix migrate user-to-machine` | FINISH-SPLIT census-gaps | collapsed to `keyorix machine migrate-from-user` (cli/cmd/machine.go), not `migrate ...` -- a top-level migrate verb would collide with the separate keyorix-migrate tool (Vault/cloud import) despite being unrelated. --by dropped: POST /machine-identities/migrate-from-user's bearer token IS the acting identity, already permission-gated by router middleware |
+| `migrate user-to-machine` | `keyorix machine migrate-from-user` | FINISH-SPLIT census-gaps | collapsed to `keyorix machine migrate-from-user` (cli/cmd/machine.go), not `migrate ...` -- a top-level migrate verb would collide with the separate keyorix-migrate tool (Vault/cloud import) despite being unrelated. --by dropped: POST /machine-identities/migrate-from-user's bearer token IS the acting identity, already permission-gated by router middleware |
 | `notification channel add` | `keyorix notification channel add` | PR 7, #2069 |  |
 | `notification channel delete` | `keyorix notification channel delete` | PR 7, #2069 |  |
 | `notification channel get` | `keyorix notification channel get` | PR 7, #2069 |  |

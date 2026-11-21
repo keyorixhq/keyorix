@@ -302,6 +302,9 @@ func (c *KeyorixCore) CountExpiredRiskExceptions(ctx context.Context) (int, erro
 // ErrRiskExceptionPermissionDenied response whether the id is missing or
 // just not theirs.
 func (c *KeyorixCore) RevokeRiskException(ctx context.Context, actorID, id uint) error {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	adminRole, err := c.isGlobalAdminRoleName(ctx, actorID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

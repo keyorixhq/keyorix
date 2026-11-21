@@ -75,6 +75,7 @@ func TestDecideAccessReviewItem_AttestAndRevoke(t *testing.T) {
 	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
+	h.EnsureActiveUser(t, 1) // the acting user must be an active account (#4159)
 	migrateCampaignTables(t, h)
 
 	const proj = uint(2)
@@ -128,6 +129,8 @@ func TestDecideAccessReviewItem_RejectsSelfCertification(t *testing.T) {
 	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
+	h.EnsureActiveUser(t, 1)  // the acting user must be an active account (#4159)
+	h.EnsureActiveUser(t, 10) // the acting user must be an active account (#4159)
 	migrateCampaignTables(t, h)
 
 	const proj = uint(2)
@@ -190,6 +193,8 @@ func TestDecideAccessReviewItem_RejectsGroupSelfCertification(t *testing.T) {
 	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
+	h.EnsureActiveUser(t, 1)  // the acting user must be an active account (#4159)
+	h.EnsureActiveUser(t, 20) // the acting user must be an active account (#4159)
 	migrateCampaignTables(t, h)
 
 	const proj = uint(2)
@@ -227,6 +232,7 @@ func TestDecideAccessReviewItem_RejectsDoubleDecision(t *testing.T) {
 	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
+	h.EnsureActiveUser(t, 1) // the acting user must be an active account (#4159)
 	migrateCampaignTables(t, h)
 
 	const proj = uint(2)
@@ -299,6 +305,7 @@ func TestCloseAccessReviewCampaign_FullyDecidedIsNotForcedIncomplete(t *testing.
 	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
+	h.EnsureActiveUser(t, 1) // the acting user must be an active account (#4159)
 	migrateCampaignTables(t, h)
 
 	const proj = uint(2)

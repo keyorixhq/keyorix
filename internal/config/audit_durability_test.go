@@ -1,6 +1,7 @@
 // audit_durability_test.go — ADR-112 Amendment 3 (Andrei, 2026-10-15):
 // storage.database.audit_durability = strict | standard, standard by default
-// on PostgreSQL, strict only on SQLite, with the old
+// on PostgreSQL, strict by default on SQLite (standard opt-in there since
+// Amendment 7), with the old
 // insecure_audit_skip_durable_sync boolean as a deprecated alias.
 package config
 
@@ -49,7 +50,7 @@ func TestEffectiveAuditDurability_DefaultPerBackend(t *testing.T) {
 	for storageType, want := range map[string]AuditDurabilityLevel{
 		"postgres":   AuditDurabilityStandard,
 		"postgresql": AuditDurabilityStandard,
-		"local":      AuditDurabilityStrict,
+		"local":      AuditDurabilityStrict, // standard is opt-in on SQLite (Amendment 7)
 		"sqlite":     AuditDurabilityStrict,
 		"remote":     AuditDurabilityStrict,
 		"":           AuditDurabilityStrict,
@@ -98,31 +99,48 @@ func TestEffectiveAuditDurability_ExplicitLevelsAndAlias(t *testing.T) {
 	}
 }
 
-// TestConfigValidate_RejectsStandardAuditDurabilityOnSQLite: SQLite runs
-// strict only; standard (by name or through the alias) refuses to start with
-// the named error. Both directions: strict, an explicit false alias and no
-// setting at all still validate on SQLite.
-func TestConfigValidate_RejectsStandardAuditDurabilityOnSQLite(t *testing.T) {
+// TestConfigValidate_AcceptsStandardAuditDurabilityOnSQLite: ADR-112
+// Amendment 7 makes standard valid on SQLite (read audits on a dedicated
+// synchronous=NORMAL connection). It is opt-in: with nothing set SQLite stays
+// strict, and strict (by name or through the alias) stays strict. Before
+// Amendment 7 the first loop refused to start.
+func TestConfigValidate_AcceptsStandardAuditDurabilityOnSQLite(t *testing.T) {
 	for _, storageType := range []string{"local", "sqlite"} {
 		for _, line := range []string{"audit_durability: standard", "insecure_audit_skip_durable_sync: true"} {
 			t.Run(storageType+"/"+line, func(t *testing.T) {
-				_, err := loadAndValidate(t, writeAuditDurabilityConfig(t, storageType, line))
-				require.Error(t, err, "standard on SQLite must refuse to start, never be ignored")
-				require.Equal(t, auditDurabilityStandardSQLiteUnsupportedError, err.Error())
-				require.Contains(t, err.Error(), "only supported with PostgreSQL")
+				cfg, err := loadAndValidate(t, writeAuditDurabilityConfig(t, storageType, line))
+				require.NoError(t, err, "standard is a valid SQLite level since Amendment 7")
+				st := cfg.Storage.Database.EffectiveAuditDurability(cfg.Storage.Type)
+				require.Equal(t, AuditDurabilityStatus{Level: AuditDurabilityStandard, Explicit: true, SQLite: true}, st)
 			})
 		}
 		for _, lines := range [][]string{nil, {"audit_durability: strict"}, {"insecure_audit_skip_durable_sync: false"}} {
-			t.Run(storageType+"/allowed "+strings.Join(lines, ","), func(t *testing.T) {
-				_, err := loadAndValidate(t, writeAuditDurabilityConfig(t, storageType, lines...))
-				require.NoError(t, err, "SQLite with strict (or nothing) must validate -- otherwise the check rejects every SQLite install")
+			t.Run(storageType+"/strict "+strings.Join(lines, ","), func(t *testing.T) {
+				cfg, err := loadAndValidate(t, writeAuditDurabilityConfig(t, storageType, lines...))
+				require.NoError(t, err)
+				st := cfg.Storage.Database.EffectiveAuditDurability(cfg.Storage.Type)
+				require.Equal(t, AuditDurabilityStrict, st.Level, "the SQLite default stays strict; only an explicit standard relaxes anything")
+				require.Equal(t, lines != nil, st.Explicit)
 			})
 		}
 	}
 }
 
-// TestConfigValidate_AllowsBothAuditDurabilityLevelsOnPostgres keeps the
-// SQLite refusal from hiding a check that rejects standard everywhere.
+// TestAuditDurabilityStatus_SQLiteStandardMeaning: SQLite's standard line
+// says what SQLite actually does (read audits only, no time bound), never
+// PostgreSQL's ~600 ms figure.
+func TestAuditDurabilityStatus_SQLiteStandardMeaning(t *testing.T) {
+	line := AuditDurabilityStatus{Level: AuditDurabilityStandard, Explicit: true, SQLite: true}.StartupLine()
+	require.Equal(t, "audit durability: standard ("+sqliteStandardAuditDurabilityMeaning+")", line)
+	require.NotContains(t, line, "600 ms")
+	require.Contains(t, line, "secret mutations and their audit rows are synced to disk")
+	require.Contains(t, line, "no time bound")
+	strict := AuditDurabilityStatus{Level: AuditDurabilityStrict, SQLite: true}.StartupLine()
+	require.Equal(t, AuditDurabilityStatus{Level: AuditDurabilityStrict}.StartupLine(), strict, "strict means the same on both backends")
+}
+
+// TestConfigValidate_AllowsBothAuditDurabilityLevelsOnPostgres: both levels
+// validate on PostgreSQL.
 func TestConfigValidate_AllowsBothAuditDurabilityLevelsOnPostgres(t *testing.T) {
 	for _, storageType := range []string{"postgres", "postgresql"} {
 		for _, level := range []string{"strict", "standard"} {
