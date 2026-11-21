@@ -18,7 +18,7 @@ import (
 // EscapeYAMLString escapes val so it can be embedded inside a double-quoted YAML
 // scalar's quotes (i.e. as the value written between the surrounding `"..."` a
 // template already supplies), mirroring secrettemplate.EscapeJSONString for YAML
-// documents. It forces yaml.v3's double-quoted scalar encoding (rather than letting
+// documents. It forces yaml v4's double-quoted scalar encoding (rather than letting
 // it choose plain/single-quoted/literal style, which would produce output that
 // doesn't fit inside pre-existing template quotes) and strips the quotes
 // yaml.Marshal adds, since the template already supplies them.
