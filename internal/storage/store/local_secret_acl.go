@@ -152,7 +152,7 @@ func lockDirectProjectGrants(tx *gorm.DB, userID, projectID uint, now time.Time)
 	var ids []uint
 	if err := tx.Model(&models.UserRole{}).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
-		Where(sqlWhereURNotExpired, now).
+		Where(sqlWhereURNotExpired, now.UTC()).
 		Clauses(clause.Locking{Strength: "SHARE"}).
 		Pluck("role_id", &ids).Error; err != nil {
 		return fmt.Errorf("failed to lock the grantee's project grants: %w", err)
