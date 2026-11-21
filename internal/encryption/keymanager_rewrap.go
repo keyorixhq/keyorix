@@ -36,10 +36,11 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 // audit-checkpoint key the new KEK derives, after the staleness check and
 // before the new wrapped DEK is written (see AuditKeyChangePrepare).
 func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepare AuditKeyChangePrepare) error {
-	km.mu.Lock()
-	defer km.mu.Unlock()
+	km.rotateMu.Lock()
+	defer km.rotateMu.Unlock()
 
-	if km.currentDEK == nil {
+	oldState := km.state.Load()
+	if oldState == nil || oldState.currentDEK == nil {
 		return fmt.Errorf("key manager not initialized — cannot re-wrap DEK")
 	}
 	if newProvider == nil {
@@ -70,26 +71,21 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 	}
 	defer lock.release()
 
-	// Mutual exclusion alone is not sufficient: km.currentDEK was captured
-	// whenever this process's own Initialize() ran, which may be long before
-	// this call and long before the lock above was even contended for. If a
-	// concurrent RotateDEKWithSweep replaced dek.key with a NEW DEK (and
-	// fully re-encrypted the database under it) in the meantime, our cached
-	// currentDEK is now stale — re-wrapping and promoting it would silently
-	// overwrite the freshly-rotated DEK with the superseded one, orphaning
-	// every row the rotation just re-encrypted. Re-read the on-disk DEK
-	// under the lock and compare it, byte-for-byte, against the snapshot
-	// taken when currentDEK was set: any difference means another process
-	// wrote dek.key since, so fail closed instead of clobbering it.
+	// Mutual exclusion alone is not sufficient: currentDEK was captured when
+	// Initialize ran, which may be long before this call. If a concurrent
+	// RotateDEKWithSweep replaced dek.key with a NEW DEK in the meantime, our
+	// cached currentDEK is now stale — re-wrapping it would silently overwrite
+	// the freshly-rotated DEK with the superseded one. Re-read under the lock
+	// and compare byte-for-byte against the dekSnapshot. (#195)
 	onDisk, err := securefiles.SafeReadFile(km.baseDir, km.dekPath)
 	if err != nil {
 		return fmt.Errorf("re-wrap DEK: re-read active DEK under lock: %w", err)
 	}
-	if !bytes.Equal(onDisk, km.dekSnapshot) {
+	if !bytes.Equal(onDisk, oldState.dekSnapshot) {
 		return fmt.Errorf("re-wrap DEK: the on-disk DEK changed since this process started — a concurrent DEK rotation likely completed in the meantime, so the in-memory DEK here is stale. Aborting without writing to avoid discarding the newer key; re-run migrate-provider now that the rotation has finished")
 	}
 
-	wrapped, err := wrapKey(km.currentDEK, newKEK)
+	wrapped, err := wrapKey(oldState.currentDEK, newKEK)
 	if err != nil {
 		return fmt.Errorf("re-wrap DEK: wrap DEK with new KEK: %w", err)
 	}
@@ -137,6 +133,20 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 	// Crash-consistency checkpoint (nil in production): the rewrap is fully durable.
 	rotationCheckpointHook("rewrap:after-syncdir")
 	km.commitKeySet(keyfiles.OpRewrapDEK, newFiles)
-	km.dekSnapshot = append([]byte(nil), wrapped...)
+
+	// Publish the new dekSnapshot. DEK, keyVersion, and all signing keys are
+	// unchanged by a rewrap (same DEK, same KEK-derived keys — the new KEK
+	// replaces only the wrapping, not the data).
+	newState := &keyState{}
+	newState.currentDEK = oldState.currentDEK
+	newState.dekSnapshot = append([]byte(nil), wrapped...)
+	newState.keyVersion = oldState.keyVersion
+	newState.evidenceSignKey = oldState.evidenceSignKey
+	newState.evidenceSignKeyID = oldState.evidenceSignKeyID
+	newState.auditCheckpointKey = oldState.auditCheckpointKey
+	newState.auditCheckpointKeyID = oldState.auditCheckpointKeyID
+	newState.backupManifestKey = oldState.backupManifestKey
+	newState.backupManifestKeyID = oldState.backupManifestKeyID
+	km.state.Store(newState)
 	return nil
 }

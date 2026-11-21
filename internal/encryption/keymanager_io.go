@@ -12,49 +12,52 @@ import (
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
-// GetDEK returns a copy of the current DEK (thread-safe).
+// GetDEK returns a copy of the current DEK (thread-safe, lock-free).
 func (km *KeyManager) GetDEK() []byte {
-	km.mu.RLock()
-	defer km.mu.RUnlock()
-
-	dek := make([]byte, len(km.currentDEK))
-	copy(dek, km.currentDEK)
+	st := km.state.Load()
+	var src []byte
+	if st != nil {
+		src = st.currentDEK
+	}
+	dek := make([]byte, len(src))
+	copy(dek, src)
 	return dek
 }
 
-// GetKeyVersion returns the current key version string.
+// GetKeyVersion returns the current key version string (lock-free).
 func (km *KeyManager) GetKeyVersion() string {
-	km.mu.RLock()
-	defer km.mu.RUnlock()
-	return km.keyVersion
+	st := km.state.Load()
+	if st == nil {
+		return ""
+	}
+	return st.keyVersion
 }
 
 // GetEvidenceSignKey returns a copy of the KEK-derived evidence-signing key and its
 // fingerprint ("key version"), or ok=false if the manager has not been initialized
-// (no KEK has been derived yet, so no evidence-signing key exists).
+// (no KEK has been derived yet, so no evidence-signing key exists). Lock-free.
 func (km *KeyManager) GetEvidenceSignKey() (key []byte, keyID string, ok bool) {
-	km.mu.RLock()
-	defer km.mu.RUnlock()
-	if len(km.evidenceSignKey) == 0 {
+	st := km.state.Load()
+	if st == nil || len(st.evidenceSignKey) == 0 {
 		return nil, "", false
 	}
-	key = make([]byte, len(km.evidenceSignKey))
-	copy(key, km.evidenceSignKey)
-	return key, km.evidenceSignKeyID, true
+	key = make([]byte, len(st.evidenceSignKey))
+	copy(key, st.evidenceSignKey)
+	return key, st.evidenceSignKeyID, true
 }
 
 // GetAuditCheckpointKey returns a copy of the KEK-derived audit-checkpoint signing
 // key and its fingerprint ("key version"), or ok=false if the manager has not been
 // initialized (no KEK has been derived yet, so no checkpoint-signing key exists).
+// Lock-free.
 func (km *KeyManager) GetAuditCheckpointKey() (key []byte, keyID string, ok bool) {
-	km.mu.RLock()
-	defer km.mu.RUnlock()
-	if len(km.auditCheckpointKey) == 0 {
+	st := km.state.Load()
+	if st == nil || len(st.auditCheckpointKey) == 0 {
 		return nil, "", false
 	}
-	key = make([]byte, len(km.auditCheckpointKey))
-	copy(key, km.auditCheckpointKey)
-	return key, km.auditCheckpointKeyID, true
+	key = make([]byte, len(st.auditCheckpointKey))
+	copy(key, st.auditCheckpointKey)
+	return key, st.auditCheckpointKeyID, true
 }
 
 // GetBackupManifestKey returns a copy of the KEK-derived backup-manifest
@@ -62,16 +65,15 @@ func (km *KeyManager) GetAuditCheckpointKey() (key []byte, keyID string, ok bool
 // manager has not been initialized -- design-b3-backup-v2.md §5.2/§5.3:
 // both `admin backup` (to sign) and `admin restore` (to verify, after
 // unwrapping the KEK from the archive's own staged key files) reach the
-// key only through this getter, never the raw KEK itself.
+// key only through this getter, never the raw KEK itself. Lock-free.
 func (km *KeyManager) GetBackupManifestKey() (key []byte, keyID string, ok bool) {
-	km.mu.RLock()
-	defer km.mu.RUnlock()
-	if len(km.backupManifestKey) == 0 {
+	st := km.state.Load()
+	if st == nil || len(st.backupManifestKey) == 0 {
 		return nil, "", false
 	}
-	key = make([]byte, len(km.backupManifestKey))
-	copy(key, km.backupManifestKey)
-	return key, km.backupManifestKeyID, true
+	key = make([]byte, len(st.backupManifestKey))
+	copy(key, st.backupManifestKey)
+	return key, st.backupManifestKeyID, true
 }
 
 // ValidateKeyFiles checks that key files exist and have correct permissions
@@ -144,24 +146,33 @@ func (km *KeyManager) keyFileSpecs(enc *config.EncryptionConfig, registryBase st
 
 // Wipe securely removes the DEK, the evidence-signing key, the
 // audit-checkpoint signing key, and the backup-manifest signing key from memory.
+// Called only at process shutdown after all request handlers have returned.
 func (km *KeyManager) Wipe() {
-	km.mu.Lock()
-	defer km.mu.Unlock()
+	km.rotateMu.Lock()
+	defer km.rotateMu.Unlock()
 
-	if km.currentDEK != nil {
-		wipeBytes(km.currentDEK)
-		km.currentDEK = nil
+	old := km.state.Load()
+	if old == nil {
+		return
 	}
-	if km.evidenceSignKey != nil {
-		wipeBytes(km.evidenceSignKey)
-		km.evidenceSignKey = nil
+	// Publish a nil-key state before wiping so any reader loading after Store
+	// sees empty keys rather than zeroed bytes still in flight.
+	newState := &keyState{}
+	newState.keyVersion = old.keyVersion
+	km.state.Store(newState)
+
+	// Wipe is called at shutdown after all handlers have returned, so no reader
+	// holds the old pointer concurrently — safe to zero the bytes immediately.
+	if old.currentDEK != nil {
+		wipeBytes(old.currentDEK)
 	}
-	if km.auditCheckpointKey != nil {
-		wipeBytes(km.auditCheckpointKey)
-		km.auditCheckpointKey = nil
+	if old.evidenceSignKey != nil {
+		wipeBytes(old.evidenceSignKey)
 	}
-	if km.backupManifestKey != nil {
-		wipeBytes(km.backupManifestKey)
-		km.backupManifestKey = nil
+	if old.auditCheckpointKey != nil {
+		wipeBytes(old.auditCheckpointKey)
+	}
+	if old.backupManifestKey != nil {
+		wipeBytes(old.backupManifestKey)
 	}
 }

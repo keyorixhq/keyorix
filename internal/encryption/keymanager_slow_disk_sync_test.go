@@ -127,11 +127,18 @@ func TestSlowDiskSync_KEKRotationAtomicAndRecovers(t *testing.T) {
 	}
 }
 
-// TestSlowDiskSync_HoldsReadLockAcrossSync demonstrates (3× replay) that a KEK
-// rotation holds KeyManager.mu across its directory fsync, so a slow fsync stalls
-// the hot encrypt path (GetKeyVersion RLock) for the whole delay. The
-// zero-contention baseline is the green control proving the measurement reflects
-// real lock contention, not a slow probe.
+// TestSlowDiskSync_HoldsReadLockAcrossSync verifies (3× replay) that after the
+// KEK lock split (step 1), a KEK rotation does NOT block GetKeyVersion during
+// its directory fsync. With the old design this test was red; after the split
+// it is green.
+//
+// Measurement: while rotation is inside its slow (injected) directory fsync,
+// GetKeyVersion must complete in well under delay/2 — it uses state.Load()
+// with no lock, so the rotation's rotateMu hold is invisible to it.
+//
+// The zero-contention baseline (no rotation in flight) is still present as the
+// GREEN control, proving the probe itself is fast and the new measurement
+// reflects the absence of contention, not a slow probe.
 func TestSlowDiskSync_HoldsReadLockAcrossSync(t *testing.T) {
 	const delay = 300 * time.Millisecond
 	// Passphrase chain, one rotation per trial.
@@ -158,9 +165,9 @@ func TestSlowDiskSync_HoldsReadLockAcrossSync(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- km.RotateKEKPassphrase(oldPass, newPass) }()
 
-		<-reached // rotation is now inside the slow fsync, holding mu.Lock
+		<-reached // rotation is now inside the slow fsync (rotateMu held, NOT mu)
 		probe0 := time.Now()
-		_ = km.GetKeyVersion() // RLock — blocks until rotation releases mu.Lock
+		_ = km.GetKeyVersion() // lock-free state.Load() — must NOT block
 		blocked := time.Since(probe0)
 
 		rotErr := <-done
@@ -169,20 +176,20 @@ func TestSlowDiskSync_HoldsReadLockAcrossSync(t *testing.T) {
 			t.Fatalf("trial %d: rotation failed: %v", i, rotErr)
 		}
 
-		t.Logf("trial %d: baseline GetKeyVersion=%v, blocked-under-slow-sync=%v (injected delay=%v)",
+		t.Logf("trial %d: baseline GetKeyVersion=%v, probe-under-slow-sync=%v (injected delay=%v)",
 			i, baseline.Round(time.Microsecond), blocked.Round(time.Millisecond), delay)
 
-		// RED: the probe is held off for most of the injected delay => mu.Lock is
-		// held across the slow fsync.
-		if blocked < delay/2 {
-			t.Fatalf("trial %d: expected the hot-path RLock to be blocked >= %v by the slow fsync, got %v "+
-				"(if this now passes, KeyManager.mu is no longer held across the directory fsync — revisit this characterization)",
-				i, delay/2, blocked)
+		// GREEN (step 1 acceptance): the probe is NOT held off by the rotation's
+		// fsync — state.Load() is lock-free and completes instantly.
+		if blocked >= delay/2 {
+			t.Fatalf("trial %d: GetKeyVersion was blocked for %v (>= %v) while rotation held the slow fsync — "+
+				"readers must not be blocked by rotation's fsync after the KEK lock split (step 1)",
+				i, blocked, delay/2)
 		}
-		// GREEN control: with no rotation in flight the same probe is ~instant.
+		// GREEN control: with no rotation in flight the same probe is also ~instant.
 		if baseline > delay/10 {
 			t.Fatalf("trial %d: zero-contention baseline GetKeyVersion took %v (> %v) — the probe itself is slow, "+
-				"the blocked measurement would not prove lock contention", i, baseline, delay/10)
+				"the blocked measurement would not prove absence of contention", i, baseline, delay/10)
 		}
 	}
 

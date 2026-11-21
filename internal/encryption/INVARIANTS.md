@@ -193,3 +193,9 @@ Format: `INV-ENCRYPTION-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#is
   host B, confirm `KEK()` fails with "unseal failed" and the blob is unchanged. Also not
   covered by design: no PCR policy is enforced (see the `tpm_provider.go` package doc), so the
   seal is bound to the chip, not to a boot state (#2514).
+
+## Concurrency
+
+Fragment invariants (see `INVARIANTS.d/`) covering in-process locking and atomic-state
+publication for `KeyManager`. All readers use `state.Load()` (no lock); all rotation
+operations hold `rotateMu` for their entire duration.

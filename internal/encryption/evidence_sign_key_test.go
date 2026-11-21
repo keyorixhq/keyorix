@@ -137,9 +137,7 @@ func TestEvidenceSignKey_WipedOnShutdown(t *testing.T) {
 		t.Fatal("EvidenceSignKey unavailable before shutdown")
 	}
 
-	svc.keyManager.mu.RLock()
-	keyRef := svc.keyManager.evidenceSignKey // same backing array wipeBytes must zero in place
-	svc.keyManager.mu.RUnlock()
+	keyRef := svc.keyManager.state.Load().evidenceSignKey // same backing array wipeBytes must zero in place
 	if allZeroBytes(keyRef) {
 		t.Fatal("test setup bug: evidence-signing key was already all-zero before Wipe()")
 	}

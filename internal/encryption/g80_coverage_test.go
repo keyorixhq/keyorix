@@ -424,7 +424,7 @@ func TestUnwrapDEK_ReadFailure_Error(t *testing.T) {
 	dir := t.TempDir()
 	km := NewKeyManager(dir, "dek.key", "kek.salt")
 	// dek.key does not exist.
-	_, err := km.unwrapDEK(make([]byte, 32))
+	_, _, err := km.unwrapDEK(make([]byte, 32))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to read wrapped DEK")
 }
@@ -506,7 +506,11 @@ func TestRotateDEKWithSweep_OldEncSvcCreationFailure_Error(t *testing.T) {
 	dir := t.TempDir()
 	km := NewKeyManager(dir, "dek.key", "kek.salt")
 	require.NoError(t, km.Initialize("passphrase"))
-	km.currentDEK = make([]byte, 10) // corrupt: not a valid AES key size
+	// Corrupt the in-memory DEK to trigger an invalid AES key size error.
+	oldSt := km.state.Load()
+	fakeSt := *oldSt
+	fakeSt.currentDEK = make([]byte, 10) // not a valid AES key size
+	km.state.Store(&fakeSt)
 
 	err := km.RotateDEKWithSweep("passphrase", func(_, _ *EncryptionService, _ string) error {
 		t.Fatal("sweepFn must not be called when the old encryption service can't be created")
@@ -665,7 +669,7 @@ func TestCommitNewKEKFiles_WriteSaltFailure_Error(t *testing.T) {
 	km := NewKeyManager(dir, "dek.key", "kek.salt")
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "kek.salt.pending"), 0755))
 
-	err := km.commitNewKEKFiles(make([]byte, 32), make([]byte, 48))
+	err := km.commitNewKEKFiles(make([]byte, 32), make([]byte, 48), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "write pending salt")
 }
@@ -675,7 +679,7 @@ func TestCommitNewKEKFiles_WriteDEKFailure_Error(t *testing.T) {
 	km := NewKeyManager(dir, "dek.key", "kek.salt")
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "dek.key.pending"), 0755))
 
-	err := km.commitNewKEKFiles(make([]byte, 32), make([]byte, 48))
+	err := km.commitNewKEKFiles(make([]byte, 32), make([]byte, 48), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "write pending DEK")
 	// The pending salt file written just before the DEK write failed must be
@@ -690,7 +694,7 @@ func TestCommitNewKEKFiles_RenameDEKFailure_Error(t *testing.T) {
 	// dek.key exists as a directory, so renaming the pending file onto it fails.
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "dek.key"), 0755))
 
-	err := km.commitNewKEKFiles(make([]byte, 32), make([]byte, 48))
+	err := km.commitNewKEKFiles(make([]byte, 32), make([]byte, 48), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "promote pending DEK to active")
 	_, statErr := os.Stat(filepath.Join(dir, "dek.key.pending"))
@@ -706,7 +710,7 @@ func TestCommitNewKEKFiles_RenameSaltFailure_Error(t *testing.T) {
 	// rename fails.
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "kek.salt"), 0755))
 
-	err := km.commitNewKEKFiles(make([]byte, 32), make([]byte, 48))
+	err := km.commitNewKEKFiles(make([]byte, 32), make([]byte, 48), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "promote pending salt to active")
 	// The DEK rename already succeeded and must NOT have been rolled back.
@@ -720,7 +724,7 @@ func TestCommitNewKEKFiles_HappyPath(t *testing.T) {
 	salt := bytes.Repeat([]byte{0x11}, 32)
 	wrapped := bytes.Repeat([]byte{0x22}, 48)
 
-	require.NoError(t, km.commitNewKEKFiles(salt, wrapped))
+	require.NoError(t, km.commitNewKEKFiles(salt, wrapped, nil))
 
 	gotSalt, err := os.ReadFile(filepath.Join(dir, "kek.salt"))
 	require.NoError(t, err)

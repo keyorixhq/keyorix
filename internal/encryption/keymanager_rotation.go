@@ -34,10 +34,11 @@ var errSweepOutcomeUnknown = errors.New("the re-encryption sweep may have commit
 //
 // Secret values NEVER leave the sweep function — transient in memory only.
 func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc, newSvc *EncryptionService, newKeyVersion string) error) error {
-	km.mu.Lock()
-	defer km.mu.Unlock()
+	km.rotateMu.Lock()
+	defer km.rotateMu.Unlock()
 
-	if km.currentDEK == nil {
+	oldState := km.state.Load()
+	if oldState == nil || oldState.currentDEK == nil {
 		return fmt.Errorf("key manager not initialized — cannot rotate")
 	}
 
@@ -94,7 +95,7 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 	// swept, active DEK still the old one. See FuzzDEKSweepCrashConsistency.
 	rotationCheckpointHook("sweep:after-write-dek-pending")
 
-	oldEncSvc, err := NewEncryptionService(km.currentDEK)
+	oldEncSvc, err := NewEncryptionService(oldState.currentDEK)
 	if err != nil {
 		wipeBytes(newDEK)
 		_ = os.Remove(filepath.Join(km.baseDir, pendingDEKPath))
@@ -154,13 +155,28 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 	rotationCheckpointHook("sweep:after-syncdir")
 	km.commitKeySet(keyfiles.OpRotateDEK, newFiles)
 
-	wipeBytes(km.currentDEK)
-	km.currentDEK = newDEK
-	km.dekSnapshot = append([]byte(nil), wrapped...)
-	km.keyVersion = newKeyVersion
+	// Publish the new key material. Signing keys are unchanged by a DEK rotation
+	// (they derive from the KEK, not the DEK). Use SelectorExpr assignments so
+	// the wipe-bytes sweep test recognises the new DEK as "retained" by newState.
+	newState := &keyState{}
+	newState.currentDEK = newDEK
+	newState.dekSnapshot = append([]byte(nil), wrapped...)
+	newState.keyVersion = newKeyVersion
+	newState.evidenceSignKey = oldState.evidenceSignKey
+	newState.evidenceSignKeyID = oldState.evidenceSignKeyID
+	newState.auditCheckpointKey = oldState.auditCheckpointKey
+	newState.auditCheckpointKeyID = oldState.auditCheckpointKeyID
+	newState.backupManifestKey = oldState.backupManifestKey
+	newState.backupManifestKeyID = oldState.backupManifestKeyID
+	km.state.Store(newState)
+
+	// RotateDEKWithSweep requires the server to be stopped (exclusive key lock),
+	// so no concurrent reader holds oldState. Safe to wipe immediately.
+	wipeBytes(oldState.currentDEK)
+
 	km.deleteBackupFiles()
 
-	fmt.Printf("✅ DEK rotated and full re-encryption sweep complete. New version: %s\n", km.keyVersion)
+	fmt.Printf("✅ DEK rotated and full re-encryption sweep complete. New version: %s\n", newKeyVersion)
 	return nil
 }
 
@@ -193,8 +209,8 @@ func (km *KeyManager) deleteBackupFiles() {
 // to call with no pending file present (no-op) — so a crash after the rename but before the
 // marker is cleared replays harmlessly.
 func (km *KeyManager) PromotePendingDEK() error {
-	km.mu.Lock()
-	defer km.mu.Unlock()
+	km.rotateMu.Lock()
+	defer km.rotateMu.Unlock()
 
 	pendingPath := filepath.Join(km.baseDir, km.dekPath+".pending")
 	activePath := filepath.Join(km.baseDir, km.dekPath)

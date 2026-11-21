@@ -165,9 +165,7 @@ func TestBackupManifestKey_WipedOnShutdown(t *testing.T) {
 		t.Fatal("BackupManifestKey unavailable before shutdown")
 	}
 
-	svc.keyManager.mu.RLock()
-	keyRef := svc.keyManager.backupManifestKey
-	svc.keyManager.mu.RUnlock()
+	keyRef := svc.keyManager.state.Load().backupManifestKey
 	if allZeroBytes(keyRef) {
 		t.Fatal("test setup bug: backup-manifest key was already all-zero before Wipe()")
 	}

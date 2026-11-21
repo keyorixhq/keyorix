@@ -50,10 +50,11 @@ type AuditKeyChangePrepare func(newAuditCheckpointKey []byte, newKeyVersion stri
 // non-nil) after the old passphrase is verified and before the key files are
 // written.
 func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase string, prepare AuditKeyChangePrepare) error {
-	km.mu.Lock()
-	defer km.mu.Unlock()
+	km.rotateMu.Lock()
+	defer km.rotateMu.Unlock()
 
-	if km.currentDEK == nil {
+	oldState := km.state.Load()
+	if oldState == nil || oldState.currentDEK == nil {
 		return fmt.Errorf("key manager not initialized — cannot rotate KEK")
 	}
 	if oldPassphrase == "" {
@@ -81,7 +82,7 @@ func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphras
 	if err != nil {
 		return fmt.Errorf("rotate KEK: re-read active DEK under lock: %w", err)
 	}
-	if !bytes.Equal(onDisk, km.dekSnapshot) {
+	if !bytes.Equal(onDisk, oldState.dekSnapshot) {
 		return fmt.Errorf("rotate KEK: the on-disk DEK changed since this process started — a concurrent DEK rotation likely completed in the meantime; re-run rotate-kek now that the rotation has finished")
 	}
 
@@ -116,7 +117,7 @@ func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphras
 	defer wipeBytes(newKEK)
 
 	// Wrap the current (unchanged) DEK with the new KEK.
-	newWrappedDEK, err := wrapKey(km.currentDEK, newKEK)
+	newWrappedDEK, err := wrapKey(oldState.currentDEK, newKEK)
 	if err != nil {
 		return fmt.Errorf("rotate KEK: wrap DEK with new KEK: %w", err)
 	}
@@ -149,27 +150,29 @@ func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphras
 		}
 	}
 
-	if err := km.commitNewKEKFiles(newSalt, newWrappedDEK); err != nil {
+	if err := km.commitNewKEKFiles(newSalt, newWrappedDEK, oldState.dekSnapshot); err != nil {
 		wipeBytes(newESK)
 		wipeBytes(newACK)
 		wipeBytes(newBMK)
 		return err
 	}
 
-	// Update in-memory state under the already-held mu.Lock.
-	wipeBytes(km.evidenceSignKey)
-	km.evidenceSignKey = newESK
-	km.evidenceSignKeyID = newESKID
-
-	wipeBytes(km.auditCheckpointKey)
-	km.auditCheckpointKey = newACK
-	km.auditCheckpointKeyID = newACKID
-
-	wipeBytes(km.backupManifestKey)
-	km.backupManifestKey = newBMK
-	km.backupManifestKeyID = newBMKID
-
-	km.dekSnapshot = append([]byte(nil), newWrappedDEK...)
+	// Publish the new in-memory state. DEK and keyVersion are unchanged by a KEK
+	// rotation; only the signing keys and dekSnapshot change.
+	// Old signing-key bytes are NOT immediately wiped: concurrent readers may still
+	// hold the old keyState pointer. They are released to GC — design doc §2.5
+	// explicitly accepts this for the signing keys.
+	newState := &keyState{}
+	newState.currentDEK = oldState.currentDEK
+	newState.dekSnapshot = append([]byte(nil), newWrappedDEK...)
+	newState.keyVersion = oldState.keyVersion
+	newState.evidenceSignKey = newESK
+	newState.evidenceSignKeyID = newESKID
+	newState.auditCheckpointKey = newACK
+	newState.auditCheckpointKeyID = newACKID
+	newState.backupManifestKey = newBMK
+	newState.backupManifestKeyID = newBMKID
+	km.state.Store(newState)
 
 	return nil
 }
@@ -179,10 +182,14 @@ func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphras
 // failure the original files are untouched. The pending DEK file is cleaned up on
 // partial failure so the next retry starts clean.
 //
+// oldSnapshot is the wrapped-DEK bytes that were on disk when the caller read
+// them (the dekSnapshot from the current keyState). It is passed here rather than
+// read from km.state so classifyDEKRename can use it without accessing the struct.
+//
 // Ordering: DEK is renamed before salt so that a crash between the two renames
 // leaves the new DEK (wrapped under the new KEK + new salt) with the old salt still
 // on disk. The pending salt file allows the operator to complete the rename manually.
-func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
+func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK, oldSnapshot []byte) error {
 	pendingSaltPath := km.saltPath + ".pending"
 	if err := durableWriteSync(km.baseDir, pendingSaltPath, newSalt, 0600, "kek:write-salt-pending"); err != nil {
 		return fmt.Errorf("rotate KEK: write pending salt: %w", err)
@@ -225,7 +232,7 @@ func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 		// into three outcomes instead of two, and fail-safe (delete nothing) on
 		// genuine uncertainty rather than treating uncertainty as "safe to
 		// clean up."
-		switch classifyDEKRename(km.baseDir, km.dekPath, pendingDEKFull, km.dekSnapshot, newWrappedDEK) {
+		switch classifyDEKRename(km.baseDir, km.dekPath, pendingDEKFull, oldSnapshot, newWrappedDEK) {
 		case dekRenameNotApplied:
 			_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
 			_ = os.Remove(pendingDEKFull)
