@@ -113,11 +113,14 @@ var plants = append([]plant{
 		// core leg returns no error for any principal that passes input
 		// validation, so it over-allows everyone the model denies. REST keeps its
 		// router gate and the op has no gRPC leg, so only the core leg diverges:
-		// "core allows, every present transport denies, the model denies" is
-		// exactly the known-04 waiver (partition_test.go), never "unexplained".
-		// This plant therefore proves the harness RECORDS the core-only
-		// over-allow (240 known-04 cases planted, 0 clean, at introduction); it
-		// does not fail a strict sweep, by the partition's design.
+		// "core allows, every present transport denies, the model denies". Until
+		// #4161 that shape was the known-04 waiver and this plant could only
+		// prove the harness RECORDED it (240 known-04 cases planted, 0 clean, at
+		// introduction). known-04 is now narrowed to the four owner-pass ops
+		// (partition_test.go), so the same core-only over-allow is "unexplained"
+		// and this plant proves a strict sweep FAILS on a dropped core gate while
+		// both transports still gate the op — the defence-in-depth regression the
+		// partition used to be blind to.
 		name: "reassign-owner-core-gate-removed",
 		file: "internal/core/secret_reassign_owner.go",
 		anchor: "\tif allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, Scope{ProjectID: projectID}); err != nil {\n" +
@@ -128,7 +131,6 @@ var plants = append([]plant{
 		repl:           "\t_ = actorKind // PLANT: core roles.assign@project gate removed\n",
 		op:             "secret.reassign.owner",
 		minUnexplained: 10,
-		bucket:         "known-04",
 	},
 	{
 		// V5: removes ActivateBreakGlass's IsProjectMember refusal — the

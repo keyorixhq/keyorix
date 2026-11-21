@@ -24,9 +24,14 @@ import (
 // The waiver families, what each matches, and what it does not detect:
 //
 //   - Core allows (known-04): the core leg allows, REST denies and gRPC
-//     denies or is absent. A transport that allows never matches. Not
-//     detected: a core leg that allows while every present transport denies
-//     (see below). The former known-02 (core let a suspended actor act, #4159)
+//     denies or is absent, on the four ops where the owner pass alone still
+//     authorizes a write in core (#4508's tags, description and move; the
+//     bulk suspend owner pass) for the viewer-owner principal. A transport
+//     that allows never matches. Every OTHER core-only over-allow is
+//     "unexplained" since #4161 moved the route gates into core
+//     (internal/core/authz_core_gate.go, TestCoreGateParity_*): a dropped core
+//     check now fails a strict sweep even while both transports still gate
+//     the op. The former known-02 (core let a suspended actor act, #4159)
 //     was fixed in core at every bound core-enforced op, the value reads
 //     included (#4336; TestCoreRefusesSuspendedActor, which fails an op it has
 //     no checked case for). The former known-03 (core let a secret's
@@ -51,10 +56,12 @@ import (
 // condition was fixed is removed instead of silently absorbing a regression
 // of that fix.
 //
-// What this partition does NOT detect: known-04 accepts "core allows, every
-// present transport denies, the model denies". The removal of a core-level
-// check (a defence-in-depth regression) is therefore invisible while both
-// transports still gate the op; only a transport that stops gating surfaces.
+// What this partition does NOT detect: on the four known-04 ops, for the
+// viewer-owner principal only, "core allows, every present transport denies,
+// the model denies" is still absorbed, so a dropped core check on exactly that
+// shape is invisible until the owner pass is closed there and the waiver goes.
+// Everywhere else a core-only over-allow is "unexplained" and fails a strict
+// sweep (the reassign-owner plant proves it, plants_test.go).
 //
 // Returns "" for a case with nothing to explain.
 func explain(r *caseResult) string {
@@ -70,7 +77,15 @@ func explain(r *caseResult) string {
 	modelDenies := r.Model == Denied || r.Model == ModelNA
 
 	switch {
-	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies:
+	// known-04, narrowed by #4161 to what is left of it: the owner pass alone
+	// still authorizes these four writes in core (secret.tags, secret.description
+	// and secret.move are #4508, fixed on PR #4536; bulk.suspend is item 2 of PR
+	// #4557), so the viewer who OWNS the fixture secret (secretArgs arg 1, or the
+	// viewer-owned secret in the bulk suspend's project) passes core and is
+	// refused by the route gate. Remove the case and the waiver row when the last
+	// of the four is closed (a dead waiver fails the full strict sweep).
+	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies &&
+		pk == pkViewer && slices.Contains([]string{"secret.tags", "secret.description", "secret.move", "bulk.suspend"}, r.Op):
 		return "known-04"
 
 	// V5EXT3 known-10: a machine actor holds the router gate permission for
