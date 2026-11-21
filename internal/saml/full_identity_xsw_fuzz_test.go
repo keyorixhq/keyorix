@@ -61,6 +61,10 @@ import (
 // Distinct signed identity: every field is a different string so a mutation that swaps one
 // field's source is unambiguous in the failure message and cannot accidentally match another.
 const (
+	// Fixture entity IDs.
+	fidIDPEntityID = "https://fid-idp.example/entity"
+	fidSPEntityID  = "https://keyorix.internal/saml/fid/metadata"
+
 	fidSubject = "subject-user@corp.example"
 	fidEmail   = "mail-addr@corp.example"
 	fidName    = "Full Identity User"
@@ -72,6 +76,9 @@ const (
 
 // fidMutate applies diffMutate for ops 0..14 and attribute-targeted mutations for ops >=15.
 func fidMutate(signed []byte, op uint8, off uint16, blob []byte) []byte {
+	if op%fidNumOps == 4 { // NameID splice on THIS fixture's subject (diffMutate's op 4 targets another fixture's)
+		return spliceCommentInto(signed, fidSubject, blob)
+	}
 	if op%fidNumOps < diffNumOps {
 		return diffMutate(signed, op%fidNumOps, off, blob)
 	}
@@ -88,12 +95,97 @@ func fidMutate(signed []byte, op uint8, off uint16, blob []byte) []byte {
 		return injectAttributeStatement(signed, false)
 	case 20: // duplicate the signed assertion's own groups AttributeValue, then rewrite the copy to the evil group
 		return dupGroupValueAsEvil(signed)
+	case 21: // matched evil assertion as the FIRST child of Response (sibling XSW)
+		return injectFidEvilAssertion(signed, fidEvilFirst)
+	case 22: // matched evil assertion appended AFTER the signed assertion
+		return injectFidEvilAssertion(signed, fidEvilLast)
+	case 23: // matched evil assertion wrapping the signed one in its Advice
+		return injectFidEvilAssertion(signed, fidEvilWrap)
 	}
 	return signed
 }
 
-// fidNumOps = diffNumOps structural ops (0..14) + 6 attribute-targeted ops (15..20).
-const fidNumOps = diffNumOps + 6
+// fidNumOps = diffNumOps structural ops (0..14) + 9 attribute-targeted ops (15..23).
+const fidNumOps = diffNumOps + 9
+
+// fidForgedAssertion returns an UNSIGNED copy of the signed assertion that grants fidEvilGroup
+// on top of the signed groups. It is built from the signed fixture at runtime rather than
+// from a constant, so it inherits everything crewjam's validateAssertion checks before it
+// reads any attribute: the fresh IssueInstant (MaxIssueDelay), the bearer SubjectConfirmation
+// (Recipient, NotOnOrAfter), the Conditions window and audience, the issuer, the NameID, and
+// the email and name attributes. Only the signature is dropped, the ID changes and one group
+// is added. A forged assertion with a hard-coded 2024 IssueInstant and no bearer confirmation
+// is refused as expired before identity is read, so the groups check would stay unreachable
+// (TestFullIdentity_EvilAssertionPassesLibraryValidation pins the reachable shape).
+// Returns nil when the signed assertion has no group value to extend.
+func fidForgedAssertion(signedAssertion *etree.Element) *etree.Element {
+	evil := signedAssertion.Copy()
+	for _, sig := range evil.FindElements("./Signature") {
+		evil.RemoveChild(sig)
+	}
+	evil.CreateAttr("ID", "_fidevil")
+	for _, av := range evil.FindElements(".//AttributeValue") {
+		if av.Text() == fidGroup1 {
+			ev := av.Copy()
+			ev.SetText(fidEvilGroup)
+			av.Parent().AddChild(ev)
+			return evil
+		}
+	}
+	return nil
+}
+
+type fidEvilPlacement int
+
+const (
+	fidEvilFirst fidEvilPlacement = iota // first child of Response
+	fidEvilLast                          // last child of Response
+	fidEvilWrap                          // outer assertion; the signed one moves into its Advice
+)
+
+// injectFidEvilAssertion places the forged assertion relative to the signed one. A parse
+// failure or missing target returns the input unchanged (TestFullIdentity_AllOpsChangeTheDocument
+// pins that this does not happen on the fixture). Ops 21 and 22 are refused first by
+// strictAssertionShape ("exactly one Assertion child of root"), before crewjam runs; the
+// ops exist to cover a regression of that layer. Op 23 keeps one Assertion child and is
+// refused by the library's own checks.
+func injectFidEvilAssertion(signed []byte, where fidEvilPlacement) []byte {
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(signed); err != nil || doc.Root() == nil {
+		return signed
+	}
+	root := doc.Root()
+	signedAssertion := root.FindElement(".//Assertion")
+	if signedAssertion == nil {
+		return signed
+	}
+	evil := fidForgedAssertion(signedAssertion)
+	if evil == nil {
+		return signed
+	}
+	switch where {
+	case fidEvilFirst:
+		root.InsertChildAt(0, evil)
+	case fidEvilLast:
+		root.AddChild(evil)
+	case fidEvilWrap:
+		adv := etree.NewElement("Advice")
+		adv.Space = signedAssertion.Space
+		if cond := evil.FindElement("./Conditions"); cond != nil {
+			evil.InsertChildAt(cond.Index()+1, adv) // schema order: Conditions, Advice, statements
+		} else {
+			evil.AddChild(adv)
+		}
+		adv.AddChild(signedAssertion.Copy())
+		root.RemoveChild(signedAssertion)
+		root.AddChild(evil)
+	}
+	out, err := doc.WriteToBytes()
+	if err != nil {
+		return signed
+	}
+	return out
+}
 
 // spliceCommentInto inserts an XML comment into the middle of the first occurrence of
 // target's text. Exclusive-C14N-without-comments strips it so an enveloped signature over
@@ -179,13 +271,17 @@ type fidFixture struct {
 	p         *Provider
 	signedXML []byte
 	acsURL    string
+	// IdP signing key and certificate: TestFullIdentity_EvilAssertionPassesLibraryValidation
+	// re-signs the forged assertion with them.
+	priv *rsa.PrivateKey
+	cert *x509.Certificate
 }
 
 func newFIDFixture(tb testing.TB) *fidFixture {
 	tb.Helper()
 	const (
-		idpEntityID = "https://fid-idp.example/entity"
-		spEntityID  = "https://keyorix.internal/saml/fid/metadata"
+		idpEntityID = fidIDPEntityID
+		spEntityID  = fidSPEntityID
 		acsURL      = "https://keyorix.internal/auth/saml/fid/acs"
 	)
 
@@ -275,7 +371,7 @@ func newFIDFixture(tb testing.TB) *fidFixture {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	return &fidFixture{p: p, signedXML: signedXML, acsURL: acsURL}
+	return &fidFixture{p: p, signedXML: signedXML, acsURL: acsURL, priv: priv, cert: idpCert}
 }
 
 // fidWantGroups is the signed groups set, sorted, that every acceptance must match.
@@ -330,6 +426,7 @@ func FuzzSAMLFullIdentity(f *testing.F) {
 	f.Add(uint8(15), uint16(0), []byte("Z"))
 	f.Add(uint8(16), uint16(0), []byte("Z"))
 	f.Add(uint8(18), uint16(0), []byte(""))
+	f.Add(uint8(21), uint16(0), []byte(""))
 
 	f.Fuzz(func(t *testing.T, op uint8, off uint16, blob []byte) {
 		mutated := fidMutate(fx.signedXML, op, off, blob)
