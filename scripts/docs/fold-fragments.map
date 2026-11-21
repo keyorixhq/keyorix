@@ -1,0 +1,17 @@
+# fold-fragments.map -- where scripts/docs/fold-fragments.sh files a config fragment
+# whose key prefix has no "## <prefix>" section of that exact name in docs/CONFIGURATION.md.
+#
+# One rule per line: <key prefix><TAB><exact text of a "## " heading in docs/CONFIGURATION.md>.
+# The longest matching prefix (whole dotted segments) wins. Blank lines and lines starting
+# with # are ignored. The heading must exist: `fold-fragments.sh --check` fails on a rule
+# whose heading is gone.
+#
+# Placement order for docs/configuration.d/<key with dots as __>.md (first hit wins):
+#   1. the section of a heading (any level) that names the key's parent in backticks, the
+#      longest parent first (`storage.database`, then `storage`);
+#   2. the "## <heading>" this file maps the key's prefix to;
+#   3. the "## <first segment of the key>" section (## storage, ## security, ...).
+# Anything else is an error: add a rule here instead of letting the fold guess.
+purge	soft_delete & purge
+soft_delete	soft_delete & purge
+audit	audit.siem

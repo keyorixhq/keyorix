@@ -76,6 +76,15 @@ const (
 	// requires the caller to have MFA enabled — no other namedPrincipalKind does.
 	// The TOTP secret is stored in fixtures.mfaUserTOTPSecret for use in core/REST legs.
 	pkMFAUser principalKind = "mfa-user"
+
+	// pkMFAEnrollee is a user with a PENDING (not yet activated) MFA enrollment.
+	// It is the positive control for mfa.activate (ActivateMFA), which requires
+	// a pending enrollment row (mfa_secrets.activated=false). No other named
+	// principal has a pending enrollment. The TOTP secret is stored in
+	// fixtures.mfaEnrolleeTOTPSecret. users.mfa_enabled stays false until
+	// activation completes, so mfaEnabled(pkMFAEnrollee)=false (Oracle 2:
+	// model denies it for mfa.disable and mfa.recovery-codes.regenerate).
+	pkMFAEnrollee principalKind = "mfa-enrollee"
 )
 
 // namedPrincipalKinds are the fixed principals, each testing a mechanism a
@@ -85,10 +94,10 @@ const (
 // (genVariations), replacing the old hand-picked subsets.
 // pkMFAUser is included because mfa.stepup requires MFA enrolment state that no
 // RBAC permission set can express — it is a named principal kind, not a variation.
-var namedPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkActor0, pkExpired, pkSuspended, pkPAT, pkPATFull, pkMFAUser}
+var namedPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkActor0, pkExpired, pkSuspended, pkPAT, pkPATFull, pkMFAUser, pkMFAEnrollee}
 
 // allPrincipalKinds is every principal the fuzz target may pick.
-var allPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkCustom, pkMachine, pkActor0, pkExpired, pkSuspended, pkPAT, pkPATFull, pkMFAUser}
+var allPrincipalKinds = []principalKind{pkNone, pkViewer, pkProjAdmin, pkGlobalAdmin, pkCustom, pkMachine, pkActor0, pkExpired, pkSuspended, pkPAT, pkPATFull, pkMFAUser, pkMFAEnrollee}
 
 type principal struct {
 	kind            principalKind
@@ -215,6 +224,14 @@ type fixtures struct {
 	// and users.mfa_enabled is set to true. decryptAuthSecret is a passthrough
 	// when encryption is off, so loadTOTPSecret reads the plaintext base32 back.
 	mfaUserTOTPSecret string
+
+	// V5EXT5: pending MFA enrollment fixture (mfa.activate).
+	//
+	// mfaEnrolleeTOTPSecret is the base32 TOTP secret for pkMFAEnrollee's pending
+	// enrollment. The MFASecret row is Activated=false; users.mfa_enabled stays false.
+	// decryptAuthSecret is a passthrough (no encryptor in test mode), so the TOTP
+	// code can be validated directly against the plaintext base32.
+	mfaEnrolleeTOTPSecret string
 
 	// V5EXT4: SCIM fixture.
 	//
@@ -763,6 +780,26 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 		return nil, fmt.Errorf("seed: ProvisionSCIMGroup: %w", err)
 	}
 	fx.scimGroupID = scimGroup.ID
+
+	// ---- V5EXT5 fixtures (mfa.activate with pkMFAEnrollee) ----
+	//
+	// pkMFAEnrollee has a PENDING (not yet activated) MFA enrollment.
+	// BeginMFAEnrollment cannot be used in test mode (requires authEncryptor); the
+	// mfa_secrets row is written directly with Activated=false. users.mfa_enabled
+	// stays false (not yet activated), so mfaEnabled(pkMFAEnrollee)=false —
+	// only pendingMFAEnrollment(pkMFAEnrollee)=true (mfa.activate's model gate).
+	mfaEnrollee := mkUser("p-mfa-enrollee")
+	mfaEnrolleeTok, _ := mustLogin(ctx, c, "p-mfa-enrollee")
+	mfaEnrolleeKey, err := totp.Generate(totp.GenerateOpts{Issuer: "keyorix-authzdiff-test", AccountName: mfaEnrollee.Email})
+	if err != nil {
+		return nil, fmt.Errorf("seed: totp.Generate (enrollee): %w", err)
+	}
+	if e := db.Create(&models.MFASecret{UserID: mfaEnrollee.ID, SecretEnc: []byte(mfaEnrolleeKey.Secret()), Activated: false}).Error; e != nil {
+		return nil, fmt.Errorf("seed: create pending MFASecret: %w", e)
+	}
+	// mfa_enabled stays false: enrollment is pending, not complete.
+	fx.mfaEnrolleeTOTPSecret = mfaEnrolleeKey.Secret()
+	fx.principals[pkMFAEnrollee] = &principal{kind: pkMFAEnrollee, userID: mfaEnrollee.ID, token: mfaEnrolleeTok, username: "p-mfa-enrollee"}
 
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the
 	// seeded tokens so the copies are never inside the 60s window.
