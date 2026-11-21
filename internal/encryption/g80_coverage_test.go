@@ -424,7 +424,7 @@ func TestUnwrapDEK_ReadFailure_Error(t *testing.T) {
 	dir := t.TempDir()
 	km := NewKeyManager(dir, "dek.key", "kek.salt")
 	// dek.key does not exist.
-	_, err := km.unwrapDEK(make([]byte, 32))
+	_, _, err := km.unwrapDEK(make([]byte, 32))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to read wrapped DEK")
 }
@@ -506,7 +506,7 @@ func TestRotateDEKWithSweep_OldEncSvcCreationFailure_Error(t *testing.T) {
 	dir := t.TempDir()
 	km := NewKeyManager(dir, "dek.key", "kek.salt")
 	require.NoError(t, km.Initialize("passphrase"))
-	km.currentDEK = make([]byte, 10) // corrupt: not a valid AES key size
+	setTestDEK(km, make([]byte, 10)) // corrupt: not a valid AES key size
 
 	err := km.RotateDEKWithSweep("passphrase", func(_, _ *EncryptionService, _ string) error {
 		t.Fatal("sweepFn must not be called when the old encryption service can't be created")

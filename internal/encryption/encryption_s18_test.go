@@ -68,7 +68,7 @@ func TestRotateDEKWithSweep_SweepErrorKeepsOldDEK(t *testing.T) {
 func TestRotateDEKWithSweep_HappyPath(t *testing.T) {
 	km, dir := initKM(t, "passphrase-happy")
 	oldDEK := append([]byte(nil), km.GetDEK()...)
-	oldVersion := km.keyVersion
+	oldVersion := km.published().keyVersion
 
 	var receivedOldSvc, receivedNewSvc *EncryptionService
 	var receivedVersion string
