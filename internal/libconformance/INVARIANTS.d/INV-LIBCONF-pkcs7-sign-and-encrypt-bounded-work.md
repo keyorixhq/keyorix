@@ -12,6 +12,10 @@
   `FuzzPKCS7Sign` (empty-parents) does not reach.  Why: the signing/encrypt
   surface was unguarded by any fuzz harness prior to LS3; `NewSignedData`
   allocates from the input inside an ASN.1 marshal path that had no
-  allocation or panic coverage.  Guard: `FuzzPKCS7Sign`,
+  allocation or panic coverage.  `FuzzPKCS7Sign` and `FuzzPKCS7SignWithChain`
+  additionally carry a sign-then-verify round-trip oracle (LS4): when
+  `Finish()` succeeds the resulting token is parsed and verified against the
+  signing PKI's own root pool via `VerifyWithChain`, asserting no sign/verify
+  asymmetry in the library.  Guard: `FuzzPKCS7Sign`,
   `FuzzPKCS7SignWithChain`, `FuzzPKCS7Encrypt`, `FuzzPKCS7EncryptUsingPSK`
   (`internal/libconformance`).
