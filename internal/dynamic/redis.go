@@ -209,6 +209,18 @@ func connectRedis(ctx context.Context, adminDSN string, allowPrivateNetwork, all
 		opts.Dialer = guard.RedisDialer(opts.TLSConfig)
 	}
 
+	// Bound what a hostile or intercepted server can make this client allocate:
+	// go-redis sizes buffers from announced RESP lengths and has no cap of its own.
+	// Outermost dialer, so it reads plaintext RESP after any TLS layer. DialTimeout
+	// is fixed up first because NewDialer reads it at dial time.
+	if opts.DialTimeout == 0 {
+		opts.DialTimeout = 5 * time.Second
+	}
+	if opts.Dialer == nil {
+		opts.Dialer = redis.NewDialer(opts)
+	}
+	opts.Dialer = netutil.RESPGuardDialer(opts.Dialer, netutil.RESPLimits{})
+
 	client := redis.NewClient(opts)
 	pingCtx, cancel := context.WithTimeout(ctx, redisOpTimeout)
 	defer cancel()
