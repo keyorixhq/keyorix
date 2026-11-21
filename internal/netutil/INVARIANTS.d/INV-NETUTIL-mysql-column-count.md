@@ -13,7 +13,7 @@
   how the stream is split), `TestMySQLGuardConn*` (violating chunk withheld, connection closed,
   sticky error, compression refused, TLS pass-through); end to end `internal/dynamic`
   `TestOpenMySQLRejectsHostileColumnCount` and `internal/rotation`
-  `TestMySQLRotateRejectsHostileColumnCount` (red without the guard: 228 MiB allocated, or a panic).
+  `TestMySQLRotateRejectsHostileColumnCount` (red without the guard: a large allocation, or a panic).
   **Not covered**: connections that negotiate TLS (the driver layers TLS over the connection it
   dials, so the guard sees ciphertext and steps aside after the SSLRequest packet); later result
   sets of a multi-statement reply; other announced sizes (row and packet lengths); the guard bounds
