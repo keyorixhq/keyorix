@@ -43,6 +43,8 @@ import (
 const (
 	pcrashChildDeadline = 3 * time.Minute
 	envPCrashStats      = "KEYORIX_PCRASH_STATS" // optional dir: one TSV line per exec
+
+	envPCrashExhaustive = "KEYORIX_PCRASH_EXHAUSTIVE" // runs the tests that spawn child processes
 )
 
 // pcrashOp is one operation under test. The after model is the before model
@@ -214,7 +216,28 @@ type pcrashWorld struct {
 	migSchema string
 }
 
+// pcrashStaleWorldAge is old enough that no run can still be using the directory.
+const pcrashStaleWorldAge = 24 * time.Hour
+
+// removeStalePCrashWorlds clears templates a killed fuzz worker left behind: a
+// process that dies by SIGKILL runs neither a Cleanup nor a deferred remove, so
+// the next run is the only thing that can. Failures only leave them for later.
+func removeStalePCrashWorlds() {
+	for _, pattern := range []string{"pcrash-template-*", "pcrash-fresh-*"} {
+		matches, err := filepath.Glob(filepath.Join(os.TempDir(), pattern))
+		if err != nil {
+			continue
+		}
+		for _, m := range matches {
+			if info, err := os.Lstat(m); err == nil && info.IsDir() && time.Since(info.ModTime()) > pcrashStaleWorldAge {
+				_ = os.RemoveAll(m)
+			}
+		}
+	}
+}
+
 func buildPCrashWorld() (_ *pcrashWorld, err error) {
+	removeStalePCrashWorlds()
 	dir, err := os.MkdirTemp("", "pcrash-template-*")
 	if err != nil {
 		return nil, err
@@ -498,14 +521,23 @@ func pcrashOpenGuarded(dir, pass string) (o pcrashOpened) {
 	return pcrashOpened{inst: inst, err: err}
 }
 
-// pcrashExplicitOpenError reports whether err is a refusal an operator is told
-// how to resolve, as opposed to an unexplained failure to open. The list is the
-// set of refusals with documented recovery steps; anything else fails I1.
+// pcrashDocumentedRefusals is the text of each refusal the product tells an
+// operator how to resolve. Keyed on the product's own wording, never on a wrapper
+// added by openPCrashInstall: those wrap every failure of a step, refusal or not.
+var pcrashDocumentedRefusals = []string{
+	"an interrupted `admin restore` left its journal at",            // restorejournal.RefuseIfPresent
+	"key material is an incomplete set",                             // keyfiles.InspectKeySet
+	"key material does not match the key-set manifest",              // keyfiles.InspectKeySet
+	"key material is incoherent",                                    // keyfiles classifyIntent
+	"failed to unwrap DEK — wrong passphrase or corrupted key file", // KeyManager.unwrapDEK
+}
+
+// pcrashExplicitOpenError reports whether err is one of those refusals, as
+// opposed to an unexplained failure to open; anything else fails I1.
 func pcrashExplicitOpenError(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "admin restore --recover") ||
-		strings.Contains(msg, "key file consistency") ||
-		errors.Is(err, errPCrashKey)
+	return slices.ContainsFunc(pcrashDocumentedRefusals, func(refusal string) bool {
+		return strings.Contains(err.Error(), refusal)
+	})
 }
 
 func pcrashModelEqual(a, b *pcrashModel) bool {
@@ -641,6 +673,14 @@ func (w *pcrashWorld) checkAfterDeath(t *testing.T, op pcrashOp, dir string, st 
 	if !reflect.DeepEqual(m.Authz, st.before.Authz) && !reflect.DeepEqual(m.Authz, after.Authz) {
 		v = append(v, fmt.Sprintf("I4 authorization is neither before nor after: vs before %v, vs after %v", pcrashAuthzDiff(m.Authz, st.before.Authz), pcrashAuthzDiff(m.Authz, after.Authz)))
 	}
+	// Each part being allowed on its own is not enough: all three must be the
+	// same side, or a change that spans two commits passes half-applied.
+	if len(v) == 0 && !pcrashModelEqual(m, st.before) && !pcrashModelEqual(m, after) {
+		v = append(v, fmt.Sprintf("I3 state mixes before and after: secrets match before=%v after=%v, roles before=%v after=%v, authorization before=%v after=%v",
+			ledgerBefore, ledgerAfter,
+			reflect.DeepEqual(m.Roles, st.before.Roles), reflect.DeepEqual(m.Roles, after.Roles),
+			reflect.DeepEqual(m.Authz, st.before.Authz), reflect.DeepEqual(m.Authz, after.Authz)))
+	}
 	for _, o := range opened {
 		o.inst.close()
 	}
@@ -696,6 +736,16 @@ func (w *pcrashWorld) checkRerun(t *testing.T, op pcrashOp, dir, pass string, st
 	if r.exit == 0 && !reflect.DeepEqual(m.Roles, after.Roles) {
 		return []string{fmt.Sprintf("I5 roles after a completed rerun differ from the after model: %v", m.Roles)}
 	}
+	if r.exit == 0 {
+		if !reflect.DeepEqual(m.Authz, after.Authz) {
+			return []string{fmt.Sprintf("I5 authorization after a completed rerun differs from the after model: %v", pcrashAuthzDiff(m.Authz, after.Authz))}
+		}
+		return nil
+	}
+	authzAllowed := []map[string]bool{st.before.Authz, after.Authz, afterKill.Authz}
+	if !slices.ContainsFunc(authzAllowed, func(a map[string]bool) bool { return reflect.DeepEqual(m.Authz, a) }) {
+		return []string{fmt.Sprintf("I5 authorization after a refused rerun is not an allowed state: vs before %v, vs after %v", pcrashAuthzDiff(m.Authz, st.before.Authz), pcrashAuthzDiff(m.Authz, after.Authz))}
+	}
 	return nil
 }
 
@@ -726,10 +776,19 @@ func pcrashWorldFor(tb testing.TB) *pcrashWorld {
 	return w
 }
 
-func TestProcessCrashCalibration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("spawns real child processes")
+// pcrashSkipUnlessRequested keeps a test that spawns real child processes out of
+// plain `go test` and the race legs, the same shape as KEYORIX_INTERLEAVE_SWEEP. It
+// gates the calibration and the exhaustive tests, not TestProcessCrashRedProof,
+// which runs unless -short is given.
+func pcrashSkipUnlessRequested(t *testing.T, what string) {
+	t.Helper()
+	if os.Getenv(envPCrashExhaustive) == "" {
+		t.Skipf("set %s=1 to %s", envPCrashExhaustive, what)
 	}
+}
+
+func TestProcessCrashCalibration(t *testing.T) {
+	pcrashSkipUnlessRequested(t, "run a clean calibration of every operation")
 	w := pcrashWorldFor(t)
 	for _, op := range pcrashOps {
 		c := w.calibrate(t, op)
@@ -742,9 +801,7 @@ func TestProcessCrashCalibration(t *testing.T) {
 // TestProcessCrashExhaustive kills every operation at every seam it has, once.
 // It takes minutes, so it runs only when asked for.
 func TestProcessCrashExhaustive(t *testing.T) {
-	if os.Getenv("KEYORIX_PCRASH_EXHAUSTIVE") == "" {
-		t.Skip("set KEYORIX_PCRASH_EXHAUSTIVE=1 to kill every operation at every seam")
-	}
+	pcrashSkipUnlessRequested(t, "kill every operation at every seam")
 	w := pcrashWorldFor(t)
 	for _, op := range pcrashOps {
 		cal := w.calibrate(t, op)
@@ -840,16 +897,49 @@ func (w *pcrashWorld) checkBackupAfterKilledRotation(t *testing.T, killAt int64,
 	return nil
 }
 
-const envPCrashFindings = "KEYORIX_PCRASH_FINDINGS" // set to fail on the known clean-host refusal
+// pcrashCleanHostRefusal is restore's refusal of an archive whose key-file count
+// differs from the target's (validateKeyFileSetV2).
+const pcrashCleanHostRefusal = "key file(s) but this config"
+
+// checkBackupAfterCompletedRotation is the positive control of the clean-host
+// check: a kill point past the last seam, so a rotation that ran to the end,
+// and a backup that must restore on the same clean host.
+func (w *pcrashWorld) checkBackupAfterCompletedRotation(t *testing.T) []string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := pcrashCopyTree(w.dir, dir); err != nil {
+		t.Fatalf("copy template: %v", err)
+	}
+	// State 0 adds no rows, so the rotation has exactly the calibrated seams.
+	st, err := w.prepare(dir, 0)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	run, err := pcrashOps[0].run(dir, pcrashPass, w.calibrate(t, pcrashOps[0]).seams+1)
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if run.killed || run.exit != 0 {
+		t.Fatalf("control: the rotation must run to the end: killed=%v exit=%d: %s", run.killed, run.exit, pcrashTail(run.output))
+	}
+	b, err := runPCrashChild(dir, pcrashPass, "admin", []string{"backup", "--config", "./keyorix.yaml", "--output", "./post.tar.gz"}, 0)
+	if err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	if b.exit != 0 {
+		return []string{fmt.Sprintf("backup after a completed rotation exited %d: %s", b.exit, pcrashTail(b.output))}
+	}
+	return w.checkCleanHostRestore(t, dir, "completed rotation", st)
+}
 
 // checkCleanHostRestore restores the same archive onto an install that never saw
 // the rotation, which is what a restore after losing the machine looks like.
 //
-// KNOWN FINDING: while a killed rotation's .pending key file exists, backup
+// KNOWN FINDING #4058: while a killed rotation's .pending key file exists, backup
 // archives it (keyfiles.Registry) and exits 0, and restore then refuses the
-// archive on a target without that file (validateKeyFileSetV2). Logged, not
-// failed, unless envPCrashFindings is set, so the harness stays usable until
-// that is decided.
+// archive on a target without that file (validateKeyFileSetV2). That one refusal
+// skips, and only while dek.key.pending is still in the data dir; anything else
+// here fails. Remove the skip when #4058 is fixed.
 func (w *pcrashWorld) checkCleanHostRestore(t *testing.T, dir, label string, st pcrashExecState) []string {
 	t.Helper()
 	target := t.TempDir()
@@ -871,15 +961,13 @@ func (w *pcrashWorld) checkCleanHostRestore(t *testing.T, dir, label string, st 
 		return []string{"clean-host restore panicked: " + pcrashTail(r.output)}
 	}
 	if r.exit != 0 {
-		if strings.Contains(r.output, "key file(s) but this config") {
-			t.Logf("finding: clean-host restore refused (killed at %s)", label)
-			if os.Getenv(envPCrashFindings) != "" {
-				return []string{fmt.Sprintf("backup exited 0 but its archive is refused on a clean host (killed at %s): %s", label, pcrashTail(r.output))}
-			}
-			return nil
+		if _, statErr := os.Stat(filepath.Join(dir, "keys", "dek.key.pending")); statErr == nil && strings.Contains(r.output, pcrashCleanHostRefusal) {
+			// #4058. To see the refusal, -v prints this skip message and the kill
+			// point is the subtest name:
+			//   KEYORIX_PCRASH_EXHAUSTIVE=1 go test ./internal/encryption/ -run 'TestProcessCrashBackupAfterKilledRotation/12' -count=1 -v
+			t.Skipf("#4058: backup exited 0 but its archive is refused on a clean host while dek.key.pending is present (killed at %s): %s", label, pcrashTail(r.output))
 		}
-		t.Logf("outcome: clean-host restore refused for another reason (killed at %s): %s", label, pcrashTail(r.output))
-		return nil
+		return []string{fmt.Sprintf("backup exited 0 but its archive is refused on a clean host (killed at %s): %s", label, pcrashTail(r.output))}
 	}
 	t.Logf("outcome: clean-host restore succeeded (killed at %s)", label)
 	o := pcrashOpenGuarded(target, pcrashPass)
@@ -920,9 +1008,7 @@ func pcrashArchiveNames(path string) []string {
 
 // TestProcessCrashBackupAfterKilledRotation runs that check at every rotation seam.
 func TestProcessCrashBackupAfterKilledRotation(t *testing.T) {
-	if os.Getenv("KEYORIX_PCRASH_EXHAUSTIVE") == "" {
-		t.Skip("set KEYORIX_PCRASH_EXHAUSTIVE=1 to kill a rotation at every seam and back up")
-	}
+	pcrashSkipUnlessRequested(t, "kill a rotation at every seam and back up")
 	w := pcrashWorldFor(t)
 	cal := w.calibrate(t, pcrashOps[0])
 	for killAt := int64(1); killAt <= cal.seams; killAt++ {
@@ -933,6 +1019,12 @@ func TestProcessCrashBackupAfterKilledRotation(t *testing.T) {
 			}
 		})
 	}
+	t.Run("completed-rotation", func(t *testing.T) {
+		t.Parallel()
+		if v := w.checkBackupAfterCompletedRotation(t); len(v) > 0 {
+			t.Errorf("%s", strings.Join(v, "; "))
+		}
+	})
 }
 
 func FuzzProcessCrashRecovery(f *testing.F) {

@@ -35,8 +35,13 @@ import (
 //
 //	online  Valid, ChainedEvents == len(rows)
 //	offline VALID with the key; ChainedEvents == len(rows); PurgedEvents == purged
-//	offline without the key: VALID if nothing was ever purged, else INDETERMINATE
-//	  (an unauthenticated retention gap is never VALID and never credited), never BROKEN
+//	offline without the key: VALID while the surviving chain starts at genesis
+//	  (nothing purged, or a purge removed every row and the chain restarted), else
+//	  INDETERMINATE (an unauthenticated retention gap is never VALID and never
+//	  credited), never BROKEN
+//
+// Every purge is run, including one that removes every surviving row and one
+// that removes the row the latest checkpoint certified as head (#4351).
 //
 // Program encoding (op numbers are corpus encoding: APPEND ONLY, never renumber).
 // bytes are (op, arg) pairs, at most auditChainMaxOps of them:
@@ -72,6 +77,11 @@ func FuzzAuditChainOpSequence(f *testing.F) {
 	f.Add([]byte{0, 2, 2, 0, 8, 0})                                // tamper: tail truncation after checkpoint
 	f.Add([]byte{0, 2, 9, 2})                                      // tamper: entry hash
 	f.Add([]byte{0, 2, 1, 29, 0, 2, 2, 0, 3, 0, 2, 0, 0, 0, 8, 0}) // purge then truncate
+
+	// #4351: case 2, a purge removes the latest checkpoint's head; case 1 after
+	// a checkpoint: the purge empties the table, the chain restarts, checkpoint.
+	f.Add([]byte{0, 0, 2, 0, 2, 0, 1, 14, 3, 8, 1, 9, 3, 18, 5, 0})
+	f.Add([]byte{0, 2, 2, 0, 1, 29, 3, 0, 0, 1, 2, 0, 5, 0})
 
 	f.Fuzz(func(t *testing.T, prog []byte) {
 		// Watchdog: a program that does not finish is a finding (a lock wait or a
@@ -114,7 +124,10 @@ func auditChainOpSequenceProgram(t *testing.T, prog []byte) {
 			purged int64
 			cpAt   int64 = -1 // total certified by the latest checkpoint; -1 = none
 			nextID uint64
-			cpHead string // desc of the row the latest checkpoint certified as head
+			// gapVisible: the surviving chain starts after removed rows (a
+			// non-genesis prev_hash). A purge that removes every row leaves the next
+			// row to restart at genesis, so no gap is visible again.
+			gapVisible bool
 		)
 		total := func() int64 { return int64(len(rows)) + purged }
 
@@ -180,22 +193,13 @@ func auditChainOpSequenceProgram(t *testing.T, prog []byte) {
 					step, what, withKey.ChainedEvents, withKey.PurgedEvents, len(rows), purged)
 			}
 			switch {
-			case purged == 0 && noKey.Verdict != auditverify.VerdictValid:
-				t.Fatalf("step %d %s: offline (no key) %s on a never-purged chain: %s", step, what, noKey.Verdict, noKey.Reason)
-			case purged > 0 && noKey.Verdict != auditverify.VerdictIndeterminate:
+			case !gapVisible && noKey.Verdict != auditverify.VerdictValid:
+				t.Fatalf("step %d %s: offline (no key) %s on a chain with no visible retention gap: %s", step, what, noKey.Verdict, noKey.Reason)
+			case gapVisible && noKey.Verdict != auditverify.VerdictIndeterminate:
 				t.Fatalf("step %d %s: offline (no key) %s after a purge, want INDETERMINATE (unauthenticated gap): %s", step, what, noKey.Verdict, noKey.Reason)
 			}
 		}
 
-		// wouldEmpty: a purge that removes EVERY surviving row leaves no row to
-		// re-anchor, so the cumulative purged count is not recorded and the next
-		// verify reads the trail as truncated below its certified high-water mark.
-		// internal/core/INVARIANTS.d/INV-CORE-audit-purge-keeps-checkpoints-verifiable.md
-		// lists it as "Not covered"; the fuzzer found the same thing on its own
-		// (#4351). Programs that would do it are not run past this point, so the
-		// remaining state space stays checkable. Remove this guard when #4351 is
-		// fixed.
-		//
 		// Which rows a purge removes: the PREFIX (by id) of rows strictly older than
 		// the cutoff, stopping at the first row that is not (local_audit.go keeps
 		// `id < B` as well as `event_time < cutoff`, so a row stamped out of order
@@ -210,25 +214,6 @@ func auditChainOpSequenceProgram(t *testing.T, prog []byte) {
 			}
 			return n
 		}
-		// The second documented gap in the same invariant: a purge that removes the
-		// row the LATEST checkpoint certified as head (no newer checkpoint written
-		// yet) makes the online verifier report "audit event #N certified by
-		// checkpoint #M is missing (tail-truncation or genesis re-seed)": a
-		// sanctioned purge read as a truncation. The scheduler writes checkpoints
-		// far more often than retention is long, so it needs a stalled checkpoint
-		// job to reach; same guard, same removal condition.
-		wouldEmpty := func(at time.Time, days int) bool {
-			n := prefixLen(at, days)
-			if len(rows) > 0 && n == len(rows) {
-				return true
-			}
-			for _, r := range rows[:n] {
-				if cpHead != "" && r.desc == cpHead {
-					return true
-				}
-			}
-			return false
-		}
 		purge := func(step int, days int) {
 			cutoff := clock.AddDate(0, 0, -days)
 			n := prefixLen(clock, days)
@@ -240,6 +225,9 @@ func auditChainOpSequenceProgram(t *testing.T, prog []byte) {
 			}
 			if res.DeletedCount != want {
 				t.Fatalf("step %d purge(%dd): deleted %d rows, model says %d (cutoff %v, %d rows held)", step, days, res.DeletedCount, want, cutoff, len(rows))
+			}
+			if n > 0 {
+				gapVisible = n < len(rows)
 			}
 			rows = append(keep, row{at: farFuture, desc: "purge", system: true})
 			purged += want
@@ -273,11 +261,10 @@ func auditChainOpSequenceProgram(t *testing.T, prog []byte) {
 						t.Fatalf("step %d checkpoint certifies %d events, model total (chained+purged) is %d", step, cp.ChainedEvents, total())
 					}
 					cpAt = total()
-					cpHead = rows[len(rows)-1].desc
 				}
 				check(step, "checkpoint", false)
 			case 3:
-				if len(rows) >= maxRows || wouldEmpty(clock, 7+arg%30) {
+				if len(rows) >= maxRows {
 					continue
 				}
 				purge(step, 7+arg%30)
@@ -288,7 +275,7 @@ func auditChainOpSequenceProgram(t *testing.T, prog []byte) {
 				}
 				days := 7 + arg%30
 				target := rows[0].at.AddDate(0, 0, days)
-				if target.Before(clock) || wouldEmpty(target, days) {
+				if target.Before(clock) {
 					continue
 				}
 				clock = target

@@ -199,31 +199,8 @@ func dirSnapshot(tb testing.TB, dir string) map[string]string {
 	return out
 }
 
-// withoutKnownWALSidecars drops the -wal and -shm entries SQLite creates when
-// it opens a file whose header says WAL (read-version byte 19 == 2; SQLite
-// opens the WAL on that byte alone, byte 18 == 2 by itself creates nothing): a
-// keyorix-side defect (issue #4350, which also covers the read-only-directory
-// failure) that the oracle tolerates for exactly those two names and only for
-// such a file. The database file's own bytes and every other entry still must
-// not change. Delete this function when #4350 is fixed.
-func withoutKnownWALSidecars(base string, before, after map[string]string) map[string]string {
-	db := before[base]
-	if len(db) < 20 || db[19] != 2 {
-		return after
-	}
-	out := map[string]string{}
-	for k, v := range after {
-		if _, existed := before[k]; !existed && (k == base+"-wal" || k == base+"-shm") {
-			continue
-		}
-		out[k] = v
-	}
-	return out
-}
-
 // checkHostileFileRun is the oracle for one open+verify of a hostile file.
 func checkHostileFileRun(verdict Verdict, verified bool, path string, before, after map[string]string) error {
-	after = withoutKnownWALSidecars(filepath.Base(path), before, after)
 	if !reflect.DeepEqual(before, after) {
 		var names []string
 		for k := range after {
@@ -259,7 +236,7 @@ func FuzzAuditVerifyHostileSQLiteFile(f *testing.F) {
 		_, _ = db.Exec(`UPDATE audit_events SET success=NULL WHERE id=4`)
 	}))
 	wal := append([]byte{}, valid...)
-	wal[18], wal[19] = 2, 2 // header says WAL: opening it drops -wal/-shm beside the file (#4350, tolerated)
+	wal[18], wal[19] = 2, 2 // header says WAL: verified from a private copy, nothing beside the file (#4350)
 	f.Add(wal)
 	f.Add(valid[:len(valid)/2])
 	f.Add([]byte{})
@@ -353,53 +330,40 @@ func TestHostileFileOracle_RedProof(t *testing.T) {
 		t.Error("oracle missed a rewritten database file")
 	}
 
-	// The #4350 exemption is exactly the WAL sidecars of a WAL-header file.
-	walBytes := append([]byte{}, good...)
-	walBytes[18], walBytes[19] = 2, 2
-	wdir, wpath := write(walBytes)
-	wsnap := dirSnapshot(t, wdir)
-	for _, name := range []string{"audit.db-wal", "audit.db-shm"} {
-		if err := os.WriteFile(filepath.Join(wdir, name), []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
+	// A WAL-header file (#4350) gets no exemption: opening and verifying it
+	// with the real driver leaves the directory as it was, and any -wal, -shm
+	// or -journal beside it, or a rewritten database file, is named.
+	for _, hdr := range [][2]byte{{2, 2}, {1, 2}, {2, 1}} {
+		walBytes := append([]byte{}, good...)
+		walBytes[18], walBytes[19] = hdr[0], hdr[1]
+		wdir, wpath := write(walBytes)
+		wsnap := dirSnapshot(t, wdir)
+		db, err := OpenSQLiteReadOnly(wpath)
+		if err != nil {
+			t.Fatalf("header %v: %v", hdr, err)
 		}
-	}
-	if err := checkHostileFileRun(VerdictBroken, true, wpath, wsnap, dirSnapshot(t, wdir)); err != nil {
-		t.Errorf("the known WAL-sidecar behaviour should be tolerated for a WAL file: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(wdir, "audit.db-journal"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := checkHostileFileRun(VerdictBroken, true, wpath, wsnap, dirSnapshot(t, wdir)); err == nil {
-		t.Error("the WAL exemption hid a -journal file")
-	}
-	_ = os.Remove(filepath.Join(wdir, "audit.db-journal"))
-	// Write-version byte 18 == 2 alone does not make SQLite open a WAL, so the
-	// same two sidecars beside such a file are not exempt.
-	w18 := append([]byte{}, good...)
-	w18[18], w18[19] = 2, 1
-	w18dir, w18path := write(w18)
-	w18snap := dirSnapshot(t, w18dir)
-	// The premise, against the real driver: opening and verifying such a file
-	// leaves the directory as it was.
-	if db, err := OpenSQLiteReadOnly(w18path); err == nil {
-		_, _ = Verify(context.Background(), db, Options{})
+		res, err := Verify(context.Background(), db, Options{})
 		_ = db.Close()
-	}
-	if err := checkHostileFileRun(VerdictBroken, true, w18path, w18snap, dirSnapshot(t, w18dir)); err != nil {
-		t.Errorf("opening a file with only byte 18 == 2 changed the directory: %v", err)
-	}
-	for _, name := range []string{"audit.db-wal", "audit.db-shm"} {
-		if err := os.WriteFile(filepath.Join(w18dir, name), []byte("x"), 0o600); err != nil {
+		if err != nil || res.Verdict != VerdictValid {
+			t.Fatalf("header %v: seed chain is not VALID: %v %+v", hdr, err, res)
+		}
+		if err := checkHostileFileRun(res.Verdict, true, wpath, wsnap, dirSnapshot(t, wdir)); err != nil {
+			t.Errorf("header %v: verifying the file changed its directory: %v", hdr, err)
+		}
+		for _, name := range []string{"audit.db-wal", "audit.db-shm", "audit.db-journal"} {
+			if err := os.WriteFile(filepath.Join(wdir, name), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := checkHostileFileRun(VerdictBroken, true, wpath, wsnap, dirSnapshot(t, wdir)); err == nil {
+				t.Errorf("header %v: oracle missed %s beside the database", hdr, name)
+			}
+			_ = os.Remove(filepath.Join(wdir, name))
+		}
+		if err := os.WriteFile(wpath, append(append([]byte{}, walBytes...), 0), 0o600); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if err := checkHostileFileRun(VerdictBroken, true, w18path, w18snap, dirSnapshot(t, w18dir)); err == nil {
-		t.Error("the WAL exemption covered a file whose read-version byte 19 is not 2")
-	}
-	if err := os.WriteFile(wpath, append(append([]byte{}, walBytes...), 0), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := checkHostileFileRun(VerdictBroken, true, wpath, wsnap, dirSnapshot(t, wdir)); err == nil {
-		t.Error("the WAL exemption hid a rewritten database file")
+		if err := checkHostileFileRun(VerdictBroken, true, wpath, wsnap, dirSnapshot(t, wdir)); err == nil {
+			t.Errorf("header %v: oracle missed a rewritten database file", hdr)
+		}
 	}
 }

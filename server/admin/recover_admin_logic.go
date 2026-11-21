@@ -10,9 +10,9 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 	"github.com/keyorixhq/keyorix/internal/recoverykey"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // recoverAdminSummary reports what performRecoverAdmin actually did, for the
@@ -132,7 +132,7 @@ func performRecoverAdminOpts(ctx context.Context, store corestorage.Storage, use
 	expiresAt := now.Add(otpTTL).UTC()
 
 	// A one-time password the recovered admin can actually log in with, not an
-	// empty hash: bcrypt.CompareHashAndPassword (VerifyPasswordCredentials,
+	// empty hash: kdfmeter.CompareHashAndPassword (VerifyPasswordCredentials,
 	// internal/core/auth.go) fails unconditionally against "" for every
 	// password, so clearing the hash outright left the one documented
 	// emergency-recovery path ending in the account still being locked out —
@@ -147,7 +147,7 @@ func performRecoverAdminOpts(ctx context.Context, store corestorage.Storage, use
 	if err != nil {
 		return nil, fmt.Errorf("generate one-time password: %w", err)
 	}
-	otpHash, err := bcrypt.GenerateFromPassword([]byte(otp), core.PasswordHashCost())
+	otpHash, err := kdfmeter.GenerateFromPassword([]byte(otp), core.PasswordHashCost())
 	if err != nil {
 		return nil, fmt.Errorf("hash one-time password: %w", err)
 	}

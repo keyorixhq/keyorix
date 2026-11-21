@@ -18,7 +18,7 @@ import (
 	"regexp"
 	"strings"
 
-	"golang.org/x/crypto/bcrypt"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -80,7 +80,7 @@ func randomPasswordHash() (string, error) {
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(hex.EncodeToString(b)), int(bcryptCost.Load()))
+	hash, err := kdfmeter.GenerateFromPassword([]byte(hex.EncodeToString(b)), int(bcryptCost.Load()))
 	if err != nil {
 		return "", err
 	}

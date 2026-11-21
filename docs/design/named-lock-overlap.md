@@ -139,16 +139,18 @@ the lock-key expression exactly as written at the call site.
 | internal/core/machine_token.go | withMachineRoleRemovalGuards | sodGrantLockKey("machine", machineID) | none that overlap can break: a removal plus an environment-in-project scope check | removal only | safe |
 | internal/core/membership_lifecycle.go | inviteMemberWithMode | membershipLockKey(projectID, userID) | (1) one active onboarding per (project, user) (2) no grant on a revoked membership (#2659) | (1) partial unique index `uniq_project_memberships_active`; (2) `membershipActiveFence` in the grant's transaction | safe (1), fixed (-2) (2) |
 | internal/core/membership_lifecycle.go | TransitionMembership | membershipLockKey(m.ProjectID, m.UserID) | no grant on a revoked membership (#2657) | the state CAS takes the membership key in its transaction; the activation grant's transaction takes it and re-reads the state (`membershipActiveFence`) | fixed (-2) |
+| internal/core/invitations.go | revokeInvitationMembershipRow | membershipLockKey(projectID, userID) | an undone invitation accept leaves its membership revoked, not `active` with no role (#4410) | the revoke is `revertFailedActivation`'s conditional write (fromState CAS): an overlapping transition makes it no-op, and the read-back under the lock reports the row still live (MANUAL CLEANUP audited), never a revoke that did not happen | safe |
 | internal/core/invitations.go | ApproveAccessRequestWithExpiry | dualControlLockKey(requestID) | the K-th approval grants (M-of-K) | role grant by primary key, one approval per approver by unique index, conditional request update: an overlap fails closed (the request stays pending) | safe |
 | internal/core/secret_dependencies.go | LockedCreateSecretDependencyExclusive | secretDependencyGraphLockKey(d.ProjectID) | the project's dependency graph stays acyclic (read-graph-then-insert) | the graph key (`LockNamedKeyInTx`), then the fused `CreateSecretDependencyExclusive` as a savepoint | fixed (-2) |
 | internal/core/secrets.go | withEnvironmentSecretGuard | storage.EnvironmentSecretGuardLockKey(environmentID) | no secret or folder created in, or resumed into, a deleted environment (check-then-insert) | the environment key, then the existence check through tx | fixed (-2) |
 | internal/core/secrets.go | RestoreSecret | storage.EnvironmentSecretGuardLockKey(secret.EnvironmentID) | as above (restore) | the environment key, then the storage restore's `requireLiveEnvironment` through tx | fixed (-2) |
 | internal/core/catalog.go | DeleteEnvironment | storage.EnvironmentSecretGuardLockKey(id) | no active secret left in a deleted environment (count-then-delete) | the environment key, then the storage count and delete through tx | fixed (-2) |
+| internal/core/rbac_reconcile.go | ReconcileRBACPermissions | rbacReconcileLockKey | a startup catalog reconcile never re-saves a pending-grants row another replica cleared, and never re-grants a (permission, role) pair it is no longer owed (REVIEW-4542-M1) | nothing: the grants run in `AssignPermissionToRole`'s own transactions, the row write is a plain upsert | accepted (startup only; see "Not fixed") |
 
-Totals: 38 sites. 31 fixed (6 by NAMEDLOCK-OVERLAP-1, 25 by NAMEDLOCK-OVERLAP-2);
-5 safe; 2 with two invariants, each now kept (`RevokeBreakGlassActivationAtomic`,
-`inviteMemberWithMode`: safe for the first, fixed for the second). None needs a
-check, none waits on a decision.
+Totals: 40 sites. 31 fixed (6 by NAMEDLOCK-OVERLAP-1, 25 by NAMEDLOCK-OVERLAP-2);
+6 safe; 2 with two invariants, each now kept (`RevokeBreakGlassActivationAtomic`,
+`inviteMemberWithMode`: safe for the first, fixed for the second); 1 accepted as startup-only
+(`ReconcileRBACPermissions`, see "Not fixed").
 
 ## Fixed by NAMEDLOCK-OVERLAP-1: user deactivation (6 sites)
 
@@ -257,7 +259,45 @@ transaction committed while the first was open).
 
 ## Not fixed
 
-Nothing in the inventory, and nothing found outside it.
+`ReconcileRBACPermissions` (REVIEW-4542-M1, added after the audit above). The lock
+serialises the startup reconcile of the RBAC catalog across replicas, so one
+replica cannot save a stale pending-grants row over one another replica cleared.
+Inside the window, a second replica starting at the same moment can run it too:
+both may then grant the same still-owed pair (harmless, the second finds it held
+or gets a duplicate), and the first may save its own copy of the row. A pair is
+re-granted only if an operator removes that exact baseline grant inside the same
+window of at most about 10 s, during a simultaneous restart of two replicas whose
+lock connection also died.
+
+The run's own failed row save does not widen that window (REVIEW-4560 M1). Each
+pair is taken off the row before its grant is attempted and put back only if the
+grant fails, so when the lock-loss path cancels the run, or a row write fails for
+any other reason, the row never lists a pair whose grant landed. What is left is
+fail closed: a pair whose failed grant cannot be put back on the row, or one the
+process stops on between that save and the grant, is dropped and not retried (a
+missed baseline grant, logged by name on a failed save), never re-granted.
+
+Accepted as startup-only (FIX-DEFECT-4542-TAILS-1), not fenced. A fence here is not
+the small `txFence` the families above use, because nothing in this section is one
+check followed by one write:
+
+- Fencing the grants alone does not close it. Each grant would have to take
+  `rbacReconcileLockKey` with `LockNamedKeyInTx`, re-read the pending row through
+  `tx`, and take its pair off the row in the same transaction, or a replica whose
+  lock died still grants from the debt it holds in memory. That needs a fenced
+  variant of `AssignPermissionToRole` (rbac_management.go, the shared grant path)
+  or a second copy of its audited grant in rbac_reconcile.go.
+- The row writes would have to become merges under the same key, and the list of
+  missing permissions would have to be re-read through `tx`: a replica that read
+  the catalog before another one created and granted a permission would otherwise
+  record that pair as owed again.
+- A version compare-and-set on the row does not help on its own: the paused
+  replica's in-memory debt still grants.
+
+That is a redesign of the reconcile into fenced transactions for a window that
+needs two replicas restarting together, a dead lock connection and an operator
+removing that exact baseline grant within the same few seconds. Revisit if the
+reconcile ever runs outside startup.
 
 ## Guard
 

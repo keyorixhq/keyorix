@@ -6,26 +6,98 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wneessen/go-mail/smtp"
+
 	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
-// TestGoMailFindingSCRAMIterationsUnbounded pins finding TP1-GOMAIL-scram-iter
-// (issue #4383) in wneessen/go-mail v0.8.2: smtp/auth_scram.go takes the
-// iteration count of the SCRAM server-first message ("i=") from the relay and
-// runs pbkdf2.Key with it, with no upper bound. The relay therefore chooses how much CPU the client spends
-// before it can send its next line, and the client's I/O timeout does not
-// interrupt it (it is CPU, not I/O). Keyorix reach: SMTPDelivery.newClient (and
-// notifychan's EmailSink.newClient) configure SMTPAuthAutoDiscover whenever a
-// relay username is set, which prefers SCRAM-SHA-256 whenever the relay lists it,
-// with or without TLS; DeliverSetupLink runs in the admin's create-user request.
+// TestSCRAMNotSelectedWithoutTLS is the Keyorix-side closure of finding
+// TP1-GOMAIL-scram-iter (issue #4383). wneessen/go-mail v0.8.2 takes the PBKDF2
+// iteration count of the SCRAM server-first message ("i=") from the relay and runs it
+// with no upper bound, and its SMTPAuthAutoDiscover picked SCRAM whenever the relay
+// listed it, with or without TLS. SMTPDelivery.newClient (and notifychan's
+// EmailSink.newClient) configured that whenever a relay username is set, and
+// DeliverSetupLink runs in the admin's create-user request: a relay, or anyone on the
+// path of a tls=none connection, announcing i=2147483647 held the request for minutes
+// of CPU that no I/O timeout interrupts.
 //
-// The test drives that exact path (newClient, buildMessage,
-// DialAndSendWithContext) against the in-memory relay with i=4096 and with
-// i=1024000 and asserts the client accepted both, computing the proof (it sent a
-// client-final message), and that the larger count cost much more time. When
-// go-mail starts refusing large iteration counts it reports the finding closed
-// (guardrules.KnownFindingClosed); then remove this test and
-// scramIterKnownFinding in FuzzSetupLinkHostileSMTPServer, and close #4383.
+// internal/smtpauth now chooses the mechanism: SCRAM only over TLS. This test drives
+// the real path (newClient, buildMessage, DialAndSendWithContext) against the
+// in-memory relay and asserts the client never starts SCRAM over a connection
+// without TLS and the whole send costs under 100 ms. With TLS the count is bounded
+// instead (internal/smtpauth tests: TestSCRAMRefusesHugeIterationCountBeforeDeriving).
+//
+// What this does NOT verify: a TLS connection (the in-memory relay cannot speak TLS).
+func TestSCRAMNotSelectedWithoutTLS(t *testing.T) {
+	sc := &smtpScript{
+		ehlo:      []string{"AUTH SCRAM-SHA-256 SCRAM-SHA-1"},
+		authStep:  []string{"334 ", "334 {scram}", "535 no"},
+		scramIter: "2147483647",
+	}
+	rec := &smtpRecord{}
+	cfg := SMTPSettings{Host: "relay.test", Port: 2525, From: fuzzFrom, TLS: smtpTLSNone, Username: fuzzSMTPUser, Password: fuzzSMTPPass}
+	req := SetupLinkRequest{RecipientEmail: "alice@example.com", Link: "https://k/s"}
+
+	// Run it off the test goroutine: before the fix this derives a key for minutes, and
+	// the test must say so within seconds rather than hang the run.
+	type result struct{ took time.Duration }
+	done := make(chan result, 1)
+	go func() {
+		took, _ := sendViaPipe(t, cfg, req, sc, rec)
+		done <- result{took}
+	}()
+	select {
+	case r := <-done:
+		if r.took > 100*time.Millisecond {
+			t.Errorf("send against a relay announcing i=2147483647 took %v, want under 100ms", r.took)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("still deriving a SCRAM key 5s after a relay announced i=2147483647 over a connection without TLS")
+	}
+	for _, l := range rec.lines {
+		if strings.HasPrefix(l, "AUTH SCRAM") {
+			t.Errorf("the client started SCRAM without TLS: %q", rec.lines)
+		}
+	}
+}
+
+// Without TLS the mechanisms that remain are the ones that never put the password on
+// the wire and cost nothing to answer; when the relay offers one next to SCRAM, that
+// one is used.
+func TestChallengeResponseStillUsedWithoutTLS(t *testing.T) {
+	sc := &smtpScript{
+		ehlo:     []string{"AUTH SCRAM-SHA-256 CRAM-MD5 PLAIN"},
+		authStep: []string{"334 PDEyMzQ1Ni4xMjM0QHJlbGF5Pg==", "535 no"},
+	}
+	rec := &smtpRecord{}
+	cfg := SMTPSettings{Host: "relay.test", Port: 2525, From: fuzzFrom, TLS: smtpTLSNone, Username: fuzzSMTPUser, Password: fuzzSMTPPass}
+	req := SetupLinkRequest{RecipientEmail: "alice@example.com", Link: "https://k/s"}
+	_, _ = sendViaPipe(t, cfg, req, sc, rec)
+	var auth []string
+	for _, l := range rec.lines {
+		if strings.HasPrefix(l, "AUTH") {
+			auth = append(auth, l)
+		}
+	}
+	if len(auth) != 1 || !strings.HasPrefix(auth[0], "AUTH CRAM-MD5") {
+		t.Fatalf("want exactly one AUTH CRAM-MD5, got %q (all lines %q)", auth, rec.lines)
+	}
+	for _, l := range rec.lines {
+		if strings.Contains(l, fuzzSMTPPass) {
+			t.Errorf("the relay password reached the wire: %q", l)
+		}
+	}
+}
+
+// TestGoMailFindingSCRAMIterationsUnbounded still pins the upstream finding
+// TP1-GOMAIL-scram-iter (#4383) in wneessen/go-mail v0.8.2, now at the library: its
+// SCRAM takes the iteration count from the relay's server-first message and runs
+// pbkdf2.Key with it, with no upper bound. Keyorix no longer reaches that code
+// unbounded (internal/smtpauth selects SCRAM only over TLS and refuses a count above
+// its bound before handing the message to go-mail), so this test is the signal for
+// the day go-mail fixes it: it then reports the finding closed
+// (guardrules.KnownFindingClosed); remove this test, and consider dropping the bound
+// in internal/smtpauth, and close #4383.
 //
 // What this does NOT verify: the exact cost per iteration (machine-dependent);
 // SCRAM-SHA-1, which shares the same code path.
@@ -33,46 +105,34 @@ func TestGoMailFindingSCRAMIterationsUnbounded(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spends about a second of CPU on purpose")
 	}
-	prev := smtpRelayIdle
-	// The relay hangs up when the client stays silent for this long, and the
-	// client is silent while it computes PBKDF2; 60s takes the relay out of the
-	// picture. The real bound is the client's own: go-mail's I/O deadline,
-	// smtpDialTimeout (10s, set at connect, so PBKDF2 runs inside it), which the
-	// test keeps because the client comes from SMTPDelivery.newClient. That is
-	// why the big count is i=1024000 (250x the small one, the ratio check needs
-	// 50x): about 0.15s plain and 1.5s under -race locally, where i=4096000 took
-	// 6.5s under -race in the merge queue, too close to 10s.
-	smtpRelayIdle = 60 * time.Second
-	defer func() { smtpRelayIdle = prev }()
-	run := func(iter string) (time.Duration, []string) {
-		sc := &smtpScript{
-			ehlo:      []string{"AUTH SCRAM-SHA-256"},
-			authStep:  []string{"334 ", "334 {scram}", "535 no"},
-			scramIter: iter,
+	run := func(iter string) (time.Duration, error) {
+		a := smtp.ScramSHA256Auth("relay-user", "pw")
+		first, err := a.Next(nil, true) // client-first: "n,,n=<user>,r=<nonce>"
+		if err != nil {
+			t.Fatalf("harness: client-first message: %v", err)
 		}
-		rec := &smtpRecord{}
-		cfg := SMTPSettings{Host: "relay.test", Port: 2525, From: fuzzFrom, TLS: smtpTLSNone, Username: fuzzSMTPUser, Password: fuzzSMTPPass}
-		req := SetupLinkRequest{RecipientEmail: "alice@example.com", Link: "https://k/s"}
+		_, nonce, ok := strings.Cut(string(first), ",r=")
+		if !ok {
+			t.Fatalf("harness: no nonce in %q", first)
+		}
+		serverFirst := fmt.Sprintf("r=%ssrv,s=c2FsdA==,i=%s", nonce, iter)
 		start := time.Now()
-		_, _ = sendViaPipe(t, cfg, req, sc, rec)
-		return time.Since(start), rec.lines
+		_, err = a.Next([]byte(serverFirst), true)
+		return time.Since(start), err
 	}
-	small, smallLines := run("4096")
-	big, bigLines := run("1024000")
-	sentFinal := func(lines []string) bool {
-		// AUTH, the client-first message, then the client-final message
-		// (base64 of "c=biws,r=...,p=..."), which needs the derived key.
-		return len(lines) >= 4 && strings.HasPrefix(lines[1], "AUTH SCRAM-SHA-256") && lines[3] != "*"
+	small, err := run("4096")
+	if err != nil {
+		t.Fatalf("harness: i=4096 refused: %v", err)
 	}
-	if !sentFinal(smallLines) {
-		t.Fatalf("harness: the SCRAM dialogue did not reach the client-final message: %q", smallLines)
-	}
-	if !sentFinal(bigLines) {
-		guardrules.KnownFindingClosed(t, "TP1-GOMAIL-scram-iter", fmt.Sprintf("no client-final for i=1024000 after %v (lines %q): either go-mail now refuses large counts (#4383 fixed) or a timeout (relay idle %v, client smtpDialTimeout %v) expired during PBKDF2; an elapsed time near either bound means a timeout", big, bigLines, smtpRelayIdle, smtpDialTimeout))
+	// 250x the small count (the ratio check needs 50x): about 0.15s plain and 1.5s
+	// under -race.
+	big, err := run("1024000")
+	if err != nil {
+		guardrules.KnownFindingClosed(t, "TP1-GOMAIL-scram-iter", fmt.Sprintf("go-mail now refuses i=1024000 (%v): #4383 is fixed upstream", err))
 		return
 	}
 	if big < 50*small {
 		t.Fatalf("i=1024000 took %v, i=4096 took %v: the iteration count no longer drives the cost", big, small)
 	}
-	t.Logf("i=4096: %v, i=1024000: %v", small, big)
+	t.Logf("go-mail SCRAM: i=4096: %v, i=1024000: %v", small, big)
 }

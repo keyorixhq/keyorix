@@ -45,6 +45,9 @@ func newCloneTestCore(t *testing.T) *KeyorixCore {
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ensureActiveActor(t, c.storage, 1) // the acting user of these tests (#4159)
+	// #4161: CloneEnvironment decides the route gate in core (secrets.write on the
+	// project, secrets.read on the source environment).
+	grantGateHolder(t, db, 1, Scope{ProjectID: 1}, permSecretsWrite, permSecretsRead)
 	return c
 }
 
@@ -236,6 +239,10 @@ func TestCloneEnvironment_ListSecretsError(t *testing.T) {
 	// Both envs have ProjectID=1 (returned by the override above), so the project
 	// check passes, and we reach ListSecrets which returns an error.
 	stubActiveActors(ms) // the acting user is active (#4159)
+	// #4161: CloneEnvironment decides the route gate in core — secrets.write on the
+	// project and secrets.read on the source environment.
+	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 1}, permSecretsWrite)
+	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
 	result, err := c.CloneEnvironment(context.Background(), 1, 2, 3, "owner", 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "db unavailable")

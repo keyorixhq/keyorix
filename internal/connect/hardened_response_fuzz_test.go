@@ -330,9 +330,10 @@ func (s stubRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 // FuzzErrorBodyScrubRoundTrip builds a hostile *http.Response and runs it through
 // errorBodyScrubRoundTripper.RoundTrip. Oracle O-RT:
 //
-//	for status < 300 (success): the response passes through UNCHANGED (body and
-//	  Content-Length preserved) — only error statuses are scrubbed, by design;
-//	for status >= 300: the body is replaced by a scrubbedErrorBody value that
+//	for status == 200: the response passes through UNCHANGED (body and
+//	  Content-Length preserved) — only 200 is trusted, by design (azsecrets.GetSecret
+//	  expects exactly 200, so azcore parses 201/202/... bodies as errors too);
+//	for every other status (including other 2xx): the body is replaced by a scrubbedErrorBody value that
 //	  satisfies all O-SCRUB laws; Content-Type is forced to application/json;
 //	  Content-Length (header and field) equals the new body length; TransferEncoding
 //	  is cleared and Uncompressed set; Content-Encoding/Content-Range/Content-Md5
@@ -344,6 +345,7 @@ func (s stubRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 // scrubbed body; nor that draining the original enables keep-alive reuse.
 func FuzzErrorBodyScrubRoundTrip(f *testing.F) {
 	f.Add(uint16(200), []byte(`{"value":"s"}`), false, false, false, false, false)
+	f.Add(uint16(101), []byte(`{"nested":[[[[]]]]}`), false, false, false, false, false) // 201: non-200 2xx is scrubbed
 	f.Add(uint16(404), []byte(`{"error":{"code":"SecretNotFound"}}`), true, true, true, true, true)
 	f.Add(uint16(500), bytes.Repeat([]byte("A"), 8192), true, false, false, true, false)
 	f.Add(uint16(301), []byte(`{"error":{"code":"inject\",\"x\":\"y"}}`), false, true, false, false, true)
@@ -391,7 +393,7 @@ func FuzzErrorBodyScrubRoundTrip(f *testing.F) {
 			t.Fatalf("O-RT: scrubbed response body is not readable: %v", rerr)
 		}
 
-		if sc < 300 {
+		if sc == http.StatusOK {
 			// passthrough
 			if !bytes.Equal(gotBody, body) {
 				t.Fatalf("O-RT passthrough violated: success status %d body changed: %q vs %q", sc, gotBody, body)

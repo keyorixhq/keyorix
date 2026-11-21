@@ -20,14 +20,24 @@ type stagingFile struct {
 // what a backup refuses is exactly what it would otherwise have archived.
 func rotationStaging(enc *config.EncryptionConfig) []stagingFile {
 	var files []stagingFile
-	if enc.SaltPath != "" {
-		files = append(files, stagingFile{label: "KEK salt rotation-staging", path: enc.SaltPath + ".pending", salt: true})
+	// EffectiveSaltPath: a non-password install has no salt rotation, so a
+	// kek.salt.pending left from its password days is not a rotation in
+	// progress (#4504 L1).
+	if salt := enc.EffectiveSaltPath(); salt != "" {
+		files = append(files, stagingFile{label: "KEK salt rotation-staging", path: salt + ".pending", salt: true})
 	}
 	if enc.DEKPath != "" {
 		files = append(files, stagingFile{label: "DEK rotation-staging", path: enc.DEKPath + ".pending"})
 	}
 	return files
 }
+
+// BackupRefusedReasonStagingFile names "admin backup is refused because a
+// rotation-staging file is present" (#4105) for machines: the reason= token of
+// the backup's structured stderr line and the reason of the server's
+// security.backup_refused status in GET /api/v1/system/info, so a monitor can
+// match one string for both.
+const BackupRefusedReasonStagingFile = "key-rotation-staging-file"
 
 // PendingRotationFile is a rotation-staging file present on disk.
 type PendingRotationFile struct {

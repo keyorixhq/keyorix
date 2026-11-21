@@ -1,11 +1,13 @@
 name: Process-crash red-proof (nightly)
 
 # TestProcessCrashRedProof and TestProcessCrashCalibration spawn real child
-# processes (about a minute, more with -race), so plain `go test` skips them
-# unless KEYORIX_PCRASH_EXHAUSTIVE is set. fuzz-changed.yml and the rig run
-# FuzzProcessCrashRecovery with -run='^$', which never reaches them, so this is
-# the job that keeps the oracles proven: a red-proof that stops firing on a day
-# nobody touched internal/encryption is caught here.
+# processes (about a minute, more with -race). RedProof runs in plain `go test`
+# and is skipped only by -short, which CI's quick tier uses; Calibration (like
+# TestProcessCrashExhaustive) is skipped unless KEYORIX_PCRASH_EXHAUSTIVE is set.
+# fuzz-changed.yml and the rig run FuzzProcessCrashRecovery with -run='^$', which
+# never reaches them, so this is the job that keeps the oracles proven: a
+# red-proof that stops firing on a day nobody touched internal/encryption is
+# caught here.
 on:
   schedule:
     # 05:17 UTC nightly, off the round minute, clear of this repo's other
@@ -18,6 +20,7 @@ permissions: {}
 jobs:
   process-crash-red-proof:
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -37,6 +40,7 @@ jobs:
     needs: [process-crash-red-proof]
     if: always() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: write

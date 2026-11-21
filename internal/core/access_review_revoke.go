@@ -148,6 +148,9 @@ func (c *KeyorixCore) checkMachineReviewerIndependence(ctx context.Context, acto
 // maps to which removal, under which lock" — the second-implementation shape
 // #2496 had to unwind, load-bearing here for the last-admin guard.
 func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	plan, err := c.planReviewRevoke(ctx, actorID, projectID, d)
 	if err != nil {
 		return err
@@ -193,6 +196,9 @@ func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, proj
 // access is still needed and correct"; recording it for a grant that no longer exists
 // would certify a false state in the compliance evidence trail (#209).
 func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	if err := c.checkAccessReviewAttestation(ctx, actorID, projectID, d); err != nil {
 		return err
 	}

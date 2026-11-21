@@ -69,6 +69,10 @@ const NamedLockPendingExpires = "2026-10-18"
 // every call site's nesting, driven or not. (TestNamedLockOrder_EveryCallSiteKeyHasAFamily
 // checks that every key has a family.)
 var NamedLockOrder = []NamedLockFamily{
+	// Held for a whole startup RBAC catalog reconcile (REVIEW-4542-M1), which
+	// grants through AssignPermissionToRole inside it; nothing holds a named
+	// lock when it is taken, so it goes first.
+	{Prefix: "rbac-permission-reconcile", Exact: true, Constructor: "core.rbacReconcileLockKey"},
 	{Prefix: "dual-control-approval:request:", Constructor: "core.dualControlLockKey"},
 	{Prefix: "project-membership:", Constructor: "core.membershipLockKey"},
 	{Prefix: "last-admin-guard", Exact: true, Constructor: "core.lastAdminGuardLockKey"},

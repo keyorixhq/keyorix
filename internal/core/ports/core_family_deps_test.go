@@ -39,6 +39,7 @@ var coreProductionKeyorixDeps = []string{
 	"internal/csvsafe",
 	"internal/i18n",
 	"internal/identity",
+	"internal/kdfmeter",
 	"internal/logging",
 	"internal/netutil",
 	"internal/oidcverify",
@@ -69,6 +70,8 @@ var coreDepsBeforeSplit = []string{
 	"internal/csvsafe",
 	"internal/i18n",
 	"internal/identity",
+	// KDF1: a new test-observable seam over bcrypt; written for this PR, never held core code.
+	"internal/kdfmeter",
 	"internal/logging",
 	"internal/netutil",
 	"internal/protectedmetrics",

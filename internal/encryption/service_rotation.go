@@ -404,13 +404,13 @@ func (s *Service) RewrapDEKWithProviderPrepare(newProvider crypto.KeyProvider, p
 // material (TPM/cloud-KMS wrapped-KEK blob, Shamir share files) s.config
 // declares; see internal/keyfiles.Registry.
 func (s *Service) ValidateKeyFiles() error {
-	return s.keyManager.ValidateKeyFiles(s.config)
+	return s.keyManager.checkKeyFilePerms(s.config, s.keyBaseDir, false)
 }
 
 // FixKeyFilePermissions fixes key file permissions to 0600, for the same set
 // ValidateKeyFiles checks.
 func (s *Service) FixKeyFilePermissions() error {
-	return s.keyManager.FixKeyFilePermissions(s.config)
+	return s.keyManager.checkKeyFilePerms(s.config, s.keyBaseDir, true)
 }
 
 // GetKeyVersion returns the current key version string.

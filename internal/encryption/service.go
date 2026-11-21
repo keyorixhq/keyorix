@@ -59,7 +59,9 @@ func NewService(cfg *config.EncryptionConfig, baseDir string) *Service {
 ║  NEVER run with encryption disabled in production.               ║
 ╚══════════════════════════════════════════════════════════════════╝`)
 	}
-	km := NewKeyManager(baseDir, cfg.DEKPath, cfg.SaltPath)
+	// #4395: EffectiveSaltPath, not SaltPath: a salt_path no provider uses is not
+	// part of the key set and must not be required, locked or checksummed.
+	km := NewKeyManager(baseDir, cfg.DEKPath, cfg.EffectiveSaltPath())
 	// The manifest writer for the whole configured set (salt, DEK, provider
 	// blobs, Shamir shares), not just the two files km knows. An unsafe path
 	// is reported by Initialize, like any other key-path configuration error.
@@ -127,7 +129,10 @@ func (s *Service) initialize(passphrase string) error {
 // Service's audit sink so a downgrade that actually FIRES at KEK() time — not
 // just one the config permits — is recorded as more than a log line.
 func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error) {
-	provider, err := newKeyProviderFromConfig(s.config, s.keyManager.baseDir, passphrase, s.auditKMSContextFallback)
+	// s.keyBaseDir, not km.baseDir: a tpm/*-kms wrapped_key_path resolves against
+	// the same base keyfiles uses (#4504 F1); newKeyProviderFromConfig
+	// normalizes it for the password provider's salt itself.
+	provider, err := newKeyProviderFromConfig(s.config, s.keyBaseDir, passphrase, s.auditKMSContextFallback)
 	if err != nil {
 		return nil, err
 	}
@@ -199,18 +204,31 @@ func newKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 	// into its own private fields — so cfg.SaltPath stays the ORIGINAL, possibly
 	// absolute, value forever. Passing that raw value into buildSingleProvider sends
 	// the password provider's salt write through securefiles with an absolute path,
-	// which safeRelComponents unconditionally rejects, even though the baseDir
-	// parameter here (when called from Service.buildKeyProvider) is already the
-	// normalized km.baseDir. Recomputing from (baseDir, cfg.DEKPath, cfg.SaltPath)
+	// which safeRelComponents unconditionally rejects. baseDir is the key base the
+	// Service was built with (Service.keyBaseDir), not km.baseDir, so normalizing
+	// it here gives the same result NewKeyManager got. Recomputing from (baseDir, cfg.DEKPath, cfg.SaltPath)
 	// directly — rather than requiring a live KeyManager to read normalized fields
 	// from — also fixes the exact same bug in NewKeyProviderFromConfig's other real
 	// caller, the KEK-provider migration tool, which builds a target provider with no
 	// KeyManager of its own to normalize on its behalf.
-	normBaseDir, _, normSaltPath, err := normalizeKeyPaths(baseDir, cfg.DEKPath, cfg.SaltPath)
+	normBaseDir, _, normSaltPath, err := normalizeKeyPaths(baseDir, cfg.DEKPath, cfg.EffectiveSaltPath())
 	if err != nil {
 		return nil, err
 	}
-	primary, err := buildSingleProvider(&cfg.KeyProvider, normBaseDir, passphrase, normSaltPath, kmsFallbackHook)
+	// Only the password provider joins its salt to normBaseDir. A tpm/*-kms
+	// wrapped_key_path is relative to baseDir, the base keyfiles.Registry,
+	// RequiredKeyFilePaths and ReconcileKeySet resolve it against: built on
+	// normBaseDir (the DEK's directory for an absolute dek_path) it wrote its
+	// blob where the next boot's key-set check did not look, and that boot
+	// refused the set as incomplete (#4504 F1).
+	build := func(kp *config.KeyProviderConfig) (crypto.KeyProvider, error) {
+		base := baseDir
+		if kp.UsesSalt() {
+			base = normBaseDir
+		}
+		return buildSingleProvider(kp, base, passphrase, normSaltPath, kmsFallbackHook)
+	}
+	primary, err := build(&cfg.KeyProvider)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +237,7 @@ func newKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 	}
 	providers := []crypto.KeyProvider{primary}
 	for i := range cfg.KeyProvider.Fallbacks {
-		fb, err := buildSingleProvider(&cfg.KeyProvider.Fallbacks[i], normBaseDir, passphrase, normSaltPath, kmsFallbackHook)
+		fb, err := build(&cfg.KeyProvider.Fallbacks[i])
 		if err != nil {
 			return nil, fmt.Errorf("fallback provider [%d] (%s): %w", i, cfg.KeyProvider.Fallbacks[i].Type, err)
 		}

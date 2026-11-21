@@ -1,0 +1,2 @@
+### Testing
+- **At-rest key-material canary (`FuzzAtRestKeyMaterial`).** A new `internal/encryption` fuzzer drives secret writes, DEK rotation with its re-encryption sweep and KEK rewraps onto new file providers. It fails when raw DEK, KEK or secret-value bytes (raw, hex or base64) rest anywhere on disk other than the KEK's own provider file, and re-checks the INV-ENCRYPTION-24 DEK wipe on Shutdown. Self-tests plant each leak, and a clean lifecycle must count every rotation and decrypt every row afterwards.

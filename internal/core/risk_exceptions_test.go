@@ -113,6 +113,7 @@ func TestRevokeRiskException(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
+	stubActiveActors(store) // the acting user is an active account (#4159)
 	// #1529: RevokeRiskException now requires creator-or-admin. CreatedBy: 3
 	// makes actor 3 the creator, satisfying the check without needing to stand
 	// up an RBAC mock chain for the admin branch.
@@ -141,6 +142,7 @@ func TestRevokeRiskException_DeniesNonCreatorNonAdmin(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
+	stubActiveActors(store) // the acting user is an active account (#4159)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 3}, nil)
 	store.On("GetUserRoleIDsAt", mock.Anything, uint(7), Scope{}).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", mock.Anything, uint(7), Scope{}).Return([]uint{}, nil)
@@ -167,6 +169,7 @@ func TestRevokeRiskException_AdminNonCreatorSucceeds(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
+	stubActiveActors(store) // the acting user is an active account (#4159)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 3}, nil)
 	store.On("GetUserRoleIDsAt", mock.Anything, uint(8), Scope{}).Return([]uint{1}, nil)
 	store.On("GetUserGroupRoleIDsAt", mock.Anything, uint(8), Scope{}).Return([]uint{}, nil)
@@ -188,6 +191,7 @@ func TestRevokeRiskException_LostRaceReturnsError(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
+	stubActiveActors(store) // the acting user is an active account (#4159)
 	// #1529: CreatedBy: 3 makes actor 3 the creator, satisfying the
 	// creator-or-admin check so this test still exercises the lost-race path
 	// it's actually about.

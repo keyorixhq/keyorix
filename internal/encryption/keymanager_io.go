@@ -81,21 +81,25 @@ func (km *KeyManager) GetBackupManifestKey() (key []byte, keyID string, ok bool)
 // salt km itself was constructed with); nil checks DEK+salt only, for a
 // KeyManager built without one (e.g. directly in a test).
 func (km *KeyManager) ValidateKeyFiles(enc *config.EncryptionConfig) error {
-	files, err := km.keyFileSpecs(enc)
-	if err != nil {
-		return err
-	}
-	return securefiles.FixFilePerms(files, false)
+	return km.checkKeyFilePerms(enc, km.baseDir, false)
 }
 
 // FixKeyFilePermissions corrects key file permissions to 0600. See
 // ValidateKeyFiles for what enc adds.
 func (km *KeyManager) FixKeyFilePermissions(enc *config.EncryptionConfig) error {
-	files, err := km.keyFileSpecs(enc)
+	return km.checkKeyFilePerms(enc, km.baseDir, true)
+}
+
+// checkKeyFilePerms audits (fix=false) or corrects (fix=true) the key files.
+// registryBase is the base enc's other key paths resolve against: the Service's
+// key base, which differs from km.baseDir when an absolute dek_path collapsed
+// km.baseDir to the DEK's directory (#4504 F1).
+func (km *KeyManager) checkKeyFilePerms(enc *config.EncryptionConfig, registryBase string, fix bool) error {
+	files, err := km.keyFileSpecs(enc, registryBase)
 	if err != nil {
 		return err
 	}
-	return securefiles.FixFilePerms(files, true)
+	return securefiles.FixFilePerms(files, fix)
 }
 
 // keyFileSpecs builds the FilePermSpec list shared by ValidateKeyFiles and
@@ -104,17 +108,22 @@ func (km *KeyManager) FixKeyFilePermissions(enc *config.EncryptionConfig) error 
 // full encryption config. km.dekPath/km.saltPath are used directly (rather
 // than enc.DEKPath/enc.SaltPath) so this still works for a KeyManager built
 // without a config at all.
-func (km *KeyManager) keyFileSpecs(enc *config.EncryptionConfig) ([]securefiles.FilePermSpec, error) {
+func (km *KeyManager) keyFileSpecs(enc *config.EncryptionConfig, registryBase string) ([]securefiles.FilePermSpec, error) {
 	dekFull := filepath.Join(km.baseDir, km.dekPath)
-	saltFull := filepath.Join(km.baseDir, km.saltPath)
-	files := []securefiles.FilePermSpec{
-		{Path: dekFull, Mode: 0600},
-		{Path: saltFull, Mode: 0600},
+	files := []securefiles.FilePermSpec{{Path: dekFull, Mode: 0600}}
+	seen := map[string]bool{dekFull: true}
+	// No salt for a provider that does not read one (km.saltPath "", #4395):
+	// joined anyway, the "salt" was the key directory itself and both audits
+	// refused it as "not a regular file" (#4504 F3).
+	if km.saltPath != "" {
+		saltFull := filepath.Join(km.baseDir, km.saltPath)
+		files = append(files, securefiles.FilePermSpec{Path: saltFull, Mode: 0600})
+		seen[saltFull] = true
 	}
 	if enc == nil {
 		return files, nil
 	}
-	specs, err := keyfiles.Registry(enc, km.baseDir)
+	specs, err := keyfiles.Registry(enc, registryBase)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +132,6 @@ func (km *KeyManager) keyFileSpecs(enc *config.EncryptionConfig) ([]securefiles.
 	// construction, see NewService) -- deduped here rather than trusted to
 	// match, so a caller that ever passes a mismatched enc still gets km's
 	// real DEK/salt checked exactly once, not silently dropped or doubled.
-	seen := map[string]bool{dekFull: true, saltFull: true}
 	for _, s := range specs {
 		if seen[s.Path] {
 			continue

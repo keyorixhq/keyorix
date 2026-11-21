@@ -197,7 +197,9 @@ func keyTransitionHeadGone(ctx context.Context, db *DB, result *Result, r *KeyTr
 		return false, err
 	case found && hash == r.HeadHash:
 		return false, nil
-	case !found && result.RetentionGap.Sanctioned && r.HeadID < result.RetentionGap.RowID:
+	case !found && result.retentionAnchorRowID != 0 && r.HeadID < result.retentionAnchorRowID:
+		// Below the authenticated anchor's RowID (a matched re-anchor, or a
+		// restart anchor after a purge that emptied the table, #4351), as online.
 		return false, nil
 	}
 	result.escalate(VerdictBroken, fmt.Sprintf("audit event #%d, the head key transition #%d certified, is missing or was rewritten", r.HeadID, r.Seq))

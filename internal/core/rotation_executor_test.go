@@ -26,12 +26,20 @@ func rotationExecCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{},
 		&models.Project{}, &models.Environment{}, &models.Role{}, &models.UserRole{},
 		&models.GroupRole{}, &models.UserGroup{}, &models.Group{}, &models.User{},
+		&models.Permission{}, &models.RolePermission{}, &models.SecretACL{}, &models.ShareRecord{},
 	))
 	// ListSecrets(ProjectID) JOINs environments, so the scope needs a real env row.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "prod"}).Error)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	ensureActiveActor(t, c.storage, 9) // the acting user of these tests (#4159)
+	// #4161: SetSecretAutoRotate decides its route gate (secrets.write on the secret)
+	// in core, so actor 9 holds exactly that — a project editor, nothing admin-tier
+	// (the admin-authority tests below stay about the backend-binding ceiling).
+	require.NoError(t, db.Create(&models.Permission{ID: 50, Name: permSecretsWrite, Resource: "secrets", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 50, Name: "rotation-editor", NameFolded: "rotation-editor"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 50, PermissionID: 50}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 50, ProjectID: 1}).Error)
 	fixed := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
 	c.now = func() time.Time { return fixed }
 	return c, db, fixed

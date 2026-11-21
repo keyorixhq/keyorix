@@ -32,7 +32,7 @@ import (
 func (e *EncryptionConfig) keyMaterialPaths() [][2]string {
 	out := [][2]string{
 		{"storage.encryption.dek_path", e.DEKPath},
-		{"storage.encryption.salt_path", e.SaltPath},
+		{"storage.encryption.salt_path", e.EffectiveSaltPath()}, // #4395: unused by a non-password provider
 	}
 	add := func(prefix string, kp *KeyProviderConfig) {
 		out = append(out,

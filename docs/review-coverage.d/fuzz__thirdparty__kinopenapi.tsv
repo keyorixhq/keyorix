@@ -1,0 +1,1 @@
+fuzz/thirdparty/kinopenapi	none	-	test-only bounded-work fuzz harness for getkin/kin-openapi schema and loader parsing; not part of any shipped build	test-helper

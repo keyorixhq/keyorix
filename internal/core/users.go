@@ -16,8 +16,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // emailRegex/usernameMinLen/usernameMaxLen/displayNameMinLen/displayNameMaxLen
@@ -128,7 +128,7 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 		return nil, "", refusal
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), int(bcryptCost.Load()))
+	hash, err := kdfmeter.GenerateFromPassword([]byte(req.Password), int(bcryptCost.Load()))
 	if err != nil {
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -258,6 +258,11 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 // transport tags ctx with WithSelfMachineGranter so its own permissions count.
 func (c *KeyorixCore) CreateUserAudited(ctx context.Context, req *CreateUserRequest, actorID uint, actorIsMachine bool) (*models.User, error) {
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return nil, err
+	}
+	// #4161: the route gate (users.read for the /users group, users.write for the
+	// create, both GLOBAL) is decided here as well; the baseline-role ceiling stays.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permUsersRead, Scope{}}, scopedGate{permUsersWrite, Scope{}}); err != nil {
 		return nil, err
 	}
 	if err := c.requireBaselineRoleGrantAuthority(ctx, actorID, actorIsMachine); err != nil {
@@ -478,6 +483,11 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 		return nil, fmt.Errorf("assignments exceeds the maximum batch size of %d", maxUserCreateAssignments)
 	}
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return nil, err
+	}
+	// #4161: the route gate (users.read for the /users group, users.write for the
+	// create, both GLOBAL) is decided here as well; the per-grant ceilings below stay.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permUsersRead, Scope{}}, scopedGate{permUsersWrite, Scope{}}); err != nil {
 		return nil, err
 	}
 	user, hash, err := c.buildUserForCreate(ctx, req)

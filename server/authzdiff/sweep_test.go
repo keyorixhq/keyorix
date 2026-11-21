@@ -386,6 +386,11 @@ func FuzzAuthzDiff(f *testing.F) {
 	f.Add(byte(0), byte(4), byte(0), byte(0), uint16(0xff), byte(0), byte(0))
 	f.Add(byte(12), byte(4), byte(1), byte(1), uint16(0x80), byte(1), byte(2))
 	probe, budget, haveBudget := authzResguardProbe(f)
+	// Build the seeded template before the metered body: it is built lazily on the
+	// first runCase, so without this the first seed's cost carries the one-time
+	// fixture build (which grows with every bound op) and trips the per-comparison
+	// ceiling the budget is calibrated for.
+	template(f)
 	f.Fuzz(func(t *testing.T, opSel, pSel, tSel, arg byte, mask uint16, routeSel, scopeSel byte) {
 		specs := withDerived(t, ops())
 		spec := specs[int(opSel)%len(specs)]

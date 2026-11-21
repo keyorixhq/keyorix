@@ -38,16 +38,16 @@ verifies it against GET /api/v1/auth/profile, and stores it (with the server URL
 one credential-file location this CLI uses: keyorix/credentials.yaml under the OS user
 config directory (~/.config on Linux, ~/Library/Application Support on macOS).
 
-The password is read from, in order: --password (insecure: visible in ps and shell
-history), KEYORIX_PASSWORD or the file named by KEYORIX_PASSWORD_FILE, then a no-echo
-prompt. With no terminal and neither variable set, login stops with an error.
+The password is read from KEYORIX_PASSWORD or the file named by KEYORIX_PASSWORD_FILE,
+then from a no-echo prompt. It is never taken from the command line (visible in ps and
+shell history). With no terminal and neither variable set, login stops with an error.
 
 When the account has TOTP multi-factor authentication enabled, /auth/login answers with a
 second-factor challenge instead of a token; login then asks for an authenticator code (or
 an unused recovery code) and completes the challenge via POST /auth/mfa/verify. To
 supply it non-interactively set KEYORIX_MFA_CODE, or KEYORIX_MFA_CODE_FILE to a file that
-holds it (the --mfa-code flag is refused: a code on the command line shows in ps and in
-shell history). The code is used for that one request only: it is never echoed, never
+holds it; a code on the command line would show in ps and in shell history, so it is
+never accepted there. The code is used for that one request only: it is never echoed, never
 logged, and never written to the credential file.`,
 	RunE: runLogin,
 }

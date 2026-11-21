@@ -63,7 +63,7 @@ func RequiredKeyFilePaths(enc *config.EncryptionConfig, baseDir string) ([]strin
 		paths = append(paths, full)
 		return nil
 	}
-	if err := add("KEK salt", enc.SaltPath); err != nil {
+	if err := add("KEK salt", enc.EffectiveSaltPath()); err != nil {
 		return nil, err
 	}
 	if err := add("DEK", enc.DEKPath); err != nil {

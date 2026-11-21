@@ -68,8 +68,16 @@ func errFamily7SecretWorld(t *testing.T) (*gorm.DB, *store.LocalStorage) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{}, &models.SecretAccessLog{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.SecretAccessSchedule{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{}, &models.SecretAccessLog{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.SecretAccessSchedule{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.GroupRole{}))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
+	// #4161: CopySecret decides the target environment's secrets.write gate in core, so
+	// the owner's role 1 (granted per project by each test) has to carry it.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "owner-role", NameFolded: "owner-role"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: permSecretsWrite, Resource: "secrets", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: permSecretsRead, Resource: "secrets", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 2}).Error)
 	return db, store.NewLocalStorage(db)
 }
 

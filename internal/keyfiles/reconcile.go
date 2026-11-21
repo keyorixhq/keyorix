@@ -146,8 +146,8 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 		}
 	}
 	saltPending := ""
-	if enc.SaltPath != "" {
-		if clean, serr := SafePath("KEK salt", enc.SaltPath); serr == nil {
+	if salt := enc.EffectiveSaltPath(); salt != "" {
+		if clean, serr := SafePath("KEK salt", salt); serr == nil {
 			saltPending = resolve(baseDir, clean) + ".pending"
 		}
 	}

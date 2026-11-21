@@ -228,6 +228,18 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return nil, nil, err
 	}
+	// #4161: the route gate (roles.read for the /roles group, roles.write for the
+	// update) and the transports' pre-authorization of every permission the update
+	// grants (the #169 self-permission rule AssignPermissionToRole applies) are
+	// decided here as well.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permRolesRead, Scope{}}, scopedGate{permRolesWrite, Scope{}}); err != nil {
+		return nil, nil, err
+	}
+	if newPermissionIDs != nil {
+		if err := c.requireActorHoldsPermissions(ctx, actorID, *newPermissionIDs); err != nil {
+			return nil, nil, err
+		}
+	}
 	if IsBuiltinRole(role.Name) {
 		c.LogRoleUpdateDenied(ctx, actorID, role.ID, role.Name, "target is a built-in role")
 		return nil, nil, permissionDeniedf("%s: cannot update %w: %s", i18n.T("ErrorPermissionDenied", nil), ErrBuiltinRole, role.Name)
@@ -458,6 +470,11 @@ func (c *KeyorixCore) updateRoleTx(ctx context.Context, tx storage.Storage, role
 // lock for an inert outcome.
 func (c *KeyorixCore) DeleteRole(ctx context.Context, actorID, id uint) error {
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
+	// #4161: the route gate (roles.read for the /roles group, roles.write for the
+	// delete) is decided here as well.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permRolesRead, Scope{}}, scopedGate{permRolesWrite, Scope{}}); err != nil {
 		return err
 	}
 	role, err := c.storage.GetRole(ctx, id)

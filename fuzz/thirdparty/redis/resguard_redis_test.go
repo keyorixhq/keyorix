@@ -5,19 +5,26 @@ package redishostile
 // no-panic/bounded-time oracles are UNCHANGED (in driveRedisReply); a resguard.Probe
 // meters alloc_bytes/mallocs (RAM-spike signal) + CPU (advisory) per input, checked
 // against a per-byte-slope budget (RESP replies are a parser, small input → bounded
-// alloc is the invariant; a huge declared bulk length that drives super-linear alloc
-// is the defect — the `$9999999\r\nshort\r\n` seed shape).
+// alloc is the invariant). A huge declared length (the `$9999999\r\nshort\r\n` shape)
+// is not policed by the budget: FuzzRedisReply skips it, see redisDeclaredAllowance.
 //
 // What this oracle does NOT verify: correctness (only alloc proportion); alloc is
 // sampled; CPU is process-wide advisory; cannot separate the test server's alloc
 // from the driver's. No net/sleep meters (loopback fake server, not a connector).
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"net"
 	"os"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
@@ -43,8 +50,8 @@ func measureRedis(t *testing.T, probe *resguard.Probe, budget resguard.Budget, h
 }
 
 // redisBenignReply: valid RESP2/RESP3 replies of modest size. A bulk string whose
-// declared length MATCHES its data is benign; the fuzzer explores the over-declared
-// shape ($9999999\r\nshort) against this slope budget.
+// declared length MATCHES its data is benign; over-declared lengths above
+// redisDeclaredAllowance are skipped by FuzzRedisReply, not budgeted.
 func redisBenignReply() [][]byte {
 	return [][]byte{
 		[]byte("+OK\r\n"),
@@ -112,4 +119,111 @@ func TestResguardRedisRedGreen(t *testing.T) {
 		t.Fatalf("RED: failure message should name alloc_bytes: %q", msg)
 	}
 	t.Logf("GREEN alloc=%d passes; RED alloc=%d fires: %s", green.AllocBytes, red.AllocBytes, msg)
+}
+
+// redisDeclaredAllowance is the largest RESP length header (bulk bytes or
+// element/pair count) FuzzRedisReply will execute. go-redis sizes its buffers from
+// the server-DECLARED length before any body bytes arrive and has no option to cap
+// it, so allocation is proportional to a number the fuzzer can set freely. That is
+// a known upstream behaviour (LF3-F3, details tracked privately), not something a
+// per-input budget can police: calibrating the budget to one declared size only
+// moves the failure to the next digit, and executing such inputs at -parallel=6
+// would exhaust the rig's memory cgroup. So FuzzRedisReply skips them and
+// TestRedisDeclaredLengthCharacterisation records what the driver does. Everything
+// within the allowance (and every other amplification shape: nesting, many small
+// elements) stays under the budget.
+const redisDeclaredAllowance = 4096
+
+// redisDeclaredLenExceeds reports whether any RESP header in reply declares a
+// length above redisDeclaredAllowance (or one too large to parse). It tries every
+// byte offset as a header start, not just CRLF-split line starts: go-redis reads
+// exactly n+2 bulk-body bytes without checking they end in CRLF, so a body can
+// desync the parser and the next header can start mid-"line" (for example
+// "$1\r\nxyz*1000000\r\n"). That makes it a superset of what go-redis can read. It
+// is deliberately conservative: it also skips an input that merely contains a
+// header-looking "$5000\r\n" inside a bulk body.
+func redisDeclaredLenExceeds(reply []byte) bool {
+	for i := range reply {
+		if !strings.ContainsRune("$*%~>|=!", rune(reply[i])) {
+			continue
+		}
+		hdr, _, found := bytes.Cut(reply[i+1:], []byte("\r\n"))
+		if !found {
+			continue
+		}
+		n, err := strconv.ParseInt(string(hdr), 10, 64)
+		if err != nil {
+			if ne, ok := err.(*strconv.NumError); ok && ne.Err == strconv.ErrRange {
+				return true
+			}
+			continue
+		}
+		if n > redisDeclaredAllowance {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRedisDeclaredLenExceeds(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"+OK\r\n", false},
+		{"$5\r\nhello\r\n", false},
+		{"$4096\r\nshort\r\n", false},
+		{"$4097\r\nshort\r\n", true},
+		{"$9999999\r\nshort\r\n", true},
+		{"*100000000\r\n:1\r\n", true},
+		{"%50000000\r\n+k\r\n+v\r\n", true},
+		{"*2\r\n$99999999\r\nx\r\n:1\r\n", true},
+		{"$9223372036854775807\r\n", true},
+		{"$99999999999999999999999\r\n", true}, // overflows int64
+		{"$-1\r\n", false},
+		{",3.14\r\n", false},
+		{"", false},
+		// bulk-body desync: the next header starts mid-line
+		{"*2\r\n$1\r\nxyz*1000000\r\n:1\r\n", true},
+		{"*2\r\n$1\r\nxyz$9999999\r\nshort\r\n", true},
+	} {
+		if got := redisDeclaredLenExceeds([]byte(tc.in)); got != tc.want {
+			t.Errorf("redisDeclaredLenExceeds(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestRedisDeclaredLengthCharacterisation records, without asserting, what go-redis
+// does with a server-declared length far above the real body (LF3-F3). It is a log,
+// not a gate: a go-redis fix would change the numbers, and the right response is
+// then to revisit redisDeclaredAllowance, not to fail a dependency bump. Sizes stay
+// at 16 MB-class so it is safe on CI; the unbounded extremes are described in
+// FuzzRESP3BulkDeclared and not re-run here.
+func TestRedisDeclaredLengthCharacterisation(t *testing.T) {
+	for _, tc := range []struct{ name, reply string }{
+		{"bulk 1e6 declared, 5 B body", "$1000000\r\nshort\r\n"},
+		{"bulk 1e7 declared, 5 B body", "$9999999\r\nshort\r\n"},
+		{"array 1e6 declared, 1 element", "*1000000\r\n:1\r\n"},
+		{"map 5e5 declared, 1 pair", "%500000\r\n+k\r\n+v\r\n"},
+	} {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		srv := hostile.NewServer(t, func(c net.Conn) { serveUntilRealCommand(c, []byte(tc.reply)) })
+		client := newClient(srv.Addr())
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Logf("%s: driver panicked: %v", tc.name, r)
+				}
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = client.Do(ctx, "ACL", "SETUSER", "kx_dyn_x", "on", ">pw").Err()
+		}()
+		runtime.ReadMemStats(&after)
+		_ = client.Close()
+		srv.Close()
+		t.Logf("%-34s reply=%2d B  alloc=%6.1f MB", tc.name, len(tc.reply), float64(after.TotalAlloc-before.TotalAlloc)/(1<<20))
+	}
 }

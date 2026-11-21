@@ -44,6 +44,9 @@ const (
 	pcrashUpdValue = "pcrash-updated-value"
 	pcrashNewRole  = "pcrash-custom-role"
 	pcrashUpdName  = "pcrash-base-0"
+
+	// pcrashWidenBobSQL grants the admin role to a user the fixture never makes admin.
+	pcrashWidenBobSQL = "INSERT INTO user_roles (user_id, role_id, project_id, environment_id) SELECT u.id, r.id, 0, 0 FROM users u, roles r WHERE u.username = 'pcrash-bob' AND r.name = 'admin'"
 )
 
 // pcrashSeed is the fixed part of an install, written once by the "seed" action.
@@ -126,7 +129,7 @@ func openPCrashInstall(dir, pass string) (_ *pcrashInstall, err error) {
 		return nil, fmt.Errorf("rotation recovery: %w", err)
 	}
 	if err := inst.svc.Initialize(pass); err != nil {
-		return nil, fmt.Errorf("%w: %w", errPCrashKey, err)
+		return nil, fmt.Errorf("key initialization: %w", err)
 	}
 	inst.core = core.NewKeyorixCore(store)
 	inst.core.SetSecretValueEncryptor(inst.svc)
@@ -136,10 +139,6 @@ func openPCrashInstall(dir, pass string) (_ *pcrashInstall, err error) {
 	}
 	return inst, nil
 }
-
-// errPCrashKey marks Initialize refusing the passphrase or the key files, which
-// is how the parent learns a passphrase is not the install's current one.
-var errPCrashKey = errors.New("key initialization refused")
 
 func (i *pcrashInstall) close() {
 	if i.svc != nil {
@@ -337,6 +336,15 @@ func runPCrashSeedAction(ctx context.Context, inst *pcrashInstall) error {
 	return os.WriteFile(pcrashSeedFile, b, 0o600)
 }
 
+func createPCrashRole(ctx context.Context, inst *pcrashInstall, seed pcrashSeed) error {
+	var ids []uint
+	if err := inst.db.Raw("SELECT id FROM permissions WHERE name IN ('secrets.read', 'secrets.write')").Scan(&ids).Error; err != nil {
+		return err
+	}
+	_, _, err := inst.core.CreateRole(ctx, seed.AdminID, pcrashNewRole, "fuzz", ids)
+	return err
+}
+
 // runPCrashCoreAction runs one core-level operation in the working directory.
 func runPCrashCoreAction(ctx context.Context, action string) int {
 	inst, err := openPCrashInstall(".", os.Getenv(envPCrashPass))
@@ -363,6 +371,25 @@ func runPCrashCoreAction(ctx context.Context, action string) int {
 		}
 		return 0
 	}
+	if action == "rerun-noop" {
+		return 0 // Red-proof control: a rerun that completes and changes nothing.
+	}
+	if action == "rerun-refuse" {
+		fmt.Fprintln(os.Stderr, "Error: red-proof refusal")
+		return 1
+	}
+	if action == "rerun-widen" || action == "rerun-refuse-widen" {
+		// Red-proof only: a rerun that grants bob admin, then reports success or a refusal.
+		if err := inst.db.Exec(pcrashWidenBobSQL).Error; err != nil {
+			fmt.Fprintln(os.Stderr, "widen:", err)
+			return pcrashExitHarness
+		}
+		if action == "rerun-refuse-widen" {
+			fmt.Fprintln(os.Stderr, "Error: red-proof refusal")
+			return 1
+		}
+		return 0
+	}
 	seed, err := readPCrashSeed(".")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "seed file:", err)
@@ -383,9 +410,18 @@ func runPCrashCoreAction(ctx context.Context, action string) int {
 	case "role-revoke":
 		err = c.RemoveUserRoleScoped(ctx, "alice@example.com", "project_viewer", scope)
 	case "role-create":
-		var ids []uint
-		if err = inst.db.Raw("SELECT id FROM permissions WHERE name IN ('secrets.read', 'secrets.write')").Scan(&ids).Error; err == nil {
-			_, _, err = c.CreateRole(ctx, seed.AdminID, pcrashNewRole, "fuzz", ids)
+		err = createPCrashRole(ctx, inst, seed)
+	case "role-mixed", "role-mixed-die-first", "role-mixed-die-between":
+		// Red-proof only: an operation whose two writes are two commits, so a
+		// kill between them leaves roles after and authorization before.
+		if action == "role-mixed-die-first" {
+			pcrashDieNow()
+		}
+		if err = createPCrashRole(ctx, inst, seed); err == nil {
+			if action == "role-mixed-die-between" {
+				pcrashDieNow()
+			}
+			err = c.AssignUserRoleScoped(ctx, "bob@example.com", "project_developer", scope)
 		}
 	default:
 		fmt.Fprintln(os.Stderr, "unknown action", action)
