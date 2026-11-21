@@ -217,7 +217,8 @@ func TestRestoreGroup_BadID_S13(t *testing.T) {
 
 func TestRestoreGroup_NotFound_S13(t *testing.T) {
 	h, cs := newGroupHandlerWithCoreS13(t)
-	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
+	ensureActiveActorUser(t, cs.Storage(), 1)                      // withUserCtx's user acts through core (#4159)
+	grantGlobalPermissions(t, cs, 1, "users.read", "roles.assign") // the route gate, decided in core too (#4161)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "999999"))
 	w := httptest.NewRecorder()
 	h.RestoreGroup(w, req)
@@ -298,7 +299,8 @@ func TestAddGroupMember_ZeroUserID_S13(t *testing.T) {
 
 func TestAddGroupMember_GroupNotFound_S13(t *testing.T) {
 	h, cs := newGroupHandlerWithCoreS13(t)
-	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
+	ensureActiveActorUser(t, cs.Storage(), 1)                      // withUserCtx's user acts through core (#4159)
+	grantGlobalPermissions(t, cs, 1, "users.read", "roles.assign") // the route gate, decided in core too (#4161)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/",
 		jsonBody(t, map[string]int{"user_id": 1})), "id", "999999"))
 	req.Header.Set("Content-Type", "application/json")
@@ -342,6 +344,7 @@ func TestAddGroupMember_ProjectScoped_S13(t *testing.T) {
 	t.Parallel()
 	h, cs := newGroupHandlerWithCoreS13(t)
 	ctx := context.Background()
+	grantGlobalPermissions(t, cs, 1, "users.read", "roles.assign") // the route gate, decided in core too (#4161)
 
 	grp, err := cs.CreateGroup(ctx, 0, &core.CreateGroupRequest{Name: "scoped-add-s13"})
 	require.NoError(t, err)

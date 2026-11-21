@@ -95,6 +95,10 @@ func newSATWorld(t *testing.T, f *ctaReview) *satWorld {
 	var err error
 	w.devRole, err = f.setup.Storage().GetRoleByName(ctx, "project_developer")
 	require.NoError(t, err)
+	// #4161: RevokeShare decides the route gate (secrets.write at the secret's scope)
+	// in core, so the member who owns and revokes the shares below also holds the
+	// developer role at the project; still a plain project member, nothing admin-tier.
+	require.NoError(t, f.setup.Storage().AssignRole(ctx, w.member.ID, w.devRole.ID, Scope{ProjectID: f.projectID}))
 	w.viewerRole, err = f.setup.Storage().GetRoleByName(ctx, "project_viewer")
 	require.NoError(t, err)
 	perm, err := f.setup.Storage().CreatePermission(ctx, &models.Permission{Name: "sat.custom", Description: "sat"})

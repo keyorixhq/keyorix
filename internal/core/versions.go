@@ -449,6 +449,17 @@ func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetV
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return nil, err
 	}
+	// The parent node is needed to reconstruct the at-rest AAD
+	// (secretID:projectID:versionNumber) below, and first for the gate: #4161, the
+	// route gate (secrets.write with SecretActionRollback on this secret) is
+	// decided here as well, before any version of the secret is read.
+	node, err := c.storage.GetSecret(ctx, secretID)
+	if err != nil {
+		return nil, fmt.Errorf("secret not found: %w", err)
+	}
+	if err := c.requireSecretActionGate(ctx, actorID, node, permSecretsWrite, SecretActionRollback); err != nil {
+		return nil, err
+	}
 	version, err := c.GetSecretVersion(ctx, secretID, targetVersion)
 	if err != nil {
 		return nil, err
@@ -457,12 +468,7 @@ func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetV
 	if err == nil && latest != nil && latest.VersionNumber == targetVersion {
 		return nil, storage.Typed(ErrAlreadyCurrentVersion, fmt.Sprintf("version %d is already the current version", targetVersion), nil)
 	}
-	// Decrypt the historical version's value to re-instate it. The parent node is
-	// needed to reconstruct the at-rest AAD (secretID:projectID:versionNumber).
-	node, err := c.storage.GetSecret(ctx, secretID)
-	if err != nil {
-		return nil, fmt.Errorf("secret not found: %w", err)
-	}
+	// Decrypt the historical version's value to re-instate it.
 	val, err := c.decryptVersionValue(node, version)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read version %d: %w", targetVersion, err)

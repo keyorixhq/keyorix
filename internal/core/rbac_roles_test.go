@@ -40,6 +40,9 @@ func newRoleCRUDTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	c := NewKeyorixCore(store.NewLocalStorage(db))
 	for _, actor := range []uint{1, 9} {
 		ensureActiveActor(t, c.storage, actor)
+		// #4161: UpdateRole/DeleteRole decide the route gate (roles.read + roles.write,
+		// global) in core; what these tests prove (built-in refusal, audit) comes after it.
+		grantGateHolder(t, db, actor, Scope{}, permRolesRead, permRolesWrite)
 	}
 	return c, db
 }

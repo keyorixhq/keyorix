@@ -16,6 +16,7 @@ auth_storage_unavailable.go
 authorize_fault_recorder.go
 authorize_transient.go
 authz.go
+authz_core_gate.go
 authz_secret_batch.go
 bcrypt_cost.go
 break_glass.go
