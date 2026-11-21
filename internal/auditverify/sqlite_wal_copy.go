@@ -24,6 +24,11 @@ import (
 // -wal (if any) go into a fresh 0700 directory from os.MkdirTemp, SQLite's
 // sidecars are created there, and the directory is removed when the DB is
 // closed (or at once if opening fails). The artifact's directory is only read.
+// The copy is the whole vault database (ciphertext, hashes, PII, the audit
+// trail), so only OpenSQLiteReadOnly (an operator-named artifact) makes one;
+// a server-owned file is opened in place (OpenSQLiteReadOnlyInPlace). A
+// process killed without Close or RemovePrivateCopy (SIGKILL, a crash) leaves
+// the keyorix-audit-verify-* directory behind.
 
 // sqliteCopyName is the copy's file name inside the private directory: fixed,
 // so no byte of the operator's file name reaches SQLite's URI parser.
@@ -75,6 +80,13 @@ func copySQLiteToPrivateDir(path string) (copyPath string, cleanup func(), err e
 		return "", nil, err
 	}
 	walPath := path + "-wal"
+	// A -wal that is there but not a regular file (a directory, a FIFO, a
+	// symlink) is refused: copying the main file alone would silently drop
+	// that -wal's frames from the verifier's view.
+	if fi, err := os.Lstat(walPath); err == nil && !fi.Mode().IsRegular() {
+		return "", nil, fmt.Errorf("%s is not a regular file (%s): verify a copy whose -wal is a plain file, "+
+			"or check the database in place with the server's own tools", walPath, fi.Mode().Type())
+	}
 	hasWAL := regularFileExists(walPath)
 	if hasWAL {
 		w, err := fileSize(walPath)

@@ -19,8 +19,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/auditverify"
@@ -121,7 +123,7 @@ Never 0 when something was silently left unverified.`,
 
 func init() {
 	verifyAuditCmd.Flags().StringVar(&verifyAuditDBPath, "db", "",
-		"Verify this SQLite file directly (opened read-only), instead of the configured database")
+		"Verify this SQLite file directly (opened read-only), instead of the configured database. A WAL-mode file is verified from a temporary copy of the whole database under $TMPDIR, removed when the command ends (also on Ctrl-C/SIGTERM): point TMPDIR at the evidence volume")
 	verifyAuditCmd.Flags().StringVar(&verifyAuditPGDSN, "pg-dsn", "",
 		"Verify this Postgres DSN directly, instead of the configured database. Point it at a detached copy, never at a database a running server uses: this mode takes no lock, and a purge running during the walk can make a valid chain read BROKEN")
 	verifyAuditCmd.Flags().StringVar(&verifyAuditKeyFile, "checkpoint-key-file", "",
@@ -174,12 +176,18 @@ func runVerifyAudit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return newExitCodeError(3, err)
 	}
+	if dir := db.PrivateCopyDir(); dir != "" {
+		fmt.Fprintf(os.Stderr, "verify-audit: verifying a temporary copy of %s in %s (removed when the command ends)\n", verifyAuditDBPath, dir)
+	}
+	stopSignalCleanup := removeCopyOnSignal(db)
 	defer func() {
+		stopSignalCleanup()
 		_ = db.Close()
 		if lock != nil {
 			_ = lock.Release()
 		}
 	}()
+	verifyAuditBeforeVerifyHook()
 
 	result, err := auditverify.Verify(context.Background(), db, opts)
 	if err != nil {
@@ -193,6 +201,43 @@ func runVerifyAudit(cmd *cobra.Command, args []string) error {
 		return newExitCodeError(result.ExitCode(), fmt.Errorf("audit chain verification: %s", result.Verdict))
 	}
 	return nil
+}
+
+// verifyAuditBeforeVerifyHook runs between opening the database and walking
+// it; tests replace it to hold a run at that point (the signal-cleanup test).
+var verifyAuditBeforeVerifyHook = func() {}
+
+// removeCopyOnSignal makes SIGINT and SIGTERM delete the private copy of the
+// whole database that `--db` verifies a WAL-mode file from
+// (auditverify.OpenSQLiteReadOnly, under $TMPDIR) before the process exits
+// with 128+signal: admin.Execute installs no signal handling, so an
+// interrupted run used to leave that copy behind. The copy is removed without
+// closing the handle, since Close waits for a running query. The exclusive
+// lock of the config fallback needs no release here: the kernel (flock) or
+// the closed connection (Postgres advisory lock) drops it at exit. SIGKILL
+// cannot be caught; the runbook says what to delete then. The returned func
+// stops watching.
+func removeCopyOnSignal(db *auditverify.DB) (stop func()) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case sig := <-sigCh:
+			db.RemovePrivateCopy()
+			fmt.Fprintf(os.Stderr, "verify-audit: interrupted by %s before a verdict; any temporary copy of the database was removed\n", sig)
+			code := 130
+			if s, ok := sig.(syscall.Signal); ok {
+				code = 128 + int(s)
+			}
+			os.Exit(code)
+		case <-done:
+		}
+	}()
+	return func() {
+		signal.Stop(sigCh)
+		close(done)
+	}
 }
 
 // configLoadState is loadConfig's raw (cfg, err) result PLUS whether the
@@ -387,7 +432,9 @@ func openVerifyAuditTarget(cfg *config.Config, cfgErr error) (*auditverify.DB, *
 		if dbPath == "" {
 			dbPath = "./secrets.db"
 		}
-		db, err := auditverify.OpenSQLiteReadOnly(dbPath)
+		// In place, under the exclusive lock: the server's own database is
+		// not copied to $TMPDIR (only a --db artifact is).
+		db, err := auditverify.OpenSQLiteReadOnlyInPlace(dbPath)
 		if err != nil {
 			_ = lock.Release()
 			return nil, nil, fmt.Errorf("open configured database %q: %w", dbPath, err)

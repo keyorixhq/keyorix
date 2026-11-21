@@ -92,7 +92,17 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
    A keyorix SQLite database is in WAL mode, and SQLite cannot read a WAL-mode file without
    creating `-wal`/`-shm` files beside it. So `--db` verifies a private copy instead: the
    database and its `-wal` (if present) are copied into a new `0700` directory under
-   `$TMPDIR`, verified there, and the copy is deleted when the command ends, also on error.
+   `$TMPDIR`, verified there, and the copy is deleted when the command ends, also on error
+   and on Ctrl-C or SIGTERM (exit 130 or 143, no verdict). The copy is the whole vault
+   database (secret ciphertext, password and token hashes, user data, the audit trail), so
+   point `TMPDIR` at the evidence volume, or another volume with the same protection, not
+   at a shared or unencrypted `/tmp`. A SIGKILL, an out-of-memory kill or a crash cannot
+   run that cleanup: after one, delete any `keyorix-audit-verify-*` directory left under
+   `$TMPDIR`. Only `--db` copies: `verify-audit` without `--db` (the configured database,
+   under the admin lock) and the automatic verify after `admin restore` read the
+   server's own database in place and need no `$TMPDIR`. A `-wal` beside the `--db` file
+   that is not a regular file (a directory, a FIFO, a symlink) is refused (exit 3) rather
+   than left out of the copy.
    The evidence directory can be read-only (an evidence share, `chmod 0500`), and its
    listing and bytes stay unchanged. An un-checkpointed `-wal` shipped with the copy is
    read, never skipped. The copy needs free space under `$TMPDIR` equal to the database
