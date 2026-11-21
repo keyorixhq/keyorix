@@ -1,7 +1,7 @@
 package core
 
 // rbac_reconcile_pending_test.go — the pending-grants list
-// (rbacReconcilePendingKey) behind the retry in rbac_reconcile_retry_test.go:
+// (rbacReconcilePendingRow) behind the retry in rbac_reconcile_retry_test.go:
 // what it holds while a grant is owed, and that a cleared entry is never
 // re-granted.
 
@@ -27,10 +27,10 @@ func TestReconcileRBAC_CompletedGrantNotReappliedAfterOperatorRemoval(t *testing
 
 	require.NoError(t, c.ReconcileRBACPermissions(ctx))
 	require.Equal(t, 2, connectReadHolders(t, c))
-	raw, found, err := c.storage.GetSystemMetadata(ctx, rbacReconcilePendingKey)
+	raw, found, err := c.storage.GetSystemMetadata(ctx, rbacReconcilePendingRow)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, "[]", raw, "nothing is owed after a clean run")
+	require.Equal(t, "{}", raw, "nothing is owed after a clean run")
 
 	admin, err := c.storage.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
@@ -53,15 +53,15 @@ func TestReconcileRBAC_PendingListedWhileGrantOwed(t *testing.T) {
 	runReconcileWithFault(t, c, &faultstorage.FaultSpec{
 		Method: "AssignPermissionToRole", NthCall: 1, Kind: faultstorage.KindError, Err: errors.New("injected grant failure"),
 	})
-	raw, found, err := c.storage.GetSystemMetadata(ctx, rbacReconcilePendingKey)
+	raw, found, err := c.storage.GetSystemMetadata(ctx, rbacReconcilePendingRow)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, `["connect.read"]`, raw)
+	require.Equal(t, `{"connect.read":["admin"]}`, raw, "only the role whose grant failed is owed")
 
 	require.NoError(t, c.ReconcileRBACPermissions(ctx))
-	raw, _, err = c.storage.GetSystemMetadata(ctx, rbacReconcilePendingKey)
+	raw, _, err = c.storage.GetSystemMetadata(ctx, rbacReconcilePendingRow)
 	require.NoError(t, err)
-	require.Equal(t, "[]", raw)
+	require.Equal(t, "{}", raw)
 }
 
 // TestReconcileRBAC_PendingWriteFailureCreatesNothing: the list is written

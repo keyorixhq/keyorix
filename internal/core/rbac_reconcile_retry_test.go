@@ -3,7 +3,7 @@ package core
 // rbac_reconcile_retry_test.go — a baseline grant that fails during
 // ReconcileRBACPermissions is retried on the next startup, and only then.
 //
-// Before rbacReconcilePendingKey a failed grant was logged and forgotten: the
+// Before the pending-grants row (rbacReconcilePendingRow) a failed grant was logged and forgotten: the
 // next startup found the permission already existing, created nothing, and
 // returned before granting anything, so the baseline role went without the
 // permission until an operator granted it by hand. These tests drive the real
