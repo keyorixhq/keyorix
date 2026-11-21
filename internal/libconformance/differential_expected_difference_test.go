@@ -14,16 +14,6 @@ package libconformance
 // the whole point is that siblings should agree, so every tolerated divergence
 // must be justified in the comment next to it.
 
-// yamlExpectedDiff lists tolerated divergence classes between
-// go.yaml.in/yaml/v3 v3.0.5 and gopkg.in/yaml.v3 v3.0.1 (see
-// FuzzYAMLSiblingDifferential / classifyYAMLSplit for the class vocabulary).
-//
-// Populated from triage during the DP1 fuzz run. Each key is a classifyYAMLSplit
-// output string; the comment on the line is the justification.
-var yamlExpectedDiff = map[string]bool{
-	// (populated during triage — see .scratch/dp1-REPORT.md findings table)
-}
-
 // jsonSchemaExpectedDiff lists tolerated verdict-divergence classes between
 // santhosh-tekuri/jsonschema/v6 and getkin/kin-openapi openapi3 schema
 // validation (see FuzzJSONSchemaValidatorDifferential). The two implement

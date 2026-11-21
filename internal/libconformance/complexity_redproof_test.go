@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/complexity"
 )
@@ -18,7 +18,7 @@ import (
 // rationale).
 //
 // Note the asymmetry by design: for yaml the red side uses the REAL parser on a
-// real known-bad vector (duplicate keys), because yaml.v3 genuinely exhibits the
+// real known-bad vector (duplicate keys), because yaml v4 genuinely exhibits the
 // amplification — no synthetic defect is needed. For the hardened parsers
 // (etree/jwt/protobuf/identity) no real input blows up (that is the point — they
 // are bounded), so the red side plants a synthetic O(n^2) amplifier in test code

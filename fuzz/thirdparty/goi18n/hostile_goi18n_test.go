@@ -9,7 +9,7 @@
 // go-i18n's own code, exercised identically regardless of the wire format.
 //
 // This target attacks that structural layer through three real decoders
-// (JSON via encoding/json, TOML via BurntSushi/toml, YAML via yaml.v3) wired
+// (JSON via encoding/json, TOML via BurntSushi/toml, YAML via yaml/v4) wired
 // exactly as a go-i18n caller would wire them.
 //
 // Oracle (crash-only parser — go-i18n has no serialiser to round-trip against):
@@ -31,7 +31,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
