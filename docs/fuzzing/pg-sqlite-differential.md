@@ -75,7 +75,7 @@ complete (it is the production enterprise backend); nothing here invents backend
 CTID=270 scripts/fuzzing/pg-differential-ct.sh
 # inside the CT
 export PATH=$PATH:/usr/local/go/bin
-export KEYORIX_TEST_PG_DSN='postgres://difffuzz:difffuzz@127.0.0.1:5432/difffuzz?sslmode=disable'
+export KEYORIX_TEST_PG_DSN='postgres://difffuzz:<PG_PASSWORD>@127.0.0.1:5432/difffuzz?sslmode=disable'
 go test ./internal/storage/store -run 'TestBackendDifferential' -count=1
 go test ./internal/storage/store -run '^$' -fuzz '^FuzzStorageBackendDifferentialV2$' -fuzztime 30m -parallel 2
 ```

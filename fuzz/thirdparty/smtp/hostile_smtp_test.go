@@ -9,15 +9,15 @@
 // hostile SMTP dialogue bytes — a mutated greeting, EHLO capability list,
 // multiline continuation responses, over-long lines. Keyorix's real call is
 // mail.NewClient(host, ...).DialAndSendWithContext(ctx, msg) (see
-// SMTPDelivery.newClient). This harness drives that exact client against a
+// SMTPDelivery.newClient and EmailSink.newClient). This harness drives that exact client against a
 // loopback TCP server whose entire server-side script is fuzzer-controlled.
 //
 // The client is built with WithTLSPolicy(mail.NoTLS) so the dialogue is plaintext
 // and every server byte is fuzzer-chosen — this exercises go-mail's SMTP
 // response-line / textproto parser directly, the SAME parser the STARTTLS and
 // implicit-TLS production paths reach once their TLS layer is up. Auth is
-// configured (AutoDiscover + username + a PASSWORD CANARY) exactly as production
-// does when credentials are present.
+// configured (mail.WithSMTPAuthCustom(smtpauth.New(username, PASSWORD CANARY, host)))
+// exactly as production does when credentials are present (#4383).
 //
 // Oracles (sound only):
 //   - Panic: no panic escapes go-mail's documented error return (RunGuarded).
@@ -26,8 +26,8 @@
 //     hostile.NewServer plus the client's own WithTimeout bound it).
 //   - No goroutine / fd leak after the call returns (CheckNoLeak).
 //   - Credential confidentiality on the wire: with TLS disabled, go-mail must
-//     NEVER transmit the configured password to the relay (SMTPAuthAutoDiscover
-//     drops PLAIN/LOGIN without TLS — it will not send a cleartext password). The
+//     NEVER transmit the configured password to the relay (smtpauth uses only
+//     CRAM-MD5 or NTLM without TLS — it will not send a cleartext password). The
 //     harness records EVERY byte the client sends and asserts the password canary
 //     never appears in them.
 //   - Credential confidentiality in errors: the password canary must never appear
@@ -57,6 +57,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/cloudfuzz"
 	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
+	"github.com/keyorixhq/keyorix/internal/smtpauth"
 )
 
 // smtpPasswordCanary is the password this harness's client is configured with —
@@ -124,9 +125,7 @@ func FuzzSMTPDialogue(f *testing.F) {
 			mail.WithPort(port),
 			mail.WithTimeout(2*time.Second),
 			mail.WithTLSPolicy(mail.NoTLS),
-			mail.WithSMTPAuth(mail.SMTPAuthAutoDiscover),
-			mail.WithUsername(smtpUsername),
-			mail.WithPassword(smtpPasswordCanary),
+			mail.WithSMTPAuthCustom(smtpauth.New(smtpUsername, smtpPasswordCanary, host)),
 		)
 		if err != nil {
 			t.Fatalf("harness bug: mail.NewClient failed: %v", err)

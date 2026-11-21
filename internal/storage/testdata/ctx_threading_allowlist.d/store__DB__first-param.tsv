@@ -1,0 +1,1 @@
+store:DB:first-param	#2507	accessor for the raw *gorm.DB used by factory/tests; runs no statement itself

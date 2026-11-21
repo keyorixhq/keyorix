@@ -33,9 +33,11 @@ package webauthnrp
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha1" //nolint:gosec // TPM Name hash for nameAlg SHA-1, test oracle only
 	"crypto/sha256"
 	"crypto/sha512"
@@ -97,6 +99,14 @@ type tpmFixture struct {
 
 func newTPMFixture(tb testing.TB) *tpmFixture {
 	tb.Helper()
+	return newTPMFixtureWithAIK(tb, tpmDetKey(tb, "aik"))
+}
+
+// newTPMFixtureWithAIK is newTPMFixture with the AIK key of the caller's choice
+// (an RSA AIK, a P-384 AIK). The AIK signs certInfo with SHA-256: PKCS #1 v1.5
+// for RSA, ASN.1 ECDSA for an EC key.
+func newTPMFixtureWithAIK(tb testing.TB, aikKey crypto.Signer) *tpmFixture {
+	tb.Helper()
 	fx := &tpmFixture{credKey: tpmDetKey(tb, "credential"), clientData: tpmClientData(tb)}
 	fx.authData = tpmAuthData(tb, fx.credKey)
 
@@ -145,7 +155,7 @@ func newTPMFixture(tb testing.TB) *tpmFixture {
 	})
 
 	// The AIK certificate chains to a root only the harness holds.
-	rootKey, aikKey := tpmDetKey(tb, "root"), tpmDetKey(tb, "aik")
+	rootKey := tpmDetKey(tb, "root")
 	rootTmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "keyorix tpm fuzz root"},
 		NotBefore: time.Unix(0, 0), NotAfter: time.Unix(4102444800, 0),
@@ -165,11 +175,11 @@ func newTPMFixture(tb testing.TB) *tpmFixture {
 		UnknownExtKeyUsage: []asn1.ObjectIdentifier{{2, 23, 133, 8, 3}},
 		ExtraExtensions:    []pkix.Extension{tpmSAN(tb)},
 	}
-	if fx.aik, err = x509.CreateCertificate(rand.Reader, aikTmpl, fx.root, &aikKey.PublicKey, rootKey); err != nil {
+	if fx.aik, err = x509.CreateCertificate(rand.Reader, aikTmpl, fx.root, aikKey.Public(), rootKey); err != nil {
 		tb.Fatal(err)
 	}
 	digest := sha256.Sum256(fx.certInfo)
-	if fx.sig, err = ecdsa.SignASN1(rand.Reader, aikKey, digest[:]); err != nil {
+	if fx.sig, err = aikKey.Sign(rand.Reader, digest[:], crypto.SHA256); err != nil {
 		tb.Fatal(err)
 	}
 	return fx
@@ -327,10 +337,15 @@ func checkTPMAccepted(fx *tpmFixture, st tpmStatement, requireRoot bool) error {
 	if err != nil {
 		return fmt.Errorf("accepted an AIK certificate that does not parse: %w", err)
 	}
-	// 1. the AIK signed certInfo (ES256 only: the harness AIK is a P-256 key).
+	// 1. the AIK signed certInfo. The harness AIK is a P-256 key, so only
+	// -7 (ES256) and -9 (ESP256), both ECDSA P-256 + SHA-256, are correct.
+	// Every other alg is flagged, algES256K (-47) included since #4545.
 	pub, ok := cert.PublicKey.(*ecdsa.PublicKey)
-	if !ok || st.alg != -7 {
-		return fmt.Errorf("accepted alg %d with a %T AIK key", st.alg, cert.PublicKey)
+	if !ok || pub.Curve != elliptic.P256() {
+		return fmt.Errorf("accepted alg %d with a %T AIK key that is not P-256", st.alg, cert.PublicKey)
+	}
+	if st.alg != -7 && st.alg != -9 {
+		return fmt.Errorf("accepted alg %d with a P-256 AIK key", st.alg)
 	}
 	d := sha256.Sum256(st.certInfo)
 	if !ecdsa.VerifyASN1(pub, d[:], st.sig) {
@@ -503,7 +518,7 @@ func tpmName(pubArea []byte) ([]byte, error) {
 	var h hash.Hash
 	switch alg := binary.BigEndian.Uint16(pubArea[2:]); alg {
 	case 0x0004:
-		h = sha1.New() //nolint:gosec // see import
+		h = sha1.New() //nolint:gosec // see import // nosemgrep: go.lang.security.audit.crypto.use_of_weak_crypto.use-of-sha1 -- TPM Name for nameAlg SHA-1 (TPM 2.0 Part 1, 16), test oracle only
 	case 0x000b:
 		h = sha256.New()
 	case 0x000c:
@@ -516,6 +531,14 @@ func tpmName(pubArea []byte) ([]byte, error) {
 	h.Write(pubArea)
 	return append(append([]byte{}, pubArea[2:4]...), h.Sum(nil)...), nil
 }
+
+// algES256K is COSE algorithm -47 (ES256K, secp256k1). go-webauthn v0.18.2 maps
+// it to x509.ECDSAWithSHA256, so the library alone accepts a TPM statement
+// labelled -47 whose P-256 AIK signature over certInfo verifies (#4545,
+// KFZ-2026-165/166). That deviates from WebAuthn §8.3 ("using the algorithm
+// specified in alg"); checkAttestationKeyAlg refuses it, and
+// TestTPMAttestation_AlgMustMatchAIKKey pins the refusal.
+const algES256K = int64(-47)
 
 // ---- tests and fuzz targets --------------------------------------------------
 
@@ -536,6 +559,114 @@ func TestTPMSeed_AcceptedByBothModes(t *testing.T) {
 	}
 	if err := checkTPMAccepted(fx, st, true); err != nil {
 		t.Fatalf("oracle rejects the genuine statement: %v", err)
+	}
+}
+
+// TestTPMOracle_AlgVariants verifies the oracle's alg handling: -9 (ESP256,
+// legitimate alias for ES256) passes with a genuine signature; -47 (ES256K,
+// #4545), -35 (ES384) and -257 (RS256) fail with a P-256 AIK even though the
+// signature is genuine.
+func TestTPMOracle_AlgVariants(t *testing.T) {
+	fx := newTPMFixture(t)
+	base := fx.seedStatement() // alg -7, real signature
+	st := base
+	st.alg = -9
+	if err := checkTPMAccepted(fx, st, true); err != nil {
+		t.Errorf("oracle rejected alg -9 with a genuine signature, want accepted: %v", err)
+	}
+	for _, alg := range []int64{algES256K, -35, -257} {
+		st := base
+		st.alg = alg
+		if err := checkTPMAccepted(fx, st, false); err == nil {
+			t.Errorf("oracle accepted alg %d, want rejected", alg)
+		}
+	}
+}
+
+// flipLastByte returns a copy of b with one bit of its last byte flipped.
+func flipLastByte(b []byte) []byte {
+	c := append([]byte{}, b...)
+	c[len(c)-1] ^= 0x01
+	return c
+}
+
+// TestTPMAttestation_AlgMustMatchAIKKey (#4545; it replaces
+// TestTPMLibrary_ES256KLeniencyPinned, which pinned the acceptance): in both RP
+// modes, a statement whose alg does not name the AIK's key type and curve is
+// refused with the library's attestation-format *protocol.Error, even though its
+// signature is genuine. -47 (ES256K) with a P-256 AIK is the KFZ-2026-165/166
+// reproducer; ES256 with a P-384 AIK is the same gap on the curve alone (x509
+// CheckSignature accepts ECDSA-with-SHA256 on any curve). -9 (ESP256) with a
+// P-256 AIK stays accepted.
+func TestTPMAttestation_AlgMustMatchAIKKey(t *testing.T) {
+	fx := newTPMFixture(t)
+	st := fx.seedStatement()
+	p384, err := ecdsa.ParseRawPrivateKey(elliptic.P384(), bytes.Repeat([]byte{0x3C}, 48))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx384 := newTPMFixtureWithAIK(t, p384)
+	st384 := fx384.seedStatement()
+	for name, rps := range map[string][2]ports.WebAuthnRelyingParty{
+		"keyorix": {newKeyorixRP(t), newKeyorixRP(t)},
+		"root":    {newRootRP(t, fx), newRootRP(t, fx384)},
+	} {
+		if _, err := finish(rps[0], fx.response(t, st.ver, -9, st.certInfo, st.pubArea, st.sig, st.aik)); err != nil {
+			t.Errorf("%s: alg -9 (ESP256) with a P-256 AIK rejected: %v", name, err)
+		}
+		requireAttFormatRefusal(t, name+": alg -47 with a P-256 AIK",
+			finishErr(rps[0], fx.response(t, st.ver, algES256K, st.certInfo, st.pubArea, st.sig, st.aik)))
+		requireAttFormatRefusal(t, name+": alg -7 (ES256) with a P-384 AIK",
+			finishErr(rps[1], fx384.response(t, st384.ver, -7, st384.certInfo, st384.pubArea, st384.sig, st384.aik)))
+		if _, err := finish(rps[0], fx.response(t, st.ver, algES256K, st.certInfo, st.pubArea, flipLastByte(st.sig), st.aik)); err == nil {
+			t.Errorf("%s: alg -47 with a forged signature accepted", name)
+		}
+	}
+}
+
+// TestTPMAttestation_GenuineES256AndRS256Accepted: the tightening keeps the two
+// AIK shapes real TPMs ship. ES256 with a P-256 AIK (the fuzz seed) and RS256
+// with an RSA-2048 AIK are accepted in both RP modes.
+func TestTPMAttestation_GenuineES256AndRS256Accepted(t *testing.T) {
+	rsaAIK, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		fx   *tpmFixture
+		alg  int64
+	}{
+		{"ES256/P-256", newTPMFixture(t), -7},
+		{"RS256/RSA-2048", newTPMFixtureWithAIK(t, rsaAIK), -257},
+	} {
+		st := tc.fx.seedStatement()
+		resp := tc.fx.response(t, st.ver, tc.alg, st.certInfo, st.pubArea, st.sig, st.aik)
+		for name, rp := range map[string]ports.WebAuthnRelyingParty{"keyorix": newKeyorixRP(t), "root": newRootRP(t, tc.fx)} {
+			if _, err := finish(rp, resp); err != nil {
+				t.Errorf("%s %s: genuine TPM attestation rejected: %v", tc.name, name, err)
+			}
+		}
+	}
+}
+
+func finishErr(rp ports.WebAuthnRelyingParty, resp []byte) error {
+	_, err := finish(rp, resp)
+	return err
+}
+
+// requireAttFormatRefusal requires err to be the library's attestation-format
+// error (type "invalid_attestation"), the type a signature that fails to verify
+// also gets, so a refusal is not mistaken for an unrelated parse failure.
+func requireAttFormatRefusal(t *testing.T, what string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Errorf("%s: accepted, want refused", what)
+		return
+	}
+	perr, ok := errors.AsType[*protocol.Error](err)
+	if !ok || perr.Type != protocol.ErrAttestationFormat.Type {
+		t.Errorf("%s: refused with %T %v, want a *protocol.Error of type %q", what, err, err, protocol.ErrAttestationFormat.Type)
 	}
 }
 
@@ -605,7 +736,8 @@ func TestTPMOracle_RedProof(t *testing.T) {
 		{"certified pubArea with the credential key outside unique.ecc", func(s *tpmStatement) {
 			s.pubArea, s.certInfo, s.sig = smuggled, certSmuggled, sigSmuggled
 		}, false},
-		{"wrong alg", func(s *tpmStatement) { s.alg = -35 }, false},
+		{"wrong alg -35 (ES384)", func(s *tpmStatement) { s.alg = -35 }, false},
+		{"wrong alg -257 (RS256)", func(s *tpmStatement) { s.alg = -257 }, false},
 		{"wrong version", func(s *tpmStatement) { s.ver = "1.2" }, false},
 		{"truncated certInfo", func(s *tpmStatement) { s.certInfo = s.certInfo[:len(s.certInfo)-1] }, false},
 		{"AIK certificate corrupted below the TBS", func(s *tpmStatement) { s.aik = flip(s.aik, len(s.aik)-3) }, true},
@@ -639,7 +771,10 @@ func fuzzTPM(f *testing.F, requireRoot bool) {
 		rp = newKeyorixRP(f)
 	}
 	s := fx.seedStatement()
-	f.Add(s.ver, s.alg, s.certInfo, s.pubArea, s.sig, s.aik)
+	// -9 and -47 with the genuine signature: the KFZ-2026-165/166 reproducers.
+	for _, alg := range []int64{s.alg, -9, algES256K} {
+		f.Add(s.ver, alg, s.certInfo, s.pubArea, s.sig, s.aik)
+	}
 	f.Fuzz(func(t *testing.T, ver string, alg int64, certInfo, pubArea, sig, aik []byte) {
 		st := tpmStatement{ver, alg, certInfo, pubArea, sig, aik}
 		resp := fx.response(t, ver, alg, certInfo, pubArea, sig, aik)

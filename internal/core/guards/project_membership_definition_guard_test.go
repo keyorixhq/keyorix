@@ -353,6 +353,9 @@ var journalReadAllowedCallers = map[string]string{
 		"annotation read, batched; never the membership answer.",
 	"internal/core/membership_lifecycle.go:inviteMemberWithMode": "ADR-022's own duplicate-invite guard — asks whether a journal row already " +
 		"exists before creating one. A question about the journal, not about membership.",
+	"internal/core/invitations.go:revokeInvitationMembershipRow": "undoing a failed invitation accept: finds the journal row the accept's own " +
+		"inviteMemberWithMode wrote, to move it to revoked. A question about the journal, not about membership (the grants " +
+		"are removed separately by RemoveProjectMember).",
 	"internal/faultstorage/faulty_storage_generated.go:ListUserProjectMemberships":          "generated fault-injection passthrough; not a semantic call site.",
 	"internal/faultstorage/faulty_storage_generated.go:ListUserProjectMembershipsByUserIDs": "generated fault-injection passthrough; not a semantic call site.",
 	"internal/faultstorage/faulty_storage_generated.go:GetActiveProjectMembership":          "generated fault-injection passthrough; not a semantic call site.",

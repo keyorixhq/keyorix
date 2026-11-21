@@ -12,8 +12,12 @@ below against Postgres before you rely on it, not after CI has failed.
 2. **`-p 1 -parallel 1`.** Run one package at a time, one test at a time:
    `go test -p 1 -parallel 1 -count=1 ./internal/core`. (`-count=1` because a
    cached result proves nothing about the database.)
-3. **`-timeout 20m` for `internal/core`.** Its Postgres run takes about 12
-   minutes; the default 10 minutes kills it.
+3. **`-timeout 40m` for `internal/core`.** Its Postgres run takes 12 to 22
+   minutes depending on how busy the shared Postgres is (three runs on the
+   shared one took 12.5, 16.7 and 22.1 minutes); the default 10 minutes and
+   even 20 minutes can kill it. A timeout detects a hang, it does not enforce
+   speed. No single test explains the cost: the ten slowest (the longest is
+   about 64 s) add up to about 400 s of a 1000 s run.
 4. **One heavy package at a time** (`internal/core`, `internal/storage`,
    `internal/storage/store`, `server`, `server/http`): they are large and
    write a lot to the Go work directory.
@@ -39,7 +43,7 @@ that queries `pg_stat_activity` or `pg_locks` without such a scope.
 
 | Package | Notes |
 |---|---|
-| `internal/core` | `-timeout 20m` |
+| `internal/core` | `-timeout 40m` |
 | `internal/storage` | |
 | `internal/storage/store` | |
 | `internal/auditverify` | |

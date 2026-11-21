@@ -34,9 +34,20 @@ type Node struct {
 	Kids []*Node
 }
 
-// ParseJSON parses b into a Node tree. Duplicate keys are preserved.
+// MaxParseJSONBytes is the largest document ParseJSON accepts. Hostile-response
+// fixtures are a few KiB; the cap keeps a runaway body from being decoded whole.
+const MaxParseJSONBytes = 32 << 20
+
+// ErrJSONTooLarge is returned by ParseJSON for a document over MaxParseJSONBytes.
+var ErrJSONTooLarge = fmt.Errorf("json document exceeds %d bytes", MaxParseJSONBytes)
+
+// ParseJSON parses b into a Node tree. Duplicate keys are preserved. A document
+// over MaxParseJSONBytes is refused with ErrJSONTooLarge.
 func ParseJSON(b []byte) (*Node, error) {
-	dec := json.NewDecoder(bytes.NewReader(b))
+	if len(b) > MaxParseJSONBytes {
+		return nil, ErrJSONTooLarge
+	}
+	dec := json.NewDecoder(io.LimitReader(bytes.NewReader(b), MaxParseJSONBytes))
 	dec.UseNumber()
 	n, err := parseVal(dec)
 	if err != nil {

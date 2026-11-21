@@ -643,13 +643,13 @@ Set `require_existing_path: true` and the server refuses to start instead:
 
 ```
 no database found at /app/data/keyorix.db (configured database.path: "/app/data/keyorix.db")
-and database.require_existing_path is set: run 'keyorix system init --database' to create one
+and database.require_existing_path is set: run 'keyorix-server admin init' to create one
 deliberately, or verify database.path and the working directory -- refusing to create a new,
-empty database in its place
+empty database in its place (INV-STORAGE-22, ADR-095 Task 3)
 ```
 
-(The command the message names is stale: the supported way to create the database is
-`keyorix-server admin init --database`, below.)
+(`keyorix-server admin init --database` creates just the database, below; the `keyorix`
+CLI has no such command.)
 
 Create the database deliberately with `keyorix-server admin init --database` (which creates the file
 with `O_CREATE|O_EXCL`), then start the server.

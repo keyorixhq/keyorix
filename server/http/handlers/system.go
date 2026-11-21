@@ -108,6 +108,12 @@ type SecurityInfo struct {
 	// nil for any caller without system.write; the web UI shows an error banner
 	// while either count is non-zero.
 	BreakGlassDegraded *core.BreakGlassDegradedStatus `json:"break_glass_degraded,omitempty"`
+	// BackupRefused is set while `admin backup` against this replica's key
+	// directory is refused because a key-rotation staging file is present
+	// (#4105, BackupRefusedStatus). Like recovery_key, only for a caller with
+	// system.write (it names key-file paths); omitted while backups are not
+	// refused.
+	BackupRefused *BackupRefusedStatus `json:"backup_refused,omitempty"`
 }
 
 // SystemMetrics represents system performance metrics
@@ -230,11 +236,13 @@ func MakeSystemInfoHandler(cfg *config.Config, coreService *core.KeyorixCore) ht
 		}
 		var auditOwed *core.OwedAuditStatus
 		var breakGlassDegraded *core.BreakGlassDegradedStatus
+		var backupRefused *BackupRefusedStatus
 		if canSystemWrite {
 			st := coreService.OwedAuditStatus(r.Context())
 			auditOwed = &st
 			bg := coreService.BreakGlassDegradedStatus(r.Context())
 			breakGlassDegraded = &bg
+			backupRefused = backupRefusedStatus(&cfg.Storage.Encryption)
 		}
 
 		tlsEnabled := cfg.Server.HTTP.TLS.Enabled
@@ -283,6 +291,7 @@ func MakeSystemInfoHandler(cfg *config.Config, coreService *core.KeyorixCore) ht
 				AuditOwed:            auditOwed,
 				SCIMJITUnmanaged:     config.SCIMJITUnmanagedWarning(cfg.SCIMJITUnmanagedProviders()),
 				BreakGlassDegraded:   breakGlassDegraded,
+				BackupRefused:        backupRefused,
 			},
 		}
 

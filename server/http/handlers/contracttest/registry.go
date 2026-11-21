@@ -43,7 +43,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getAuthProfile":                     reasonSchemaNotYetWritten, // get /api/v1/auth/profile
 	"getComplianceControls":              reasonSchemaNotYetWritten, // get /api/v1/compliance/controls
 	"getComplianceEvidence":              reasonSchemaNotYetWritten, // get /api/v1/compliance/evidence
-	"getCompliancePosture":               reasonSchemaNotYetWritten, // get /api/v1/compliance/posture
 	"getDashboardActivity":               reasonSchemaNotYetWritten, // get /api/v1/dashboard/activity
 	"getDashboardStats":                  reasonSchemaNotYetWritten, // get /api/v1/dashboard/stats
 	"getEncryptionConfig":                reasonSchemaNotYetWritten, // get /api/v1/system/encryption-config
@@ -234,6 +233,7 @@ var exercisingTests = map[string][]string{
 	"verifyMFALogin":                {"TestContractQA2_VerifyMFALogin"},
 	"authRefresh":                   {"TestRefreshToken_ValidToken_S7"},
 	"healthCheck":                   {"TestHealthCheck"},
+	"getCompliancePosture":          {"TestContractPosture_GetCompliancePosture"},
 	"getVersion":                    {"TestVersionHandler_ExposesOnlySkewFields"},
 	"listSecretACLs":                {"TestListSecretACLs_Empty", "TestGrantSecretACL_HappyPath"},
 	"systemInit":                    {"TestAuthHandler_InitSystem_Success"},

@@ -145,6 +145,45 @@ func TestEvaluateControls_EmergencyAccessDegradedCollectionIsUnknownNeverPass(t 
 	}
 }
 
+// TestEvaluateControls_EmergencyAccessDegradedReasonAndDetail
+// (AUDIT-GUARDS-TAILS-NOV-1 item 3): what an operator reads for a failed
+// break-glass read after #4250/#4248. The posture names the failed project
+// under "emergency_access:", not the owed-audit area, both controls are
+// Unknown, and neither detail claims what nobody collected: no "all audited"
+// over unread activations, no "reviewer available" when that lookup failed.
+func TestEvaluateControls_EmergencyAccessDegradedReasonAndDetail(t *testing.T) {
+	t.Parallel()
+	p := &CompliancePosture{}
+	c := NewKeyorixCore(new(MockStorage))
+	c.accumulateBreakGlassPosture(p, 1, &complianceSnapshot{
+		breakGlassByProject:    map[uint][]*models.BreakGlassActivation{},
+		breakGlassErrByProject: map[uint]error{1: errors.New("simulated db failure")},
+	})
+	assert.True(t, p.Degraded)
+	assert.Equal(t, []string{"emergency_access:project=1: simulated db failure"}, p.DegradedReasons)
+	assert.False(t, p.DegradedArea("emergency_access_audit:"), "a failed read is not owed audit rows")
+
+	ea := findControl(t, EvaluateControls(p), "emergency-access")
+	assert.Equal(t, ControlStatusUnknown, ea.Status)
+	assert.Contains(t, ea.Detail, "UNKNOWN")
+	assert.NotContains(t, ea.Detail, "all audited", "unread activations are not audited ones")
+	ir := findControl(t, EvaluateControls(p), "emergency-access-independent-reviewer")
+	assert.Equal(t, ControlStatusUnknown, ir.Status)
+	assert.Equal(t, "an independent reviewer is available", ir.Detail, "the reviewer lookup itself succeeded")
+
+	// The reviewer lookup failed: availability is not known.
+	p.degrade("emergency_access:independent_reviewer", errors.New("simulated db failure"))
+	ir = findControl(t, EvaluateControls(p), "emergency-access-independent-reviewer")
+	assert.Equal(t, ControlStatusUnknown, ir.Status)
+	assert.Contains(t, ir.Detail, "UNKNOWN")
+	assert.NotContains(t, ir.Detail, "an independent reviewer is available")
+
+	// Known-good direction: a healthy posture keeps the plain details.
+	healthy := EvaluateControls(&CompliancePosture{})
+	assert.Equal(t, "0 active, 0 total activations (all audited), 0 unreviewed past the window", findControl(t, healthy, "emergency-access").Detail)
+	assert.Equal(t, "an independent reviewer is available", findControl(t, healthy, "emergency-access-independent-reviewer").Detail)
+}
+
 // #396: the data-classification control must fold ALL FOUR classifiable surfaces —
 // static secrets, dynamic-secret configs, machine identities, and machine-token
 // credentials — into its pass/fail decision, not just static secrets. A deployment

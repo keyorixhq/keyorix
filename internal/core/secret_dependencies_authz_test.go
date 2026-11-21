@@ -54,6 +54,8 @@ func newDepAuthzCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	// an authorization path of its own.
 	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+	// GrantSecretACL (grantDepACL) refuses an acting account that is not active (#4159).
+	ensureActiveActor(t, c.storage, 1)
 	return c, db
 }
 

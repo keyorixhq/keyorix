@@ -5,8 +5,11 @@
   closed as a storage read fault, typed `ErrStorageReadUnavailable`, which a transport answers
   503). Machine actors (ctx-tagged, an `actorIsMachine`/`actorKind` flag, or UserID 0) and the
   actorID-0 system pseudo-actor are not checked: they have no user account. A consequence:
-  invitation acceptance re-checks the inviter's authority through `AssignUserRole`
-  /`InviteMember`, so a suspended inviter's pending invitation no longer grants. Why: #4159
+  invitation acceptance refuses an inactive human inviter (`requireInviterActive`, before the
+  account is created and again in `applyInvitationGrants`), so a suspended inviter's pending
+  invitation, project-scoped or global, no longer grants. The exported `InviteMember` check is
+  not reached at accept time, which calls `inviteMemberWithMode` directly (#4507; guard
+  `TestCompleteInvitationAccept_SuspendedInviterGrantsNothing`). Why: #4159
   (authzdiff known-02: core granted roles, members, invitations, approvals, machine tokens,
   shares and secret mutations to a suspended actor the transports refuse at authentication).
   Guard: `server/authzdiff/core_suspended_actor_test.go` (`TestCoreRefusesSuspendedActor`: every

@@ -1,0 +1,3 @@
+### Fixed
+
+- **Compose `web` `/readyz` now reflects the backend.** The web container's nginx had no `/readyz` location, so a probe of `/readyz` on the public port fell through to the SPA and answered `200` with `index.html` whatever the backend did. `/readyz` now answers by status only like `/health` (`200 healthy` when the backend's `/readyz` answers 2xx, `503 unavailable` otherwise; the backend body is not passed through). `docs/SELF_HOSTING.md` now says a load balancer must probe `/health` or `/readyz`, never `/nginx-health`. Guarded by `internal/config/web_nginx_health_guard_test.go`. `nginx -t` and a real-container run: pending e2e VM. The Helm chart's web nginx has no `/readyz` location either (reported, not changed here).

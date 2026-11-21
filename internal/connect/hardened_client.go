@@ -285,16 +285,17 @@ func newConnectHardenedTransport(base *http.Transport) http.RoundTripper {
 	return targetGuardRoundTripper{Transport: sizeCappedRoundTripper{Transport: base, MaxBytes: connectMaxResponseBytes}}
 }
 
-// errorBodyScrubRoundTripper replaces the body of every non-success response
-// (status >= 300; redirects are refused upstream of the SDK, so a 3xx that
-// arrives here is an error response too) with a short, fixed JSON body before
-// the SDK sees it. Azure's azcore parses an error response body as nested JSON
-// and builds a ResponseError from it; that parse allocates thousands of times the
-// size of a deeply nested body (a few tens of KB can cost hundreds of MB), and a
-// plain size cap does not help because the amplifying body is small. Replacing
-// the body bounds that work no matter what the server sends. The status code and
-// all headers (Retry-After, WWW-Authenticate, x-ms-*, ...) are kept, so the SDK's
-// retry and auth-challenge decisions, which are made from those, are unchanged.
+// errorBodyScrubRoundTripper replaces the body of every response whose status
+// is not 200 OK with a short, fixed JSON body before the SDK sees it. Azure's
+// azcore parses any unexpected-status response body as nested JSON and builds a
+// ResponseError from it; that parse allocates thousands of times the size of a
+// deeply nested body (a few tens of KB can cost hundreds of MB), and a plain size
+// cap does not help because the amplifying body is small. This includes 2xx
+// responses other than 200 — azsecrets.GetSecret only expects 200 on success, so
+// azcore treats 201/202/etc. as errors and parses their bodies the same way.
+// Replacing the body bounds that work for all unexpected statuses. The status code
+// and all headers (Retry-After, WWW-Authenticate, x-ms-*, ...) are kept, so the
+// SDK's retry and auth-challenge decisions, which are made from those, are unchanged.
 // The original body is read for at most errorBodyDrainBytes (so a keep-alive
 // connection can usually be reused) and is never surfaced, which also keeps
 // server-supplied text out of returned errors.
@@ -339,7 +340,7 @@ func validErrorCode(s string) bool {
 
 func (rt errorBodyScrubRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := rt.Transport.RoundTrip(req)
-	if err != nil || resp == nil || resp.StatusCode < 300 {
+	if err != nil || resp == nil || resp.StatusCode == 200 {
 		return resp, err
 	}
 	var original []byte

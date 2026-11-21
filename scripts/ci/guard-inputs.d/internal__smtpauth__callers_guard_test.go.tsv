@@ -1,0 +1,1 @@
+internal/smtpauth/callers_guard_test.go	operator/**/*.go	TestEveryGoMailClientAuthGoesThroughSmtpauth walks every non-test .go file of the repository, nested modules included, for go-mail clients that pick their own AUTH mechanism (#4383)

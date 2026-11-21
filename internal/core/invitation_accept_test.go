@@ -53,6 +53,11 @@ func TestCompleteInvitationAccept(t *testing.T) {
 		// F6 sweep (2026-09-22): activation-on-accept now ALSO requires the
 		// inviter (7) hold roles.assign as a baseline at the invitation's project.
 		ms.On("GetUserRoleIDsAt", ctx, uint(7), Scope{ProjectID: 5}).Return([]uint{100}, nil)
+		// #4507: accepting re-checks that the inviter (7) is still an active account.
+		ms.On("GetUser", ctx, uint(7)).Return(&models.User{ID: 7, IsActive: true, AccountState: AccountActive}, nil)
+		// The mock's LockUserForUpdate reuses GetUser once it is stubbed: the grant
+		// fence row-locks the invitee (20).
+		ms.On("GetUser", ctx, uint(20)).Return(&models.User{ID: 20, IsActive: true, AccountState: AccountActive}, nil).Maybe()
 		ms.On("GetUserGroupRoleIDsAt", ctx, uint(7), Scope{ProjectID: 5}).Return([]uint{}, nil)
 		ms.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
 		ms.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
@@ -98,6 +103,11 @@ func TestCompleteInvitationAccept(t *testing.T) {
 		// F6 sweep (2026-09-22): the invite-on-accept baseline check runs
 		// regardless of validation mode -- see the "open mode" subtest above.
 		ms.On("GetUserRoleIDsAt", ctx, uint(7), Scope{ProjectID: 5}).Return([]uint{100}, nil)
+		// #4507: accepting re-checks that the inviter (7) is still an active account.
+		ms.On("GetUser", ctx, uint(7)).Return(&models.User{ID: 7, IsActive: true, AccountState: AccountActive}, nil)
+		// The mock's LockUserForUpdate reuses GetUser once it is stubbed: the grant
+		// fence row-locks the invitee (20).
+		ms.On("GetUser", ctx, uint(20)).Return(&models.User{ID: 20, IsActive: true, AccountState: AccountActive}, nil).Maybe()
 		ms.On("GetUserGroupRoleIDsAt", ctx, uint(7), Scope{ProjectID: 5}).Return([]uint{}, nil)
 		ms.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
 		ms.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)

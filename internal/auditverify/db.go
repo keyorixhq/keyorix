@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	// Drivers registered directly with database/sql — no GORM, no
@@ -30,22 +32,62 @@ const (
 type DB struct {
 	sql     *sql.DB
 	backend Backend
+	// cleanup removes the private copy a WAL-mode SQLite file is verified
+	// from (sqlite_wal_copy.go); idempotent (sync.OnceFunc); nil for Postgres.
+	cleanup func()
+	// copyDir is the private copy's directory; "" when there is none.
+	copyDir string
 }
 
-// OpenSQLiteReadOnly opens a SQLite file read-only (file:<path>?mode=ro) —
-// it never writes to the artifact being verified, and works unmodified
-// against a copy taken from a live deployment.
+// OpenSQLiteReadOnly opens an operator-named SQLite artifact (`verify-audit
+// --db`, an evidence copy) read-only (file:<path>?mode=ro) — it never writes
+// to the artifact being verified, and works unmodified against a copy taken
+// from a live deployment. A WAL-mode file (every keyorix database) is opened
+// from a private copy of the whole file and its -wal under $TMPDIR, so
+// nothing is created beside the artifact and a read-only directory works
+// (#4350); Close removes that copy, and RemovePrivateCopy does so for a
+// process that exits without Close. A server-owned database is opened with
+// OpenSQLiteReadOnlyInPlace instead, so the vault is not copied for it.
 func OpenSQLiteReadOnly(path string) (*DB, error) {
-	dsn := "file:" + sqliteURIPath.Replace(path) + "?mode=ro"
+	openPath, cleanup := path, func() {}
+	if sqliteNeedsPrivateCopy(path) {
+		cp, rm, err := copySQLiteToPrivateDir(path)
+		if err != nil {
+			return nil, fmt.Errorf("open sqlite %s: %w", path, err)
+		}
+		openPath, cleanup = cp, rm
+	}
+	db, err := openSQLite(path, openPath, sync.OnceFunc(cleanup))
+	if err == nil && openPath != path {
+		db.copyDir = filepath.Dir(openPath)
+	}
+	return db, err
+}
+
+// OpenSQLiteReadOnlyInPlace opens a server-owned SQLite file (the configured
+// live database, a just-restored one) read-only where it is, without a
+// private copy. SQLite may create the file's -wal/-shm beside it, which is
+// normal in the server's own data directory; it never writes the main file.
+// Use OpenSQLiteReadOnly for an operator-named artifact.
+func OpenSQLiteReadOnlyInPlace(path string) (*DB, error) {
+	return openSQLite(path, path, func() {})
+}
+
+// openSQLite opens openPath read-only and reports errors against path (the
+// name the operator gave). cleanup runs on any error and on Close.
+func openSQLite(path, openPath string, cleanup func()) (*DB, error) {
+	dsn := "file:" + sqliteURIPath.Replace(openPath) + "?mode=ro"
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
+		cleanup()
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
 	if err := sqlDB.Ping(); err != nil {
 		_ = sqlDB.Close()
+		cleanup()
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
-	return &DB{sql: sqlDB, backend: BackendSQLite}, nil
+	return &DB{sql: sqlDB, backend: BackendSQLite, cleanup: cleanup}, nil
 }
 
 // sqliteURIPath percent-escapes the bytes SQLite's URI parser gives a meaning
@@ -81,9 +123,28 @@ func OpenPostgresConfig(cc *pgx.ConnConfig) (*DB, error) {
 	return &DB{sql: sqlDB, backend: BackendPostgres}, nil
 }
 
-// Close closes the underlying connection(s).
+// Close closes the underlying connection(s) and removes the private copy a
+// WAL-mode SQLite file was verified from, if any.
 func (d *DB) Close() error {
-	return d.sql.Close()
+	err := d.sql.Close()
+	d.RemovePrivateCopy()
+	return err
+}
+
+// PrivateCopyDir is the directory holding the private copy this DB reads
+// (OpenSQLiteReadOnly on a WAL-mode file), or "" when it reads the artifact
+// itself. For telling the operator where the copy of the database is.
+func (d *DB) PrivateCopyDir() string { return d.copyDir }
+
+// RemovePrivateCopy deletes the private copy OpenSQLiteReadOnly verifies a
+// WAL-mode file from, without closing the handle: for a signal handler that
+// exits the process while a query may still be running (Close would wait for
+// it). Idempotent and safe to call concurrently with Close; a no-op for a DB
+// with no private copy.
+func (d *DB) RemovePrivateCopy() {
+	if d.cleanup != nil {
+		d.cleanup()
+	}
 }
 
 // Backend reports which dialect this DB was opened against.

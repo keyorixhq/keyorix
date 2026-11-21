@@ -30,6 +30,7 @@ func TestBulkRenameSecretsHandler(t *testing.T) {
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
+	grantProjectSecretsWrite(t, db, 1, 1) // the owner also holds the route's gate (CORE-AUTHZ-RACE-NOV-1 item 2)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, Name: "production", ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.SecretNode{
 		ID: 5, Name: "db-password", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1,
@@ -37,6 +38,7 @@ func TestBulkRenameSecretsHandler(t *testing.T) {
 	}).Error)
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	ensureActiveActorUser(t, c.Storage(), 1) // the withUserCtx user acts through core (#4159)
 	require.NoError(t, c.SetSecretNamePolicy(core.SecretNamePolicy{
 		Enabled: true, Pattern: "^[A-Z][A-Z0-9_]*$", MaxLength: 30,
 	}))

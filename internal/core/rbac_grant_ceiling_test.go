@@ -2,12 +2,23 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+// seedGrantTargetUser creates the user row a successful grant needs: AssignUserRole
+// refuses a target that does not exist (ERRMAP-TAILS-NOV-4), so a test that expects the
+// grant to succeed must name a real user, not just an id.
+func seedGrantTargetUser(t *testing.T, db *gorm.DB, id uint) {
+	t.Helper()
+	name := fmt.Sprintf("grant-target-%d", id)
+	require.NoError(t, db.Create(&models.User{ID: id, Username: name, UsernameFolded: name, Email: name + "@example.test", EmailFolded: name + "@example.test", AccountState: "active"}).Error)
+}
 
 // #93/#107/#141: a roles.assign holder with no other authority must not be able to
 // GRANT a role bundling a permission they don't hold themselves — the "grant"
@@ -82,6 +93,7 @@ func TestAssignUserRole_ScopedHolderCannotGrantAtBroaderScope(t *testing.T) {
 	const target = uint(10)
 	// attacker holds secrets.delete and roles.assign only at project 3, not globally.
 	seedLiveScopeProjects(t, db, 3)
+	seedGrantTargetUser(t, db, target)
 	require.NoError(t, db.Create(&models.UserRole{UserID: attacker, RoleID: 3, ProjectID: 3}).Error)
 
 	ensureActiveActor(t, c.storage, attacker)
@@ -115,6 +127,7 @@ func TestAssignUserRole_HolderMayGrantRoleTheyQualifyFor(t *testing.T) {
 
 	const holder = uint(9)
 	const target = uint(10)
+	seedGrantTargetUser(t, db, target)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 3}).Error) // global grant
 
 	ensureActiveActor(t, c.storage, holder)
@@ -140,6 +153,7 @@ func TestAssignUserRole_AdminBypassesCeiling(t *testing.T) {
 
 	const admin = uint(9)
 	const target = uint(10)
+	seedGrantTargetUser(t, db, target)
 	require.NoError(t, db.Create(&models.UserRole{UserID: admin, RoleID: 1}).Error)
 
 	ensureActiveActor(t, c.storage, admin)
@@ -159,6 +173,7 @@ func TestAssignUserRole_SystemActorBypassesCeiling(t *testing.T) {
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 
 	const target = uint(10)
+	seedGrantTargetUser(t, db, target)
 	require.NoError(t, c.AssignUserRole(ctx, 0, target, 2, Scope{ProjectID: 3}, false))
 
 	var count int64
@@ -207,6 +222,7 @@ func TestAssignUserRole_EmptyRoleGrantableByRolesAssignHolder(t *testing.T) {
 	const holder = uint(9)
 	const target = uint(10)
 	seedLiveScopeProjects(t, db, 3)
+	seedGrantTargetUser(t, db, target)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 3, ProjectID: 3}).Error)
 
 	ensureActiveActor(t, c.storage, holder)
