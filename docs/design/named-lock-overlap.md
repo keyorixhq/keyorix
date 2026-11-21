@@ -269,6 +269,14 @@ re-granted only if an operator removes that exact baseline grant inside the same
 window of at most about 10 s, during a simultaneous restart of two replicas whose
 lock connection also died.
 
+The run's own failed row save does not widen that window (REVIEW-4560 M1). Each
+pair is taken off the row before its grant is attempted and put back only if the
+grant fails, so when the lock-loss path cancels the run, or a row write fails for
+any other reason, the row never lists a pair whose grant landed. What is left is
+fail closed: a pair whose failed grant cannot be put back on the row, or one the
+process stops on between that save and the grant, is dropped and not retried (a
+missed baseline grant, logged by name on a failed save), never re-granted.
+
 Accepted as startup-only (FIX-DEFECT-4542-TAILS-1), not fenced. A fence here is not
 the small `txFence` the families above use, because nothing in this section is one
 check followed by one write:

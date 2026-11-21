@@ -30,8 +30,11 @@ import (
 // received it yet. It is written BEFORE the permissions are created, so a
 // failed grant, a failed role read, or a stop between the create and the grants
 // leaves the pair listed and the next startup retries exactly that pair. A role
-// leaves a permission's list as soon as its grant lands, it is seen holding the
-// permission, or it does not exist; it stays listed only on an error. A role off
+// leaves a permission's list durably BEFORE its grant is attempted (and is
+// listed again if the grant fails), when it is seen holding the permission, or
+// when it does not exist; it stays listed only on an error. If recording a
+// failed grant for a retry fails as well, the pair is dropped and logged
+// (fail closed): a missed baseline grant, never a re-grant. A role off
 // the list is never granted the permission again, so an operator who removes it
 // from that role keeps it removed, even while another role's grant of the same
 // permission keeps failing (REVIEW-4542-M1: the v1 row kept one entry per
@@ -126,6 +129,11 @@ func (c *KeyorixCore) ReconcileRBACPermissions(ctx context.Context) error { // N
 		if len(pending) == 0 {
 			return nil
 		}
+		type owedGrant struct {
+			perm, role     string
+			roleID, permID uint
+		}
+		var grants []owedGrant
 		for _, rdef := range defaultRoles {
 			var owed []string
 			for permName, roles := range pending {
@@ -165,26 +173,48 @@ func (c *KeyorixCore) ReconcileRBACPermissions(ctx context.Context) error { // N
 				held[p.Name] = true
 			}
 			for _, permName := range owed {
-				if held[permName] {
-					settlePendingGrant(pending, permName, rdef.Name)
-					continue
-				}
-				// Routed through the audited core wrapper (actor 0 = system, the same
-				// convention every other system-initiated grant uses) so this startup
-				// top-up emits permission.assigned like every other permission grant
-				// path, instead of leaving the tamper-evident audit chain silent (#293).
-				if err := c.AssignPermissionToRole(ctx, 0, role.ID, have[permName], false); err != nil {
-					log.Printf("rbac reconcile: grant %s to role %s: %v (stays pending)", permName, rdef.Name, err)
-					continue
-				}
 				settlePendingGrant(pending, permName, rdef.Name)
+				if !held[permName] {
+					grants = append(grants, owedGrant{perm: permName, role: rdef.Name, roleID: role.ID, permID: have[permName]})
+				}
 			}
 		}
 
+		// Settle every pair BEFORE its grant is attempted, and owe it again only
+		// if the grant fails (REVIEW-4560 M1). The row then never lists a pair
+		// whose grant has landed, so a failed save after the grants (a write
+		// error, or the lock-loss path cancelling ctx) cannot leave a landed pair
+		// listed for the next startup to re-grant after an operator removed it.
+		// If this save fails, no grant is attempted and the pairs stay owed. A
+		// write that failed but did commit drops them ungranted: fail closed.
 		if err := c.saveRBACReconcilePending(ctx, pending); err != nil {
-			// The grants themselves landed; a stale row only lists pairs whose
-			// grant has landed, and the next startup skips every one it finds held.
-			log.Printf("rbac reconcile: %v", err)
+			for _, g := range grants {
+				owePendingGrant(pending, g.perm, g.role)
+			}
+			log.Printf("rbac reconcile: %v (no grant attempted; %d grant(s) stay pending)", err, len(grants))
+			grants = nil
+		}
+		var failed []owedGrant
+		for _, g := range grants {
+			// Routed through the audited core wrapper (actor 0 = system, the same
+			// convention every other system-initiated grant uses) so this startup
+			// top-up emits permission.assigned like every other permission grant
+			// path, instead of leaving the tamper-evident audit chain silent (#293).
+			if err := c.AssignPermissionToRole(ctx, 0, g.roleID, g.permID, false); err != nil {
+				log.Printf("rbac reconcile: grant %s to role %s: %v (stays pending)", g.perm, g.role, err)
+				owePendingGrant(pending, g.perm, g.role)
+				failed = append(failed, g)
+			}
+		}
+		if len(failed) > 0 {
+			if err := c.saveRBACReconcilePending(ctx, pending); err != nil {
+				// The pair is off the row and was not granted: it is lost, never
+				// re-granted from a stale row (fail closed). Say so by name.
+				for _, g := range failed {
+					log.Printf("RBAC reconcile: ERROR: the grant of %s to role %s failed and could not be recorded for a retry (%v). Grant %s to role %s by hand.", g.perm, g.role, err, g.perm, g.role)
+					settlePendingGrant(pending, g.perm, g.role)
+				}
+			}
 		}
 
 		if len(created) > 0 {
@@ -244,12 +274,37 @@ func (c *KeyorixCore) loadRBACReconcilePending(ctx context.Context) (map[string]
 		}
 		return pending, nil
 	}
+	var dropped []string
 	for perm, roles := range owed {
 		for _, role := range roles {
+			if !isBaselineGrant(perm, role) {
+				// Nothing would ever grant or settle it (REVIEW-4560 L3).
+				dropped = append(dropped, perm+"->"+role)
+				continue
+			}
 			owePendingGrant(pending, perm, role)
 		}
 	}
+	if len(dropped) > 0 {
+		sort.Strings(dropped)
+		log.Printf("RBAC reconcile: dropping pending grants that are not baseline (permission->role) pairs, without granting them: %v", dropped)
+		if err := c.saveRBACReconcilePending(ctx, pending); err != nil {
+			// Nothing is granted from them either way; the next startup drops them again.
+			log.Printf("rbac reconcile: %v", err)
+		}
+	}
 	return pending, nil
+}
+
+// isBaselineGrant reports whether role is a canonical role whose definition
+// lists perm, the only pairs the pending row can owe.
+func isBaselineGrant(perm, role string) bool {
+	for _, rdef := range defaultRoles {
+		if rdef.Name == role {
+			return slices.Contains(rdef.Permissions, perm)
+		}
+	}
+	return false
 }
 
 // dropLegacyRBACReconcilePending empties the v1 row (rbacReconcileLegacyPendingRow)
