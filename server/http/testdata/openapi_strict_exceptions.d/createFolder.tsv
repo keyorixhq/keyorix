@@ -1,0 +1,1 @@
+createFolder	500	missing-sentinel	NEEDS ISSUE	catalog-handlers	OPENAPI-STATEFUL-9: duplicate folder name in same project/environment -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (core lacks a Conflict sentinel on the name-uniqueness violation, same class as createSecretTemplate). Caught by the strict fuzz pass.

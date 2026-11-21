@@ -1,0 +1,71 @@
+name: OpenAPI strict nightly (FuzzOpenAPIStateful)
+
+# Runs FuzzOpenAPIStateful with KEYORIX_OSF_STRICT=1 on a nightly schedule.
+# That flag makes any well-formed request that returns an undeclared 5xx FATAL
+# (not just logged), so a new error-classification regression surfaces the
+# morning after it lands rather than sitting silent in the candidate list.
+# Already-known undeclared-5xx bugs are waived by osKnownUndeclared5xx
+# (openapi_stateful_fuzz_test.go) so the gate does not fail on day one for
+# things already triaged in #4132.
+#
+# Failure alerting: one GitHub issue per workflow (scripts/ci/failure-issue.sh)
+# -- opened on the first red night, commented on each later red night, closed
+# automatically on the next green one. No webhook or secret: GitHub's own
+# email / mobile notifications deliver it.
+on:
+  schedule:
+    # 08:43 UTC nightly — off the round minute, clear of this repo's other
+    # nightly cron slots (e2e 7:13, fault-tolerance 7:29, anchore-syft 7:41,
+    # guard 7:53, sonarcloud 8:07, docker-publish 8:21, pg-race 8:27).
+    - cron: '43 8 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: openapi-strict-nightly
+  cancel-in-progress: false
+
+jobs:
+  fuzz-strict:
+    runs-on: ubuntu-24.04
+    # Budget: fuzztime=1800s (30 min) + ~5 min for checkout/compile/teardown.
+    # Sized against e2e-nightly's 25-min job cap (the longest reference slot):
+    # 30 min of fuzz is the most we can run while keeping total wall clock under
+    # 40 min. The harness is Phase 1 (SQLite-backed, CI-runnable per its own
+    # doc comment); no Postgres service container is needed.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      KEYORIX_OSF_STRICT: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Fuzz FuzzOpenAPIStateful in strict mode (1800s)
+        # KEYORIX_OSF_STRICT=1 is set above. go test's exit code propagates
+        # naturally: a strict-mode violation exits non-zero, failing this step
+        # and the job, which the alert job below picks up via needs.*.result.
+        run: go test -run='^$' -fuzz='^FuzzOpenAPIStateful$' -fuzztime=1800s ./server/http
+
+  alert:
+    needs: [fuzz-strict]
+    # Always report on main; a manual dispatch on a feature branch must not
+    # open or close the main-branch issue.
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open, update or close the alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+        run: |
+          ./scripts/ci/failure-issue.sh "$OUTCOME" \
+            "Nightly strict OpenAPI fuzz is failing" \
+            "FuzzOpenAPIStateful with KEYORIX_OSF_STRICT=1 found an undeclared 5xx not covered by osKnownUndeclared5xx; see openapi_stateful_fuzz_test.go and #4132"
