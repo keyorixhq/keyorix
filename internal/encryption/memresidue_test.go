@@ -144,10 +144,12 @@ func memResidueScenarioNamed(name string) (memResidueScenario, bool) {
 //	kek 6  crypto/sha256 buffer in HKDF's HMAC    <- deriveEvidenceSignKey, deriveAuditCheckpointKey,
 //	       (Extract writes the KEK as the message)   auditverify.DeriveBackupManifestKey (key + key ID each)
 //
-// The encoded and passphrase copies, per scenario:
+// No copy of the KEK's encoded text remains in the file scenarios: before
+// #4498 there were two (io.ReadAll's buffer in FileKeyProvider.KEK, and
+// decodeKeyMaterial's string(material)); the buffer is now wiped, the decode
+// makes no string, and INV-ENCRYPTION-file-kek-read-wiped (a site claim) holds
+// it there. The passphrase copies cannot be wiped by application code:
 //
-//	kek-hex/-base64/-base64url 1  io.ReadAll's buffer         <- crypto.(*FileKeyProvider).KEK (app-owned, unwiped)
-//	kek-hex/-base64/-base64url 1  string(material)            <- crypto.decodeKeyMaterial (immutable string)
 //	passphrase 1  the string passed to Service.Initialize, kept as PasswordKeyProvider.passphrase (immutable)
 //	passphrase 1  string(password) in golang.org/x/crypto/pbkdf2.Key
 //	passphrase 1  []byte(password) in crypto/internal/fips140/pbkdf2.Key (for hmac.New)
@@ -159,9 +161,9 @@ func memResidueScenarioNamed(name string) (memResidueScenario, bool) {
 // (WipeDEK, the claimed copy).
 var memResidueRatchet = map[string]map[string]int{
 	"file-raw":       {"dek": 2, "kek": 10, "kek-hex": 0, "kek-base64": 0, "kek-base64url": 0, "passphrase": 0},
-	"file-hex":       {"dek": 2, "kek": 10, "kek-hex": 2, "kek-base64": 0, "kek-base64url": 0, "passphrase": 0},
-	"file-base64":    {"dek": 2, "kek": 10, "kek-hex": 0, "kek-base64": 2, "kek-base64url": 0, "passphrase": 0},
-	"file-base64url": {"dek": 2, "kek": 10, "kek-hex": 0, "kek-base64": 0, "kek-base64url": 2, "passphrase": 0},
+	"file-hex":       {"dek": 2, "kek": 10, "kek-hex": 0, "kek-base64": 0, "kek-base64url": 0, "passphrase": 0},
+	"file-base64":    {"dek": 2, "kek": 10, "kek-hex": 0, "kek-base64": 0, "kek-base64url": 0, "passphrase": 0},
+	"file-base64url": {"dek": 2, "kek": 10, "kek-hex": 0, "kek-base64": 0, "kek-base64url": 0, "passphrase": 0},
 	"passphrase":     {"dek": 2, "kek": 10, "kek-hex": 0, "kek-base64": 0, "kek-base64url": 0, "passphrase": 3},
 }
 
@@ -176,7 +178,12 @@ type memResidueSiteClaim struct {
 }
 
 // memResidueSiteClaims lists the site claims.
-var memResidueSiteClaims = []memResidueSiteClaim{}
+var memResidueSiteClaims = []memResidueSiteClaim{{
+	Scenarios: []string{"file-raw", "file-hex", "file-base64", "file-base64url"},
+	Func:      "github.com/keyorixhq/keyorix/internal/crypto.(*FileKeyProvider).KEK",
+	What:      "the KEK file's read buffer, decode buffers and returned KEK",
+	Claim:     "INV-ENCRYPTION-file-kek-read-wiped",
+}}
 
 // memResidueClaim is a copy with a documented zeroization claim: a hit at its
 // address after Shutdown is a failure, not hardening data.

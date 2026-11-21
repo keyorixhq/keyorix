@@ -36,7 +36,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 182 | 182 | 0 |
 | `internal/delivery` | [internal/delivery/INVARIANTS.md](../internal/delivery/INVARIANTS.md) | 1 | 1 | 0 |
-| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 54 | 54 | 0 |
+| `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 55 | 55 | 0 |
 | `internal/evidencesink` | [internal/evidencesink/INVARIANTS.md](../internal/evidencesink/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/fuzzutil/boundedwork` | [internal/fuzzutil/boundedwork/INVARIANTS.md](../internal/fuzzutil/boundedwork/INVARIANTS.md) | 5 | 5 | 0 |
@@ -48,7 +48,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 3 | 2 | 1 |
 | `internal/kdfmeter` | [internal/kdfmeter/INVARIANTS.md](../internal/kdfmeter/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/keyfiles` | [internal/keyfiles/INVARIANTS.md](../internal/keyfiles/INVARIANTS.md) | 1 | 1 | 0 |
-| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 20 | 20 | 0 |
+| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 18 | 18 | 0 |
 | `internal/logging` | [internal/logging/INVARIANTS.md](../internal/logging/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/notifychan` | [internal/notifychan/INVARIANTS.md](../internal/notifychan/INVARIANTS.md) | 2 | 2 | 0 |
