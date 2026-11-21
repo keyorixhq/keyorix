@@ -91,6 +91,13 @@ func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleI
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
 		return err
 	}
+	// #4161: the route gate (roles.read for the /roles group, roles.write for the
+	// grant) is decided here as well; the self-permission rule below stays. The
+	// system pseudo-actor (actorID 0, not a machine: ReconcileRBACPermissions and
+	// the alerts.write reconcile) is exempt from both, as before.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permRolesRead, Scope{}}, scopedGate{permRolesWrite, Scope{}}); err != nil {
+		return err
+	}
 	role, err := c.storage.GetRole(ctx, roleID)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
@@ -223,6 +230,14 @@ func (c *KeyorixCore) GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*
 // caller (also actorID==0) from that true unauthenticated case.
 func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope, actorIsMachine bool) error {
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
+	// #4161: the route gate is decided here as well. Groups are install-wide
+	// objects, so the transports gate every group mutation at the GLOBAL scope
+	// (users.read for the /groups group, roles.assign for a role grant); the
+	// granter ceiling below (roles.assign and the role's permissions AT scope)
+	// stays on top of it.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permUsersRead, Scope{}}, scopedGate{permRolesAssign, Scope{}}); err != nil {
 		return err
 	}
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
@@ -457,6 +472,12 @@ func (c *KeyorixCore) GetUserPermissionsByID(ctx context.Context, userID uint) (
 // the old one, the old one minus the removals, nor the new one.
 func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, roleIDs []uint, scope Scope, actorIsMachine bool) error {
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
+	// #4161: the route gate (users.read for the /users group and roles.assign,
+	// both at the GLOBAL scope, PUT /users/{id}/roles) is decided here as well; the
+	// per-role granter ceiling at scope inside replaceUserRoleSet stays.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permUsersRead, Scope{}}, scopedGate{permRolesAssign, Scope{}}); err != nil {
 		return err
 	}
 	return c.replaceUserRoleSet(ctx, roleSetReplace{
