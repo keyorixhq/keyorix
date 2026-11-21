@@ -90,16 +90,20 @@ func SplitDSNHostList(field string) []string {
 		// net.SplitHostPort requires an explicit port, so a bracket-quoted
 		// IPv6 literal with NO port (e.g. "[64:ff9b::8.8.8.8]" -- a legal
 		// PostgreSQL multi-host URI entry that just uses the default port)
-		// fails that call for want of one. Strip the brackets before giving
-		// up, rather than carrying them into the "host" -- net.ParseIP (and
-		// every guard downstream of it) rejects a bracket-wrapped literal
+		// fails that call for want of one. Strip ALL bracket layers before
+		// giving up, rather than carrying them into the "host" -- net.ParseIP
+		// (and every guard downstream of it) rejects a bracket-wrapped literal
 		// outright, which would otherwise fall through to net.LookupHost and
 		// silently skip validation for exactly this shape.
 		//
+		// Loop, not a single if: a host written with more than one bracket
+		// layer (e.g. "[[::1]]") must reach the validator as the bare address
+		// ("::1"), the same normalised form every guard downstream expects.
+		//
 		// An empty bracket pair ("[]") would strip to "" and be dropped by
 		// every caller, hiding a host the driver still sees (pgx dials the
-		// literal "[]"); keep the entry as written so it stays a candidate.
-		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 2 {
+		// literal "[]"); the len(part) > 2 guard keeps it as written.
+		for strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 2 {
 			part = part[1 : len(part)-1]
 		}
 		hosts = append(hosts, part)
