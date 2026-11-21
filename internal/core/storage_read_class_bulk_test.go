@@ -117,6 +117,18 @@ func TestStorageReadClass_AccessReviewAndBulk(t *testing.T) {
 				require.NoError(t, w.db.First(&row, s.ID).Error)
 				assert.NotEqual(t, newName, row.Name, "the rename was never applied")
 
+				// The second GetSecret is the per-secret permission re-check
+				// (enforceSecretWriteGate): its fault answers retry too (#4559 review LOW).
+				faulty.Arm(&faultstorage.FaultSpec{Method: "GetSecret", NthCall: 2, Kind: faultstorage.KindError, Err: assert.AnError})
+				rep, err = c.BulkRenameSecrets(ctx, p.ID, []SecretRename{{ID: s.ID, NewName: newName}}, false, "tester", actor.ID, "", "")
+				require.NoError(t, err)
+				require.True(t, faulty.Fired())
+				require.Len(t, rep.Outcomes, 1)
+				assert.Equal(t, renameStatusSkipped, rep.Outcomes[0].Status)
+				assert.Equal(t, StorageReadUnavailableMessage, rep.Outcomes[0].Reason, "a re-check fault is not \"secret not found\"")
+				require.NoError(t, w.db.First(&row, s.ID).Error)
+				assert.NotEqual(t, newName, row.Name, "the rename was never applied")
+
 				faulty.Arm(nil)
 				rep, err = c.BulkRenameSecrets(ctx, p.ID, []SecretRename{{ID: s.ID, NewName: newName}}, false, "tester", actor.ID, "", "")
 				require.NoError(t, err)

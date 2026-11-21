@@ -24,10 +24,12 @@ func TestBulkRenameSecrets(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{},
-		&models.AuditEvent{}, &models.SecretAccessLog{}, &models.UserRole{},
+		&models.AuditEvent{}, &models.SecretAccessLog{}, &models.UserRole{}, &models.User{},
 	))
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	ensureActiveActor(t, c.storage, 1) // the acting user must be an active account (#4159)
+	ensureActiveActor(t, c.storage, 2) // the non-owner caller is an active account too, so the per-secret gate is what refuses it
 	ctx := context.Background()
 	now := time.Now()
 
@@ -40,6 +42,7 @@ func TestBulkRenameSecrets(t *testing.T) {
 	// CheckSecretPermission gates the owner path on IsProjectMember (RBAC-001); seed
 	// user 1 so the owning actor passes the project-membership guard.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	grantProjectSecretsWrite(t, db, 1, p.ID) // the owner also holds the route's gate (CORE-AUTHZ-RACE-NOV-1 item 2)
 
 	mk := func(name string, projectID uint, isSecret bool) uint {
 		s, e := c.storage.CreateSecret(ctx, &models.SecretNode{

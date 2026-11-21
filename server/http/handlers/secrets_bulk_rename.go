@@ -42,6 +42,9 @@ func (h *SecretHandler) BulkRenameSecrets(w http.ResponseWriter, r *http.Request
 	ip, ua := clientIP(r), r.Header.Get("User-Agent")
 	report, err := h.coreService.BulkRenameSecrets(r.Context(), uint(id), reqBody.Renames, reqBody.DryRun, userCtx.Username, userCtx.UserID, ip, ua)
 	if err != nil {
+		if sendActorGateError(w, err) { // a typed refusal (#4514 machine actor, #4159 inactive actor) is a 403
+			return
+		}
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "exceeds the maximum batch size") {
 			status = http.StatusBadRequest

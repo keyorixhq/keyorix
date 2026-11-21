@@ -216,8 +216,13 @@ func pgLiveSource(t *testing.T) (*config.Config, *config.EncryptionConfig, strin
 	configPathFlag = writeAbsKeyPathsConfig(t, srcDir, fmt.Sprintf("  type: postgres\n  database:\n    dsn: %q\n", srcDSN), keysDir)
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(cfg)
+	st, err := storage.NewStorageFactory().CreateStorage(cfg)
 	require.NoError(t, err)
+	// Close it (INV-STORE-background-jobs-end-with-close): otherwise its
+	// trigger-integrity check outlives the test and logs into later tests' captures (#4501).
+	if c, ok := st.(interface{ Close() error }); ok {
+		t.Cleanup(func() { _ = c.Close() })
+	}
 	seed := pgAdminRawOpen(t, srcDSN)
 	require.NoError(t, seed.Create(&models.Project{Name: "live-proj"}).Error)
 	return cfg, enc, keysDir, srcDir

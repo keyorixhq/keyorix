@@ -63,7 +63,10 @@ func initializeEncryption(cfg *config.Config, auditSink encryption.AuditSink) (*
 	// deployment configuring an absolute key path could never complete
 	// first-boot key generation.
 	baseDir := "."
-	if w := encryption.RelativeKeyPathWarning(cfg.Storage.Encryption.DEKPath, cfg.Storage.Encryption.SaltPath); w != "" {
+	if w := cfg.Storage.Encryption.UnusedSaltPathWarning(); w != "" {
+		log.Printf("WARNING: %s", w) // #4395
+	}
+	if w := encryption.RelativeKeyPathWarning(cfg.Storage.Encryption.DEKPath, cfg.Storage.Encryption.EffectiveSaltPath()); w != "" {
 		log.Print(w)
 	}
 	svc := encryption.NewService(&cfg.Storage.Encryption, baseDir)

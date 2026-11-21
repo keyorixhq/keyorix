@@ -19,7 +19,11 @@
 # role); each run needs a fresh EMPTY database from the caller (`kpg dsn`/`kpg drop`, or DROP/CREATE).
 #
 # Usage: [DRILL_BACKEND=postgres DRILL_PG_DSN_FILE=a.txt] [DRILL_SERVER_BIN=... DRILL_CLI_BIN=...] \
-#        [SOAK_CYCLES=50] [SOAK_SEED=1] scripts/drills/kill9-soak.sh
+#        [SOAK_CYCLES=50] [SOAK_SEED=1] [SOAK_AUDIT_DURABILITY=strict|standard] scripts/drills/kill9-soak.sh
+#
+# SOAK_AUDIT_DURABILITY=standard on SQLite (ADR-112 Amendment 7) runs the soak with successful
+# read audits on the dedicated synchronous=NORMAL connection: a process kill must still lose
+# nothing and leave the chain VALID. (An OS crash or power loss is not what this drill does.)
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -55,12 +59,21 @@ srv_start_nowait() {
 step "provision and seed"
 inst_new "$I" "$P"
 if [ -n "${SOAK_AUDIT_DURABILITY:-}" ]; then
-    sed -i.bak -E "s|^    ssl_mode: disable|    ssl_mode: disable\n    audit_durability: $SOAK_AUDIT_DURABILITY|" "$d/keyorix.yaml"
+    case "$DRILL_BACKEND" in
+    postgres) sed -i.bak -E "s|^    ssl_mode: disable|    ssl_mode: disable\n    audit_durability: $SOAK_AUDIT_DURABILITY|" "$d/keyorix.yaml" ;;
+    sqlite) sed -i.bak -E "s|^    path: \"keyorix.db\"|    path: \"keyorix.db\"\n    audit_durability: $SOAK_AUDIT_DURABILITY|" "$d/keyorix.yaml" ;;
+    esac
     rm -f "$d/keyorix.yaml.bak"
     grep -q "audit_durability: $SOAK_AUDIT_DURABILITY" "$d/keyorix.yaml" || fail "could not set audit_durability in the config"
 fi
 srv_start "$I" "$P"
 grep -m1 -i 'audit durability' "$d/server.log" || echo "    (no 'audit durability' line in the server log)"
+if [ "$DRILL_BACKEND" = "sqlite" ] && [ "${SOAK_AUDIT_DURABILITY:-}" = "standard" ]; then
+    # ADR-112 Amendment 7: the soak is only a test of the NORMAL read-audit connection if it is open.
+    grep -q 'commit on a dedicated synchronous=NORMAL connection' "$d/server.log" \
+        || fail "SQLite audit_durability standard did not open the synchronous=NORMAL read-audit connection"
+    ok "SQLite read audits commit on the dedicated synchronous=NORMAL connection"
+fi
 seed_data "$I" "$P"
 
 step "start the load generator (2 readers, 2 writers)"
@@ -131,4 +144,17 @@ load_check_ledger
 verify_seed "$I" "$P"
 srv_stop "$I"
 verify_audit "$I"
+# Every value read the load generator saw succeed was audited before it was answered, so its
+# secret.read row must have survived every kill: at standard on SQLite those rows commit on the
+# synchronous=NORMAL connection (ADR-112 Amendment 7), and a process kill must lose none of them.
+# ">=": the seed checks read values too.
+if [ "$DRILL_BACKEND" = "sqlite" ]; then
+    reads_ok="$(cat "$d"/load/read.*.log | grep -c ' read ok ' || true)"
+    read_rows="$(sqlite3 "$d/keyorix.db" "SELECT COUNT(*) FROM audit_events WHERE event_type = 'secret.read' AND success = 1")"
+    [ "$read_rows" -ge "$reads_ok" ] \
+        || fail "$reads_ok reads were answered but only $read_rows successful secret.read audit rows survived the kills"
+    ok "every answered read kept its audit row ($reads_ok answered, $read_rows secret.read rows)"
+else
+    drill_skip "$DRILL_BACKEND" "read-audit row count is checked on sqlite only (no psql stand-in is built by this drill)"
+fi
 drill_end "KILL -9 SOAK ($CYCLES cycles, seed $SEED, $DRILL_BACKEND)"

@@ -29,6 +29,9 @@ func TestCreateUserWithAssignments_RejectsNonAdminGrantingGlobalAdminRole(t *tes
 	// but plausibly also holding roles.assign via a custom role in the real HTTP/gRPC
 	// deployment) must not be able to mint an admin account in one call.
 	nonAdminID := seedUserWithRole(t, st, "cua-attacker", "project_developer", storage.Scope{})
+	// #4161: core also decides the route gate (users.read + users.write, global); the
+	// attacker holds exactly that through an ordinary role, so the ceiling decides.
+	grantGateHolder(t, st.DB(), nonAdminID, Scope{}, permUsersRead, permUsersWrite)
 
 	_, err := c.CreateUserWithAssignments(ctx, &CreateUserRequest{
 		Username: "cua-mallory", Email: "cua-mallory@acme.io", Password: "Qr7#Kp2$Lm5@Vn9!",
@@ -46,6 +49,7 @@ func TestCreateUserWithAssignments_RejectsNonAdminGrantingProjectAdminAssignment
 	ctx := context.Background()
 
 	nonAdminID := seedUserWithRole(t, st, "cua-attacker-2", "project_developer", storage.Scope{})
+	grantGateHolder(t, st.DB(), nonAdminID, Scope{}, permUsersRead, permUsersWrite) // #4161, as above
 	proj, err := st.CreateProject(ctx, &models.Project{Name: "cua-target-project"})
 	require.NoError(t, err)
 

@@ -515,8 +515,17 @@ func rolePhase5Ops() []opSpec {
 			// replace u-acct's role set at P (it holds none there): global
 			// roles.assign route gate inside the users.read group, then the
 			// granter ceiling per added role.
+			// coreGateExcluded (#4161): the router gates PUT /users/{id}/roles at the
+			// GLOBAL scope (users.read + roles.assign); core's own rule is the finer
+			// per-scope granter ceiling of replaceUserRoleSet (roles.assign and the
+			// granted roles' permissions AT the target scope, the self-replacement
+			// rules, the two-commit retry semantics). Core is an authorization layer
+			// here but does not re-derive the router's global gate, so its leg is
+			// recorded and not compared against the model (same reasoning as the bulk
+			// access-request ops).
 			name: "user.roles.set", row: "SetUserRoles", targets: projTargets, grantArgs: true,
-			invalidArg: legacyRoleAtProject,
+			coreGateExcluded: true,
+			invalidArg:       legacyRoleAtProject,
 			req: func(fx *fixtures, t tgt, a byte) requirement {
 				_, rid := grantRole(fx, a)
 				return requirement{perms: []string{"roles.assign"}, scope: pid(fx, t), globalPerms: []string{"users.read", "roles.assign"}, ceiling: []roleAt{{rid, pid(fx, t)}}}

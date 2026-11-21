@@ -44,7 +44,7 @@ var reasonRules = []struct{ match, reason string }{
 	{" /api/v1/end-impersonation", "fixture: needs an impersonation session (deferred to the not-yet list)"},
 	{" /api/v1/admin/impersonate", "fixture: needs an impersonation session (deferred to the not-yet list)"},
 	{" /system/init", "design: one-time bootstrap of an uninitialised install; the template is already initialised"},
-	{" /scim/v2/", "fixture: needs the SCIM bearer token and an IdP-managed principal (SCIM principals deferred to the not-yet list)"},
+	{" /scim/v2/", "design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)"},
 	{"DynamicSecretService.", "fixture: needs a dynamic-secret backend (database/cloud) configured"},
 	{" /api/v1/dynamic-secrets/", "fixture: needs a dynamic-secret backend (database/cloud) configured"},
 	{"ConnectService.", "fixture: needs a Keyorix Connect connector configured"},
@@ -103,18 +103,24 @@ var uncoveredReasons = map[string]string{
 	"REST PUT /api/v1/secrets/{id}/tags":                                         "design: metadata edit outside the initially bound secret set; not bound",
 	"REST POST /api/v1/projects/{id}/secrets/bulk-delete":                        "design: bulk secret operation outside the initially bound secret set; not bound",
 	"REST POST /api/v1/projects/{id}/secrets/bulk-rename":                        "design: bulk secret operation outside the initially bound secret set; not bound",
-	"REST POST /api/v1/projects/{id}/secrets/bulk-rotate":                        "design: bulk secret operation outside the initially bound secret set; not bound",
-	"REST POST /api/v1/projects/{id}/secrets/extend-expiring":                    "fixture: needs expiring secrets",
-	"REST POST /api/v1/projects/{id}/secrets/render":                             "fixture: needs a template referencing secrets",
-	"REST POST /api/v1/projects/{id}/secrets/resume-all":                         "design: bulk secret operation outside the initially bound secret set; not bound",
-	"REST POST /api/v1/projects/{id}/secrets/suspend-all":                        "design: bulk secret operation outside the initially bound secret set; not bound",
-	"REST POST /api/v1/secrets/{id}/copy":                                        "fixture: needs a clean target environment per case",
-	"REST POST /api/v1/secrets/{id}/move":                                        "fixture: needs a folder to move into",
-	"REST POST /api/v1/secrets/{id}/restore":                                     "fixture: needs a soft-deleted secret",
-	"REST POST /api/v1/secrets/{id}/resume":                                      "fixture: needs a suspended secret",
-	"REST POST /api/v1/secrets/{id}/suspend":                                     "design: lifecycle op outside the initially bound secret set; not bound",
-	"REST POST /api/v1/secrets/{id}/rollback":                                    "fixture: needs a secret with two or more versions",
-	"REST POST /api/v1/secrets/{id}/rotate":                                      "design: rotation outside the initially bound secret set; not bound (auto-rotate is covered)",
-	"REST POST /api/v1/secrets/{id}/rotation/simulate":                           "design: rotation outside the initially bound secret set; not bound (auto-rotate is covered)",
-	"REST POST /api/v1/secrets/{id}/transfer-ownership":                          "model: ownership semantics are not in the reference model",
+
+	"REST POST /api/v1/projects/{id}/secrets/extend-expiring": "fixture: needs expiring secrets",
+	"REST POST /api/v1/projects/{id}/secrets/render":          "fixture: needs a template referencing secrets",
+	"REST POST /api/v1/projects/{id}/secrets/resume-all":      "design: bulk secret operation outside the initially bound secret set; not bound",
+	"REST POST /api/v1/projects/{id}/secrets/suspend-all":     "design: bulk secret operation outside the initially bound secret set; not bound",
+	"REST POST /api/v1/secrets/{id}/copy":                     "fixture: needs a clean target environment per case",
+	"REST POST /api/v1/secrets/{id}/move":                     "fixture: needs a folder to move into",
+	"REST POST /api/v1/secrets/{id}/restore":                  "fixture: needs a soft-deleted secret",
+	"REST POST /api/v1/secrets/{id}/resume":                   "fixture: needs a suspended secret",
+	"REST POST /api/v1/secrets/{id}/suspend":                  "design: lifecycle op outside the initially bound secret set; not bound",
+	"REST POST /api/v1/secrets/{id}/rollback":                 "fixture: needs a secret with two or more versions",
+	"REST POST /api/v1/secrets/{id}/rotate":                   "design: rotation outside the initially bound secret set; not bound (auto-rotate is covered)",
+	"REST POST /api/v1/secrets/{id}/rotation/simulate":        "design: rotation outside the initially bound secret set; not bound (auto-rotate is covered)",
+	"REST POST /api/v1/secrets/{id}/transfer-ownership":       "model: ownership semantics are not in the reference model",
+	// risk-exception revoke (DELETE): router gate system.write@global PLUS a typed
+	// core gate "creator OR admin-tier (isGlobalAdminRoleName)" that the router gate
+	// alone does not capture (a system.write holder who is neither creator nor
+	// admin-tier is refused by core). Binding it needs the owner-style model
+	// extension, analyzed-not-bound in V8b — see the report's LEFTOVERS.
+	"REST DELETE /api/v1/risk-exceptions/{id}": "model: revoke authority (creator-or-admin-tier) is a typed core gate beyond the system.write@global router gate; needs the owner-style model extension (analyzed-not-bound)",
 }

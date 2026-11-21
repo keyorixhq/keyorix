@@ -22,6 +22,7 @@ package core
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -130,6 +131,18 @@ func TestHostZoneStamps_CoreWritesStoreUTC(t *testing.T) {
 			d.requireStoredNow(t, db, table, "updated_at", before, after, "id = ?", tpl.ID)
 		})
 
+		// storeSecretVersion stamped CreatedAt with time.Now(): secret_versions.created_at was stored
+		// "... +0900 JST" on a Tokyo host.
+		t.Run("CreateSecret stores the version row's created_at in UTC", func(t *testing.T) {
+			before, after := stampWindow()
+			s, err := c.CreateSecret(ctx, &CreateSecretRequest{
+				Name: "hz-version", Value: []byte("supersecret1"), ProjectID: p.ID, EnvironmentID: e.ID,
+				Type: "password", CreatedBy: "owner", OwnerID: 1,
+			})
+			require.NoError(t, err)
+			d.requireStoredNow(t, db, "secret_versions", "created_at", before, after, "secret_node_id = ?", s.ID)
+		})
+
 	})
 }
 
@@ -191,4 +204,27 @@ func TestHostZoneStamps_CoreHarmlessSitesStayUTC(t *testing.T) {
 			d.requireStoredNow(t, db, tableOf(t, db, &models.SecretTemplate{}), "updated_at", before, after, "id = ?", tpl.ID)
 		})
 	})
+}
+
+// TestHostZoneStamps_SecretVersionCreatedAtAnyHostZone runs in whatever zone the test binary was
+// started in (no subprocess), so `TZ=Pacific/Auckland go test -run ...` proves a second non-UTC zone
+// (+1200/+1300, the opposite side of the date line from Tokyo). On a UTC host it is a plain UTC check.
+func TestHostZoneStamps_SecretVersionCreatedAtAnyHostZone(t *testing.T) {
+	for _, d := range []utcDialect{{name: "sqlite"}, {name: "postgres", pg: true}} {
+		t.Run(d.name, func(t *testing.T) {
+			if d.pg && os.Getenv("KEYORIX_TEST_PG_DSN") == "" {
+				t.Skip("KEYORIX_TEST_PG_DSN not set — skipping the PostgreSQL half of this UTC-write test")
+			}
+			db := d.open(t, hostZoneCoreTables...)
+			c := hostZoneCore(db)
+			p, e := seedProjectEnv(t, c)
+			before, after := stampWindow()
+			s, err := c.CreateSecret(context.Background(), &CreateSecretRequest{
+				Name: "hz-version-any", Value: []byte("supersecret1"), ProjectID: p.ID, EnvironmentID: e.ID,
+				Type: "password", CreatedBy: "owner", OwnerID: 1,
+			})
+			require.NoError(t, err)
+			d.requireStoredNow(t, db, "secret_versions", "created_at", before, after, "secret_node_id = ?", s.ID)
+		})
+	}
 }

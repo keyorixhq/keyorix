@@ -35,6 +35,7 @@ func TestExtendExpiringSecrets(t *testing.T) {
 	p, err := c.storage.CreateProject(ctx, &models.Project{Name: "p1"})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	grantProjectSecretsWrite(t, db, 1, p.ID) // the owner also holds the route's gate (CORE-AUTHZ-RACE-NOV-1 item 2)
 	e, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
 	require.NoError(t, err)
 

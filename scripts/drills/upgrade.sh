@@ -11,7 +11,10 @@
 #   - every seeded secret still decrypts, versions, share, MFA login and machine
 #     token all still work;
 #   - `admin verify-audit` is VALID before and after the upgrade;
-#   - the audit trail grew (the upgrade did not rewrite history).
+#   - the audit trail grew (the upgrade did not rewrite history);
+#   - rollback by restore (upgrade-rollback.md 4B): a backup taken with the OLD binary before
+#     the upgrade is restored into the OLD binary afterwards; login, a decrypted secret and
+#     `admin verify-audit` VALID work again, and the post-upgrade write is gone.
 #
 # Usage:
 #   DRILL_OLD_SERVER_BIN=/path/old/keyorix-server \
@@ -46,6 +49,11 @@ verify_seed "$INST" "$PORT"
 # audit checkpoints and the append-only audit writer flush on stop
 srv_stop "$INST"
 export DRILL_ADMIN_BIN="$DRILL_OLD_SERVER_BIN"  # lib.sh inst_admin runs this binary
+step "pre-upgrade backup with the OLD binary (server stopped; the rollback leg restores it)"
+inst_admin "$INST" backup --output ./pre-upgrade.tar.gz >"$DRILL_DIR/backup-pre-upgrade.log" 2>&1 \
+    || { cat "$DRILL_DIR/backup-pre-upgrade.log" >&2; fail "admin backup with the old binary failed"; }
+[ -s "$DRILL_DIR/$INST/pre-upgrade.tar.gz" ] || fail "pre-upgrade backup archive is empty"
+ok "archive $(wc -c <"$DRILL_DIR/$INST/pre-upgrade.tar.gz" | tr -d ' ') bytes"
 verify_audit "$INST"
 audit_before="$AUDIT_COUNT"
 unset DRILL_ADMIN_BIN
@@ -119,5 +127,35 @@ else
         fail "old binary failed on the migrated data without the documented schema-epoch message"
     fi
 fi
+
+# ---- 3. rollback by restore (docs/operator/upgrade-rollback.md 4B) ----------------
+# The data is now migrated and one secret richer than the pre-upgrade backup. Restore that backup
+# with the OLD binary in place: everything written after it must be gone, and login, a decrypted
+# secret and verify-audit must work on the old release again.
+step "rollback: restore the pre-upgrade backup into the OLD binary (4B)"
+export DRILL_ADMIN_BIN="$DRILL_OLD_SERVER_BIN"
+if [ "$DRILL_BACKEND" = "postgres" ]; then
+    # a v0.96.x binary does not empty a populated PostgreSQL database under --overwrite-existing
+    pg_empty_schema "${DRILL_PG_DSN_FILE:?postgres needs DRILL_PG_DSN_FILE}"
+    ok "public schema emptied (documented step for a v0.96.x restore)"
+fi
+inst_admin "$INST" restore --input ./pre-upgrade.tar.gz --overwrite-existing --allow-rollback \
+    >"$DRILL_DIR/restore-rollback.log" 2>&1 \
+    || { tail -20 "$DRILL_DIR/restore-rollback.log" >&2; fail "admin restore of the pre-upgrade backup with the old binary failed"; }
+grep -q 'VALID' "$DRILL_DIR/restore-rollback.log" \
+    || { tail -20 "$DRILL_DIR/restore-rollback.log" >&2; fail "restore output does not show verify-audit VALID"; }
+ok "restore finished; its own verify-audit said VALID"
+
+step "start the OLD binary on the restored data and verify the seed"
+: >"$DRILL_DIR/$INST/server.log"
+srv_start "$INST" "$PORT" "$DRILL_OLD_SERVER_BIN"
+verify_seed "$INST" "$PORT"
+if cli "$INST" "$PORT" secret get --id 4 --show-value >/dev/null 2>&1; then
+    fail "the post-upgrade secret survived the rollback (recovery point is later than the backup?)"
+fi
+ok "post-upgrade write is absent: the recovery point is the pre-upgrade backup"
+srv_stop "$INST"
+verify_audit "$INST"
+unset DRILL_ADMIN_BIN
 
 drill_end "UPGRADE DRILL"

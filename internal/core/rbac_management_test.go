@@ -46,14 +46,28 @@ func TestAssignPermissionToRole_RequiresActorHoldPermission(t *testing.T) {
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "custom"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "system.write", Resource: "system", Action: "write"}).Error)
 
-	const attacker = uint(9) // holds ONLY roles.write in the real exploit scenario, no roles at all here
+	const attacker = uint(9) // holds ONLY roles.read + roles.write (the route gate), nothing else
+	grantRoleAuthoringGate(t, db, attacker)
 	err := c.AssignPermissionToRole(ctx, attacker, 1, 1, false)
 	require.Error(t, err, "an actor who doesn't hold system.write must not be able to bundle it into a role")
 	assert.Contains(t, err.Error(), "do not hold it yourself")
 
 	var count int64
-	require.NoError(t, db.Model(&models.RolePermission{}).Count(&count).Error)
+	require.NoError(t, db.Model(&models.RolePermission{}).Where("role_id = ?", 1).Count(&count).Error)
 	assert.Zero(t, count, "the permission must not have been assigned")
+}
+
+// grantRoleAuthoringGate gives actorID the /roles route gate at the global scope —
+// roles.read and roles.write, which core decides itself since #4161 — and nothing
+// else, so the #169 self-permission rule under test is what refuses or admits.
+func grantRoleAuthoringGate(t *testing.T, db *gorm.DB, actorID uint) {
+	t.Helper()
+	require.NoError(t, db.Create(&models.Permission{ID: 90, Name: permRolesRead, Resource: "roles", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 91, Name: permRolesWrite, Resource: "roles", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 90, Name: "role-author", NameFolded: "role-author"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 90, PermissionID: 90}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 90, PermissionID: 91}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: actorID, RoleID: 90}).Error)
 }
 
 // #1545: a machine identity presents actorID==0 by construction (ADR-030, no
@@ -133,6 +147,7 @@ func TestAssignPermissionToRole_HolderMaySelfBundle(t *testing.T) {
 
 	const holder = uint(9)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 2}).Error) // global grant
+	grantRoleAuthoringGate(t, db, holder)
 
 	require.NoError(t, c.AssignPermissionToRole(ctx, holder, 1, 1, false))
 
@@ -302,6 +317,7 @@ func TestAssignPermissionToRole_NonBuiltinRole_NoSignal(t *testing.T) {
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 	const holder = uint(9)
 	require.NoError(t, db.Create(&models.UserRole{UserID: holder, RoleID: 2}).Error)
+	grantRoleAuthoringGate(t, db, holder)
 
 	logOutput := captureLog(t, func() {
 		require.NoError(t, c.AssignPermissionToRole(ctx, holder, 1, 1, false))

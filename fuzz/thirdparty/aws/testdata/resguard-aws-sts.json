@@ -1,0 +1,33 @@
+{
+  "target": "aws_sts",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 9,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 201112,
+      "per_byte": 5746.057142857143,
+      "abs_max": 804448
+    },
+    "cpu_ns": {
+      "floor": 1848000,
+      "per_byte": 52800,
+      "abs_max": 7392000
+    },
+    "mallocs": {
+      "floor": 1194,
+      "per_byte": 34.114285714285714,
+      "abs_max": 4776
+    },
+    "net_bytes_in": {
+      "floor": 384,
+      "per_byte": 10.971428571428572,
+      "abs_max": 1536
+    },
+    "net_bytes_out": {
+      "floor": 2610,
+      "per_byte": 74.57142857142857,
+      "abs_max": 10440
+    }
+  }
+}

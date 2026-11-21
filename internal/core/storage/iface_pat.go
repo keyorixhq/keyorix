@@ -7,6 +7,16 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// PATOwnerState is a PAT owner's account state as
+// GetPersonalAccessTokenWithOwnerByHash reads it alongside the token row.
+type PATOwnerState struct {
+	// Found is false when no live users row exists for the token's UserID
+	// (hard-deleted, or soft-deleted). IsActive and AccountState are then zero.
+	Found        bool
+	IsActive     bool
+	AccountState string
+}
+
 // PATStore is the Storage slice for personal access tokens.
 // Storage (interface.go) embeds it; the method set of Storage is the union of
 // the per-domain interfaces, so callers and implementers are unaffected.
@@ -19,6 +29,14 @@ type PATStore interface {
 	ListActivePersonalAccessTokens(ctx context.Context) ([]*models.PersonalAccessToken, error)
 	GetPersonalAccessTokenByID(ctx context.Context, id uint) (*models.PersonalAccessToken, error)
 	GetPersonalAccessTokenByHash(ctx context.Context, hash string) (*models.PersonalAccessToken, error)
+	// GetPersonalAccessTokenWithOwnerByHash is GetPersonalAccessTokenByHash
+	// plus the owning account's state, read in the same statement. It is the
+	// auth-cache-hit re-check (core.CurrentPATRestriction), so a cached PAT
+	// stays at one storage read per request while still seeing a suspended,
+	// deactivated or deleted owner. A missing token row is the same error as
+	// GetPersonalAccessTokenByHash's; a missing (or soft-deleted) owner row is
+	// not an error, it is owner.Found == false.
+	GetPersonalAccessTokenWithOwnerByHash(ctx context.Context, hash string) (pat *models.PersonalAccessToken, owner PATOwnerState, err error)
 	RevokePersonalAccessToken(ctx context.Context, id uint) error
 	// RevokeAllPersonalAccessTokensForUser revokes every active PAT for a user and returns
 	// their token hashes (for immediate auth-cache eviction). Used on a password change/

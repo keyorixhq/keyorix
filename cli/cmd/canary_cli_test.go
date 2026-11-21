@@ -94,9 +94,11 @@ func TestCLICanaryStdoutStderr(t *testing.T) {
 	sc := canary.NewScanner(pw, tok, val, code, stdinC)
 
 	// closed port: connection refused
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
-	dead := "http://" + ln.Addr().String()
-	_ = ln.Close()
+	dead := "http://127.0.0.1:1"
+	if ln, err := net.Listen("tcp", "127.0.0.1:0"); err == nil {
+		dead = "http://" + ln.Addr().String()
+		_ = ln.Close()
+	}
 
 	type vec struct {
 		name        string

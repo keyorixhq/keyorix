@@ -177,6 +177,11 @@ func (r *relyingParty) FinishRegistration(u ports.WebAuthnUser, session ports.We
 	if err != nil {
 		return ports.WebAuthnVerified{}, err
 	}
+	// #4545: the library does not bind the statement's alg to the attestation
+	// key's curve; refuse a mismatch the library accepted.
+	if err := checkAttestationKeyAlg(&p.Response.AttestationObject); err != nil {
+		return ports.WebAuthnVerified{}, err
+	}
 	return verified(cred), nil
 }
 

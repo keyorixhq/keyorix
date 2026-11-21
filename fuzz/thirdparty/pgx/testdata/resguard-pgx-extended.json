@@ -1,0 +1,24 @@
+{
+  "target": "pgx_extended",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 6,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 92656,
+      "per_byte": 7721.333333333333,
+      "abs_max": 1419200,
+      "mode": "absolute"
+    },
+    "cpu_ns": {
+      "floor": 1728000,
+      "per_byte": 144000,
+      "abs_max": 6912000
+    },
+    "mallocs": {
+      "floor": 216,
+      "per_byte": 18,
+      "abs_max": 864
+    }
+  }
+}

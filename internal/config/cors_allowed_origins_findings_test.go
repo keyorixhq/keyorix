@@ -1,45 +1,47 @@
 package config
 
 import (
-	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
-
-	"github.com/go-chi/cors"
 )
 
-// TestAllowedOriginsFindingWildcardEntry pins finding LF1-CORS-wildcard-entry.
-// validateAllowedOrigins refuses a bare "*" because "a wildcard origin defeats the CORS
-// allowlist", but it accepts "https://*" (url.Parse takes "*" as a host), and go-chi/cors
-// treats that entry as the pattern "https://" + anything. With router.go's options
-// (AllowCredentials true) every https origin then gets a credentialed grant: the same
-// effect the bare "*" ban exists to prevent, for https pages. "https://*.example.com"
-// likewise turns an exact-origin list into a subdomain pattern the validator's doc
-// comment does not describe.
-//
-// This test goes red when validateAllowedOrigins rejects '*' inside an entry (or
-// go-chi/cors stops treating it as a wildcard); then drop the wildcard branch in
-// checkCORSGrant together with this test.
+// TestValidateAllowedOrigins_RejectsWildcardInsideEntry closes finding
+// LF1-CORS-wildcard-entry (#4382). validateAllowedOrigins refused a bare "*" but
+// accepted "https://*" (url.Parse takes "*" as a host), which go-chi/cors treats as
+// the pattern "https://" + anything: with router.go's options (AllowCredentials true)
+// every https origin then got a credentialed grant. "https://*.example.com" likewise
+// turned an exact-origin list into a subdomain pattern. A '*' anywhere in an entry is
+// now refused at startup.
 //
 // What this does NOT verify: attacker reach. server.http.allowed_origins is operator
 // configuration, so this is a guard gap (HARDENING), not something a remote party can
 // set.
-func TestAllowedOriginsFindingWildcardEntry(t *testing.T) {
-	for _, entry := range []string{"https://*", "https://*.example.com", "http://*:8080"} {
-		if err := validateAllowedOrigins([]string{entry}); err != nil {
-			t.Fatalf("validateAllowedOrigins now rejects %q (%v): finding fixed", entry, err)
+func TestValidateAllowedOrigins_RejectsWildcardInsideEntry(t *testing.T) {
+	for _, entry := range []string{"https://*", "https://*.example.com", "http://*:8080", "https://app.*"} {
+		if err := validateAllowedOrigins([]string{"https://app.example.com", entry}); err == nil {
+			t.Errorf("validateAllowedOrigins accepted %q", entry)
 		}
 	}
-	list := []string{"https://*"}
-	h := cors.Handler(corsTestOptions(list))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets", nil)
-	req.Header.Set("Origin", "https://attacker.example")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://attacker.example" {
-		t.Fatalf("Access-Control-Allow-Origin = %q: go-chi/cors no longer treats the entry as a wildcard", got)
+	if err := validateAllowedOrigins([]string{"https://app.example.com", "http://localhost:3000"}); err != nil {
+		t.Fatalf("validateAllowedOrigins rejected an explicit list: %v", err)
 	}
-	if rec.Header().Get("Access-Control-Allow-Credentials") != "true" {
-		t.Fatal("grant is no longer credentialed")
+}
+
+// TestValidateServerSection_RejectsWildcardDomain is #4382's sibling: with
+// allowed_origins empty the CORS allowlist defaults to https://<server.http.domain>,
+// so domain "*" or "*.example.com" became the same credentialed wildcard pattern.
+func TestValidateServerSection_RejectsWildcardDomain(t *testing.T) {
+	for _, domain := range []string{"*", "*.example.com"} {
+		c := &Config{}
+		c.Server.HTTP.Domain = domain
+		err := validateServerSection(c)
+		if err == nil || !strings.Contains(err.Error(), "server.http.domain") {
+			t.Errorf("domain %q: got %v, want the server.http.domain refusal", domain, err)
+		}
+	}
+	c := &Config{}
+	c.Server.HTTP.Domain = "keyorix.example.com"
+	if err := validateServerSection(c); err != nil && strings.Contains(err.Error(), "server.http.domain") {
+		t.Fatalf("an ordinary domain was refused: %v", err)
 	}
 }

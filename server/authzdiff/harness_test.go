@@ -105,6 +105,9 @@ var humanOnlyOps = map[string]bool{
 	"secret.acl.grant": true, "secret.share": true, "accessrequest.create": true, "secret.certificate": true,
 	"secret.tags": true, "secret.description": true, "secret.move": true, "secret.copy": true,
 	"secret.extend.expiring": true,
+	// #4514: the three project-scope bulk ops refuse a machine actor typed
+	// (refuseMachineActor), REST answers 403. Formerly waiver known-10.
+	"bulk.rename": true, "bulk.suspend": true, "resume.all": true,
 }
 
 // ---------- legs ----------
@@ -321,8 +324,8 @@ func classify(spec opSpec, p *principal, r *caseResult) []string {
 			}
 			continue
 		}
-		if l == layerCore && !spec.coreEnforced {
-			continue // ID-2: transport-enforced op, core leg recorded only
+		if l == layerCore && (!spec.coreEnforced || spec.coreGateExcluded) {
+			continue // ID-2: transport-enforced, or core enforces only business rules not the permission gate
 		}
 		part[l] = lo.Outcome
 	}

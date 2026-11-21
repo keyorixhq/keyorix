@@ -748,6 +748,44 @@ describe('AuditLogPage — URL filters', () => {
         expect(screen.queryByText('alice')).not.toBeInTheDocument();
     });
 
+    it('includes failed second factors (mfa.failed, webauthn.failed) in ?filter=failed (#3363)', () => {
+        useAuditLog.mockReturnValue({
+            data: {
+                data: [
+                    ...mixedEntries,
+                    {
+                        id: 4,
+                        event_type: 'mfa.failed',
+                        actor: 'totp-guesser',
+                        actor_type: 'user',
+                        description: 'Wrong TOTP code',
+                        timestamp: '2026-01-04T10:00:00Z',
+                    },
+                    {
+                        id: 5,
+                        event_type: 'webauthn.failed',
+                        actor: 'passkey-guesser',
+                        actor_type: 'user',
+                        description: 'Passkey assertion failed',
+                        timestamp: '2026-01-05T10:00:00Z',
+                    },
+                ],
+                total: mixedEntries.length + 2,
+                page: 1,
+                pageSize: 100,
+                totalPages: 1,
+            },
+            isLoading: false,
+            error: null,
+        });
+        window.history.pushState({}, '', '/audit?filter=failed');
+        render(<AuditLogPage />);
+        expect(screen.getByText('attacker')).toBeInTheDocument();
+        expect(screen.getByText('totp-guesser')).toBeInTheDocument();
+        expect(screen.getByText('passkey-guesser')).toBeInTheDocument();
+        expect(screen.queryByText('bob')).not.toBeInTheDocument();
+    });
+
     it('shows only secret-read events for ?filter=reads', () => {
         mockMixedEntries();
         window.history.pushState({}, '', '/audit?filter=reads');

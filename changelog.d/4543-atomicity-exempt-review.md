@@ -1,0 +1,2 @@
+### Testing
+- **`docs/atomicity-exempt.tsv` is under the exemption-review rule (#2693).** Every row now needs a reviewer other than its author, recorded as one fragment per row in `docs/atomicity-exempt.reviewed.d/`; `TestExemptLedgers_EveryRowIndependentlyReviewed` fails on a missing, self-reviewed, duplicate or orphan fragment. All 47 rows were re-read against the code, and stale reasons were corrected in place.

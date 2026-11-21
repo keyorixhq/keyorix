@@ -5888,7 +5888,7 @@ func TestOperationCatalogKeysAreRegistered(t *testing.T) {
 	inCatalog := make(map[string]bool, len(opCatalog))
 	for _, op := range opCatalog {
 		inCatalog[op.Key] = true
-		if !knownOperations[op.Key] {
+		if !knownOperations[opRouteKey(op.Key)] {
 			t.Errorf("opCatalog references %q, which is not in the live operation inventory (rename/removal upstream?)", op.Key)
 		}
 		if statusOf(op.Key).Status != StatusFuzzed {

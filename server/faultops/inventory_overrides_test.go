@@ -33,11 +33,10 @@ type overrideEntry struct {
 
 var operationOverrides = map[string]overrideEntry{
 	// --- StatusExcluded: not real application mutations ---
-	"REST DELETE /metrics":   {StatusExcluded, "the /metrics endpoint responds to any HTTP method identically (Prometheus text exposition, no state); chi.Walk sees it once per registered method, not once per real behavior — see TestEveryMutatingRouteDeniesReadOnly's own /sw.js precedent for the same catch-all-handler shape"},
-	"REST PATCH /metrics":    {StatusExcluded, "see REST DELETE /metrics"},
-	"REST POST /metrics":     {StatusExcluded, "see REST DELETE /metrics"},
-	"REST PUT /metrics":      {StatusExcluded, "see REST DELETE /metrics"},
-	"REST POST /system/init": {StatusExcluded, "bootstrap-only, single-fire before any admin/RBAC state exists — every fuzz world already calls this once during setup (see newFaultWorld); there is no meaningful 'faulted' state to snapshot around a call that only succeeds on a virgin database"},
+	"REST DELETE /metrics": {StatusExcluded, "the /metrics endpoint responds to any HTTP method identically (Prometheus text exposition, no state); chi.Walk sees it once per registered method, not once per real behavior — see TestEveryMutatingRouteDeniesReadOnly's own /sw.js precedent for the same catch-all-handler shape"},
+	"REST PATCH /metrics":  {StatusExcluded, "see REST DELETE /metrics"},
+	"REST POST /metrics":   {StatusExcluded, "see REST DELETE /metrics"},
+	"REST PUT /metrics":    {StatusExcluded, "see REST DELETE /metrics"},
 
 	// --- StatusFuzzed: wired into the operation catalog (opcatalog_test.go) ---
 	// F3: replaceRolePermissions drops GetRolePermissions/RemovePermissionFromRole

@@ -31,6 +31,7 @@ func breakGlassActivationFixture() *models.BreakGlassActivation {
 
 func TestReviewBreakGlass_RecordsReviewAndAudits(t *testing.T) {
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting reviewer is an active account (#4159)
 	ms.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(breakGlassActivationFixture(), nil)
 	ms.On("ReviewBreakGlassActivation", mock.Anything, uint(7), uint(99), "checked the justification, looks fine", mock.Anything).Return(nil)
 	var captured *models.AuditEvent
@@ -48,6 +49,7 @@ func TestReviewBreakGlass_RecordsReviewAndAudits(t *testing.T) {
 
 func TestReviewBreakGlass_RejectsShortNote(t *testing.T) {
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting reviewer is an active account (#4159)
 	ms.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(breakGlassActivationFixture(), nil)
 
 	c := NewKeyorixCore(ms)
@@ -59,6 +61,7 @@ func TestReviewBreakGlass_RejectsShortNote(t *testing.T) {
 
 func TestReviewBreakGlass_RejectsEmptyProjectID(t *testing.T) {
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting reviewer is an active account (#4159)
 	c := NewKeyorixCore(ms)
 	err := c.ReviewBreakGlass(context.Background(), 99, 0, 7, "a perfectly good review note")
 	require.Error(t, err)
@@ -67,6 +70,7 @@ func TestReviewBreakGlass_RejectsEmptyProjectID(t *testing.T) {
 
 func TestReviewBreakGlass_MismatchedProjectIsNotFound(t *testing.T) {
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting reviewer is an active account (#4159)
 	ms.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(breakGlassActivationFixture(), nil)
 
 	c := NewKeyorixCore(ms)
@@ -84,6 +88,7 @@ func TestReviewBreakGlass_AllowedOnConcludedActivation(t *testing.T) {
 			act.State = state
 
 			ms := new(MockStorage)
+			stubActiveActors(ms) // the acting reviewer is an active account (#4159)
 			ms.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(act, nil)
 			ms.On("ReviewBreakGlassActivation", mock.Anything, uint(7), uint(99), mock.Anything, mock.Anything).Return(nil)
 			ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -104,6 +109,7 @@ func TestReviewBreakGlass_AllowedOnConcludedActivation(t *testing.T) {
 func TestReviewBreakGlass_RefusesSelfReview(t *testing.T) {
 	act := breakGlassActivationFixture() // UserID 10
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting reviewer is an active account (#4159)
 	ms.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(act, nil)
 
 	c := NewKeyorixCore(ms)
@@ -122,6 +128,7 @@ func TestReviewBreakGlass_RefusesSelfReview(t *testing.T) {
 // already applies to access-review decisions.
 func TestReviewBreakGlass_RefusesUnattributableReviewer(t *testing.T) {
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting reviewer is an active account (#4159)
 	c := NewKeyorixCore(ms)
 	err := c.ReviewBreakGlass(context.Background(), 0, 1, 7, "reviewed by nobody in particular")
 	require.Error(t, err)
@@ -145,6 +152,7 @@ func TestReviewBreakGlass_RefusesWhileStillActive(t *testing.T) {
 	act.State = BreakGlassActive
 
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting reviewer is an active account (#4159)
 	ms.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(act, nil)
 
 	c := NewKeyorixCore(ms)
@@ -186,6 +194,7 @@ func TestBreakGlassActivation_HasNoApproverField(t *testing.T) {
 
 func TestReviewBreakGlass_AlreadyReviewedIsSurfacedAsValidationError(t *testing.T) {
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting reviewer is an active account (#4159)
 	ms.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(breakGlassActivationFixture(), nil)
 	ms.On("ReviewBreakGlassActivation", mock.Anything, uint(7), uint(99), mock.Anything, mock.Anything).
 		Return(storage.ErrBreakGlassAlreadyReviewed)
@@ -198,6 +207,7 @@ func TestReviewBreakGlass_AlreadyReviewedIsSurfacedAsValidationError(t *testing.
 
 func TestListUnreviewedBreakGlassActivations_PassesCorrectCutoff(t *testing.T) {
 	ms := new(MockStorage)
+	stubActiveActors(ms) // the acting reviewer is an active account (#4159)
 	var gotCutoff time.Time
 	ms.On("ListUnreviewedBreakGlassActivationsBefore", mock.Anything, mock.AnythingOfType("time.Time")).
 		Run(func(args mock.Arguments) { gotCutoff = args.Get(1).(time.Time) }).
