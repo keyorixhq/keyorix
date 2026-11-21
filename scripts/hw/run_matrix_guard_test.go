@@ -44,10 +44,22 @@ func runMatrix(t *testing.T, tempMilliC string, extra ...string) (string, string
 		}
 	}
 
+	// A fake iostat that outlives the sampler, as `iostat -d 10 2` does on a host
+	// with sysstat: the script must not leave it holding the output pipe, or the
+	// reader below waits for it (CI saw this as ErrWaitDelay on a clean exit 0).
+	fakebin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(fakebin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fakebin, "iostat"), []byte("#!/bin/sh\nexec sleep 10\n"), 0o755); err != nil { //nolint:gosec // test stub must be executable
+		t.Fatal(err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "bash", "run-matrix.sh", results)
 	cmd.Env = append(os.Environ(),
+		"PATH="+fakebin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"HWMON_PKG="+sensor,
 		"HDD_ROOT="+hdd,
 		"TMPFS_ROOT="+tmpfs,

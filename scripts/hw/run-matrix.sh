@@ -122,6 +122,16 @@ signal_tree() {
   for child in $(pgrep -P "$pid" 2>/dev/null); do signal_tree "$sig" "$child"; done
 }
 
+# Stop the sampler and everything it started (iostat, sleep). The sampler is
+# frozen first so its loop cannot start a new iostat while its children are
+# being killed.
+stop_sampler() {
+  local pid="$1"
+  signal_tree STOP "$pid"
+  kill_tree "$pid"
+  wait "$pid" 2>/dev/null
+}
+
 # Globals tracking the currently-running cell, cleaned up on any exit/interrupt
 # so no sampler or workload is ever left behind.
 CURRENT_SAMPLER=""
@@ -129,7 +139,7 @@ CURRENT_PIDS=()
 cleanup() {
   local p
   for p in "${CURRENT_PIDS[@]:-}"; do [[ -n "$p" ]] && kill_tree "$p"; done
-  [[ -n "$CURRENT_SAMPLER" ]] && kill "$CURRENT_SAMPLER" 2>/dev/null
+  [[ -n "$CURRENT_SAMPLER" ]] && stop_sampler "$CURRENT_SAMPLER"
 }
 trap cleanup EXIT INT TERM
 
@@ -262,7 +272,10 @@ run_cell() {
   log "CELL $tag: storage=$st N=$n  load=${LOAD_S}s cooldown=${COOLDOWN_S}s"
 
   # Start the sampler for this cell (writes continuously through cooldown).
-  DISK_TARGET="$HDD_ROOT" "$SAMPLER" "$csv" &
+  # Its output goes to a file, not this script's stdout/stderr: iostat (or the
+  # fallback sleep) can outlive the sampler by up to its 10 s interval, and a
+  # child that still holds our pipe keeps a caller reading it (CI, a test) waiting.
+  DISK_TARGET="$HDD_ROOT" "$SAMPLER" "$csv" >"$RESULTS_DIR/$tag.sampler.log" 2>&1 &
   local sampler_pid=$!
   CURRENT_SAMPLER="$sampler_pid"
 
@@ -331,7 +344,7 @@ run_cell() {
 
     if [[ "$aborted" -eq 1 ]]; then
       local p; for p in "${pids[@]}"; do kill_tree "$p"; done
-      kill "$sampler_pid" 2>/dev/null
+      stop_sampler "$sampler_pid"
       CURRENT_SAMPLER=""; CURRENT_PIDS=()
       echo "ABORTED=$(date +%s)" >>"$events"
       log "CELL $tag ABORTED — stopping matrix"
@@ -360,8 +373,7 @@ run_cell() {
 
   # Cooldown complete: stop the sampler, clean up clones.
   echo "CELL_END=$(date +%s)" >>"$events"
-  kill "$sampler_pid" 2>/dev/null
-  wait "$sampler_pid" 2>/dev/null
+  stop_sampler "$sampler_pid"
   CURRENT_SAMPLER=""; CURRENT_PIDS=()
   # Remove this cell's clones + GOCACHE to reclaim storage (esp. tmpfs). For
   # storage C the GOCACHE lives on tmpfs outside $parent, so remove it too.
