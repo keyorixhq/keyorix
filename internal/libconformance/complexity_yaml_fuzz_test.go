@@ -3,29 +3,29 @@ package libconformance
 import (
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/complexity"
 )
 
-// FuzzYAMLParseComplexity is a cost-per-byte oracle over gopkg.in/yaml.v3's
+// FuzzYAMLParseComplexity is a cost-per-byte oracle over go.yaml.in/yaml/v4's
 // decoder, with a focus on the anchor/alias/merge-key expansion that is the
 // classic YAML "billion laughs" amplification: a few hundred bytes of nested
 // aliases (`a: &a [*b,*b]; b: &b [*c,*c]; ...`) expand to an exponentially large
 // in-memory structure.
 //
-// Reachability (recorded honestly): in Keyorix today yaml.v3 parses OPERATOR-
+// Reachability (recorded honestly): in Keyorix today yaml v4 parses OPERATOR-
 // controlled input, not network-attacker input — server/CLI config
 // (internal/config/config.go), k8s sync config (internal/k8ssync/config.go),
 // and `keyorix secret import` of a local YAML file
 // (cli/cmd/secret_import_parsers.go). An operator importing a hostile YAML file,
 // or a config supplied by a lower-trust automation layer, is the realistic
-// threat; there is no network path that reaches yaml.v3 with a size cap. This
+// threat; there is no network path that reaches yaml v4 with a size cap. This
 // target is therefore primarily an UPSTREAM-ready amplification check (and a
-// regression guard should a future feature expose yaml.v3 to the network).
+// regression guard should a future feature expose yaml v4 to the network).
 //
-// Property: decoding N bytes of YAML must allocate O(N). yaml.v3 added an
-// alias-expansion budget after the original billion-laughs report; this target
+// Property: decoding N bytes of YAML must allocate O(N). the yaml library added
+// an alias-expansion budget after the original billion-laughs report; this target
 // is the standing check that the budget is still effective for the versions
 // Keyorix pins.
 //
@@ -44,7 +44,7 @@ func FuzzYAMLParseComplexity(f *testing.F) {
 	f.Add([]byte("a: &a [x,x]\nb: &b [*a,*a]\nc: &c [*b,*b]\nd: [*c,*c]\n"))
 	f.Add([]byte(""))
 
-	// yaml.v3's own expansion budget should keep this linear-ish; a 512 B/byte
+	// yaml v4's own expansion budget should keep this linear-ish; a 512 B/byte
 	// slope with a 2 MiB floor flags a genuine exponential blow-up while
 	// tolerating the moderate fan-out of legitimate alias reuse. No fixed
 	// absolute ceiling (no network size limit applies); the slope is the oracle.
