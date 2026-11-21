@@ -144,14 +144,14 @@ func (f *fakeKeyorix) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/projects/1/environments":
 		_, _ = io.WriteString(w, `{"data":{"environments":[{"ID":3,"Name":"prod"}]}}`)
 	case "/api/v1/secrets":
-		_, _ = io.WriteString(w, `{"data":{"secrets":[{"ID":7,"Name":"db"}],"total_pages":1}}`)
+		_, _ = io.WriteString(w, `{"data":{"secrets":[{"ID":7,"Name":"db","project_id":1,"environment_id":3}],"total_pages":1}}`)
 	case "/api/v1/secrets/7":
 		switch state {
 		case "unavailable":
 			w.WriteHeader(http.StatusServiceUnavailable)
 		case "":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
-				"value": value, "secret": map[string]any{"expiration": exp},
+				"value": value, "secret": map[string]any{"id": 7, "project_id": 1, "environment_id": 3, "expiration": exp},
 			}})
 		default:
 			w.WriteHeader(http.StatusConflict)

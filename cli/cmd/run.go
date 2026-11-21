@@ -167,12 +167,9 @@ func fetchRunSecrets(ctx context.Context, client *apiclient.ClientWithResponses,
 	if envResp.JSON200 == nil || envResp.JSON200.Data == nil {
 		return nil, apiError("list environments", envResp.StatusCode(), envResp.Body)
 	}
-	var envID int
-	for _, e := range derefEnvironmentSlice(envResp.JSON200.Data.Environments) {
-		if e.Name != nil && strings.EqualFold(*e.Name, env) {
-			envID = derefInt(e.Id)
-			break
-		}
+	envID, err := matchEnvironmentID(derefEnvironmentSlice(envResp.JSON200.Data.Environments), env)
+	if err != nil {
+		return nil, err
 	}
 	if envID == 0 {
 		return nil, fmt.Errorf("environment %q not found in project %q", env, project)
