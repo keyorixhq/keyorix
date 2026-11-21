@@ -40,7 +40,7 @@ levels: `standard` relaxes only the audit transaction's own commit
 | `storage.type` | Default | Allowed |
 |---|---|---|
 | `postgres` / `postgresql` | `standard` | `standard`, `strict` |
-| `local` / `sqlite` | `strict` | `strict` only; `standard` refuses to start with `storage.database.audit_durability: standard is only supported with PostgreSQL; SQLite runs strict only -- remove the setting or set it to strict` (§5 explains why) |
+| `local` / `sqlite` | `strict` | `strict`, `standard` (since ADR-112 Amendment 7: successful read audits only, on a dedicated `synchronous=NORMAL` connection; mutations and their audit rows stay FULL. Before that, `standard` refused to start, §5 and S7) |
 
 **Reporting.** Neither level is a posture deviation, and the setting is not an
 `insecure_` registry entry.
@@ -79,7 +79,7 @@ moves to `standard` on upgrade (`docs/UPGRADING.md` §6c).
 | Requirement | Test |
 |---|---|
 | default per backend | `TestEffectiveAuditDurability_DefaultPerBackend` |
-| SQLite refuses `standard` | `TestConfigValidate_RejectsStandardAuditDurabilityOnSQLite`, `TestAuditDurability_SQLiteRefusesStandardEndToEnd` (real binary) |
+| SQLite accepts `standard` (Amendment 7; it refused before) | `TestConfigValidate_AcceptsStandardAuditDurabilityOnSQLite`, `TestAuditDurability_SQLiteStandardBootsEndToEnd` (real binary) |
 | alias mapping, conflict refusal, deprecation line | `TestEffectiveAuditDurability_ExplicitLevelsAndAlias`, `TestConfigValidate_RefusesConflictingAuditDurabilityAlias`, `TestLoad_DeprecatedAuditDurabilityAliasAddsDeprecationLine` |
 | non-audit writes stay durable at `standard` | `TestAuditDurabilityStandard_NonAuditWritesStayDurable` (pg-gated), `TestWithTransaction_CloneNeverInheritsAuditSkipDurableSync` |
 | crash under load at both levels, chain verifies | `TestFastAuditMode_PostgresCrashLosesOnlyATail` (standard), `TestAuditDurabilityStrict_PostgresCrashLosesNothing` (strict); manual, they kill a database server |
@@ -241,7 +241,9 @@ three states),
 `TestMakeSystemInfoHandler_AuditDurableSyncSkippedReflectsConfig`,
 `TestAuditDurableSyncStatus` (the rule itself).
 
-**S7 — A SQLite backend refuses to start.** `storage.database.audit_durability: standard`
+**S7 — A SQLite backend refuses to start.** *(Superseded on 2026-10-18 by ADR-112
+Amendment 7: SQLite accepts `standard`, for read audits only; kept as the
+Amendment 1/3 record.)* `storage.database.audit_durability: standard`
 (or the deprecated alias `insecure_audit_skip_durable_sync: true`, which maps to
 `standard`) with `storage.type: local`/`sqlite` fails config validation with
 `storage.database.audit_durability: standard is only supported with PostgreSQL;

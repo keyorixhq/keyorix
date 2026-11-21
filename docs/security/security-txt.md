@@ -12,6 +12,23 @@ which is not part of this repository, so **publishing is a hosting change that
 this repository cannot make**. Copy the file unchanged to that path (and
 `/security.txt`), over HTTPS, `Content-Type: text/plain; charset=utf-8`.
 
+### Status and how to publish it
+
+As of 2026-11-18 nothing in this repository serves the file: `web/public/` has no
+`.well-known/` directory, no route in the product server returns it, and no
+workflow deploys it. Whether the marketing site already carries a copy has not
+been checked from here (the site is outside this repository). To publish it on
+the website:
+
+1. Copy `docs/security/security.txt` byte for byte to `/.well-known/security.txt`
+   in the site's static root, and to `/security.txt` as RFC 9116 allows.
+2. Serve both over HTTPS as `text/plain; charset=utf-8`, with no redirect to
+   another host (the `Canonical` line must match the URL it is fetched from).
+3. Check it from outside: `curl -sI https://keyorix.com/.well-known/security.txt`
+   returns 200 and the content type above, and the body equals the repo file.
+4. Put the renewal date (see Renewal) in whoever's calendar owns the site, since
+   the repository test cannot see the deployed copy.
+
 ### Why it is not in the product web build
 
 `web/` is the dashboard that customers run on their own hosts. Serving the file

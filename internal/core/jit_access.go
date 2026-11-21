@@ -44,6 +44,10 @@ func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, use
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
+	// The ceiling first, then the target must exist (same order as requireGrantTargetUser).
+	if err := c.requireGrantTargetExists(ctx, userID); err != nil {
+		return err
+	}
 	// #1646: same cross-replica race as AssignUserRole (see WithNamedLock's doc
 	// comment) — this is its time-bound sibling.
 	return c.storage.WithNamedLock(ctx, sodGrantLockKey("user", userID), func(ctx context.Context) error {

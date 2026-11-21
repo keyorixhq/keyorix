@@ -1,5 +1,7 @@
 package config
 
+import "fmt"
+
 // EncryptionConfig configures the ADR-004 envelope scheme. The KEK is derived
 // from the master passphrase at runtime (PBKDF2) and never touches disk, so the
 // only key material on disk is the salt and the wrapped DEK.
@@ -38,6 +40,49 @@ const (
 // PostgreSQL-backed one (storage.encryption.key_dir_lock: database).
 func (e *EncryptionConfig) KeyDirLockIsDatabase() bool {
 	return e.KeyDirLock == KeyDirLockDatabase
+}
+
+// UsesSalt reports whether this provider derives its KEK from the on-disk KEK
+// salt. Only the password provider (type "" or "password") does.
+func (kp *KeyProviderConfig) UsesSalt() bool {
+	return kp.Type == "" || kp.Type == "password"
+}
+
+// UsesSalt reports whether the primary key provider, or any fallback, reads the
+// KEK salt file (#4395). A salt_path in a config whose providers are all
+// file/env/exec/shamir/tpm/*-kms is vestigial: nothing creates or reads it.
+func (e *EncryptionConfig) UsesSalt() bool {
+	if e.KeyProvider.UsesSalt() {
+		return true
+	}
+	for i := range e.KeyProvider.Fallbacks {
+		if e.KeyProvider.Fallbacks[i].UsesSalt() {
+			return true
+		}
+	}
+	return false
+}
+
+// EffectiveSaltPath is SaltPath when a configured provider uses the salt and ""
+// otherwise. Every consumer that requires, checksums or locks the salt file
+// takes this instead of SaltPath, so a leftover salt_path cannot make a
+// non-password install refuse to boot (#4395).
+func (e *EncryptionConfig) EffectiveSaltPath() string {
+	if e.UsesSalt() {
+		return e.SaltPath
+	}
+	return ""
+}
+
+// UnusedSaltPathWarning returns the one-line WARN for a salt_path that no
+// configured provider uses, or "" when there is nothing to say.
+func (e *EncryptionConfig) UnusedSaltPathWarning() string {
+	if e == nil || !e.Enabled || e.SaltPath == "" || e.UsesSalt() {
+		return ""
+	}
+	return fmt.Sprintf("storage.encryption.salt_path (%q) is unused by provider %s and is ignored: "+
+		"only the password key provider reads a KEK salt; remove salt_path from the config",
+		e.SaltPath, e.KeyProvider.Type)
 }
 
 // KeyProviderConfig selects the KEK source. type: "password" (default) derives the

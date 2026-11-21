@@ -60,6 +60,18 @@ func FuzzAWSSMHostileEndpoint(f *testing.F) {
 		{Ops: []hostile.Op{{Code: 6, A: 4, B: 8}}}, {Ops: []hostile.Op{{Code: 4, A: 4, B: 3}}},
 		{Status: 10}, {Status: 16}, {Status: 8, Redir: 3}, {Redir: 1}, {Redir: 3}, {Redir: 5}, {Occ: 1, Redir: 2},
 		{Frame: 1}, {Frame: 3}, {Fault: 2}, {Fault: 5}, {Enc: 2}, {Enc: 3}, {Trunc: 20},
+		// Deep-nesting seeds (Op code 5): ensure the O4 oracle is exercised on the
+		// error-parse path. A=4 targets the SecretString value node (pre-order index
+		// 4 in the success body). B=3 → array nesting 20000 deep; B=0x83 → object
+		// nesting 20000 deep. Status:2/3 = 201/202 (statuses slice, 1-based index).
+		{Ops: []hostile.Op{{Code: 5, A: 4, B: 3}}},
+		{Ops: []hostile.Op{{Code: 5, A: 4, B: 0x83}}},
+		{Status: 10, Ops: []hostile.Op{{Code: 5, A: 4, B: 3}}},
+		{Status: 10, Ops: []hostile.Op{{Code: 5, A: 4, B: 0x83}}},
+		{Status: 16, Ops: []hostile.Op{{Code: 5, A: 4, B: 3}}},
+		{Status: 2},
+		{Status: 3},
+		{Status: 2, Ops: []hostile.Op{{Code: 5, A: 4, B: 3}}},
 	} {
 		f.Add(hostile.Encode(p))
 	}

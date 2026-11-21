@@ -85,6 +85,13 @@ var pgCases = []hostileCase{
 	{"copy-in-short", "query", pgMsg('G', 0)},
 	{"param-desc-huge", "query", pgMsg('t', 0xff, 0xff)},
 	{"notification-short", "query", pgMsg('A', 0, 0)},
+	// COPY sub-protocol answers to a plain statement (H6 report, pgx COPY harness).
+	{"copy-out-short", "query", pgMsg('H')},
+	{"copy-both-short", "query", pgMsg('W', 0)},
+	{"copy-data-unframed", "query", pgMsg('d', 1, 2, 3)},
+	{"copy-in-huge-columns", "query", pgMsg('G', 0, 0xff, 0xff)},
+	// SSL negotiation answered with something that is neither S nor N nor E.
+	{"auth-gss-continue-empty", "startup", pgMsg('R', be32(8)...)},
 }
 
 func pgHandler(tc hostileCase) func(net.Conn) {
@@ -170,6 +177,12 @@ var myCases = []hostileCase{
 	{"column-def-truncated", "query", append(myFrame(1, []byte{0x01}), myFrame(2, []byte{0x03, 'd', 'e', 'f'})...)},
 	{"local-infile-short", "query", myFrame(1, []byte{0xfb})},
 	{"eof-short", "query", myFrame(1, []byte{0xfe, 0x00})},
+	// Revoke/Issue run a prepared statement (SELECT ... WHERE user=?): the answer to
+	// COM_STMT_PREPARE is the frame (H6 report, prepared-statement harness).
+	{"prepare-ok-no-counts", "query", myFrame(1, []byte{0x00, 1, 0, 0, 0})},
+	{"prepare-ok-huge-param-count", "query", myFrame(1, []byte{0x00, 1, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0})},
+	{"prepare-ok-columns-then-eof-short", "query", append(myFrame(1, []byte{0x00, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}), myFrame(2, []byte{0xfe})...)},
+	{"multi-result-flag-short", "query", myFrame(1, []byte{0x00, 0x00, 0x00, 0x08})},
 }
 
 func myHandler(tc hostileCase) func(net.Conn) {
@@ -211,7 +224,11 @@ var redisCases = []hostileCase{
 	{"negative-array-len", "any", []byte("*-5\r\n")},
 	// Length-prefix frames announcing gigabytes (array/bulk/map) are deliberately not
 	// here: one of them makes the client allocate >6 GB, which is a memory-bound
-	// finding, not a panic, and kills the test process. Tracked in the report.
+	// finding, not a panic, and kills the test process. There is no client-side bound to
+	// set: go-redis v9.23.0 takes the size straight from the reply header
+	// (internal/proto replyLen -> make([]byte, n+2) / make([]interface{}, n)) and has no
+	// Options field that caps it, so the fix is upstream (DYNAMIC-HOSTILE-TAILS-1 item 3;
+	// a conn-level RESP sniffer is the only local alternative and is not built).
 	{"negative-bulk-len", "any", []byte("$-2\r\n")},
 	{"empty-simple-string", "any", []byte("+")},
 	{"empty-error", "any", []byte("-\r\n")},

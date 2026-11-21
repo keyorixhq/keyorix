@@ -21,7 +21,7 @@ excluded from the counts table, which tracks production packages only.
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
 | `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 154 | 154 | 0 |
-| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 44 | 41 | 3 |
+| `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 44 | 42 | 2 |
 | `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 75 | 75 | 0 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 44 | 44 | 0 |
 | `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 21 | 21 | 0 |
@@ -37,11 +37,13 @@ excluded from the counts table, which tracks production packages only.
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
+| `server/pgfault` (test-only) | [server/pgfault/INVARIANTS.md](../server/pgfault/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/keyfiles` | [internal/keyfiles/INVARIANTS.md](../internal/keyfiles/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/restorejournal` | [internal/restorejournal/INVARIANTS.md](../internal/restorejournal/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/securefiles` | [internal/securefiles/INVARIANTS.md](../internal/securefiles/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/logging` | [internal/logging/INVARIANTS.md](../internal/logging/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/evidencesink` | [internal/evidencesink/INVARIANTS.md](../internal/evidencesink/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/audit/siem` | [internal/audit/siem/INVARIANTS.md](../internal/audit/siem/INVARIANTS.md) | 1 | 1 | 0 |
@@ -63,11 +65,13 @@ excluded from the counts table, which tracks production packages only.
 | `internal/secrettemplate` | [internal/secrettemplate/INVARIANTS.md](../internal/secrettemplate/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/i18n` | [internal/i18n/INVARIANTS.md](../internal/i18n/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 7 | 7 | 0 |
-| `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 4 | 4 | 0 |
-| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 1 | 1 | 0 |
 | `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 5 | 5 | 0 |
 | `fuzz/thirdparty/otp` | [fuzz/thirdparty/otp/INVARIANTS.md](../fuzz/thirdparty/otp/INVARIANTS.md) | 5 | 5 | 0 |
+| `fuzz/thirdparty/compress` | [fuzz/thirdparty/compress/INVARIANTS.md](../fuzz/thirdparty/compress/INVARIANTS.md) | 2 | 2 | 0 |
+| `fuzz/thirdparty/uuid` | [fuzz/thirdparty/uuid/INVARIANTS.md](../fuzz/thirdparty/uuid/INVARIANTS.md) | 2 | 2 | 0 |
 | `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |
+| `fuzz/thirdparty/cors` | [fuzz/thirdparty/cors/INVARIANTS.md](../fuzz/thirdparty/cors/INVARIANTS.md) | 4 | 4 | 0 |
+| `fuzz/thirdparty/kinopenapi` | [fuzz/thirdparty/kinopenapi/INVARIANTS.md](../fuzz/thirdparty/kinopenapi/INVARIANTS.md) | 3 | 3 | 0 |
 
 ## Highest-priority UNGUARDED gaps
 
@@ -75,7 +79,8 @@ One UNGUARDED item is flagged as materially more important than the rest, and on
 item has a known CI gap. Re-checked 2026-10-30 against `origin/main`.
 
 - **ADR-103's Postgres RLS tenancy layer is a ratified design with zero implementation and
-  zero tests** (`internal/storage/INVARIANTS.md` INV-STORAGE-31/32) — confirmed by direct grep:
+  zero tests** (`internal/storage/INVARIANTS.md` INV-STORAGE-31; its prerequisite INV-STORAGE-32,
+  ctx threading, is now guarded by `internal/storage/ctx_threading_guard_test.go`) — confirmed by direct grep:
   `rg -i 'ROW LEVEL SECURITY|app\.current_tenant|keyorix_migrator' internal/storage` matches only
   `internal/storage/INVARIANTS.md` itself, no code or test.
 - **`web/src/types` drift check does not run on an `openapi.yaml`-only PR** (INV-WEB-05,

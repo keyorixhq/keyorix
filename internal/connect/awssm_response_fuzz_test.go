@@ -134,15 +134,7 @@ func FuzzAWSSMConnectorResponse(f *testing.F) {
 		// configured max -- irrelevant to what's being tested here (whether
 		// attempts are BOUNDED, not how long a real backoff would take) and
 		// would otherwise make this target too slow to fuzz.
-		cl := secretsmanager.New(secretsmanager.Options{
-			Region:       "us-east-1",
-			Credentials:  credentials.NewStaticCredentialsProvider(awsFuzzAccessKeyID, awsFuzzSecretKey, ""),
-			BaseEndpoint: aws.String(srv.URL),
-			Retryer: retry.NewStandard(func(o *retry.StandardOptions) {
-				o.MaxAttempts = 3
-				o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
-			}),
-		})
+		cl := awssmResponseFuzzClient(srv.URL, true)
 
 		// For ~1/3 of inputs (derived from the fuzzed status, no extra fuzz
 		// parameter needed), configure a non-empty accountID and pass an
@@ -169,9 +161,19 @@ func FuzzAWSSMConnectorResponse(f *testing.F) {
 
 		var val string
 		var err error
+		var m0, m1 runtime.MemStats
+		runtime.ReadMemStats(&m0)
 		fuzzutil.Guard(t.Fatalf, "AWSSecretsManagerConnector.GetSecret", func() {
 			val, err = c.GetSecret(context.Background(), smRef)
 		})
+		runtime.ReadMemStats(&m1)
+		// Oracle (O4): bounded work, allocation. Same budget as the sibling
+		// TestAWSSM_NestedErrorBodyDoesNotAmplifyMemory (awssmO4Budget); the wire
+		// bytes are what the fake server sent across every attempt the retryer made.
+		wire := len(body) * int(max(hits.Load(), 1))
+		if alloc := m1.TotalAlloc - m0.TotalAlloc; alloc > awssmO4Budget(wire) {
+			t.Fatalf("O4 BOUNDED-WORK: status %d, %d wire bytes: allocated %d bytes, budget %d", code, wire, alloc, awssmO4Budget(wire))
+		}
 		// Oracle (b): fail-closed, two ways --
 		//  1. the smithy-go awsJson1_1 deserializer routes any response outside
 		//     [200,300) to the error deserializer -- GetSecret must therefore
@@ -261,4 +263,58 @@ func FuzzAWSSMConnectorResponse(f *testing.F) {
 			t.Fatalf("fd leak: %d open descriptors after AWSSecretsManagerConnector.GetSecret (expected O(10))", fd)
 		}
 	})
+}
+
+// awssmResponseFuzzClient builds the real secretsmanager.Client this target
+// drives. hardened=true installs the transport production installs
+// (newConnectHardenedTransport + refuseRedirect, as awssm.go's client() and
+// awssmHardenedClient do); hardened=false is the SDK default client, kept only
+// so TestAWSSMResponseFuzzO4RedProof can show the O4 oracle bites without it.
+// MaxAttempts=3 with a zero-delay backoff: see the retry oracle in the fuzz body.
+func awssmResponseFuzzClient(baseURL string, hardened bool) *secretsmanager.Client {
+	o := secretsmanager.Options{
+		Region:       "us-east-1",
+		Credentials:  credentials.NewStaticCredentialsProvider(awsFuzzAccessKeyID, awsFuzzSecretKey, ""),
+		BaseEndpoint: aws.String(baseURL),
+		Retryer: retry.NewStandard(func(o *retry.StandardOptions) {
+			o.MaxAttempts = 3
+			o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
+		}),
+	}
+	if hardened {
+		o.HTTPClient = &http.Client{Transport: newConnectHardenedTransport(awsBaseTransport()), CheckRedirect: refuseRedirect}
+	}
+	return secretsmanager.New(o)
+}
+
+// TestAWSSMResponseFuzzO4RedProof shows the fuzz target's O4 oracle is not
+// vacuous: a deliberately unbounded error body (64 MiB, far over the 1 MiB
+// response cap) exceeds awssmO4Budget through the un-hardened client the target
+// used before #4531, and stays inside it through the hardened client.
+func TestAWSSMResponseFuzzO4RedProof(t *testing.T) {
+	body := bytes.Repeat([]byte("A"), 64<<20)
+	run := func(hardened bool) (alloc uint64, wire int) {
+		var hits atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			hits.Add(1)
+			w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write(body)
+		}))
+		defer srv.Close()
+		c := NewAWSSecretsManagerConnector("fuzz", "us-east-1", "", nil)
+		cl := awssmResponseFuzzClient(srv.URL, hardened)
+		c.newClient = func(_ context.Context, _ string) (smSecretGetter, error) { return cl, nil }
+		var m0, m1 runtime.MemStats
+		runtime.ReadMemStats(&m0)
+		_, _ = c.GetSecret(context.Background(), "fuzz/secret")
+		runtime.ReadMemStats(&m1)
+		return m1.TotalAlloc - m0.TotalAlloc, len(body) * int(max(hits.Load(), 1))
+	}
+	if alloc, wire := run(false); alloc <= awssmO4Budget(wire) {
+		t.Fatalf("red proof: un-hardened client allocated %d <= budget %d for %d wire bytes; the O4 oracle would not catch an unbounded response", alloc, awssmO4Budget(wire), wire)
+	}
+	if alloc, wire := run(true); alloc > awssmO4Budget(wire) {
+		t.Fatalf("hardened client allocated %d > budget %d for %d wire bytes", alloc, awssmO4Budget(wire), wire)
+	}
 }

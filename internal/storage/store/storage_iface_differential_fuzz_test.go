@@ -179,6 +179,7 @@ func ifaceClass(err error) string {
 		{"DuplicateReminder", storage.ErrDuplicateReminderNotification}, {"ChannelNotFound", storage.ErrNotificationChannelNotFound},
 		{"NotificationNotFound", storage.ErrNotificationNotFound}, {"TemplateNotFound", storage.ErrSecretTemplateNotFound},
 		{"ACLNotFound", storage.ErrSecretACLNotFound}, {"InvalidACL", storage.ErrInvalidSecretACLRequest},
+		{"ACLGranteeNotMember", storage.ErrSecretACLGranteeNotMember},
 		{"ShareNotFound", storage.ErrShareNotFound}, {"ShareExpiryNotInFuture", storage.ErrShareExpiryNotInFuture},
 		{"SessionNotFound", storage.ErrSessionNotFound}, {"ConnectorBindingNotFound", storage.ErrConnectorBindingNotFound},
 		{"MFAChallengeInvalid", storage.ErrMFAChallengeInvalid}, {"MFASecretActivated", storage.ErrMFASecretActivated},

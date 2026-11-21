@@ -1041,6 +1041,9 @@ func (c *KeyorixCore) logBreakGlassRevokedOn(ctx context.Context, tgt auditTarge
 // accumulateBreakGlassPosture), which is exactly ADR-112's "an open activation
 // without a recorded review shows as a posture deviation."
 func (c *KeyorixCore) ReviewBreakGlass(ctx context.Context, actorID, projectID, activationID uint, note string) error {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	if projectID == 0 {
 		return fmt.Errorf("%w: %s: %s", ErrInvalidInput, i18n.T("ErrorValidation", nil), "project ID is required")
 	}

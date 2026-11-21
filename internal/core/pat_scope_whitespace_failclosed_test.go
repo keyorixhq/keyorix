@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,8 @@ func TestValidatePATToken_WhitespaceOnlyScopesColumnIsNotOwnerEquivalent(t *test
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
 		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{ID: 9, UserID: 1, Scopes: scopes}, nil)
+		ms.On("GetPersonalAccessTokenWithOwnerByHash", ctx, hash).Return(&models.PersonalAccessToken{ID: 9, UserID: 1, Scopes: scopes},
+			storage.PATOwnerState{Found: true, IsActive: true, AccountState: AccountActive}, nil)
 		ms.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: acctTestUser, IsActive: true, AccountState: AccountActive}, nil)
 		ms.On("GetUserRoles", ctx, uint(1)).Return([]*models.Role{{Name: "super_admin"}}, nil)
 

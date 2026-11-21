@@ -67,8 +67,10 @@ func explain(r *caseResult) string {
 	deniedOrNA := func(lo *legOutcome) bool { return na(lo) || is(lo, Denied) }
 	modelDenies := r.Model == Denied || r.Model == ModelNA
 
-	if is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies {
+	switch {
+	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies:
 		return "known-04"
+
 	}
 	return "unexplained"
 }

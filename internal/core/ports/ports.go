@@ -170,6 +170,30 @@ type DynamicBackendEngine interface {
 	RevokeInvalidatesCredential(adminDSN string) bool
 }
 
+// issuedRoleReporterKey carries the callback IssueLease hands an engine through the
+// context of DynamicBackendEngine.Issue.
+type issuedRoleReporterKey struct{}
+
+// WithIssuedRoleReporter returns a context whose engine Issue reports the account name
+// it generated through fn, BEFORE its first write to the target (DYNAMIC-HOSTILE-TAILS-1).
+// Issue returns the name only on success; a panic in the client library after the target
+// created the account (contained by dynamic.Contain into an error) would otherwise leave
+// an account nobody knows the name of. A context value rather than a new Issue parameter
+// so the cloud engines (which create no account) and every test double keep their
+// signature. fn is called on the goroutine running Issue and must not block.
+func WithIssuedRoleReporter(ctx context.Context, fn func(roleName string)) context.Context {
+	return context.WithValue(ctx, issuedRoleReporterKey{}, fn)
+}
+
+// ReportIssuedRole tells the caller of Issue which account is about to be created. An
+// engine that creates an account on the target calls it once the name is generated and
+// before the first statement that can create it. A no-op when ctx carries no reporter.
+func ReportIssuedRole(ctx context.Context, roleName string) {
+	if fn, ok := ctx.Value(issuedRoleReporterKey{}).(func(string)); ok && fn != nil {
+		fn(roleName)
+	}
+}
+
 // DynamicBackendFactory resolves a DynamicBackendEngine for the named backend
 // type. A plain function type — not an interface with an Engine method — since
 // that's the exact shape internal/core.dynamicEngineFactory already holds

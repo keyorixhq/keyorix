@@ -218,11 +218,8 @@ type LocalStorage struct {
 	//
 	// Read by commitBatchAttempt and logAuditEventDirect, and acted on ONLY on
 	// Postgres (`SET LOCAL synchronous_commit = off`, transaction-scoped).
-	// There is no SQLite equivalent and deliberately never was in a shipped
-	// build: standard is PostgreSQL-only and config validation refuses to
-	// start a SQLite backend set to it, so a SQLite-backed LocalStorage can
-	// never have this field true. See config.DatabaseConfig.AuditDurability
-	// for why (per-connection pragma relaxes every table).
+	// The storage factory never sets it on a SQLite-backed LocalStorage:
+	// SQLite's standard level is sqliteReadAuditDB below, not this field.
 	//
 	// Deliberately NOT shared with transaction-scoped clones, same as
 	// auditFlusherLingerWindow: read-only after construction, and a clone's
@@ -230,6 +227,16 @@ type LocalStorage struct {
 	// transaction, whose durability is the caller's business, not the audit
 	// chain's.
 	auditSkipDurableSync bool
+	// sqliteReadAuditDB is SQLite audit_durability standard (ADR-112
+	// Amendment 7): a separate one-connection handle to the same file, opened
+	// with _synchronous=NORMAL, that the audit flusher commits a batch on ONLY
+	// when every row in it is a successful secret-value read audit
+	// (isSQLiteNormalReadAuditBatch). nil (strict, the SQLite default, and
+	// every PostgreSQL store) commits every batch on db. Set once by the
+	// storage factory (SetSQLiteReadAuditDB). Not shared with
+	// transaction-scoped clones: their audit rows go through
+	// logAuditEventDirect inside the caller's FULL transaction.
+	sqliteReadAuditDB *gorm.DB
 	// secretMetaCache backs GetSecret/GetLatestSecretVersion/GetSecretAccessSchedule's
 	// read-path cache (PERF-3, docs/specs/read-path-caching.md). A pointer so a
 	// transaction-scoped LocalStorage (see WithTransaction) shares the SAME cache as
@@ -468,6 +475,14 @@ func (ls *LocalStorage) SetAuditSkipDurableSync(skip bool) {
 	ls.auditSkipDurableSync = skip
 }
 
+// SetSQLiteReadAuditDB hands this SQLite-backed LocalStorage its read-audit
+// connection (ADR-112 Amendment 7; see the sqliteReadAuditDB field). Only
+// internal/storage's factory calls this, at audit_durability standard, before
+// the storage serves traffic. Close closes it.
+func (ls *LocalStorage) SetSQLiteReadAuditDB(db *gorm.DB) {
+	ls.sqliteReadAuditDB = db
+}
+
 // PoolStats returns the live connection-pool statistics of the underlying
 // *sql.DB (database/sql's DBStats: MaxOpenConnections as applied by the storage
 // factory, InUse, Idle). ok is false if the pool cannot be reached. Read-only and
@@ -510,6 +525,13 @@ func (ls *LocalStorage) Close() error {
 	for _, lockDB := range []*sql.DB{ls.schedulerLockDB, ls.namedLockDB} {
 		if lockDB != nil {
 			errs = append(errs, lockDB.Close())
+		}
+	}
+	if ls.sqliteReadAuditDB != nil {
+		if sqlDB, err := ls.sqliteReadAuditDB.DB(); err != nil {
+			errs = append(errs, err)
+		} else {
+			errs = append(errs, sqlDB.Close())
 		}
 	}
 	if sqlDB, err := ls.db.DB(); err != nil {

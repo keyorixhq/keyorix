@@ -24,6 +24,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -336,7 +337,13 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 			"this backup was taken by a newer version of Keyorix; upgrade this binary before restoring it",
 			manifest.SchemaEpoch, storage.CurrentSchemaEpoch())
 	}
-	if err := validateKeyFileSetV2(manifest.KeyFiles, targetKeyPaths); err != nil {
+	// The signed manifest stays as archived; only the files restore installs
+	// leave out a salt this config no longer reads (#4504 F2).
+	keyFiles := manifest.KeyFiles
+	if i := unusedArchivedSaltIndex(cfg, len(keyFiles), func(i int) string { return keyFiles[i].OriginalPath }); i >= 0 {
+		keyFiles = slices.Delete(slices.Clone(keyFiles), i, i+1)
+	}
+	if err := validateKeyFileSetV2(keyFiles, targetKeyPaths); err != nil {
 		return err
 	}
 
@@ -346,7 +353,7 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	// relative paths cfg.Storage.Encryption expects, so the exact same
 	// internal/encryption code path `admin diagnose`/`admin backup` use
 	// works unmodified, just pointed elsewhere.
-	stagedCfg, kekStagingDir, err := stageKeyFilesForKEKUnwrap(cfg, stagingDir, manifest.KeyFiles, targetKeyPaths)
+	stagedCfg, kekStagingDir, err := stageKeyFilesForKEKUnwrap(cfg, stagingDir, keyFiles, targetKeyPaths)
 	if err != nil {
 		return err
 	}
@@ -408,8 +415,8 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	// Only past every check above: stage the key files, load the data, and
 	// install both only once the load has committed (restore_commit.go).
 	restoreTS := time.Now().UTC().Format("20060102T150405Z")
-	keyFileData := make([][]byte, len(manifest.KeyFiles))
-	for i, entry := range manifest.KeyFiles {
+	keyFileData := make([][]byte, len(keyFiles))
+	for i, entry := range keyFiles {
 		data, rerr := os.ReadFile(filepath.Join(stagingDir, entry.TarName)) // #nosec G304 -- our own staged file, already checksum-verified by ExtractArchive
 		if rerr != nil {
 			return fmt.Errorf("read staged key file %q: %w", entry.TarName, rerr)
@@ -512,7 +519,7 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 		totalRows += te.RowCount
 	}
 	fmt.Printf("Restored %d table(s), %d row(s), %d key file(s) from %s (backup created %s)\n",
-		len(manifest.Tables), totalRows, len(manifest.KeyFiles), restoreInput, manifest.CreatedAt.Format(time.RFC3339))
+		len(manifest.Tables), totalRows, len(keyFiles), restoreInput, manifest.CreatedAt.Format(time.RFC3339))
 	if restoreOverwriteExisting {
 		fmt.Printf("The replaced key files and database were kept as <path>.pre-restore-%s.\n", restoreTS)
 	}
@@ -653,6 +660,28 @@ func validateKeyFileSetV2(archived []backupfmt.KeyFileEntry, target []string) er
 		}
 	}
 	return nil
+}
+
+// unusedArchivedSaltIndex returns the index of the archived key file that is
+// the KEK salt cfg's salt_path names while no configured provider reads it, or
+// -1. An install that kept salt_path after leaving the password provider
+// (migrate-provider keeps it) archived [salt, DEK, ...] before #4395 dropped
+// an unused salt from keyfiles.Registry; restore then compared that against
+// the shorter set and refused every such backup. The salt is not installed:
+// nothing reads it. Logged, so the skipped file is not silent.
+func unusedArchivedSaltIndex(cfg *config.Config, n int, originalPath func(int) string) int {
+	salt := keyfiles.UnusedSaltPath(&cfg.Storage.Encryption, ".")
+	if salt == "" {
+		return -1
+	}
+	for i := range n {
+		if originalPath(i) == salt {
+			fmt.Fprintf(os.Stderr, "restore: not installing the archived KEK salt %s: storage.encryption.salt_path names it, "+
+				"but no configured key provider reads a salt; remove salt_path from the config\n", salt)
+			return i
+		}
+	}
+	return -1
 }
 
 // stageKeyFilesForKEKUnwrap copies each archive key file's ALREADY-STAGED,
@@ -822,6 +851,12 @@ func runAdminRestoreV1(cfg *config.Config) error {
 	targetKeyPaths, err := expectedKeyFilePaths(cfg)
 	if err != nil {
 		return err
+	}
+	// v1 manifests are not signed; the archived salt a non-password config no
+	// longer reads is left out of the restored set like v2's (#4504 F2).
+	if i := unusedArchivedSaltIndex(cfg, len(manifest.KeyFiles), func(i int) string { return manifest.KeyFiles[i].OriginalPath }); i >= 0 {
+		manifest.KeyFiles = slices.Delete(slices.Clone(manifest.KeyFiles), i, i+1)
+		keyBlobs = slices.Delete(slices.Clone(keyBlobs), i, i+1)
 	}
 	if err := validateKeyFileSetV1(manifest.KeyFiles, targetKeyPaths); err != nil {
 		return err
@@ -1152,7 +1187,10 @@ func readExistingDatabaseAuditEventCount(dbPath string) (int64, error) {
 // INDETERMINATE are both reported but do not, matching verify-audit's own
 // documented semantics.
 func verifyRestoredAudit(cfg *config.Config, dbPath string) error {
-	db, err := auditverify.OpenSQLiteReadOnly(dbPath)
+	// In place: the restored file is server-owned, so it is not copied to
+	// $TMPDIR (a full copy of the vault, and a restore that already committed
+	// must not fail on a small or missing $TMPDIR).
+	db, err := auditverify.OpenSQLiteReadOnlyInPlace(dbPath)
 	if err != nil {
 		return fmt.Errorf("open restored database for automatic verify-audit: %w", err)
 	}

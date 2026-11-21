@@ -153,7 +153,16 @@ func runSystemInit(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("  +-- Environments: %s\n", envList)
 	fmt.Printf("  +-- Admin user: %s (change password after first login)\n", username)
 	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("  keyorix login --server %s --username %s\n", server, username)
+	// A CA given with --ca-file applied to this command only: carry it into the login
+	// line, or the first thing a reader pastes fails on a self-signed server certificate.
+	caArg := ""
+	if caFileFlag != "" {
+		caArg = " --ca-file " + caFileFlag
+		if strings.ContainsAny(caFileFlag, " \t'\"$`\\") {
+			caArg = " --ca-file '" + strings.ReplaceAll(caFileFlag, "'", `'\''`) + "'"
+		}
+	}
+	fmt.Printf("  keyorix login --server %s --username %s%s\n", server, username, caArg)
 	fmt.Printf("  keyorix mfa enroll      (required by default: secrets stay locked until the admin has a second factor)\n")
 	fmt.Printf("  keyorix mfa activate\n")
 	fmt.Printf("  keyorix secret create --name my-first-secret --interactive\n")

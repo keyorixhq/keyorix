@@ -27,9 +27,14 @@ func newRBACAuditCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 		&models.RolePermission{}, &models.SystemMetadata{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SoDPolicy{},
 		// A grant transaction row-locks its user first (NAMEDLOCK-OVERLAP-2
-		// fence); the table must exist, the row need not.
+		// fence), and AssignUserRole refuses a target with no row (ERRMAP-TAILS-NOV-4):
+		// users 10 and 11 below are the grant targets of these tests.
 		&models.User{},
 	))
+	for _, id := range []uint{10, 11} {
+		name := fmt.Sprintf("audit-target-%d", id)
+		require.NoError(t, db.Create(&models.User{ID: id, Username: name, UsernameFolded: name, Email: name + "@example.test", EmailFolded: name + "@example.test", AccountState: "active"}).Error)
+	}
 	// The roles and the {project 3, environment 7} scope these tests grant at
 	// must exist: the #3546 role-scope check resolves both before a grant.
 	for id := uint(1); id <= 4; id++ {

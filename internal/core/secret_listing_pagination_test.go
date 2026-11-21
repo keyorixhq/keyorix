@@ -48,6 +48,7 @@ func TestListSecretsInScope_PaginationSurvivesPostFetchTagFilter(t *testing.T) {
 	e, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	seedOwnerWriteRoleForTest(t, db, 1) // #4508: the owner must hold secrets.write
 
 	mk := func(name string, keep bool) {
 		s, err := c.storage.CreateSecret(ctx, &models.SecretNode{

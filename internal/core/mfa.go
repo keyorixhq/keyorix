@@ -168,13 +168,16 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 // (consume_first_fails_closed_test.go), whose red proof folds the consume into
 // the transaction and shows the replay then succeeds.
 //
-// Note that requireReauth, called just below, performs NO consumption on this
-// path, despite being a class-B row in its own right: activation happens with
-// user.MFAEnabled still false, so secondFactorEnrolled is false, requireReauth
-// takes its bare-password branch, and neither MarkTOTPStepUsed nor
-// ConsumeMFAStepUpGrant runs. This function's own MarkTOTPStepUsed is the only
-// consume on the ActivateMFA path — spelled out because PR #2840 originally
-// attributed it to requireReauth and was wrong (coordinator review).
+// requireReauth, called just below, is a class-B row in its own right. For an
+// account with no second factor yet (user.MFAEnabled and user.WebAuthnEnabled
+// both false) it consumes nothing: secondFactorEnrolled is false, it takes its
+// bare-password branch, and this function's own MarkTOTPStepUsed is the only
+// consume on the path (PR #2840 originally attributed it to requireReauth and
+// was wrong, coordinator review). For an account that already has a passkey
+// and is adding TOTP, secondFactorEnrolled is true, so requireReauth consumes a
+// reauth step-up grant (ConsumeMFAStepUpGrant) before the activation runs, and
+// that grant stays consumed if activation fails: fail-safe, the user repeats
+// the passkey reauth (#2693 exemption review).
 func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, password, keepSessionToken string) ([]string, error) {
 	// Refused before the password or the code is evaluated (nothing counted).
 	if err := totpUnavailable(); err != nil {
@@ -1057,6 +1060,20 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 		}
 		c.auditMFAFailed(ctx, user.ID, phase)
 		c.recordFailedLogin(ctx, user) // count the failed re-auth attempt toward the lockout
+		return &reauthRejectedError{msg: "invalid code or password"}
+	}
+	// The loginLocked check at the top read the caller's snapshot of user; a
+	// concurrent burst of wrong guesses may have locked the account since. Re-read
+	// it now that the credential matched, as login, MFA verify, step-up and
+	// WebAuthn do (#2888): otherwise a correct guess here would clear the counter
+	// of an account that is locked. Both outcomes answer like a wrong code.
+	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
+		if errors.Is(err, ErrLoginPostVerdict) {
+			// Counted already; audited distinctly, like postVerdictErr above.
+			c.auditMFAError(ctx, user.ID, phase, err)
+		} else {
+			c.auditMFAFailed(ctx, user.ID, phase)
+		}
 		return &reauthRejectedError{msg: "invalid code or password"}
 	}
 	c.clearLoginFailures(ctx, user)

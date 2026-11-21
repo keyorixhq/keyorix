@@ -42,7 +42,7 @@ func IPInCIDRs(ip string, cidrs []string) bool {
 		return false
 	}
 	for _, c := range cidrs {
-		_, network, err := net.ParseCIDR(strings.TrimSpace(c))
+		network, err := rules.ParseAllowlistCIDR(c) // reads a legacy "::ffff:a.b.c.d/32" as a.b.c.d/32 (#4520 sibling)
 		if err != nil {
 			continue
 		}

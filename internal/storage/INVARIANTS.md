@@ -320,8 +320,15 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
 - **INV-STORAGE-32** Every exported `LocalStorage`/`storage.Storage` method's first parameter
   is a real, threaded `context.Context` (never `context.Background()`/`context.TODO()`
   substituted) — required for RLS's `SET LOCAL` injection to ever reach the right tenant. Why:
-  ADR-103 §1f "Guard". UNGUARDED (#issue: explicitly specified as required-before-ship, not
-  built — blocks INV-STORAGE-31).
+  ADR-103 §1f "Guard". Guard: `ctx_threading_guard_test.go:TestCtxThreading_EveryStorageMethodThreadsContext`
+  (every `storage.Storage` method and exported `*LocalStorage` method has a named leading
+  `ctx context.Context`; no exported method reaches a `context.Background()`/`TODO()` site),
+  with `TestCtxThreading_NoStaleAllowlistRows`, `TestCtxThreading_BackgroundEntryPointsExist`,
+  `TestCtxThreading_ScanPreconditionHolds` and the planted-violation calibration
+  `TestCtxThreading_ScannerFixture`. Reviewed exceptions (config/lifecycle setters, detached
+  background jobs, the audit cleanup helper) are rows in `testdata/ctx_threading_allowlist.d/`,
+  each with an owner and a reason. It does not see multi-hop or interface calls and does not
+  detect an accepted-but-unused ctx (header of the test file). Unblocks INV-STORAGE-31.
 - **INV-STORAGE-33** SQLite has no RLS and is not protected by this layer at all
   (single-instance/dev only, per ADR-039). Why: ADR-103 §1e. Not a gap — by design.
 

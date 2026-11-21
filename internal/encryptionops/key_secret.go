@@ -352,7 +352,8 @@ func keySetInDir(cfg *config.Config) (*config.Config, error) {
 	if enc.DEKPath == "" {
 		return nil, errors.New("storage.encryption.dek_path is not set")
 	}
-	if enc.SaltPath, err = base("salt_path", enc.SaltPath); err != nil {
+	// #4395: a salt_path no provider uses is not part of the key set.
+	if enc.SaltPath, err = base("salt_path", enc.EffectiveSaltPath()); err != nil {
 		return nil, err
 	}
 	if enc.KeyProvider.WrappedKeyPath, err = base("key_provider.wrapped_key_path", enc.KeyProvider.WrappedKeyPath); err != nil {

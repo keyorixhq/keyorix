@@ -33,7 +33,10 @@ func newAccessRequestDuplicateTestHandler(t *testing.T) *CatalogHandler {
 		&models.AuditEvent{}, &models.Notification{}, &models.Role{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "e2e-smoke-project"}).Error)
-	return NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+	st := store.NewLocalStorage(db)
+	// core refuses an acting account that is not active (#4159): seed the caller.
+	ensureActiveActorUser(t, st, 1)
+	return NewCatalogHandler(core.NewKeyorixCore(st))
 }
 
 func createAccessRequestReq(projectID string) *http.Request {

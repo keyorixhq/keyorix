@@ -125,12 +125,17 @@ func init() {
 			return "recovery_key_records", "rotated_at", rec.ID
 		}},
 		hostZoneWriter{"CreateOrUpdateSecretACL insert updated_at", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
-			acl := &models.SecretACL{SecretID: seedSecret(w).ID, UserID: w.user(), Permissions: `["secrets.read"]`, GrantedBy: w.user(), UpdatedAt: at}
+			s := seedSecret(w)
+			grantee := w.user()
+			ppProjectMember(w, grantee, s.ProjectID) // #4533: a grantee must be a member of the secret's project
+			acl := &models.SecretACL{SecretID: s.ID, UserID: grantee, Permissions: `["secrets.read"]`, GrantedBy: w.user(), UpdatedAt: at}
 			require.NoError(w.t, w.ls.CreateOrUpdateSecretACL(ctx, acl))
 			return "secret_acls", "updated_at", acl.ID
 		}},
 		hostZoneWriter{"CreateOrUpdateSecretACL upsert updated_at", func(ctx context.Context, w ppWorld, at time.Time) (string, string, any) {
-			secretID, userID := seedSecret(w).ID, w.user()
+			s := seedSecret(w)
+			secretID, userID := s.ID, w.user()
+			ppProjectMember(w, userID, s.ProjectID) // #4533
 			first := &models.SecretACL{SecretID: secretID, UserID: userID, Permissions: `["secrets.read"]`, GrantedBy: userID}
 			require.NoError(w.t, w.ls.CreateOrUpdateSecretACL(ctx, first))
 			second := &models.SecretACL{SecretID: secretID, UserID: userID, Permissions: `["secrets.write"]`, GrantedBy: userID, UpdatedAt: at}
@@ -174,4 +179,11 @@ func transitionMachine(ctx context.Context, w ppWorld, m *models.MachineIdentity
 	ok, err := w.ls.TransitionMachineIdentityState(ctx, m, machineIdentityStateActive)
 	require.NoError(w.t, err)
 	require.True(w.t, ok)
+}
+
+// ppProjectMember makes userID a direct member of projectID. #4533:
+// CreateOrUpdateSecretACL refuses a grantee who is not a member of the secret's
+// project, so an ACL writer above has to make its grantee one first.
+func ppProjectMember(w ppWorld, userID, projectID uint) {
+	require.NoError(w.t, w.ls.db.Create(&models.UserRole{UserID: userID, RoleID: 1, ProjectID: projectID}).Error)
 }

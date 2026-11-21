@@ -28,6 +28,7 @@ func TestExtendExpiringSecretsHandler(t *testing.T) {
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
+	grantProjectSecretsWrite(t, db, 1, 1)                                                                                                                                  // the owner also holds the route's gate (CORE-AUTHZ-RACE-NOV-1 item 2)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "u1", UsernameFolded: "u1", Email: "u1@example.com", EmailFolded: "u1@example.com", IsActive: true}).Error) // an active actor (#4159)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, Name: "production", ProjectID: 1}).Error)
 	expired := time.Now().Add(-48 * time.Hour)

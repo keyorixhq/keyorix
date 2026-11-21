@@ -85,34 +85,35 @@ const sqliteBusyTimeoutMillis = 10000
 //     before/after (no throughput delta, as expected, since the pragma value
 //     is unchanged — this closes an unasserted-guarantee gap, not a bug).
 //
-//     NOT RELAXABLE BY CONFIGURATION. storage.database.audit_durability's
-//     standard level (ADR-112 Amendments 1 and 3) is PostgreSQL-ONLY and
-//     config validation REFUSES TO START a SQLite backend set to it
-//     (internal/config's auditDurabilityStandardSQLiteUnsupportedError), so this
-//     DSN has no NORMAL branch at all and never had one in a shipped build.
-//     Two reasons it is not offered here, both measured or structural:
-//     `synchronous` is a PER-CONNECTION property set once per DSN and the pool
-//     is shared by every query, so NORMAL would relax commit durability for
-//     the WHOLE database — a power loss could undo a just-committed secret
-//     rotation or revocation, not merely lose audit entries; and the measured
-//     p99 got WORSE under concurrency anyway (328.8->518.0ms at c=10,
-//     703.7->919.0ms at c=50 on pve01), so it was not even a clean latency
-//     win. Postgres's own path confines the equivalent change to the audit
-//     transaction alone (SET LOCAL synchronous_commit, see
-//     internal/storage/store/local_audit_chain.go), which is why it IS offered
-//     there.
+//     NOT RELAXABLE BY CONFIGURATION for this pool. `synchronous` is a
+//     PER-CONNECTION property set once per DSN and this pool is shared by every
+//     query, so NORMAL here would relax commit durability for the WHOLE
+//     database — a power loss could undo a just-committed secret rotation or
+//     revocation, not merely lose audit entries (ADR-112 Amendment 1). This
+//     DSN therefore has no NORMAL branch. storage.database.audit_durability
+//     standard on SQLite (ADR-112 Amendment 7) does not touch it: it opens a
+//     SEPARATE one-connection handle with sqliteReadAuditDSN that the audit
+//     flusher uses for batches of successful secret-read audits only
+//     (factory_sqlite_read_audit.go), and checks at start that this pool
+//     still reports FULL.
 //
 // Postgres has no equivalent opt-out (FK enforcement is always on) and no analogous
 // pragmas, so this is intentionally SQLite-only — never applied to the Postgres
 // connection path.
 func sqliteDSN(dbPath string) string {
+	return sqliteDSNWithSynchronous(dbPath, "FULL")
+}
+
+// sqliteDSNWithSynchronous is sqliteDSN with the synchronous pragma given:
+// "FULL" for every handle except the read-audit one (sqliteReadAuditDSN).
+func sqliteDSNWithSynchronous(dbPath, synchronous string) string {
 	sep := "?"
 	if strings.Contains(dbPath, "?") {
 		// The operator already supplied their own DSN query parameters (e.g. a
 		// custom path with embedded pragmas) — append rather than clobber them.
 		sep = "&"
 	}
-	return fmt.Sprintf("%s%s_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL&_txlock=immediate&_synchronous=FULL", dbPath, sep, sqliteBusyTimeoutMillis)
+	return fmt.Sprintf("%s%s_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL&_txlock=immediate&_synchronous=%s", dbPath, sep, sqliteBusyTimeoutMillis, synchronous)
 }
 
 // secureLocalStoragePerm is the mode the SQLite database and its -wal/-shm sidecars must
@@ -330,12 +331,15 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
 	ls.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
-	// No SetAuditSkipDurableSync here, deliberately: audit_durability standard
-	// is PostgreSQL-only and config validation refuses to start a SQLite
-	// backend set to it (SQLite is strict only), so there is nothing to propagate --
-	// and leaving the zero value (false, durable) means a config that somehow
-	// bypassed validation still gets durable commits rather than a half-
-	// applied weak mode.
+	// No SetAuditSkipDurableSync here, deliberately: that is the PostgreSQL
+	// mechanism (SET LOCAL synchronous_commit), and leaving its zero value
+	// (false, durable) keeps every transaction on this pool FULL. SQLite's
+	// standard level is the separate read-audit connection below (ADR-112
+	// Amendment 7), opened after the migration so it never races it.
+	if err := attachSQLiteReadAuditDB(cfg, dbPath, ls); err != nil {
+		_ = ls.Close()
+		return nil, err
+	}
 	return ls, nil
 }
 

@@ -70,6 +70,14 @@ checks is [docs/releases/RELEASE-CHECKLIST.md](docs/releases/RELEASE-CHECKLIST.m
    issue. `scripts/release/check-release-blockers.sh --self-test` shows the red and green cases.
    `scripts/release/verify-release.sh --check-blockers` repeats the check as its first step
    (opt-in: a customer's verification of a published tag never runs it).
+   **RC gate (hard step for a final tag, do not tag around it).** A final `vX.Y.Z` is tagged
+   only after its last release candidate `vX.Y.Z-rc.N` has been through
+   `scripts/release/rc-gate.sh vX.Y.Z-rc.N` (upgrade from the previous release to the RC and
+   rollback by restore, on SQLite and PostgreSQL, on the RELEASED binaries), and
+   `scripts/release/rc-gate.sh --check-result tmp/rc-gate-vX.Y.Z-rc.N/rc-gate-result.tsv vX.Y.Z-rc.N`
+   exits 0: every leg PASS, no FAIL, no SKIP, not run with `--cli-bin`. Paste that result into
+   the release PR. What each leg proves and what it does not:
+   [docs/operator/upgrade-rollback.md](docs/operator/upgrade-rollback.md#the-rc-gate-one-command).
 5. Tag and push:
 
    ```sh

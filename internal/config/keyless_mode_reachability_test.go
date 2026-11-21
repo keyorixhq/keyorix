@@ -104,7 +104,7 @@ func findKeylessModeReferences(t *testing.T, root string) map[string]bool {
 		}
 		if d.IsDir() {
 			base := d.Name()
-			if base == ".git" || base == "node_modules" || base == "cli" || base == "operator" {
+			if base == ".git" || base == ".claude" || base == "node_modules" || base == "cli" || base == "operator" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -183,7 +183,7 @@ func TestKeylessMode_NoWriteAssignment(t *testing.T) {
 		}
 		if d.IsDir() {
 			base := d.Name()
-			if base == ".git" || base == "node_modules" || base == "cli" || base == "operator" {
+			if base == ".git" || base == ".claude" || base == "node_modules" || base == "cli" || base == "operator" {
 				return filepath.SkipDir
 			}
 			return nil

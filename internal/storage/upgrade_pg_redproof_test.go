@@ -12,6 +12,7 @@ package storage
 import (
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -135,7 +136,7 @@ func TestUpgradeInterrupted_V091_SQLite_RealPath(t *testing.T) {
 	for _, stop := range []int{34, 41, 200} {
 		dir := t.TempDir()
 		dbPath := filepath.Join(dir, "upgrade.db")
-		if err := ugCopyFile(tpl.dbFile, dbPath); err != nil {
+		if err := os.WriteFile(dbPath, tpl.image, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		gdb, err := openSQLiteGorm(sqliteDSN(dbPath))
