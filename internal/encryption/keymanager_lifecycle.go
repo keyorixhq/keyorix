@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/hkdf"
@@ -53,69 +54,20 @@ type KeyManager struct {
 	// keySet keeps the key-set manifest (#2900) current; see
 	// keymanager_manifest.go. NewService replaces the salt+DEK default with
 	// the writer for the whole configured set (provider blobs, shares).
-	keySet     *keyfiles.SetWriter
-	currentDEK []byte
-	// dekSnapshot is the raw wrapped-DEK bytes read from disk at the moment
-	// currentDEK was last set (Initialize/RotateDEKWithSweep). It
-	// lets RewrapDEK detect — under the exclusive key lock — whether another
-	// process has changed dek.key since, so it never overwrites a
-	// concurrently-completed rotation with a stale value (#195).
-	dekSnapshot []byte
-	keyVersion  string
+	keySet *keyfiles.SetWriter
 	// keyProvider sources the KEK (ADR-038). nil = the legacy passphrase+salt
 	// derivation below; set to a crypto.KeyProvider (password/file/env) by the
 	// Service to obtain the KEK from elsewhere. Either way the KEK still wraps the
 	// same on-disk DEK, so the data path is unchanged.
 	keyProvider crypto.KeyProvider
-	// evidenceSignKey/evidenceSignKeyID are a 32-byte HMAC key and its public
-	// fingerprint, derived from the KEK (NOT the DEK) via HKDF-SHA256 at
-	// Initialize time — before the KEK is wiped below. Used to sign/verify
-	// exported compliance-evidence packs (internal/core/evidence_signing.go).
-	// Deriving from the KEK rather than the DEK is the point (#268): a routine
-	// DEK rotation (RotateDEKWithSweep, ADR-010) re-wraps a brand-new DEK under
-	// the SAME KEK, so this key — and its fingerprint — is completely unaffected
-	// by it, and a previously-signed evidence pack stays verifiable across a DEK
-	// rotation. Only a genuine KEK change (rotate-kek, KEK-provider migration,
-	// RewrapDEK / ADR-041 — a far rarer, deliberate operator action) changes it; when that
-	// happens VerifyEvidenceSignature correctly reports an older signature as
-	// made under a superseded key version rather than as tampered, same as
-	// before. Never persisted to disk — held only in memory, like currentDEK.
-	evidenceSignKey   []byte
-	evidenceSignKeyID string
-	// auditCheckpointKey/auditCheckpointKeyID are a 32-byte HMAC key and its public
-	// fingerprint, derived from the KEK (NOT the DEK) via HKDF-SHA256 at Initialize
-	// time — before the KEK is wiped below. Used to sign/verify audit-chain
-	// checkpoints (ADR-029, internal/core/audit_checkpoint.go). Deriving from the
-	// KEK rather than the DEK is the point (#502, mirroring #268's fix for
-	// evidenceSignKey above): a routine DEK rotation (RotateDEKWithSweep, ADR-010)
-	// re-wraps a brand-new DEK under the SAME KEK, so this key — and its
-	// fingerprint — is completely unaffected by it, and a checkpoint signed before a
-	// DEK rotation stays verifiable after one (previously, deriving from the DEK
-	// meant every DEK rotation followed by a server restart caused every existing
-	// checkpoint to fail its signature check and `audit verify` to report the trail
-	// invalid until the next checkpoint write re-baselined it — a real, if
-	// self-healing, false-tamper-alarm window). Only a genuine KEK change
-	// (rotate-kek, KEK-provider migration, RewrapDEK / ADR-041 — a far rarer,
-	// deliberate operator action) changes it; when that happens the existing superseded-key
-	// handling in enforceAuditCheckpoint/writeAuditCheckpointLocked correctly
-	// treats the stale checkpoint as needing re-baselining rather than as tampered,
-	// same as before. Never persisted to disk — held only in memory, like
-	// currentDEK/evidenceSignKey.
-	auditCheckpointKey   []byte
-	auditCheckpointKeyID string
-	// backupManifestKey/backupManifestKeyID are a 32-byte HMAC key and its
-	// public fingerprint, derived from the KEK via
-	// auditverify.DeriveBackupManifestKey at Initialize time -- the exact
-	// same treatment as auditCheckpointKey immediately above (KEK-derived
-	// so a DEK rotation never invalidates an already-signed manifest;
-	// re-derived on KEK rotation; wiped on shutdown), but its own
-	// independently domain-separated key: design-b3-backup-v2.md §5.2's
-	// explicit decision that the manifest-signing key must never be the
-	// audit-checkpoint key reused for a second protocol. Never persisted to
-	// disk -- held only in memory, like every other key here.
-	backupManifestKey   []byte
-	backupManifestKeyID string
-	mu                  sync.RWMutex
+	// state is the published key material (keymanager_state.go): readers do
+	// one Load under mu.RLock, writers Store a whole new keyState.
+	state atomic.Pointer[keyState]
+	// rotateMu serialises a rotation that keeps mu off its disk I/O
+	// (RotateKEKPassphraseWithPrepare) against every other in-process writer
+	// of state; readers never take it. Lock order: keymanager_state.go.
+	rotateMu sync.Mutex
+	mu       sync.RWMutex
 }
 
 // evidenceSignKeyInfo/evidenceSignKeyIDInfo domain-separate the evidence-signing
@@ -239,14 +191,15 @@ type KeyInfo struct {
 // NewKeyManager creates a new KeyManager.
 func NewKeyManager(baseDir, dekPath, saltPath string) *KeyManager {
 	base, dek, salt, err := normalizeKeyPaths(baseDir, dekPath, saltPath)
-	return &KeyManager{
-		dekPath:    dek,
-		saltPath:   salt,
-		baseDir:    base,
-		keyVersion: "v1",
-		configErr:  err,
-		keySet:     defaultKeySetWriter(base, dek, salt),
+	km := &KeyManager{
+		dekPath:   dek,
+		saltPath:  salt,
+		baseDir:   base,
+		configErr: err,
+		keySet:    defaultKeySetWriter(base, dek, salt),
 	}
+	km.state.Store(&keyState{keyVersion: "v1"})
+	return km
 }
 
 // normalizeKeyPaths reconciles a configured (baseDir, dekPath, saltPath) with
@@ -355,6 +308,8 @@ func absOrRel(abs bool) string {
 // First run: generates salt + DEK, wraps DEK with passphrase-derived KEK.
 // Subsequent runs: loads salt, derives KEK, unwraps DEK, wipes KEK.
 func (km *KeyManager) Initialize(passphrase string) error {
+	km.rotateMu.Lock()
+	defer km.rotateMu.Unlock()
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
@@ -375,7 +330,7 @@ func (km *KeyManager) Initialize(passphrase string) error {
 		return fmt.Errorf("failed to ensure wrapped DEK exists: %w", err)
 	}
 
-	dek, err := km.unwrapDEK(kek)
+	dek, wrapped, err := km.unwrapDEK(kek)
 	if err != nil {
 		return err // unwrapDEK's errors name the step ("failed to unwrap DEK — wrong passphrase ...")
 	}
@@ -416,13 +371,16 @@ func (km *KeyManager) Initialize(passphrase string) error {
 		return fmt.Errorf("failed to derive backup-manifest key: %w", err)
 	}
 
-	km.currentDEK = dek
-	km.evidenceSignKey = esk
-	km.evidenceSignKeyID = eskID
-	km.auditCheckpointKey = ack
-	km.auditCheckpointKeyID = ackID
-	km.backupManifestKey = bmk
-	km.backupManifestKeyID = bmkID
+	next := km.nextState()
+	next.dek = dek
+	next.dekSnapshot = wrapped
+	next.evidenceSignKey = esk
+	next.evidenceSignKeyID = eskID
+	next.auditCheckpointKey = ack
+	next.auditCheckpointKeyID = ackID
+	next.backupManifestKey = bmk
+	next.backupManifestKeyID = bmkID
+	km.state.Store(next)
 	return nil
 }
 
@@ -515,22 +473,23 @@ func (km *KeyManager) wrappedDEKExists() bool {
 	return !os.IsNotExist(err)
 }
 
-// unwrapDEK reads the wrapped DEK from disk and decrypts it with the KEK.
-func (km *KeyManager) unwrapDEK(kek []byte) ([]byte, error) {
-	wrapped, err := securefiles.SafeReadFile(km.baseDir, km.dekPath)
+// unwrapDEK reads the wrapped DEK from disk and decrypts it with the KEK. It
+// returns the DEK and a copy of the wrapped bytes it came from (the caller's
+// next dekSnapshot).
+func (km *KeyManager) unwrapDEK(kek []byte) (dek, wrapped []byte, err error) {
+	wrapped, err = securefiles.SafeReadFile(km.baseDir, km.dekPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read wrapped DEK: %w", err)
+		return nil, nil, fmt.Errorf("failed to read wrapped DEK: %w", err)
 	}
 
-	dek, err := unwrapKey(wrapped, kek)
+	dek, err = unwrapKey(wrapped, kek)
 	if err != nil {
-		return nil, km.withInterruptedKeyOpHints(fmt.Errorf("failed to unwrap DEK — wrong passphrase or corrupted key file: %w", err))
+		return nil, nil, km.withInterruptedKeyOpHints(fmt.Errorf("failed to unwrap DEK — wrong passphrase or corrupted key file: %w", err))
 	}
 	if len(dek) != 32 {
-		return nil, fmt.Errorf("invalid DEK size after unwrap: expected 32 bytes, got %d", len(dek))
+		return nil, nil, fmt.Errorf("invalid DEK size after unwrap: expected 32 bytes, got %d", len(dek))
 	}
-	km.dekSnapshot = append([]byte(nil), wrapped...)
-	return dek, nil
+	return dek, append([]byte(nil), wrapped...), nil
 }
 
 // wrapKey encrypts plainKey with kek using AES-256-GCM.

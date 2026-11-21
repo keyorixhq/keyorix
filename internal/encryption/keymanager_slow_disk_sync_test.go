@@ -19,14 +19,16 @@
 //   - ATOMIC + RECOVERS (gate): a KEK rotation whose directory fsync is slow still
 //     commits atomically; the DEK is unchanged; a freshly reopened key manager
 //     recovers the same DEK under the NEW passphrase and rejects the OLD one.
-//   - NO LOCK HELD ACROSS THE SLOW OP (demonstration + calibration): KEK rotation
-//     holds KeyManager.mu (write) across its fsyncs; GetKeyVersion()/GetDEK() take
-//     it (read) on the hot encrypt path (service.go:EncryptSecret calls
-//     GetKeyVersion on every encrypt). So a slow fsync stalls every encrypt for
-//     its full duration. The test measures this and asserts the stall tracks the
-//     injected delay (red), against a zero-contention baseline (green). This is a
-//     hardening observation, not a defect; it is benign in production (rotation
-//     is rare and admin-initiated) but real.
+//   - NO LOCK HELD ACROSS THE SLOW OP (acceptance, #4376): GetKeyVersion()/GetDEK()
+//     and the KEK-derived key getters sit on the hot encrypt path
+//     (service.go:EncryptSecret calls GetKeyVersion on every encrypt). KEK rotation
+//     used to hold KeyManager.mu (write) across its fsyncs, so a slow fsync stalled
+//     every encrypt for its full duration. It now holds only rotateMu and the DEK
+//     flock, which readers never take, and publishes the new keys after the files
+//     are durable: every reader probed while the fsync is stalled returns within a
+//     small bound, returns the OLD keys (nothing is published before the rename and
+//     directory fsync), and the NEW keys once the rotation returns. Red on a tree
+//     where the rotation holds mu across the fsync.
 //   - NO FD / GOROUTINE LEAK (gate): the slow-disk rotation leaves the open-fd and
 //     goroutine counts where it found them.
 package encryption
@@ -40,8 +42,8 @@ import (
 )
 
 // armSlowSyncOnce installs a fileFaultHook that, on the FIRST call for seam,
-// closes reached (signalling the caller that the seam is now executing — and
-// therefore that KeyManager.mu is held) and sleeps delay, then returns nil so the
+// closes reached (signalling the caller that the seam is now executing, with
+// whatever locks the rotation holds there) and sleeps delay, then returns nil so the
 // REAL durability call runs afterwards. Subsequent seams/calls are pass-through.
 // Returns a restore func. Not for parallel use (fileFaultHook is a package global).
 func armSlowSyncOnce(seam string, delay time.Duration, reached chan struct{}) (restore func()) {
@@ -127,13 +129,61 @@ func TestSlowDiskSync_KEKRotationAtomicAndRecovers(t *testing.T) {
 	}
 }
 
-// TestSlowDiskSync_HoldsReadLockAcrossSync demonstrates (3× replay) that a KEK
-// rotation holds KeyManager.mu across its directory fsync, so a slow fsync stalls
-// the hot encrypt path (GetKeyVersion RLock) for the whole delay. The
-// zero-contention baseline is the green control proving the measurement reflects
-// real lock contention, not a slow probe.
-func TestSlowDiskSync_HoldsReadLockAcrossSync(t *testing.T) {
-	const delay = 300 * time.Millisecond
+// readerProbeBound is how long one key-manager read may take while a rotation's
+// fsync is stalled for slowSyncDelay. Generous against scheduler and -race noise,
+// far below the stall it must not track.
+const (
+	slowSyncDelay    = 300 * time.Millisecond
+	readerProbeBound = 50 * time.Millisecond
+	readerProbes     = 10
+)
+
+// probeReaders calls every key-manager getter readerProbes times while a
+// rotation is stalled inside a slow fsync, failing on any call slower than
+// readerProbeBound, and returns the evidence-signing key ID the last probe saw.
+func probeReaders(t *testing.T, km *KeyManager, trial int) (eskID string) {
+	t.Helper()
+	var worst time.Duration
+	for range readerProbes {
+		for name, read := range map[string]func(){
+			"GetKeyVersion":         func() { _ = km.GetKeyVersion() },
+			"GetDEK":                func() { _ = km.GetDEK() },
+			"GetEvidenceSignKey":    func() { _, eskID, _ = km.GetEvidenceSignKey() },
+			"GetAuditCheckpointKey": func() { _, _, _ = km.GetAuditCheckpointKey() },
+			"GetBackupManifestKey":  func() { _, _, _ = km.GetBackupManifestKey() },
+		} {
+			t0 := time.Now()
+			read()
+			took := time.Since(t0)
+			worst = max(worst, took)
+			if took > readerProbeBound {
+				t.Fatalf("trial %d: %s took %v while the rotation's fsync was stalled for %v (bound %v) — "+
+					"a lock readers take is held across the slow fsync", trial, name, took, slowSyncDelay, readerProbeBound)
+			}
+		}
+	}
+	t.Logf("trial %d: slowest reader under a %v stalled fsync: %v", trial, slowSyncDelay, worst.Round(time.Microsecond))
+	return eskID
+}
+
+// requireStillStalled fails unless the rotation is still inside its slow seam,
+// so the probes before it provably overlapped the stall rather than running
+// after the rotation finished.
+func requireStillStalled(t *testing.T, done <-chan error, trial int) {
+	t.Helper()
+	select {
+	case err := <-done:
+		t.Fatalf("HARNESS trial %d: the rotation returned (err=%v) before the reader probes finished — "+
+			"the probes did not overlap the stalled fsync; raise slowSyncDelay", trial, err)
+	default:
+	}
+}
+
+// TestSlowDiskSync_ReadersNotBlockedAcrossKEKSync is the acceptance test for
+// #4376 item 1 (3× replay): while a KEK rotation's directory fsync is stalled,
+// every key-manager reader returns within readerProbeBound and still sees the
+// old keys; after the rotation returns it sees the new ones.
+func TestSlowDiskSync_ReadersNotBlockedAcrossKEKSync(t *testing.T) {
 	// Passphrase chain, one rotation per trial.
 	passes := []string{"hold-p0", "hold-p1", "hold-p2", "hold-p3"}
 	dir := t.TempDir()
@@ -141,48 +191,38 @@ func TestSlowDiskSync_HoldsReadLockAcrossSync(t *testing.T) {
 	if err := km.Initialize(passes[0]); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
+	dek0 := km.GetDEK()
 
 	goroutinesBefore := runtime.NumGoroutine()
 
 	const trials = 3
 	for i := range trials {
 		oldPass, newPass := passes[i], passes[i+1]
-
-		// Green control: probe latency with NO rotation holding the lock.
-		base0 := time.Now()
-		_ = km.GetKeyVersion()
-		baseline := time.Since(base0)
+		_, oldID, _ := km.GetEvidenceSignKey()
 
 		reached := make(chan struct{})
-		restore := armSlowSyncOnce("kek:syncdir-dek", delay, reached)
+		restore := armSlowSyncOnce("kek:syncdir-dek", slowSyncDelay, reached)
 		done := make(chan error, 1)
 		go func() { done <- km.RotateKEKPassphrase(oldPass, newPass) }()
 
-		<-reached // rotation is now inside the slow fsync, holding mu.Lock
-		probe0 := time.Now()
-		_ = km.GetKeyVersion() // RLock — blocks until rotation releases mu.Lock
-		blocked := time.Since(probe0)
+		<-reached // rotation is now inside the slow directory fsync
+		seenID := probeReaders(t, km, i)
+		requireStillStalled(t, done, i)
 
 		rotErr := <-done
 		restore()
 		if rotErr != nil {
 			t.Fatalf("trial %d: rotation failed: %v", i, rotErr)
 		}
-
-		t.Logf("trial %d: baseline GetKeyVersion=%v, blocked-under-slow-sync=%v (injected delay=%v)",
-			i, baseline.Round(time.Microsecond), blocked.Round(time.Millisecond), delay)
-
-		// RED: the probe is held off for most of the injected delay => mu.Lock is
-		// held across the slow fsync.
-		if blocked < delay/2 {
-			t.Fatalf("trial %d: expected the hot-path RLock to be blocked >= %v by the slow fsync, got %v "+
-				"(if this now passes, KeyManager.mu is no longer held across the directory fsync — revisit this characterization)",
-				i, delay/2, blocked)
+		if seenID != oldID {
+			t.Fatalf("trial %d: a reader saw evidence-signing key %q while the rotation was still inside its fsync, want the old %q — "+
+				"the new keys were published before the key files were durable", i, seenID, oldID)
 		}
-		// GREEN control: with no rotation in flight the same probe is ~instant.
-		if baseline > delay/10 {
-			t.Fatalf("trial %d: zero-contention baseline GetKeyVersion took %v (> %v) — the probe itself is slow, "+
-				"the blocked measurement would not prove lock contention", i, baseline, delay/10)
+		if _, newID, _ := km.GetEvidenceSignKey(); newID == oldID {
+			t.Fatalf("trial %d: evidence-signing key ID unchanged (%q) after the KEK rotation returned", i, newID)
+		}
+		if !bytes.Equal(km.GetDEK(), dek0) {
+			t.Fatalf("trial %d: DEK changed across a KEK rotation", i)
 		}
 	}
 

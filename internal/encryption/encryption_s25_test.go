@@ -1466,7 +1466,7 @@ func TestKeyManager_RotateDEKWithSweep_BadPassphrase_Error(t *testing.T) {
 	// to pass the "not initialized" check; the empty passphrase will then fail at
 	// deriveKEK because there's no provider and passphrase == "".
 	km := NewKeyManager(dir, "dek.key", "kek.salt")
-	km.currentDEK = make([]byte, 32) // satisfy the nil check
+	setTestDEK(km, make([]byte, 32)) // satisfy the nil check
 
 	// Create the salt file so ensureSaltExists doesn't generate a new one.
 	saltPath := filepath.Join(dir, "kek.salt")

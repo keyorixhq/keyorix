@@ -39,7 +39,8 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	if km.currentDEK == nil {
+	cur := km.published()
+	if cur.dek == nil {
 		return fmt.Errorf("key manager not initialized — cannot re-wrap DEK")
 	}
 	if newProvider == nil {
@@ -70,7 +71,7 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 	}
 	defer lock.release()
 
-	// Mutual exclusion alone is not sufficient: km.currentDEK was captured
+	// Mutual exclusion alone is not sufficient: the in-memory DEK was captured
 	// whenever this process's own Initialize() ran, which may be long before
 	// this call and long before the lock above was even contended for. If a
 	// concurrent RotateDEKWithSweep replaced dek.key with a NEW DEK (and
@@ -85,11 +86,11 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 	if err != nil {
 		return fmt.Errorf("re-wrap DEK: re-read active DEK under lock: %w", err)
 	}
-	if !bytes.Equal(onDisk, km.dekSnapshot) {
+	if !bytes.Equal(onDisk, cur.dekSnapshot) {
 		return fmt.Errorf("re-wrap DEK: the on-disk DEK changed since this process started — a concurrent DEK rotation likely completed in the meantime, so the in-memory DEK here is stale. Aborting without writing to avoid discarding the newer key; re-run migrate-provider now that the rotation has finished")
 	}
 
-	wrapped, err := wrapKey(km.currentDEK, newKEK)
+	wrapped, err := wrapKey(cur.dek, newKEK)
 	if err != nil {
 		return fmt.Errorf("re-wrap DEK: wrap DEK with new KEK: %w", err)
 	}
@@ -137,6 +138,8 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 	// Crash-consistency checkpoint (nil in production): the rewrap is fully durable.
 	rotationCheckpointHook("rewrap:after-syncdir")
 	km.commitKeySet(keyfiles.OpRewrapDEK, newFiles)
-	km.dekSnapshot = append([]byte(nil), wrapped...)
+	next := km.nextState()
+	next.dekSnapshot = append([]byte(nil), wrapped...)
+	km.state.Store(next)
 	return nil
 }
