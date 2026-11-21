@@ -132,8 +132,8 @@ ledger gap.
   One consequence of "own text contains the word": a guarded invariant that mentions
   `UNGUARDED` for a sub-clause (for example `INV-KSYNC-fetcher-resource-bounded`'s
   `UNGUARDED-CORNER`) counts as UNGUARDED until that sub-clause is reworded.
-- `internal/docsdrift` (`invariants_index_test.go`, `invariants_index_malformed_test.go`,
-  `invariants_index_generator_test.go`) fails on a stale block, a package listed twice, a row
+- `internal/docsdrift` (`invariants_index_test.go`, `invariants_index_malformed_test.go`)
+  fails on a stale block, a package listed twice, a row
   whose Invariants is not Guarded + UNGUARDED, a Total row (there is none: two PRs editing the
   hand-kept one merged in the queue into two Total rows or a wrong sum, #4237; the test
   computes the column sums and logs them, run it with `-v` to read them), a row whose linked
