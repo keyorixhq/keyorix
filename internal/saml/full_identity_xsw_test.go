@@ -5,11 +5,15 @@ package saml
 
 import (
 	"bytes"
+	"crypto/tls"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/beevik/etree"
+	csaml "github.com/crewjam/saml"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 func pristineIdentity() *AssertionInfo {
@@ -120,11 +124,17 @@ func naiveIdentity(t *testing.T, doc []byte, last bool) *AssertionInfo {
 }
 
 // Red side for ops 21-23: fed through a naive reader, they must reach the oracle's GROUPS
-// check (not stop at subject/email/name), which proves the fuzzer can generate the
-// "signed NameID, different groups" shape. The real provider rejecting them is asserted by
-// TestFullIdentity_AttributeOpsNeverChangeIdentity.
+// check (not stop at subject/email/name). This reads raw XML and skips the library's
+// validation, so it proves only the document shape; whether the forged assertion survives
+// crewjam's own checks is TestFullIdentity_EvilAssertionPassesLibraryValidation. The real
+// provider rejecting the ops is asserted by TestFullIdentity_AttributeOpsNeverChangeIdentity.
 func TestFullIdentity_EvilAssertionOpsReachGroupsCheck(t *testing.T) {
 	fx := newFIDFixture(t)
+	// The naive reader reading the signed assertion must reproduce the signed identity, so
+	// the oracle below fires on the injected assertion and not on the fixture.
+	if clean := naiveIdentity(t, fx.signedXML, false); checkFullIdentity(clean, nil, 0, 0) != "" {
+		t.Fatalf("naive reader does not reproduce the signed identity on the pristine fixture")
+	}
 	cases := []struct {
 		op   uint8
 		last bool // which assertion the naive reader trusts for this placement
@@ -158,5 +168,77 @@ func TestFullIdentity_AttributeOpsNeverChangeIdentity(t *testing.T) {
 		if msg := checkFullIdentity(info, perr, op, 0); msg != "" {
 			t.Errorf("op %d: %s", op, msg)
 		}
+	}
+}
+
+// The forged assertion, once signed with the trusted IdP key, must pass the library's own
+// assertion validation (IssueInstant age, bearer SubjectConfirmation, Conditions, audience)
+// and reach the oracle's GROUPS check. Without this, ops 21-23 could be refused as expired
+// before any attribute is read, and the groups check would certify nothing. This is the
+// shape of an SP regression that binds the verified identity to the wrong assertion but
+// still runs assertion validation.
+func TestFullIdentity_EvilAssertionPassesLibraryValidation(t *testing.T) {
+	fx := newFIDFixture(t)
+	doc := etree.NewDocument()
+	if err := doc.ReadFromBytes(fx.signedXML); err != nil {
+		t.Fatal(err)
+	}
+	root := doc.Root()
+	orig := root.FindElement(".//Assertion")
+	if orig == nil {
+		t.Fatal("fixture has no Assertion")
+	}
+	evil := fidForgedAssertion(orig)
+	if evil == nil {
+		t.Fatal("fidForgedAssertion found no group value to extend")
+	}
+
+	ks := dsig.TLSCertKeyStore(tls.Certificate{
+		Certificate: [][]byte{fx.cert.Raw}, PrivateKey: fx.priv, Leaf: fx.cert,
+	})
+	sc := dsig.NewDefaultSigningContext(ks)
+	sc.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
+	if err := sc.SetSignatureMethod(dsig.RSASHA256SignatureMethod); err != nil {
+		t.Fatal(err)
+	}
+	signedEvil, err := sc.SignEnveloped(evil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture's Response carries its own signature, which the swap below would
+	// invalidate: drop it so the forged assertion's signature is the one under test.
+	for _, rs := range root.FindElements("./Signature") {
+		root.RemoveChild(rs)
+	}
+	root.RemoveChild(orig)
+	root.AddChild(signedEvil)
+	resp, err := doc.WriteToBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	acs, err := url.Parse(fx.acsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := fx.p.sp.ParseXMLResponse(resp, nil, *acs)
+	if err != nil {
+		var ire *csaml.InvalidResponseError
+		if errors.As(err, &ire) {
+			err = ire.PrivateErr
+		}
+		t.Fatalf("forged assertion signed by the IdP key was refused by the library, so the groups check is unreachable for ops 21-23: %v", err)
+	}
+	if a == nil {
+		t.Fatal("ParseXMLResponse returned nil assertion with nil error")
+	}
+
+	// And through the provider: the oracle must report the groups escalation.
+	info, perr := fx.p.ParseResponse(postedReq(fx.acsURL, resp), nil)
+	if perr != nil {
+		t.Fatalf("provider refused the forged-but-signed response: %v", perr)
+	}
+	if msg := checkFullIdentity(info, perr, 21, 0); !strings.Contains(msg, "(groups)") {
+		t.Fatalf("oracle did not report the groups escalation for the forged assertion: %q (groups=%v)", msg, info.Groups)
 	}
 }

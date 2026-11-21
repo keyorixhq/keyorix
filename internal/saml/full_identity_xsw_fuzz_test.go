@@ -61,9 +61,7 @@ import (
 // Distinct signed identity: every field is a different string so a mutation that swaps one
 // field's source is unambiguous in the failure message and cannot accidentally match another.
 const (
-	// Fixture entity IDs, shared with fidEvilAssertion so the forged assertion matches the
-	// signed one's issuer and audience (a mismatch would be stopped by those checks and
-	// never reach the identity comparison).
+	// Fixture entity IDs.
 	fidIDPEntityID = "https://fid-idp.example/entity"
 	fidSPEntityID  = "https://keyorix.internal/saml/fid/metadata"
 
@@ -110,27 +108,32 @@ func fidMutate(signed []byte, op uint8, off uint16, blob []byte) []byte {
 // fidNumOps = diffNumOps structural ops (0..14) + 9 attribute-targeted ops (15..23).
 const fidNumOps = diffNumOps + 9
 
-// fidEvilAssertion is an UNSIGNED assertion that matches the signed one on everything an SP
-// checks before reading identity (issuer, audience, validity window) AND on the signed
-// NameID, email and name, but grants fidEvilGroup. Subject-only oracles cannot see it, and
-// diffEvilAssertion (another fixture's issuer/audience, a different NameID, no
-// AttributeStatement) is stopped by the issuer/audience/subject checks before the groups
-// comparison is reached. An SP that read identity from this assertion would pass the
-// subject check and fail only on groups, which is the shape this oracle exists for.
-const fidEvilAssertion = `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" Version="2.0" ID="_fidevil" IssueInstant="2024-01-01T00:00:00Z">` +
-	`<saml:Issuer>` + fidIDPEntityID + `</saml:Issuer>` +
-	`<saml:Subject><saml:NameID>` + fidSubject + `</saml:NameID></saml:Subject>` +
-	`<saml:Conditions NotBefore="2024-01-01T00:00:00Z" NotOnOrAfter="2099-01-01T00:00:00Z">` +
-	`<saml:AudienceRestriction><saml:Audience>` + fidSPEntityID + `</saml:Audience></saml:AudienceRestriction></saml:Conditions>` +
-	`<saml:AuthnStatement AuthnInstant="2024-01-01T00:00:00Z"><saml:AuthnContext>` +
-	`<saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:Password</saml:AuthnContextClassRef>` +
-	`</saml:AuthnContext></saml:AuthnStatement>` +
-	`<saml:AttributeStatement>` +
-	`<saml:Attribute FriendlyName="mail" Name="mail"><saml:AttributeValue>` + fidEmail + `</saml:AttributeValue></saml:Attribute>` +
-	`<saml:Attribute FriendlyName="cn" Name="cn"><saml:AttributeValue>` + fidName + `</saml:AttributeValue></saml:Attribute>` +
-	`<saml:Attribute FriendlyName="eduPersonAffiliation" Name="eduPersonAffiliation">` +
-	`<saml:AttributeValue>` + fidGroup1 + `</saml:AttributeValue><saml:AttributeValue>` + fidEvilGroup + `</saml:AttributeValue>` +
-	`</saml:Attribute></saml:AttributeStatement></saml:Assertion>`
+// fidForgedAssertion returns an UNSIGNED copy of the signed assertion that grants fidEvilGroup
+// on top of the signed groups. It is built from the signed fixture at runtime rather than
+// from a constant, so it inherits everything crewjam's validateAssertion checks before it
+// reads any attribute: the fresh IssueInstant (MaxIssueDelay), the bearer SubjectConfirmation
+// (Recipient, NotOnOrAfter), the Conditions window and audience, the issuer, the NameID, and
+// the email and name attributes. Only the signature is dropped, the ID changes and one group
+// is added. A forged assertion with a hard-coded 2024 IssueInstant and no bearer confirmation
+// is refused as expired before identity is read, so the groups check would stay unreachable
+// (TestFullIdentity_EvilAssertionPassesLibraryValidation pins the reachable shape).
+// Returns nil when the signed assertion has no group value to extend.
+func fidForgedAssertion(signedAssertion *etree.Element) *etree.Element {
+	evil := signedAssertion.Copy()
+	for _, sig := range evil.FindElements("./Signature") {
+		evil.RemoveChild(sig)
+	}
+	evil.CreateAttr("ID", "_fidevil")
+	for _, av := range evil.FindElements(".//AttributeValue") {
+		if av.Text() == fidGroup1 {
+			ev := av.Copy()
+			ev.SetText(fidEvilGroup)
+			av.Parent().AddChild(ev)
+			return evil
+		}
+	}
+	return nil
+}
 
 type fidEvilPlacement int
 
@@ -140,9 +143,12 @@ const (
 	fidEvilWrap                          // outer assertion; the signed one moves into its Advice
 )
 
-// injectFidEvilAssertion places fidEvilAssertion relative to the signed assertion. A parse
+// injectFidEvilAssertion places the forged assertion relative to the signed one. A parse
 // failure or missing target returns the input unchanged (TestFullIdentity_AllOpsChangeTheDocument
-// pins that this does not happen on the fixture).
+// pins that this does not happen on the fixture). Ops 21 and 22 are refused first by
+// strictAssertionShape ("exactly one Assertion child of root"), before crewjam runs; the
+// ops exist to cover a regression of that layer. Op 23 keeps one Assertion child and is
+// refused by the library's own checks.
 func injectFidEvilAssertion(signed []byte, where fidEvilPlacement) []byte {
 	doc := etree.NewDocument()
 	if err := doc.ReadFromBytes(signed); err != nil || doc.Root() == nil {
@@ -153,18 +159,22 @@ func injectFidEvilAssertion(signed []byte, where fidEvilPlacement) []byte {
 	if signedAssertion == nil {
 		return signed
 	}
+	evil := fidForgedAssertion(signedAssertion)
+	if evil == nil {
+		return signed
+	}
 	switch where {
 	case fidEvilFirst:
-		root.InsertChildAt(0, parseFragment(fidEvilAssertion))
+		root.InsertChildAt(0, evil)
 	case fidEvilLast:
-		root.AddChild(parseFragment(fidEvilAssertion))
+		root.AddChild(evil)
 	case fidEvilWrap:
-		evil := parseFragment(strings.Replace(fidEvilAssertion,
-			`</saml:AttributeStatement></saml:Assertion>`,
-			`</saml:AttributeStatement><saml:Advice></saml:Advice></saml:Assertion>`, 1))
-		adv := evil.FindElement(".//Advice")
-		if adv == nil {
-			return signed
+		adv := etree.NewElement("Advice")
+		adv.Space = signedAssertion.Space
+		if cond := evil.FindElement("./Conditions"); cond != nil {
+			evil.InsertChildAt(cond.Index()+1, adv) // schema order: Conditions, Advice, statements
+		} else {
+			evil.AddChild(adv)
 		}
 		adv.AddChild(signedAssertion.Copy())
 		root.RemoveChild(signedAssertion)
@@ -261,6 +271,10 @@ type fidFixture struct {
 	p         *Provider
 	signedXML []byte
 	acsURL    string
+	// IdP signing key and certificate: TestFullIdentity_EvilAssertionPassesLibraryValidation
+	// re-signs the forged assertion with them.
+	priv *rsa.PrivateKey
+	cert *x509.Certificate
 }
 
 func newFIDFixture(tb testing.TB) *fidFixture {
@@ -357,7 +371,7 @@ func newFIDFixture(tb testing.TB) *fidFixture {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	return &fidFixture{p: p, signedXML: signedXML, acsURL: acsURL}
+	return &fidFixture{p: p, signedXML: signedXML, acsURL: acsURL, priv: priv, cert: idpCert}
 }
 
 // fidWantGroups is the signed groups set, sorted, that every acceptance must match.
