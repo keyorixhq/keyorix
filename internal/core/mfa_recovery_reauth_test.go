@@ -277,16 +277,14 @@ func TestRecoveryReauth_ConcurrentSameCodeExactlyOneSucceeds(t *testing.T) {
 			start := make(chan struct{})
 			errs := make([]error, n)
 			for i := range n {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					<-start
 					if op == "disable" {
 						errs[i] = c.DisableMFA(ctx, 1, codes[0], "")
 					} else {
 						_, errs[i] = c.RegenerateMFARecoveryCodes(ctx, 1, codes[0])
 					}
-				}()
+				})
 			}
 			close(start)
 			wg.Wait()

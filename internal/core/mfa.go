@@ -314,7 +314,7 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 		if err := c.requireReauth(ctx, user, codeOrPassword, "disable"); err != nil {
 			return err
 		}
-		if err := c.storage.WithTransaction(ctx, disable); err != nil {
+		if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error { return disable(tx) }); err != nil {
 			return err
 		}
 	}
@@ -384,7 +384,7 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 		if err := c.requireReauth(ctx, user, codeOrPassword, "regenerate_recovery_codes"); err != nil {
 			return nil, err
 		}
-		if err := c.storage.WithTransaction(ctx, replace); err != nil {
+		if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error { return replace(tx) }); err != nil {
 			return nil, fmt.Errorf("failed to store recovery codes: %w", err)
 		}
 	}
