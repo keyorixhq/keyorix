@@ -203,8 +203,9 @@ func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, proj
 		// secrets.write route gate is not sufficient on its own — the single-secret PUT
 		// path enforces this too, so a caller who can't update a secret individually must
 		// not be able to via the bulk op (mirrors ExtendExpiringSecrets). Skip (don't
-		// abort) on denial.
-		if _, err := c.EnforceSecretWritePermission(ctx, s.ID, actorID); err != nil {
+		// abort) on denial. An OWNER who holds no secrets.write is skipped as well
+		// (#4508 sibling, CORE-AUTHZ-RACE-NOV-1 item 2): the route gate refuses them.
+		if err := c.enforceSecretWriteGate(ctx, s.ID, actorID, SecretActionSuspend, SecretActionSuspend); err != nil {
 			// A denial (or a secret deleted since the list) is a skip. Any other error
 			// is a failed re-check, not a denial: a plain suspend still skips it, but a
 			// clear-synced-copies suspend counts it as a secret it could not suspend.
@@ -319,7 +320,7 @@ func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actor
 		}
 		// Re-check per-secret write authorization — see the matching check in
 		// SuspendProjectSecrets above.
-		if _, err := c.EnforceSecretWritePermission(ctx, s.ID, actorID); err != nil {
+		if err := c.enforceSecretWriteGate(ctx, s.ID, actorID, SecretActionResume, SecretActionResume); err != nil {
 			continue
 		}
 		if _, err := c.ResumeSecret(ctx, s.ID, actorID); err == nil {

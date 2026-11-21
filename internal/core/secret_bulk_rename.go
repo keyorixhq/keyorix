@@ -136,8 +136,10 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 		// Re-check per-secret write authorization (owner/share). The project-wide
 		// secrets.write route gate is not sufficient on its own — the single-secret PUT
 		// path enforces this, so the bulk op must not let a caller rename a secret they
-		// can't update individually.
-		if _, perr := c.EnforceSecretWritePermission(ctx, secret.ID, actorID); perr != nil {
+		// can't update individually. And the other way round (#4508 sibling,
+		// CORE-AUTHZ-RACE-NOV-1 item 2): an OWNER who holds no secrets.write is skipped,
+		// as the route gate refuses them.
+		if perr := c.enforceSecretWriteGate(ctx, secret.ID, actorID, SecretActionUpdateMetadata, SecretActionUpdateMetadata); perr != nil {
 			skip(rn.ID, "", newName, "secret not found")
 			continue
 		}
