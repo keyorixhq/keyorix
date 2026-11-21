@@ -149,6 +149,12 @@ logs legacy-only duplicates, which become fatal when a package is migrated by
 `scripts/ledgers/migrate-invariants-to-fragments.sh` (coordinator only, quiet window). See
 `docs/invariants-fragments.md`.
 
+**The package table in `docs/INVARIANTS.md` is generated.** Add or change invariants only in
+the package's own file, run `scripts/gen-invariants-index.sh` to refresh the index and commit
+the result, and never edit the block between its `GENERATED` markers by hand. On a merge
+conflict in it, take main's `docs/INVARIANTS.md` and rerun the script. A new package's first
+`INVARIANTS.md` gets its row automatically.
+
 ### Core principle: prefer the machine-checked over the asserted
 
 **Every claim this codebase makes should have a mechanism that fails when the claim stops
