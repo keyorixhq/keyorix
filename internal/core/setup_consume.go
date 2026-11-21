@@ -17,7 +17,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"golang.org/x/crypto/bcrypt"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -217,7 +217,7 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 			return nil, fmt.Errorf("%w: %s: %w", ErrSetupPostVerdict, i18n.T("ErrorStorageFailed", nil), err)
 		}
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), int(bcryptCost.Load()))
+	hash, err := kdfmeter.GenerateFromPassword([]byte(newPassword), int(bcryptCost.Load()))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

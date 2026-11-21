@@ -178,8 +178,9 @@ func pcrashWant(t *testing.T, v []string, name string) {
 	t.Fatalf("oracle %s did not fire; violations: %v", name, v)
 }
 
-// TestProcessCrashRedProof needs child processes but is quick, so it runs by default.
-// Each subtest works on its own copy of the template (the calibration cache is
+// TestProcessCrashRedProof needs child processes but is quick, so it runs in plain
+// `go test` and is skipped only by -short (KEYORIX_PCRASH_EXHAUSTIVE does not gate
+// it; it gates TestProcessCrashCalibration and the exhaustive tests). Each subtest works on its own copy of the template (the calibration cache is
 // locked), so they run in parallel, as TestProcessCrashExhaustive's do.
 func TestProcessCrashRedProof(t *testing.T) {
 	if testing.Short() {
@@ -247,12 +248,64 @@ func TestProcessCrashRedProof(t *testing.T) {
 			twice.passes = []string{pcrashPass, pcrashPass}
 			pcrashWant(t, pcrashRedProof(t, w, twice, "", 1, nil), "I3")
 		})
+		t.Run("I3-mixed-roles-after-authorization-before", func(t *testing.T) {
+			t.Parallel()
+			// Each part alone is an allowed state; only the combination is not.
+			mixed := pcrashOp{name: "role-mixed", after: pcrashSame}
+			if v := pcrashRedProof(t, w, mixed, "role-mixed-die-first", 0, nil); len(v) > 0 {
+				t.Fatalf("control: killed before either write is wholly before: %v", v)
+			}
+			if v := pcrashRedProof(t, w, mixed, "", 0, nil); len(v) > 0 {
+				t.Fatalf("control: a completed run is wholly after: %v", v)
+			}
+			pcrashWant(t, pcrashRedProof(t, w, mixed, "role-mixed-die-between", 0, nil), "I3 state mixes before and")
+		})
 		t.Run("I4-privilege-widened", func(t *testing.T) {
 			t.Parallel()
 			v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
-				pcrashExecSQL(t, dir, "INSERT INTO user_roles (user_id, role_id, project_id, environment_id) SELECT u.id, r.id, 0, 0 FROM users u, roles r WHERE u.username = 'pcrash-bob' AND r.name = 'admin'")
+				pcrashExecSQL(t, dir, pcrashWidenBobSQL)
 			})
 			pcrashWant(t, v, "I4")
+		})
+		t.Run("I1-refusal-must-be-the-products", func(t *testing.T) {
+			t.Parallel()
+			// A directory in the DEK's place fails in key reconciliation or key
+			// initialization, and is no refusal an operator is told how to resolve.
+			v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+				dekPath := filepath.Join(dir, "keys", "dek.key")
+				if err := os.Remove(dekPath); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(dekPath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			})
+			pcrashWant(t, v, "I1 reopen failed without a documented")
+		})
+		t.Run("control-product-refusals-are-documented", func(t *testing.T) {
+			t.Parallel()
+			wrongFirst := update
+			wrongFirst.passes = []string{"pcrash-not-the-passphrase", pcrashPass}
+			if v := pcrashRedProof(t, w, wrongFirst, "", 1, nil); len(v) > 0 {
+				t.Fatalf("a wrong passphrase is a documented refusal: %v", v)
+			}
+			v := pcrashRedProof(t, w, update, "", 1, func(dir string) {
+				if err := os.Remove(filepath.Join(dir, "keys", "dek.key")); err != nil {
+					t.Fatal(err)
+				}
+			})
+			pcrashWant(t, v, "I1 no passphrase opens")
+			dir := t.TempDir()
+			if err := pcrashCopyTree(w.dir, dir); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".keyorix-restore-journal.json"), []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			o := pcrashOpenGuarded(dir, pcrashPass)
+			if o.err == nil || !pcrashExplicitOpenError(o.err) {
+				t.Fatalf("the restore journal refusal is documented: inst=%v err=%v", o.inst != nil, o.err)
+			}
 		})
 		t.Run("I5-migration-schema-differs", func(t *testing.T) {
 			t.Parallel()
@@ -309,6 +362,10 @@ func TestProcessCrashRedProof(t *testing.T) {
 		for _, c := range []struct{ name, action, want string }{
 			{"I5-rerun-panics", "rerun-panic", "I5"},
 			{"I5-rerun-corrupts", "rerun-corrupt", "I5"},
+			{"I5-completed-rerun-moves-authorization", "rerun-widen", "I5 authorization after a completed"},
+			{"I5-refused-rerun-moves-authorization", "rerun-refuse-widen", "I5 authorization after a refused"},
+			{"control-rerun-completes-unchanged", "rerun-noop", ""},
+			{"control-rerun-refuses-unchanged", "rerun-refuse", ""},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				t.Parallel()
@@ -324,7 +381,14 @@ func TestProcessCrashRedProof(t *testing.T) {
 				cal := w.calibrate(t, pcrashOps[6])
 				after := &pcrashModel{Ledger: st.before.Ledger.clone(), Roles: cal.ref.Roles, Authz: st.before.Authz}
 				m := &pcrashModel{Ledger: st.before.Ledger, Roles: st.before.Roles, Authz: st.before.Authz}
-				pcrashWant(t, w.checkRerun(t, broken, dir, pcrashPass, st, after, m), c.want)
+				v := w.checkRerun(t, broken, dir, pcrashPass, st, after, m)
+				if c.want == "" {
+					if len(v) > 0 {
+						t.Fatalf("control: %v", v)
+					}
+					return
+				}
+				pcrashWant(t, v, c.want)
 			})
 		}
 	})

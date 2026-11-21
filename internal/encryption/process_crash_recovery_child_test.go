@@ -51,7 +51,8 @@ var pcrashSeams atomic.Int64
 // installPCrashSeam makes this process SIGKILL itself at seam killAt.
 func installPCrashSeam(killAt int64, resultPath string) {
 	tick := func(label string) {
-		if pcrashSeams.Add(1) != killAt {
+		n := pcrashSeams.Add(1)
+		if n != killAt {
 			return
 		}
 		writePCrashResult(resultPath, pcrashChildResult{Seams: killAt, Label: label})
@@ -71,6 +72,13 @@ func installPCrashSeam(killAt int64, resultPath string) {
 		return nil
 	})
 	encryption.SetProcessCrashSeamForTest(tick)
+}
+
+// pcrashDieNow is the SIGKILL a red-proof action delivers at a point of its own
+// choosing; the seam counter plays no part.
+func pcrashDieNow() {
+	_ = syscall.Kill(syscall.Getpid(), syscall.SIGKILL)
+	select {} // the signal is already on its way; nothing may run after this point
 }
 
 func writePCrashResult(path string, r pcrashChildResult) {

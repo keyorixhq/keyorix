@@ -1,0 +1,23 @@
+{
+  "target": "ssh_authorizedkey",
+  "platform": "unsupported",
+  "factor": 4,
+  "seeds": 24,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 2152,
+      "per_byte": 86.6086956521739,
+      "abs_max": 8608
+    },
+    "mallocs": {
+      "floor": 18,
+      "per_byte": 1,
+      "abs_max": 72
+    },
+    "wall_ns": {
+      "floor": 37708,
+      "per_byte": 401.1489361702128,
+      "abs_max": 150832
+    }
+  }
+}

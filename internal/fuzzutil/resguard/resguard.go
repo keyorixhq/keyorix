@@ -160,6 +160,11 @@ type Cost struct {
 	LogBytes         int64
 	DBQueries        int
 	DBRows           int64
+
+	// KDF: password-hash / key-derivation invocations routed through the
+	// internal/kdfmeter seam (only counts what the KDFMeter observer saw).
+	KDFGenerates int
+	KDFCompares  int
 }
 
 // Options configures a Probe. The zero value is usable: SampleEvery defaults to
@@ -175,12 +180,13 @@ type Options struct {
 	// SlowWall forces an expensive sample on any input slower than this even if
 	// it is not on the sampling cadence. 0 selects defaultSlowWall.
 	SlowWall time.Duration
-	// Net, Clock, Log, DB are the application-meter seams. Leave any nil to
+	// Net, Clock, Log, DB, KDF are the application-meter seams. Leave any nil to
 	// skip that meter; the Probe reads and resets whichever are set.
 	Net   *NetMeter
 	Clock *SleepClock
 	Log   *LogMeter
 	DB    *DBMeter
+	KDF   *KDFMeter
 }
 
 const (
@@ -316,6 +322,9 @@ func (p *Probe) resetSeams() {
 	if p.opts.DB != nil {
 		p.opts.DB.reset()
 	}
+	if p.opts.KDF != nil {
+		p.opts.KDF.reset()
+	}
 }
 
 func (p *Probe) readSeams(c *Cost) {
@@ -330,6 +339,9 @@ func (p *Probe) readSeams(c *Cost) {
 	}
 	if p.opts.DB != nil {
 		c.DBQueries, c.DBRows = p.opts.DB.read()
+	}
+	if p.opts.KDF != nil {
+		c.KDFGenerates, c.KDFCompares = p.opts.KDF.read()
 	}
 }
 
