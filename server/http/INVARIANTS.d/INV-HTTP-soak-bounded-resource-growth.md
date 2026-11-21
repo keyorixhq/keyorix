@@ -16,5 +16,7 @@
   schedulers/rotation loops (this harness wires NewRouter+core, not server/main's
   `startSchedulers`, so their growth is out of scope and is exercised by the kill-9/edge
   soak drills instead); a remote client's connection-pool fds (requests run over a local
-  httptest.Server + keep-alive client); and growth slower than the calibrated per-10k-ops
-  ceiling.
+  httptest.Server + keep-alive client); growth slower than the calibrated per-10k-ops
+  ceiling; and, on the default 1.5k-op CI run, a per-op heap leak below ~2.8 KiB/op (under
+  the 2 MiB fitted-rise floor, #4389; pinned by `TestSoakHeapOracle_FloorBoundary`). No
+  workflow runs a longer soak; it needs a manual `KEYORIX_SOAK_OPS` >= ~6700 run.
