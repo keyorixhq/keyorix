@@ -12,8 +12,13 @@
   crashes `RotateDEKWithSweep` at every durability checkpoint, recovers, scans the key dir for the
   raw DEK + all three derived keys; red-proofed by `:TestKeyLifecycleKeyLeakRedProof`) and the
   real-SIGKILL `resguard_keylifecycle_crash_test.go:FuzzKeyLifecycleCrashKeyLeak` (forks a killed
-  rotation child, recovers, takes a backup, scans the tree AND the archive; red/green-proofed by
-  `:TestResguardKeyLeakRedGreen`). **Not covered**: a key leaked to a channel that is not a file
+  rotation child, recovers, takes a backup, scans the tree AND the archive for the three derived
+  keys only, pre- and post-recovery; it does NOT needle the raw DEK, which only the
+  `TestKeyLifecycleKeyLeakBackends` guard above does). The fuzz target's tree scan and meter are
+  red/green-proven by `:TestResguardKeyLeakRedGreen`; its archive scan, including the rule that an
+  archive that is missing, not gzip, truncated or empty after a successful backup is itself a
+  violation, is red/green-proven by `:TestResguardKeyLeakArchiveRedGreen` on hand-built archives.
+  **Not covered**: a key leaked to a channel that is not a file
   under the scanned tree (process memory, swap, a log shipped off-box, a socket); secret *plaintext*
   spill (that is `FuzzFaultInjectedOperations`' canary scan); and a WRAPPED copy left where it should
   not be (only raw unwrapped bytes are needled, since the wrapped `dek.key` legitimately exists).

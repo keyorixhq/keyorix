@@ -141,30 +141,40 @@ func kleakScanTree(root string, needles [][]byte, needleName func(int) string) [
 // whose content contains a needle. The archive legitimately carries the WRAPPED
 // dek.key and the (non-secret) kek.salt; neither equals a raw derived key, so a
 // hit here is a genuine leak of key material into a backup.
-func kleakScanArchive(archivePath string, needles [][]byte, needleName func(int) string) []string {
+//
+// It returns a non-nil error when the archive cannot be fully inspected: it will
+// not open, is not gzip, has a tar or entry read error, or holds zero entries. A
+// scan that silently saw nothing would certify a backup it never looked at, so
+// the caller must treat the error as a violation.
+func kleakScanArchive(archivePath string, needles [][]byte, needleName func(int) string) ([]string, error) {
 	f, err := os.Open(archivePath) //nolint:gosec // test-generated path
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("open archive: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("gunzip archive: %w", err)
 	}
 	defer func() { _ = gz.Close() }()
 	var hits []string
+	entries := 0
 	tr := tar.NewReader(gz)
 	for {
 		h, err := tr.Next()
-		if err != nil {
-			return hits
+		if err == io.EOF {
+			break
 		}
+		if err != nil {
+			return hits, fmt.Errorf("read tar entry after %d entries: %w", entries, err)
+		}
+		entries++
 		if h.Typeflag != tar.TypeReg {
 			continue
 		}
 		data, err := io.ReadAll(io.LimitReader(tr, 64<<20))
 		if err != nil {
-			continue
+			return hits, fmt.Errorf("read archive entry %s: %w", h.Name, err)
 		}
 		for i, n := range needles {
 			if bytes.Contains(data, n) {
@@ -172,6 +182,25 @@ func kleakScanArchive(archivePath string, needles [][]byte, needleName func(int)
 			}
 		}
 	}
+	if entries == 0 {
+		return hits, fmt.Errorf("archive has zero entries")
+	}
+	return hits, nil
+}
+
+// kleakCheckArchive is the archive leg of K1 as kleakRun applies it to a backup
+// that reported success: a needle hit, or an archive that could not be fully
+// scanned, are both violations.
+func kleakCheckArchive(archivePath string, needles [][]byte, needleName func(int) string) []string {
+	var violations []string
+	hits, err := kleakScanArchive(archivePath, needles, needleName)
+	if len(hits) > 0 {
+		violations = append(violations, "K1 PLAINTEXT KEY MATERIAL in backup archive: "+strings.Join(hits, "; "))
+	}
+	if err != nil {
+		violations = append(violations, "K1 backup archive could not be scanned (backup reported success): "+err.Error())
+	}
+	return violations
 }
 
 // kleakRun is one full iteration: copy the template, add state, kill the op,
@@ -258,9 +287,7 @@ func kleakRun(t *testing.T, w *pcrashWorld, probe *resguard.Probe, budget resgua
 		violations = append(violations, "K1 PLAINTEXT KEY MATERIAL on disk: "+strings.Join(hits, "; "))
 	}
 	if backupOK {
-		if hits := kleakScanArchive(filepath.Join(dir, kleakArchive), needles, name); len(hits) > 0 {
-			violations = append(violations, "K1 PLAINTEXT KEY MATERIAL in backup archive: "+strings.Join(hits, "; "))
-		}
+		violations = append(violations, kleakCheckArchive(filepath.Join(dir, kleakArchive), needles, name)...)
 	}
 
 	// Meters: disk is fatal (absolute), wall/goroutines advisory.
@@ -332,7 +359,9 @@ func TestResguardKeyLeakCalibrate(t *testing.T) {
 	}
 }
 
-// TestResguardKeyLeakRedGreen proves both oracles fire.
+// TestResguardKeyLeakRedGreen proves the tree-scan and meter oracles fire (the
+// archive leg of K1 is proven by TestResguardKeyLeakArchiveRedGreen: the needle
+// here is planted after the backup, so it never reaches the archive).
 //   - K1: a scratch file holding the raw key-material bytes makes the tree scan
 //     fire; without it the same run is clean.
 //   - Meter: a 64 MiB file written inside the measured region trips the absolute
@@ -370,6 +399,87 @@ func TestResguardKeyLeakRedGreen(t *testing.T) {
 	red := kleakMeterRedProof(t, w, probe, b)
 	if !kleakHas(red, "METER") {
 		t.Fatalf("RED(meter) did not fire; violations=%v", red)
+	}
+}
+
+// kleakWriteTarGz hand-builds a gzip-tar archive with the given regular entries.
+func kleakWriteTarGz(t *testing.T, path string, entries map[string][]byte, names []string) {
+	t.Helper()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	for _, n := range names {
+		data := entries[n]
+		if err := tw.WriteHeader(&tar.Header{Name: n, Mode: 0o600, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestResguardKeyLeakArchiveRedGreen proves the ARCHIVE leg of K1 on its own,
+// against hand-built archives (no child processes): a clean archive is green; a
+// needle inside an entry, and an archive that is missing, not gzip, truncated or
+// empty, are each red. Without this the archive scan would only ever be shown
+// green, because TestResguardKeyLeakRedGreen plants its needle in the tree after
+// the backup was taken.
+func TestResguardKeyLeakArchiveRedGreen(t *testing.T) {
+	needle := bytes.Repeat([]byte{0xA5, 0x5A, 0xC3, 0x3C}, 8)
+	needles := [][]byte{needle}
+	name := func(int) string { return "needle" }
+	dir := t.TempDir()
+	clean := map[string][]byte{"dek.key": []byte("wrapped-not-raw"), "kek.salt": []byte("salt")}
+
+	// GREEN: a readable archive with no needle.
+	green := filepath.Join(dir, "green.tar.gz")
+	kleakWriteTarGz(t, green, clean, []string{"dek.key", "kek.salt"})
+	if v := kleakCheckArchive(green, needles, name); len(v) > 0 {
+		t.Fatalf("GREEN archive reported violations: %v", v)
+	}
+
+	// RED: the needle sits inside an archive entry.
+	leaky := filepath.Join(dir, "leaky.tar.gz")
+	kleakWriteTarGz(t, leaky, map[string][]byte{"dek.key": []byte("wrapped"), "oops.bin": append([]byte("xx"), append(needle, 'y')...)},
+		[]string{"dek.key", "oops.bin"})
+	if v := kleakCheckArchive(leaky, needles, name); !kleakHas(v, "PLAINTEXT KEY MATERIAL in backup archive") || !kleakHas(v, "oops.bin") {
+		t.Fatalf("RED(archive needle) did not fire; violations=%v", v)
+	}
+
+	// RED: the archive cannot be inspected although the backup claimed success.
+	notGzip := filepath.Join(dir, "notgzip.tar.gz")
+	if err := os.WriteFile(notGzip, []byte("this is not gzip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	truncated := filepath.Join(dir, "truncated.tar.gz")
+	whole, err := os.ReadFile(green) //nolint:gosec // test-generated path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(truncated, whole[:len(whole)/2], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	empty := filepath.Join(dir, "empty.tar.gz")
+	kleakWriteTarGz(t, empty, nil, nil)
+	for label, p := range map[string]string{
+		"missing":    filepath.Join(dir, "missing.tar.gz"),
+		"not-gzip":   notGzip,
+		"truncated":  truncated,
+		"zero-entry": empty,
+	} {
+		if v := kleakCheckArchive(p, needles, name); !kleakHas(v, "could not be scanned") {
+			t.Fatalf("RED(%s archive) did not fire; violations=%v", label, v)
+		}
 	}
 }
 
