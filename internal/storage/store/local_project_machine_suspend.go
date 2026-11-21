@@ -103,6 +103,7 @@ func (ls *LocalStorage) SuspendMachineIdentitiesForDeletedProject(ctx context.Co
 		return nil, nil
 	}
 	deletedAt := gorm.Expr(sqlProjectDeletedAt, id)
+	// safe-cas-writer-ok: MachineIdentity: moves state active->suspended, so a stale TransitionMachineIdentityState built on the active read loses its state CAS (TestFullRowWriters_CascadeSuspendSurvivesStaleClassify_TransitionMachineIdentityState).
 	res := tx.Model(&models.MachineIdentity{}).
 		Where("id IN ? AND state = ?", ids, machineIdentityStateActive).
 		UpdateColumns(map[string]any{
@@ -144,6 +145,7 @@ func (ls *LocalStorage) ReactivateMachineIdentitiesForRestoredProject(ctx contex
 	if len(ids) == 0 {
 		return nil, nil
 	}
+	// safe-cas-writer-ok: MachineIdentity: moves state suspended->active and clears the marker, so a stale write built on the suspended read loses its CAS; the one A->B->A that matches leaves the marker inert (TestFullRowWriters_StaleClassifyAfterRestoreAndAdminSuspend_MarkerStaysInert_TransitionMachineIdentityState).
 	res := tx.Model(&models.MachineIdentity{}).
 		Where("id IN ? AND state = ?", ids, machineIdentityStateSuspended).
 		UpdateColumns(map[string]any{

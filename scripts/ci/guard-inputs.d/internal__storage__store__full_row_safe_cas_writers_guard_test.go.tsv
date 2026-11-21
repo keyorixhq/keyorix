@@ -1,0 +1,1 @@
+internal/storage/store/full_row_safe_cas_writers_guard_test.go	docs/full-row-write-exempt.tsv,docs/guard-rollout.d/TestFullRowWriteGuard_EveryOtherWriterOfASafeCASTableIsMarked.tsv	SAFE-CAS rows of the exemption ledger; walks internal/storage/store only (flat)
