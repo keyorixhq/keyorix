@@ -5,9 +5,12 @@ package encryption
 // memresidue_attribute_linux_test.go: the attribution mode of the
 // memory-residue oracle (memresidue_test.go). It answers "which line allocated
 // this copy?" for every hit, so a ratchet bound can be explained and a copy
-// can be wiped where it is made. Opt-in only, never part of a CI lane:
+// can be wiped where it is made. The table for every scenario is opt-in:
 //
 //	KEYORIX_MEMRESIDUE_ATTRIBUTE=1 go test ./internal/encryption/ -run '^TestMemResidueAttribute$' -count=1 -v
+//
+// The oracle's site-claims subtest runs the same child for the scenarios that
+// have a memResidueSiteClaims entry and applies memResidueSiteVerdict.
 //
 // The child samples every allocation (runtime.MemProfileRate = 1), turns the
 // GC off so no copy is freed before it is looked up, runs the oracle's
@@ -26,11 +29,11 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -185,8 +188,9 @@ func parseHeapDump(b []byte) (*heapDump, error) {
 	return nil, fmt.Errorf("heap dump: %w", h.err)
 }
 
-// attribute names what holds address a.
-func (d *heapDump) attribute(a uint64) string {
+// attribute names what holds address a and, for a sampled heap object, its
+// allocation stack (full function names, innermost first).
+func (d *heapDump) attribute(a uint64) (string, []string) {
 	i, found := slices.BinarySearchFunc(d.objects, a, func(o heapDumpObject, a uint64) int {
 		switch {
 		case a < o.addr:
@@ -200,28 +204,40 @@ func (d *heapDump) attribute(a uint64) string {
 		o := d.objects[i]
 		bucket, ok := d.samples[o.addr]
 		if !ok {
-			return fmt.Sprintf("heap object %#x (%d bytes, +%d), no allocation sample", o.addr, o.size, a-o.addr)
+			return fmt.Sprintf("heap object %#x (%d bytes, +%d), no allocation sample", o.addr, o.size, a-o.addr), nil
 		}
-		var sites []string
+		var sites, stack []string
 		for _, s := range d.buckets[bucket] {
+			stack = append(stack, s.fn)
 			if strings.HasPrefix(s.fn, "runtime.") || strings.HasPrefix(s.fn, "testing.") {
 				continue
 			}
 			sites = append(sites, fmt.Sprintf("%s (%s:%d)", s.fn, shortGoPath(s.file), s.line))
 		}
-		return fmt.Sprintf("heap object %d bytes, +%d, allocated at:\n\t\t%s", o.size, a-o.addr, strings.Join(sites, "\n\t\t"))
+		return fmt.Sprintf("heap object %d bytes, +%d, allocated at:\n\t\t%s", o.size, a-o.addr, strings.Join(sites, "\n\t\t")), stack
 	}
 	for _, f := range d.frames {
 		if a >= f.sp && a < f.sp+f.size {
-			return "live stack frame of " + f.fn
+			return "live stack frame of " + f.fn, nil
 		}
 	}
 	for _, s := range d.segments {
 		if a >= s.addr && a < s.addr+s.size {
-			return "data/bss segment"
+			return "data/bss segment", nil
 		}
 	}
-	return "UNATTRIBUTED (free heap slot or dead stack)"
+	return "UNATTRIBUTED (free heap slot or dead stack)", nil
+}
+
+// sampledFunc reports whether fn occurs in the allocation stack of any sampled
+// heap object.
+func (d *heapDump) sampledFunc(fn string) bool {
+	for _, bucket := range d.samples {
+		if slices.ContainsFunc(d.buckets[bucket], func(s heapDumpCallSite) bool { return s.fn == fn }) {
+			return true
+		}
+	}
+	return false
 }
 
 func shortGoPath(file string) string {
@@ -241,37 +257,70 @@ func TestMemResidueAttribute(t *testing.T) {
 	if err := memScanSupported(); err != nil {
 		t.Skipf("memory-residue oracle unavailable: %v", err)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestMemResidueAttributeChild$", "-test.count=1", "-test.v") // #nosec G204 -- os.Args[0] is this test binary
-	cmd.Env = append(os.Environ(), envMemResidueHelper+"="+t.TempDir())
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("attribution child failed: %v\n%s", err, out)
+	for _, sc := range memResidueScenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			rep := runMemAttributionChild(t, sc.name)
+			claimed := map[uint64]string{}
+			for _, c := range rep.Claims {
+				claimed[c.Addr] = c.What + " (" + c.Claim + ")"
+			}
+			t.Log("attribution (GC off, so a superset of the measure mode's hits):")
+			for _, phase := range []string{"live", "after"} {
+				t.Logf("%s: %d hit(s)", phase, len(slices.DeleteFunc(slices.Clone(rep.Hits), func(h memAttributedHit) bool { return h.Phase != phase })))
+				for _, h := range rep.Hits {
+					if h.Phase != phase {
+						continue
+					}
+					what := h.Holder
+					if c, ok := claimed[h.Addr]; ok {
+						what = "CLAIMED " + c + "; " + what
+					}
+					t.Logf("  %s %#x: %s", h.Name, h.Addr, what)
+				}
+			}
+			for _, f := range memResidueSiteVerdict(rep, memResidueSiteClaims) {
+				t.Log("site claim: " + f)
+			}
+		})
 	}
-	t.Logf("attribution (GC off, so a superset of the measure mode's hits):\n%s", out)
 }
 
 // TestMemResidueAttributeChild is the attribution child; it does nothing unless
-// the parent set KEYORIX_MEMRESIDUE_HELPER.
+// the parent set KEYORIX_MEMRESIDUE_HELPER. It reports through
+// emitMemAttribution, never by failing, so the parent sees every error.
 func TestMemResidueAttributeChild(t *testing.T) {
 	dir := os.Getenv(envMemResidueHelper)
 	if dir == "" {
 		t.Skip("not invoked as the memory-residue attribution child")
 	}
+	rep := memAttributionReport{Scenario: os.Getenv(envMemResidueScenario), SitesSeen: map[string]bool{}}
+	if err := attributeMemResidue(dir, &rep); err != nil {
+		rep.Error = err.Error()
+	}
+	emitMemAttribution(rep)
+}
+
+func attributeMemResidue(dir string, rep *memAttributionReport) error {
+	sc, ok := memResidueScenarioNamed(rep.Scenario)
+	if !ok {
+		return fmt.Errorf("unknown scenario %q", rep.Scenario)
+	}
 	runtime.MemProfileRate = 1
 	debug.SetGCPercent(-1)
 
-	svc, needles, claims, err := startMemResidueService(dir)
+	svc, needles, claims, err := startMemResidueService(dir, sc)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
+	rep.Claims = claims
 	live, _, err := scanProcessMemory(needles)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	svc.Shutdown()
 	after, _, err := scanProcessMemory(needles)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 
 	// The dump holds every heap object's contents, key bytes included: it is
@@ -279,36 +328,37 @@ func TestMemResidueAttributeChild(t *testing.T) {
 	path := filepath.Join(dir, "heap.dump")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- path is under the parent's t.TempDir
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	debug.WriteHeapDump(f.Fd())
 	_ = f.Close()
 	raw, err := os.ReadFile(path) // #nosec G304 -- see above
 	_ = os.Remove(path)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 	d, err := parseHeapDump(raw)
 	clear(raw)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
 
-	claimed := map[uint64]string{}
-	for _, c := range claims {
-		claimed[c.Addr] = c.What + " (" + c.Claim + ")"
-	}
 	for _, phase := range []struct {
 		name string
 		hits []memHit
-	}{{"live", live}, {"after Shutdown", after}} {
-		t.Logf("%s: %d hit(s)", phase.name, len(phase.hits))
+	}{{"live", live}, {"after", after}} {
 		for _, h := range phase.hits {
-			what := d.attribute(h.Addr)
-			if c, ok := claimed[h.Addr]; ok {
-				what = "CLAIMED " + c + "; " + what
-			}
-			t.Logf("  %s %#x: %s", h.Name, h.Addr, what)
+			holder, stack := d.attribute(h.Addr)
+			rep.Hits = append(rep.Hits, memAttributedHit{memHit: h, Phase: phase.name, Holder: holder, Stack: stack})
 		}
 	}
+	for _, c := range siteClaimsFor(memResidueSiteClaims, rep.Scenario) {
+		rep.SitesSeen[c.Func] = d.sampledFunc(c.Func)
+	}
+	return nil
+}
+
+func emitMemAttribution(rep memAttributionReport) {
+	b, _ := json.Marshal(rep)
+	fmt.Println(memResidueMarker + string(b))
 }
