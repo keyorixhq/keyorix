@@ -44,8 +44,9 @@ func isRecoveryCodeShaped(code string) bool {
 
 // errRecoveryCodeNotMatched rolls the recovery-code transaction back when the
 // input matched no unused code of the account: nothing was consumed, and the
-// caller hands the input to requireReauth (a password with a reauth step-up
-// grant can be recovery-shaped too).
+// caller hands the input to requireReauth. Only the request's code field ever
+// reaches this path; the password field never does (a password can be
+// recovery-shaped, and must not be hashed or consumed as a recovery code).
 var errRecoveryCodeNotMatched = errors.New("no unused recovery code matched")
 
 // recoveryReauthStage records how far the recovery-code transaction got, so

@@ -94,7 +94,7 @@ func TestVerifyMFA_RecoveryCodeConsumePanicIsAnsweredLikeItsError(t *testing.T) 
 		// With TOTP active, the re-auth takes a current code, not the password.
 		totpCode, err := totp.GenerateCode(e.totpSecret, e.clock)
 		require.NoError(t, err)
-		codes, err := e.h.coreService.RegenerateMFARecoveryCodes(context.Background(), 1, totpCode)
+		codes, err := e.h.coreService.RegenerateMFARecoveryCodes(context.Background(), 1, totpCode, "")
 		require.NoError(t, err)
 		require.NotEmpty(t, codes)
 		return codes[0]

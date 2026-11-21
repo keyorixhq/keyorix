@@ -55,9 +55,9 @@ func TestRecoveryReauth_ConcurrentSameCode_CrossReplicaPostgres(t *testing.T) {
 				go func() {
 					<-start
 					if op == "disable" {
-						errs[i] = c.DisableMFA(ctx, user.ID, codes[0], "")
+						errs[i] = c.DisableMFA(ctx, user.ID, codes[0], "", "")
 					} else {
-						_, errs[i] = c.RegenerateMFARecoveryCodes(ctx, user.ID, codes[0])
+						_, errs[i] = c.RegenerateMFARecoveryCodes(ctx, user.ID, codes[0], "")
 					}
 					done <- i
 				}()

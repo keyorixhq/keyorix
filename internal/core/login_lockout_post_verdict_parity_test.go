@@ -286,7 +286,7 @@ func TestRequireReauth_PostVerdictFaultCostsTheSameAsAWrongCode(t *testing.T) {
 	cc.loginLockout = postVerdictParityPolicy
 	activateMFAForTest(t, cc, cfixed)
 	putAtThresholdMinusOne(t, cdb, 1)
-	require.Error(t, cc.DisableMFA(context.Background(), 1, "000000", ""), "control: a wrong code must be refused")
+	require.Error(t, cc.DisableMFA(context.Background(), 1, "000000", "", ""), "control: a wrong code must be refused")
 	control := readLockoutState(t, cdb, 1)
 
 	// Probe: the correct code, with the anti-replay mark faulted after the match.
@@ -298,7 +298,7 @@ func TestRequireReauth_PostVerdictFaultCostsTheSameAsAWrongCode(t *testing.T) {
 	require.NoError(t, err)
 	base := pc.storage
 	pc.storage = markTOTPStepErrStub(base, errors.New("injected: MarkTOTPStepUsed"))
-	require.Error(t, pc.DisableMFA(context.Background(), 1, good, ""))
+	require.Error(t, pc.DisableMFA(context.Background(), 1, good, "", ""))
 	pc.storage = base
 	probe := readLockoutState(t, pdb, 1)
 

@@ -76,8 +76,9 @@ func (h *AuthHandler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 }
 
 // DisableMFA turns off MFA after verifying a current TOTP code, an unused
-// recovery code (both in "code"; #4224) or the password. Every refusal of the
-// proof answers the same 400 "invalid code or password".
+// recovery code (both in "code"; #4224) or the password (in "password"). A
+// recovery code sent in "password" is not accepted. Every refusal of the proof
+// answers the same 400 "invalid code or password".
 func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -92,16 +93,13 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
-	proof := body.Code
-	if proof == "" {
-		proof = body.Password
-	}
 	att, admitted := h.admitCredentialCheck(w, r)
 	if !admitted {
 		return
 	}
 	defer h.releaseCredentialSlotOnPanic(r, att)
-	err := h.coreService.DisableMFA(r.Context(), userCtx.UserID, proof, extractBearerToken(r))
+	// code and password stay separate: only code can be a recovery code.
+	err := h.coreService.DisableMFA(r.Context(), userCtx.UserID, body.Code, body.Password, extractBearerToken(r))
 	h.settleCredentialCheck(r, att, userCtx, "disable_mfa", err)
 	if err != nil {
 		h.writeMFAErr(w, err)
@@ -112,7 +110,8 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 
 // RegenerateRecoveryCodes issues a fresh set of recovery codes (replacing the old
 // ones) after verifying a current TOTP code, an unused recovery code (both in
-// "code"; #4224) or the password. The codes are returned once and never shown again.
+// "code"; #4224) or the password (in "password"; a recovery code sent there is not
+// accepted). The codes are returned once and never shown again.
 func (h *AuthHandler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -127,16 +126,13 @@ func (h *AuthHandler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Req
 		sendError(w, "BadRequest", errInvalidRequestBody, http.StatusBadRequest, nil)
 		return
 	}
-	proof := body.Code
-	if proof == "" {
-		proof = body.Password
-	}
 	att, admitted := h.admitCredentialCheck(w, r)
 	if !admitted {
 		return
 	}
 	defer h.releaseCredentialSlotOnPanic(r, att)
-	codes, err := h.coreService.RegenerateMFARecoveryCodes(r.Context(), userCtx.UserID, proof)
+	// code and password stay separate: only code can be a recovery code.
+	codes, err := h.coreService.RegenerateMFARecoveryCodes(r.Context(), userCtx.UserID, body.Code, body.Password)
 	h.settleCredentialCheck(r, att, userCtx, "regenerate_recovery_codes", err)
 	if err != nil {
 		h.writeMFAErr(w, err)

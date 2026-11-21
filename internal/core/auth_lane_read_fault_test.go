@@ -34,10 +34,10 @@ func TestAuthLane_GetUserReadFault_IsUnavailableNotNotFound(t *testing.T) {
 			return err
 		}},
 		{"DisableMFA", false, func(c *KeyorixCore, id uint) error {
-			return c.DisableMFA(context.Background(), id, mfaTestPassword, "")
+			return c.DisableMFA(context.Background(), id, "", mfaTestPassword, "")
 		}},
 		{"RegenerateMFARecoveryCodes", false, func(c *KeyorixCore, id uint) error {
-			_, err := c.RegenerateMFARecoveryCodes(context.Background(), id, mfaTestPassword)
+			_, err := c.RegenerateMFARecoveryCodes(context.Background(), id, "", mfaTestPassword)
 			return err
 		}},
 		{"MFARecoveryCodesRemaining", false, func(c *KeyorixCore, id uint) error {

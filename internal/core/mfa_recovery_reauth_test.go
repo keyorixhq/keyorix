@@ -65,7 +65,7 @@ func TestDisableMFA_RecoveryCode_DisablesConsumesAndRevokesOtherSessions(t *test
 
 	// Entered the forgiving way the login accepts it: lower case, no dash.
 	entered := strings.ToLower(strings.ReplaceAll(codes[3], "-", ""))
-	require.NoError(t, c.DisableMFA(ctx, 1, entered, "calling-session"))
+	require.NoError(t, c.DisableMFA(ctx, 1, entered, "", "calling-session"))
 
 	assert.False(t, mfaEnabledInDB(t, db), "MFA must be off")
 	var left int64
@@ -90,17 +90,17 @@ func TestRegenerateRecoveryCodes_RecoveryCode_ReplacesTheSetAndRecordsTheMethod(
 	c, db, fixed := newMFATestCore(t)
 	_, codes := activateMFAForTest(t, c, fixed)
 
-	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, codes[0])
+	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, codes[0], "")
 	require.NoError(t, err)
 	require.Len(t, fresh, mfaRecoveryCodeCount)
 	assert.True(t, mfaEnabledInDB(t, db), "regenerate leaves MFA on")
 	assert.Equal(t, int64(mfaRecoveryCodeCount), unusedRecoveryCodes(t, db), "exactly the new set is unused")
 
 	// An old, never-used code from the replaced set no longer re-authenticates.
-	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, codes[1])
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, codes[1], "")
 	require.ErrorIs(t, err, ErrReauthRejected)
 	// A code from the new set does.
-	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, fresh[0])
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, fresh[0], "")
 	require.NoError(t, err)
 
 	regen := auditDescriptions(t, db, "mfa.recovery_codes_regenerated")
@@ -121,7 +121,7 @@ func TestRecoveryReauth_WrongOrUsedCodeCountsOnceLikeAWrongTOTPCode(t *testing.T
 	cc, cdb, cfixed := newMFATestCore(t)
 	cc.loginLockout = recoveryReauthPolicy
 	activateMFAForTest(t, cc, cfixed)
-	cerr := cc.DisableMFA(ctx, 1, "000000", "")
+	cerr := cc.DisableMFA(ctx, 1, "000000", "", "")
 	require.ErrorIs(t, cerr, ErrReauthRejected)
 
 	for name, input := range map[string]func(codes []string, c *KeyorixCore) string{
@@ -141,10 +141,10 @@ func TestRecoveryReauth_WrongOrUsedCodeCountsOnceLikeAWrongTOTPCode(t *testing.T
 			code := input(codes, c)
 			before := unusedRecoveryCodes(t, db)
 
-			err := c.DisableMFA(ctx, 1, code, "")
+			err := c.DisableMFA(ctx, 1, code, "", "")
 			require.ErrorIs(t, err, ErrReauthRejected)
 			assert.Equal(t, cerr.Error(), err.Error(), "the same answer as a wrong TOTP code")
-			_, err = c.RegenerateMFARecoveryCodes(ctx, 1, code)
+			_, err = c.RegenerateMFARecoveryCodes(ctx, 1, code, "")
 			require.ErrorIs(t, err, ErrReauthRejected)
 
 			assert.Equal(t, 2*failedLoginCount(t, cdb), failedLoginCount(t, db), "each attempt counted exactly once, like the control")
@@ -166,10 +166,10 @@ func TestRecoveryReauth_LockedAccountRefusedBeforeTheCodeIsEvaluated(t *testing.
 	until := time.Now().Add(time.Hour)
 	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("login_locked_until", until).Error)
 
-	err := c.DisableMFA(ctx, 1, codes[0], "")
+	err := c.DisableMFA(ctx, 1, codes[0], "", "")
 	require.ErrorIs(t, err, ErrReauthRejected)
 	assert.Contains(t, err.Error(), "temporarily locked")
-	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, codes[0])
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, codes[0], "")
 	require.ErrorIs(t, err, ErrReauthRejected)
 	assert.Equal(t, int64(mfaRecoveryCodeCount), unusedRecoveryCodes(t, db), "the code was not looked at")
 	assert.True(t, mfaEnabledInDB(t, db))
@@ -187,7 +187,7 @@ func TestRecoveryReauth_ChangeFailureRollsBackAndCostsLikeAWrongCode(t *testing.
 	cc.loginLockout = postVerdictParityPolicy
 	activateMFAForTest(t, cc, cfixed)
 	putAtThresholdMinusOne(t, cdb, 1)
-	wrong := cc.DisableMFA(ctx, 1, "ZZZZZ-ZZZZZ", "")
+	wrong := cc.DisableMFA(ctx, 1, "ZZZZZ-ZZZZZ", "", "")
 	require.ErrorIs(t, wrong, ErrReauthRejected)
 	control := readLockoutState(t, cdb, 1)
 
@@ -210,9 +210,9 @@ func TestRecoveryReauth_ChangeFailureRollsBackAndCostsLikeAWrongCode(t *testing.
 			fs, restore := armFault(c, tc.method, tc.kind)
 			var err error
 			if tc.op == "disable" {
-				err = c.DisableMFA(ctx, 1, codes[0], "")
+				err = c.DisableMFA(ctx, 1, codes[0], "", "")
 			} else {
-				_, err = c.RegenerateMFARecoveryCodes(ctx, 1, codes[0])
+				_, err = c.RegenerateMFARecoveryCodes(ctx, 1, codes[0], "")
 			}
 			restore()
 			require.True(t, fs.Fired(), "the fault must have been reached")
@@ -243,7 +243,7 @@ func TestRecoveryReauth_PreVerdictFaultIsNotCounted(t *testing.T) {
 				c.loginLockout = recoveryReauthPolicy
 				_, codes := activateMFAForTest(t, c, fixed)
 				fs, restore := armFault(c, method, kind)
-				err := c.DisableMFA(ctx, 1, codes[0], "")
+				err := c.DisableMFA(ctx, 1, codes[0], "", "")
 				restore()
 				require.True(t, fs.Fired())
 				require.ErrorIs(t, err, ErrMFAVerificationStorageFailure)
@@ -280,9 +280,9 @@ func TestRecoveryReauth_ConcurrentSameCodeExactlyOneSucceeds(t *testing.T) {
 				wg.Go(func() {
 					<-start
 					if op == "disable" {
-						errs[i] = c.DisableMFA(ctx, 1, codes[0], "")
+						errs[i] = c.DisableMFA(ctx, 1, codes[0], "", "")
 					} else {
-						_, errs[i] = c.RegenerateMFARecoveryCodes(ctx, 1, codes[0])
+						_, errs[i] = c.RegenerateMFARecoveryCodes(ctx, 1, codes[0], "")
 					}
 				})
 			}
@@ -326,17 +326,17 @@ func TestRecoveryReauth_FIPSModeAcceptsRecoveryCodesAndCountsWrongOnes(t *testin
 	}
 	forceTOTPFIPS(t)
 
-	err = c.DisableMFA(ctx, 1, "123456", "")
+	err = c.DisableMFA(ctx, 1, "123456", "", "")
 	require.ErrorIs(t, err, ErrTOTPUnavailableInFIPSMode, "a TOTP code is still refused unevaluated")
 	assert.Zero(t, failedLoginCount(t, db))
 
-	err = c.DisableMFA(ctx, 1, "ZZZZZ-ZZZZZ", "")
+	err = c.DisableMFA(ctx, 1, "ZZZZZ-ZZZZZ", "", "")
 	require.ErrorIs(t, err, ErrReauthRejected)
 	assert.Equal(t, 1, failedLoginCount(t, db), "a wrong recovery code is counted in FIPS mode too")
 
-	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, codes[0])
+	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, codes[0], "")
 	require.NoError(t, err, "a recovery code re-authenticates in FIPS mode")
-	require.NoError(t, c.DisableMFA(ctx, 1, fresh[0], ""))
+	require.NoError(t, c.DisableMFA(ctx, 1, fresh[0], "", ""))
 	assert.False(t, mfaEnabledInDB(t, db))
 	assert.Contains(t, auditDescriptions(t, db, "mfa.disabled")[0], "method: recovery_code")
 }
@@ -350,8 +350,8 @@ func TestRecoveryReauth_PasswordAloneStillRefusedAndOtherCallersUnchanged(t *tes
 	c, db, fixed := newMFATestCore(t)
 	_, codes := activateMFAForTest(t, c, fixed)
 
-	require.ErrorIs(t, c.DisableMFA(ctx, 1, mfaTestPassword, ""), ErrReauthRejected)
-	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	require.ErrorIs(t, c.DisableMFA(ctx, 1, "", mfaTestPassword, ""), ErrReauthRejected)
+	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "", mfaTestPassword)
 	require.ErrorIs(t, err, ErrReauthRejected)
 
 	var u models.User
@@ -376,9 +376,54 @@ func TestRecoveryReauth_RecoveryShapedPasswordWithGrantStillWorks(t *testing.T) 
 	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("password_hash", string(hash)).Error)
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: time.Now().Add(time.Hour)}).Error)
 
-	require.NoError(t, c.DisableMFA(ctx, 1, shaped, ""))
+	require.NoError(t, c.DisableMFA(ctx, 1, "", shaped, ""))
 	assert.False(t, mfaEnabledInDB(t, db))
 	assert.NotContains(t, auditDescriptions(t, db, "mfa.disabled")[0], "method:", "not a recovery-code disable")
+}
+
+// Only the code field can be a recovery code (CodeQL go/weak-sensitive-data-hashing:
+// the password must never reach the SHA-256 recovery-code path). A real, unused
+// recovery code sent as the PASSWORD is refused like any wrong password, is not
+// consumed, and still works as a code.
+func TestRecoveryReauth_RecoveryCodeSentAsPasswordIsNeverConsumed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c, db, fixed := newMFATestCore(t)
+	c.loginLockout = recoveryReauthPolicy
+	_, codes := activateMFAForTest(t, c, fixed)
+
+	require.ErrorIs(t, c.DisableMFA(ctx, 1, "", codes[0], ""), ErrReauthRejected)
+	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "", codes[0])
+	require.ErrorIs(t, err, ErrReauthRejected)
+
+	assert.Equal(t, int64(mfaRecoveryCodeCount), unusedRecoveryCodes(t, db), "a recovery code in the password field is not consumed")
+	assert.True(t, mfaEnabledInDB(t, db))
+	assert.Equal(t, 2, failedLoginCount(t, db), "each refusal counted once, like a wrong password")
+	assert.Empty(t, auditDescriptions(t, db, "mfa.disabled"))
+
+	// The same code in the code field is still accepted.
+	require.NoError(t, c.DisableMFA(ctx, 1, codes[0], "", ""))
+	assert.False(t, mfaEnabledInDB(t, db))
+	assert.Contains(t, auditDescriptions(t, db, "mfa.disabled")[0], "method: recovery_code")
+}
+
+// A password that IS an unused recovery code's text (the worst case for the old
+// single-proof shape) takes the password path: it is verified against the
+// password hash with the reauth step-up grant, nothing is consumed as a recovery
+// code, and the audit row does not claim method: recovery_code.
+func TestRecoveryReauth_PasswordEqualToAnUnusedRecoveryCodeTakesThePasswordPath(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c, db, fixed := newMFATestCore(t)
+	_, codes := activateMFAForTest(t, c, fixed)
+	hash, err := bcrypt.GenerateFromPassword([]byte(codes[0]), int(bcryptCost.Load()))
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("password_hash", string(hash)).Error)
+	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: time.Now().Add(time.Hour)}).Error)
+
+	require.NoError(t, c.DisableMFA(ctx, 1, "", codes[0], ""))
+	assert.False(t, mfaEnabledInDB(t, db))
+	assert.NotContains(t, auditDescriptions(t, db, "mfa.disabled")[0], "method:", "the password path, not a recovery-code disable")
 }
 
 // An account owing an enrolment after an administrator reset, or with only a
@@ -393,8 +438,8 @@ func TestRecoveryReauth_NoTOTPFactorAnswersAsBefore(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.MFARecoveryCode{UserID: 1, CodeHash: hashes[0]}).Error)
 
-	err = c.DisableMFA(ctx, 1, "ZZZZZ-ZZZZZ", "")
+	err = c.DisableMFA(ctx, 1, "ZZZZZ-ZZZZZ", "", "")
 	require.EqualError(t, err, "MFA is not enabled")
-	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, "ZZZZZ-ZZZZZ")
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, "ZZZZZ-ZZZZZ", "")
 	require.EqualError(t, err, "MFA is not enabled")
 }

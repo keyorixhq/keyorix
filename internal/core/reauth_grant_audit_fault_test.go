@@ -149,7 +149,7 @@ func TestRequireReauth_ActiveRecheckGetUserFault_CountsTowardLockout(t *testing.
 			Err: errors.New("injected: GetUser"),
 		})
 		c.storage = fs
-		_, err := c.RegenerateMFARecoveryCodes(context.Background(), 1, mfaTestPassword)
+		_, err := c.RegenerateMFARecoveryCodes(context.Background(), 1, "", mfaTestPassword)
 		require.True(t, fs.Fired(), "attempt %d: the re-check must have faulted", i)
 		require.Error(t, err, "attempt %d", i)
 		assert.Contains(t, err.Error(), "invalid code or password")

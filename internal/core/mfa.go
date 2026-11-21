@@ -280,12 +280,24 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	return codes, nil
 }
 
-// DisableMFA turns MFA off after verifying a current TOTP code, an unused
-// recovery code (#4224) OR the account password (with a reauth step-up grant
-// once a second factor is enrolled), then clears the secret and all recovery
-// codes. A recovery code is consumed in the same transaction as the disable
-// (reauthWithRecoveryCode).
-func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPassword, keepSessionToken string) error {
+// reauthProof picks the single value requireReauth evaluates: the code when one
+// was sent, else the password. It feeds requireReauth only. The recovery-code
+// path (reauthWithRecoveryCode) is handed code alone, so a value sent as the
+// password is never SHA-256'd or consumed as a recovery code.
+func reauthProof(code, password string) string {
+	if code != "" {
+		return code
+	}
+	return password
+}
+
+// DisableMFA turns MFA off after verifying a current TOTP code or an unused
+// recovery code (#4224), both in code, OR the account password in password (with
+// a reauth step-up grant once a second factor is enrolled), then clears the
+// secret and all recovery codes. A recovery code is consumed in the same
+// transaction as the disable (reauthWithRecoveryCode). Only code can be a
+// recovery code: a recovery-shaped password is just a password.
+func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, code, password, keepSessionToken string) error {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
@@ -305,13 +317,13 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 		return tx.DeleteMFAForUser(ctx, userID)
 	}
 	method := ""
-	if handled, err := c.reauthWithRecoveryCode(ctx, user, codeOrPassword, "disable", disable); handled {
+	if handled, err := c.reauthWithRecoveryCode(ctx, user, code, "disable", disable); handled {
 		if err != nil {
 			return err
 		}
 		method = reauthMethodRecoveryCode
 	} else {
-		if err := c.requireReauth(ctx, user, codeOrPassword, "disable"); err != nil {
+		if err := c.requireReauth(ctx, user, reauthProof(code, password), "disable"); err != nil {
 			return err
 		}
 		if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error { return disable(tx) }); err != nil {
@@ -346,12 +358,13 @@ func withReauthMethod(description, method string) string {
 }
 
 // RegenerateMFARecoveryCodes issues a fresh set of recovery codes after verifying a
-// current TOTP code, an unused recovery code (#4224) OR the account password (same
-// re-auth as DisableMFA), replacing any existing codes (used and unused). The
-// plaintext codes are returned once and never stored. Invalidating the old set means
-// a regenerate also revokes leaked or previously-recorded codes. A recovery code used
-// as the proof is consumed in the same transaction as the replacement.
-func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uint, codeOrPassword string) ([]string, error) {
+// current TOTP code or an unused recovery code (#4224), both in code, OR the account
+// password in password (same re-auth as DisableMFA), replacing any existing codes
+// (used and unused). The plaintext codes are returned once and never stored.
+// Invalidating the old set means a regenerate also revokes leaked or
+// previously-recorded codes. A recovery code used as the proof is consumed in the
+// same transaction as the replacement; only code can be one.
+func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uint, code, password string) ([]string, error) {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
@@ -375,13 +388,13 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 		return tx.CreateMFARecoveryCodes(ctx, userID, hashes)
 	}
 	method := ""
-	if handled, err := c.reauthWithRecoveryCode(ctx, user, codeOrPassword, "regenerate_recovery_codes", replace); handled {
+	if handled, err := c.reauthWithRecoveryCode(ctx, user, code, "regenerate_recovery_codes", replace); handled {
 		if err != nil {
 			return nil, err
 		}
 		method = reauthMethodRecoveryCode
 	} else {
-		if err := c.requireReauth(ctx, user, codeOrPassword, "regenerate_recovery_codes"); err != nil {
+		if err := c.requireReauth(ctx, user, reauthProof(code, password), "regenerate_recovery_codes"); err != nil {
 			return nil, err
 		}
 		if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error { return replace(tx) }); err != nil {
