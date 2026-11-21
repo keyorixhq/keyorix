@@ -75,7 +75,9 @@ func (h *AuthHandler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 	}, message)
 }
 
-// DisableMFA turns off MFA after verifying a current code or the password.
+// DisableMFA turns off MFA after verifying a current TOTP code, an unused
+// recovery code (both in "code"; #4224) or the password. Every refusal of the
+// proof answers the same 400 "invalid code or password".
 func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -109,8 +111,8 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 }
 
 // RegenerateRecoveryCodes issues a fresh set of recovery codes (replacing the old
-// ones) after verifying a current TOTP code or the password. The codes are returned
-// once and never shown again.
+// ones) after verifying a current TOTP code, an unused recovery code (both in
+// "code"; #4224) or the password. The codes are returned once and never shown again.
 func (h *AuthHandler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
