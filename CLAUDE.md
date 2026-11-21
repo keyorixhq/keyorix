@@ -107,6 +107,23 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
   `scripts/changelog-assemble.sh --check` validates. The maintainer assembles fragments
   into `CHANGELOG.md` at release (`RELEASING.md`). Editing `CHANGELOG.md` directly
   reintroduces the merge-main conflict churn this removed.
+- **Docs: a feature or fix PR never edits `docs/CONFIGURATION.md` or `docs/UPGRADING.md`.**
+  A new config key is documented in `docs/configuration.d/<key with dots as __>.md`
+  (one file per key) and the upgrade note in `docs/upgrading.d/<slug>.md` (unnumbered
+  `## <title>` heading; the section number is assigned when it is folded). Only a
+  dedicated documentation PR, on a branch named `docs/fold-*` or `docs/consolidate-*`,
+  edits the two flat files directly: it runs `scripts/docs/fold-fragments.sh` (one
+  command: appends each fragment into its section, deletes the fragment files), then
+  `go test ./internal/docsdrift/`. These two files were the 1st and 3rd most overlapped
+  files in the merge queue (61 and 57 edits in 30 days) while the fragment readers sat
+  unused. What stays in the flat files by design: the renamed-settings/alias table in
+  `CONFIGURATION.md` (it lists renames, not new keys; its tests read the flat table) and
+  every existing section's text. A wording correction or behaviour change to an
+  EXISTING section is not a fragment (the readers only accept a fragment that documents
+  a new, not-yet-documented key): put the operator-visible part in an `upgrading.d/`
+  note and leave the section edit to the next fold PR. If a guard forces an edit to
+  existing flat text, stop and ask rather than editing it from a feature PR. Naming
+  and the reader's checks: `docs/configuration.d/README.md`, `docs/upgrading.d/README.md`.
 
 ## Engineering practices
 
@@ -437,11 +454,10 @@ committed at all, only built from `docs/security-closures.d/` on demand (see
 
 ### Docs: new config keys and upgrade notes go in `docs/*.d/`
 
-Document a NEW config key in `docs/configuration.d/<key with dots as __>.md` and put an
-upgrade note in `docs/upgrading.d/<slug>.md`, not in `docs/CONFIGURATION.md` /
-`docs/UPGRADING.md`. `TestEveryConfigKeyIsDocumented` and the other readers of
-`CONFIGURATION.md` read the flat file PLUS the fragments (dual-read); existing text stays
-in the flat files. Naming, folding at release time and the reader's checks: each
+The rule (feature PRs use fragments; only `docs/fold-*` / `docs/consolidate-*` PRs edit
+the flat files, via `scripts/docs/fold-fragments.sh`) is in "Git / PR conventions" above.
+`TestEveryConfigKeyIsDocumented` and the other readers of `CONFIGURATION.md` read the flat
+file PLUS the fragments (dual-read). Naming, folding and the reader's checks: each
 directory's `README.md`.
 
 ### Test registry tables: one file per entry, never append to a shared list

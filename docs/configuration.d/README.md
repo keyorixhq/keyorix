@@ -28,5 +28,20 @@ Not covered: the renamed-settings table in `docs/CONFIGURATION.md` (`TestConfigu
 `TestConfigurationDoc_AliasTableHasNoStaleRows`, `TestDocs_ConfigurationListsEveryDeprecatedAlias`)
 lists renames, not new keys, and stays a flat table in `docs/CONFIGURATION.md`.
 
-Folding a fragment into `docs/CONFIGURATION.md` is optional and by hand: copy the text into the right
-section, delete the fragment, and run the same test. Nothing assembles these files.
+## Folding (dedicated documentation PRs only)
+
+A feature or fix PR never edits `docs/CONFIGURATION.md`. A documentation PR on a branch whose
+name starts with docs/fold- or docs/consolidate- folds the fragments in with one command, then runs the
+docs guards:
+
+```
+scripts/docs/fold-fragments.sh            # append each fragment into its section, delete the file
+go test ./internal/docsdrift/
+```
+
+`--dry-run` shows where each fragment would go; `--check` exits 1 if one cannot be placed. A
+fragment goes at the end of the first section that matches: a heading naming the key's parent in
+backticks (longest parent first), else the `## <heading>` that `scripts/docs/fold-fragments.map`
+gives for the key's prefix, else `## <first segment of the key>`. A key the script cannot place
+fails with a message: add a rule to the map file. Relative links (`../X.md`) lose one `../` on the
+way up. The script also folds `docs/upgrading.d/` (see its `README.md`).

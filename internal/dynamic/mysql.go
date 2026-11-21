@@ -206,6 +206,11 @@ func openMySQLConfig(ctx context.Context, cfg *mysql.Config, allowPrivateNetwork
 	if !allowPrivateNetwork {
 		cfg.DialFunc = (&netutil.Dialer{Disallow: netutil.IsPrivateOrLinkLocal, Resolve: dialResolve}).DialContext
 	}
+	// A hostile or intercepted server announces the result set's column count and
+	// the driver sizes its column slice from it before reading any column packet;
+	// refuse an absurd count on the wire. Does not cover TLS connections, see
+	// netutil/mysqlguard.go and INV-NETUTIL-mysql-column-count.
+	cfg.DialFunc = netutil.MySQLGuardDialer(cfg.DialFunc, netutil.MySQLLimits{})
 	connector, err := mysql.NewConnector(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("invalid mysql admin DSN: %w", err)
