@@ -33,6 +33,8 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // rt decodes data as T, and if that succeeds performs the round-trip-stability
@@ -88,13 +90,13 @@ func FuzzGoTPMUnmarshal(f *testing.F) {
 			}
 			errc <- err
 		}()
-		select {
-		case err := <-errc:
-			if err != nil {
-				t.Fatal(err)
-			}
-		case <-time.After(15 * time.Second):
+		err, ok, fz := fuzzutil.Wait(errc, 15*time.Second)
+		if !ok {
+			t.Logf("stall monitor: process frozen %s of the wait window", fz)
 			t.Fatalf("bounded-work: tpm2 did not return in 15s for %d-byte input sel=%d", len(data), sel%5)
+		}
+		if err != nil {
+			t.Fatal(err)
 		}
 	})
 }

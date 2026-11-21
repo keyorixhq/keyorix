@@ -22,6 +22,8 @@ import (
 	"time"
 
 	flag "github.com/spf13/pflag"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 func newFS() *flag.FlagSet {
@@ -70,9 +72,8 @@ func FuzzPflagParse(f *testing.F) {
 			fs.SetOutput(discard{})
 			_ = fs.Parse(args)
 		}()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
+		if _, ok, fz := fuzzutil.Wait(done, 10*time.Second); !ok {
+			t.Logf("stall monitor: process frozen %s of the wait window", fz)
 			t.Fatalf("bounded-work: pflag.Parse did not return in 10s for %d args", len(args))
 		}
 	})

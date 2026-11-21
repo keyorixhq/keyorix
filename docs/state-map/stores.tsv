@@ -123,6 +123,7 @@ internal/encryptionops/migrate_provider.go (securefiles.SecureWriteFileSync)	fil
 internal/encryptionops/shamir_split.go (securefiles.SecureCreateFileSync)	file_write	internal/encryptionops	2
 internal/faultstorage/gen/main.go (os.WriteFile)	file_write	internal/faultstorage/gen	2
 internal/fuzzutil/resguard/budget.go (os.WriteFile)	file_write	internal/fuzzutil/resguard	1
+internal/fuzzutil/stall.go (os.OpenFile)	file_write	internal/fuzzutil	1
 internal/guardrules/expiry.go (os.OpenFile)	file_write	internal/guardrules	1
 internal/guardrules/rollout.go (os.OpenFile)	file_write	internal/guardrules	1
 internal/keyfiles/manifest.go (securefiles.SecureWriteFileSync)	file_write	internal/keyfiles	1
