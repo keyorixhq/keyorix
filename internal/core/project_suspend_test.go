@@ -44,6 +44,7 @@ func TestSuspendResumeProjectSecrets(t *testing.T) {
 	// Actor 1 is a live project member (and owner of its own secrets) in p1 — the
 	// standard "full authority" caller for the happy-path assertions below.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p1.ID}).Error)
+	grantProjectSecretsWrite(t, db, 1, p1.ID) // the owner also holds the route's gate (CORE-AUTHZ-RACE-NOV-1 item 2)
 
 	// Project p1: three secrets (one already suspended). Project p2: one (must be untouched).
 	mk := func(name string, projectID, envID, ownerID uint, status string) uint {
