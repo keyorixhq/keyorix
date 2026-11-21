@@ -73,7 +73,7 @@ func explain(r *caseResult) string {
 	is := func(lo *legOutcome, o Outcome) bool { return lo != nil && lo.NA == "" && lo.Outcome == o }
 	na := func(lo *legOutcome) bool { return lo == nil || lo.NA != "" }
 	deniedOrNA := func(lo *legOutcome) bool { return na(lo) || is(lo, Denied) }
-	restBadStatus := is(rest, Other) && (rest.Detail == "Internal Server Error" || rest.Detail == "Bad Request")
+	restBadRequest := is(rest, Other) && rest.Detail == "Bad Request"
 	pk := r.Principal
 	modelDenies := r.Model == Denied || r.Model == ModelNA
 
@@ -100,10 +100,14 @@ func explain(r *caseResult) string {
 	// Other, not Denied. The model correctly says Denied. No gRPC surface;
 	// coreEnforced=false for all three ops. The core leg returns a business-logic
 	// error (not ErrPermissionDenied) for these; !is(core,Allowed) prevents this
-	// from absorbing a hypothetical core-allows case.
+	// from absorbing a hypothetical core-allows case. Only 400 is absorbed: a 500
+	// on these ops is a server fault, not the precondition refusal, and stays
+	// unexplained. The principal kind is deliberately unconstrained: the refusal
+	// depends on the caller's own MFA account state, not on its role, so every
+	// fixture principal without that state lands here.
 	// Tracking issue: #4525.
 	case slices.Contains([]string{"mfa.activate", "mfa.disable", "mfa.recovery-codes.regenerate"}, r.Op) &&
-		!is(core, Allowed) && restBadStatus && modelDenies && na(grpc):
+		!is(core, Allowed) && restBadRequest && modelDenies && na(grpc):
 		return "known-12"
 	}
 	return "unexplained"

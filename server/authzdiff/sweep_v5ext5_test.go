@@ -63,7 +63,7 @@ func TestV5ext5StrictSweep(t *testing.T) {
 	t.Logf("partition of O1/O2 cases: %v", tally.disBuckets)
 	t.Logf("partition of mapping-gap-only cases: %v", tally.gapBuckets)
 	if tally.uncalibrated > 0 {
-		t.Errorf("%d uncalibrated V5EXT5 cases: an admin positive control failed — fix the op binding", tally.uncalibrated)
+		t.Errorf("%d uncalibrated V5EXT5 cases: a positive control (pkMFAEnrollee for mfa.activate, pkMFAUser for mfa.disable and mfa.recovery-codes.regenerate) was not allowed — fix the op binding or the V5EXT5 fixture seed", tally.uncalibrated)
 	}
 	if tally.disBuckets["unexplained"] > 0 || tally.gapBuckets["unexplained"] > 0 {
 		t.Errorf("unexplained V5EXT5 cases present: a disagreement or mapping gap no known waiver absorbs")
@@ -88,6 +88,12 @@ func TestV5ext5StrictSweep(t *testing.T) {
 // Red/green proof:
 //   - RED: remove any BlockWhenImpersonating anchor from router.go → test fails.
 //   - GREEN: tree as committed → all 4 anchors found exactly once → test passes.
+//
+// What it does NOT verify: it is a source-text match on router.go, so a
+// reformat, an alias rename (customMiddleware) or a handler rename breaks it
+// without any behaviour change. It does not prove that the routes sit inside
+// the authenticated route group, the middleware order, or that
+// BlockWhenImpersonating refuses at runtime; no request is sent.
 func TestMFARouteGatesPresent(t *testing.T) {
 	src, err := os.ReadFile("../../server/http/router.go")
 	if err != nil {
