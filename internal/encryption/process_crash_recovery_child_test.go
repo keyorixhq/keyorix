@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -43,26 +42,16 @@ const (
 // pcrashChildResult is what a child that was not killed reports. A killed child
 // reports only the seam label it died at.
 type pcrashChildResult struct {
-	Seams  int64    `json:"seams"`
-	Label  string   `json:"label,omitempty"`
-	Labels []string `json:"labels,omitempty"` // every seam in order, on a run that was not told to die
+	Seams int64  `json:"seams"`
+	Label string `json:"label,omitempty"`
 }
 
-var (
-	pcrashSeams    atomic.Int64
-	pcrashLabelsMu sync.Mutex
-	pcrashLabels   []string
-)
+var pcrashSeams atomic.Int64
 
 // installPCrashSeam makes this process SIGKILL itself at seam killAt.
 func installPCrashSeam(killAt int64, resultPath string) {
 	tick := func(label string) {
 		n := pcrashSeams.Add(1)
-		if killAt == 0 {
-			pcrashLabelsMu.Lock()
-			pcrashLabels = append(pcrashLabels, label)
-			pcrashLabelsMu.Unlock()
-		}
 		if n != killAt {
 			return
 		}
@@ -131,9 +120,6 @@ func TestProcessCrashChild(t *testing.T) {
 	default:
 		code = runPCrashCoreAction(context.Background(), action)
 	}
-	pcrashLabelsMu.Lock()
-	labels := pcrashLabels
-	pcrashLabelsMu.Unlock()
-	writePCrashResult(resultPath, pcrashChildResult{Seams: pcrashSeams.Load(), Labels: labels})
+	writePCrashResult(resultPath, pcrashChildResult{Seams: pcrashSeams.Load()})
 	os.Exit(code)
 }

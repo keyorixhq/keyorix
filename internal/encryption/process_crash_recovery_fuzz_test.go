@@ -102,7 +102,6 @@ type pcrashChildRun struct {
 	exit   int
 	seams  int64
 	label  string
-	labels []string // only on a run with no kill point
 	output string
 }
 
@@ -156,7 +155,7 @@ func runPCrashChild(dir, pass, action string, args []string, killAt int64) (pcra
 	if b, err := os.ReadFile(resultFile.Name()); err == nil && len(b) > 0 {
 		var res pcrashChildResult
 		if json.Unmarshal(b, &res) == nil {
-			r.seams, r.label, r.labels = res.Seams, res.Label, res.Labels
+			r.seams, r.label = res.Seams, res.Label
 		}
 	}
 	return r, nil
@@ -200,9 +199,8 @@ func pcrashCopyTree(src, dst string) error {
 
 // pcrashCalibration is a clean run of an operation on the unmodified template.
 type pcrashCalibration struct {
-	seams  int64
-	labels []string // seam names in order, labels[n-1] being kill point n
-	ref    *pcrashModel
+	seams int64
+	ref   *pcrashModel
 }
 
 // pcrashWorld is one test's template install. Fuzz workers each build their own,
@@ -467,7 +465,7 @@ func (w *pcrashWorld) calibrate(t *testing.T, op pcrashOp) pcrashCalibration {
 	if err != nil {
 		t.Fatalf("calibrate %s: observe: %v", op.name, err)
 	}
-	c := pcrashCalibration{seams: r.seams, labels: r.labels, ref: ref}
+	c := pcrashCalibration{seams: r.seams, ref: ref}
 	w.cal[op.name] = c
 	return c
 }
@@ -779,8 +777,9 @@ func pcrashWorldFor(tb testing.TB) *pcrashWorld {
 }
 
 // pcrashSkipUnlessRequested keeps a test that spawns real child processes out of
-// plain `go test` and the race legs; the nightly (.github/workflows/process-crash-nightly.yml)
-// runs the red-proof and calibration, the same shape as KEYORIX_INTERLEAVE_SWEEP.
+// plain `go test` and the race legs, the same shape as KEYORIX_INTERLEAVE_SWEEP. It
+// gates the calibration and the exhaustive tests, not TestProcessCrashRedProof,
+// which runs unless -short is given.
 func pcrashSkipUnlessRequested(t *testing.T, what string) {
 	t.Helper()
 	if os.Getenv(envPCrashExhaustive) == "" {

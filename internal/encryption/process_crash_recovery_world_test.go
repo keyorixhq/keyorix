@@ -421,7 +421,7 @@ func runPCrashCoreAction(ctx context.Context, action string) int {
 			if action == "role-mixed-die-between" {
 				pcrashDieNow()
 			}
-			err = c.AssignUserRoleScoped(ctx, "bob@example.com", "editor", scope)
+			err = c.AssignUserRoleScoped(ctx, "bob@example.com", "project_developer", scope)
 		}
 	default:
 		fmt.Fprintln(os.Stderr, "unknown action", action)
