@@ -88,12 +88,10 @@ func TestV5ext3StrictSweep(t *testing.T) {
 //     but the DELETE RBAC check fails, correctly matching model=denied.
 //
 //  2. bulk.rename, bulk.suspend, resume.all: BulkRenameSecrets, SuspendProjectSecrets,
-//     and ResumeProjectSecrets return an error immediately for actorID==0 (machines).
-//     The HTTP handler then returns 400 or 500, which the harness maps to "other" —
-//     a mapping gap the model (which says "allowed" for a machine holding secrets.write)
-//     cannot absorb. The machine+holds variation is therefore omitted for these three
-//     ops. The machine+lacks variation (machine without secrets.write → router 403)
-//     is kept, as it exercises the router gate for machine actors normally.
+//     and ResumeProjectSecrets refuse a machine actor with ErrPermissionDenied and
+//     REST answers 403 (#4514); the model marks them human-only, so machine+holds
+//     is denied everywhere and is swept. The machine+lacks variation (machine
+//     without secrets.write → router 403) exercises the router gate as before.
 //     For bulk.delete, the machine+holds variation is kept: BulkDeleteSecrets treats
 //     actorID=0 as the CLI caller (skipping permission checks), so a machine that passes
 //     the router gate CAN delete the secret — restOK returns true, core n/a, model
@@ -135,10 +133,9 @@ func curatedV5ext3Variations(spec opSpec, t tgt) []struct {
 		{pkCustom, variation{Mask: have, Route: "group", Scope: here}},                    // via live group → allowed
 		{pkMachine, variation{Mask: allPerms &^ gatePerm, Route: "machine", Scope: here}}, // machine lacks perm → denied (router 403)
 	}
-	// Machine+holds is only safe for bulk.delete (CLI bypass path, see note above).
-	if spec.name == "bulk.delete" {
-		cvs = append(cvs, pv{pkMachine, variation{Mask: have, Route: "machine", Scope: here}})
-	}
+	// Machine+holds: bulk.delete takes the CLI bypass (allowed everywhere); the
+	// other three refuse a machine actor (403, human-only in the model, #4514).
+	cvs = append(cvs, pv{pkMachine, variation{Mask: have, Route: "machine", Scope: here}})
 	return cvs
 }
 

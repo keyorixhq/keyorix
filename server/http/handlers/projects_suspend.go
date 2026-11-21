@@ -53,7 +53,7 @@ func (h *SecretHandler) SuspendProjectSecrets(w http.ResponseWriter, r *http.Req
 			h.sendError(w, core.SuspendAuditUnavailableCode, core.SuspendAuditUnavailableMessage, http.StatusInternalServerError, nil)
 			return
 		}
-		if sendActorGateError(w, err) {
+		if sendActorGateError(w, err) { // a typed refusal (#4514 machine actor, #4159 inactive actor) is a 403
 			return
 		}
 		h.sendError(w, "InternalError", "Failed to suspend project secrets", http.StatusInternalServerError, nil)
@@ -80,7 +80,7 @@ func (h *SecretHandler) ResumeProjectSecrets(w http.ResponseWriter, r *http.Requ
 	}
 	n, err := h.coreService.ResumeProjectSecrets(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
-		if sendAuditUnavailable(w, err) || sendActorGateError(w, err) {
+		if sendAuditUnavailable(w, err) || sendActorGateError(w, err) { // a typed refusal (#4514 machine actor, #4159 inactive actor) is a 403
 			return
 		}
 		h.sendError(w, "InternalError", "Failed to resume project secrets", http.StatusInternalServerError, nil)
