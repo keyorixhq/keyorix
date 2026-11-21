@@ -72,29 +72,32 @@ var knownUncoveredUserPaths = map[string]string{
 	// ratchet finds it and the allowlist entry is stale -- hence removed. Its
 	// coverage.go skipList entry STAYS: that skip is about this Go driver, which
 	// still has nothing enrolled to disable, and is a separate mechanism.
-	"POST /api/v1/auth/mfa/recovery-codes/regenerate": "see coverage.go skipList -- depends on mfa/enroll+activate",
-	"POST /api/v1/auth/mfa/stepup":                    "see coverage.go skipList -- depends on mfa/enroll+activate",
-	"POST /auth/mfa/verify":                           "see coverage.go skipList -- needs an MFA-enrolled account",
-	"POST /auth/webauthn/login/begin":                 "see coverage.go skipList -- needs a real/simulated authenticator",
-	"POST /auth/webauthn/login/finish":                "see coverage.go skipList -- needs a real/simulated authenticator",
-	"POST /auth/webauthn/passwordless/begin":          "see coverage.go skipList -- needs a real/simulated authenticator",
-	"POST /auth/webauthn/passwordless/finish":         "see coverage.go skipList -- needs a real/simulated authenticator",
-	"DELETE /api/v1/auth/webauthn/credentials/{id}":   "see coverage.go skipList -- nothing to delete, enrollment unreachable here",
-	"POST /api/v1/auth/webauthn/reauth/begin":         "see coverage.go skipList -- needs a real/simulated authenticator",
-	"POST /api/v1/auth/webauthn/reauth/finish":        "see coverage.go skipList -- needs a real/simulated authenticator",
-	"POST /api/v1/auth/webauthn/register/begin":       "see coverage.go skipList -- needs a real/simulated authenticator",
-	"POST /api/v1/auth/webauthn/register/finish":      "see coverage.go skipList -- needs a real/simulated authenticator",
-	"POST /auth/password-reset":                       "see coverage.go skipList -- out-of-band emailed token",
-	"POST /auth/setup/consume":                        "see coverage.go skipList -- out-of-band admin-issued setup token",
-	"POST /api/v1/risk-exceptions/{id}/approve":       "see coverage.go skipList -- dual-control, needs a second distinct session",
-	"POST /api/v1/audit/migrate-chain-encoding":       "see coverage.go skipList -- one-way irreversible migration of the live audit chain",
-	"POST /api/v1/admin/impersonate":                  "see coverage.go skipList -- mutates shared session state",
-	"DELETE /api/v1/auth/sessions/{id}":               "see coverage.go skipList -- would need a second non-current session",
-	"PUT /api/v1/admin/anomaly-config":                "see coverage.go skipList -- replaces shared deployment-wide thresholds other groups' assertions depend on",
-	"POST /api/v1/admin/jobs/anomaly-alerts":          "see coverage.go skipList -- deployment-wide job trigger with real side effects",
-	"POST /api/v1/admin/jobs/check-read-quotas":       "see coverage.go skipList -- deployment-wide job trigger",
-	"POST /api/v1/admin/jobs/compliance-digest":       "see coverage.go skipList -- deployment-wide job trigger with real side effects",
-	"POST /api/v1/admin/jobs/expiry-reminders":        "see coverage.go skipList -- deployment-wide job trigger with real side effects",
+	// POST /api/v1/auth/mfa/recovery-codes/regenerate was here until #4224's
+	// journeys/TestJourney_RecoveryCodeReplacesLostTOTP, which names the path
+	// literally; the ratchet now finds it, so the entry is stale and removed.
+	// Its coverage.go skipList entry stays, for the same reason as mfa/disable.
+	"POST /api/v1/auth/mfa/stepup":                  "see coverage.go skipList -- depends on mfa/enroll+activate",
+	"POST /auth/mfa/verify":                         "see coverage.go skipList -- needs an MFA-enrolled account",
+	"POST /auth/webauthn/login/begin":               "see coverage.go skipList -- needs a real/simulated authenticator",
+	"POST /auth/webauthn/login/finish":              "see coverage.go skipList -- needs a real/simulated authenticator",
+	"POST /auth/webauthn/passwordless/begin":        "see coverage.go skipList -- needs a real/simulated authenticator",
+	"POST /auth/webauthn/passwordless/finish":       "see coverage.go skipList -- needs a real/simulated authenticator",
+	"DELETE /api/v1/auth/webauthn/credentials/{id}": "see coverage.go skipList -- nothing to delete, enrollment unreachable here",
+	"POST /api/v1/auth/webauthn/reauth/begin":       "see coverage.go skipList -- needs a real/simulated authenticator",
+	"POST /api/v1/auth/webauthn/reauth/finish":      "see coverage.go skipList -- needs a real/simulated authenticator",
+	"POST /api/v1/auth/webauthn/register/begin":     "see coverage.go skipList -- needs a real/simulated authenticator",
+	"POST /api/v1/auth/webauthn/register/finish":    "see coverage.go skipList -- needs a real/simulated authenticator",
+	"POST /auth/password-reset":                     "see coverage.go skipList -- out-of-band emailed token",
+	"POST /auth/setup/consume":                      "see coverage.go skipList -- out-of-band admin-issued setup token",
+	"POST /api/v1/risk-exceptions/{id}/approve":     "see coverage.go skipList -- dual-control, needs a second distinct session",
+	"POST /api/v1/audit/migrate-chain-encoding":     "see coverage.go skipList -- one-way irreversible migration of the live audit chain",
+	"POST /api/v1/admin/impersonate":                "see coverage.go skipList -- mutates shared session state",
+	"DELETE /api/v1/auth/sessions/{id}":             "see coverage.go skipList -- would need a second non-current session",
+	"PUT /api/v1/admin/anomaly-config":              "see coverage.go skipList -- replaces shared deployment-wide thresholds other groups' assertions depend on",
+	"POST /api/v1/admin/jobs/anomaly-alerts":        "see coverage.go skipList -- deployment-wide job trigger with real side effects",
+	"POST /api/v1/admin/jobs/check-read-quotas":     "see coverage.go skipList -- deployment-wide job trigger",
+	"POST /api/v1/admin/jobs/compliance-digest":     "see coverage.go skipList -- deployment-wide job trigger with real side effects",
+	"POST /api/v1/admin/jobs/expiry-reminders":      "see coverage.go skipList -- deployment-wide job trigger with real side effects",
 	// TestMixedVersion_RollingUpgrade_Postgres (mixed_version_test.go) drives this route, but it is
 	// e2e-tagged and no CI job runs it yet. Follow-up: wire scripts/e2e mixed_version_test into a CI
 	// job (.github, Andrei); remove this entry in that change.
