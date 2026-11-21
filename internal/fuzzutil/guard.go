@@ -5,6 +5,7 @@
 package fuzzutil
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 	"time"
@@ -45,24 +46,35 @@ func Guard(fatalf func(format string, args ...any), label string, fn func()) {
 	case <-t.C:
 		putTimer(t)
 		// Deadline miss. Before calling it a hang, ask whether the PROCESS was frozen
-		// (see stall.go): if a third or more of the window was a freeze, give the call
-		// one more full timeout after recovery. The window start is reconstructed from the
-		// timeout so the hot path above pays nothing for it.
-		if frozenSinceFn(time.Now().Add(-timeout)) >= timeout/3 {
+		// (see stall.go): if a third or more of the window was a freeze the input did not
+		// cause, give the call one more full timeout after recovery. The window start is
+		// reconstructed from the timeout so the hot path above pays nothing for it.
+		start := time.Now().Add(-timeout)
+		frozen := min(frozenSinceFn(start), timeout)
+		grace, why := graceFor(start, timeout, frozen)
+		if grace {
 			g := time.NewTimer(timeout)
 			select {
 			case <-r.done:
 				g.Stop()
-				StallsRecovered.Add(1)
-				putRunner(r)
+				putRunner(r) // fn returned, so the runner is reusable whatever the verdict
+				ok, elapsed, fz, sig := settle(start, timeout, frozenSinceFn)
+				if ok {
+					StallsRecovered.Add(1)
+					noteExcused(label, timeout, elapsed, fz, sig)
+					return
+				}
+				fatalf("%s exceeded %s — possible amplification or hang (%s; frozen %s)", label, timeout, sig, fz.Round(time.Millisecond))
 				return
 			case <-g.C:
+				why = fmt.Sprintf("still unreturned after a further %s", timeout)
 			}
 		}
 		// Abandon the runner: closing work ends its loop once the hung fn
 		// returns (done is buffered, so its final send cannot block).
 		r.stop()
-		fatalf("%s exceeded %s — possible amplification or hang", label, timeout)
+		fatalf("%s exceeded %s — possible amplification or hang (waited %s, process frozen %s: %s)",
+			label, timeout, time.Since(start).Round(time.Millisecond), frozen.Round(time.Millisecond), why)
 	}
 }
 
