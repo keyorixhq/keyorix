@@ -38,9 +38,9 @@ import (
 //
 // In all cases the core leg returns errNotAuthzLayer for machine actors: the
 // per-item checks are not authoritative for machines (the router gate is the
-// authoritative check). For BulkRenameSecrets / Suspend / Resume, the REST
-// layer also returns 400/500 (actorID=0 is not supported by those functions);
-// that mapping gap is covered by waiver known-10 (partition_test.go).
+// authoritative check). BulkRenameSecrets / Suspend / Resume refuse a machine
+// actor with ErrPermissionDenied and REST answers 403 (#4514), so the model
+// marks them human-only (humanOnlyOps); the former waiver known-10 is gone.
 //
 // # What these oracles do NOT verify
 //
@@ -66,7 +66,9 @@ func v5ext3Ops() []opSpec {
 //	Core gate: BulkDeleteSecrets → bulkDeleteOneSecret → DeleteSecretWithPermissionCheck
 //	  → EnforceSecretOwnerPermission → CheckSecretPermission(PermissionOwner) with
 //	  RBAC fallback for secrets.delete.
-//	Model: secrets.delete @ project.
+//	Model: secrets.delete @ project, plus secrets.read @ project for a user actor:
+//	  each item is first read through GetSecretWithPermissionCheck (#4515). A
+//	  machine actor takes the actorID=0 path, which reads without a check.
 //	restOK: the fixture secretID must appear in the "deleted" list.
 //	core: machine → errNotAuthzLayer; user → check Deleted list.
 //
@@ -82,7 +84,9 @@ func bulkSecretDeleteRenameOps() []opSpec {
 	return []opSpec{
 		{
 			name: "bulk.delete", row: "BulkDeleteSecrets", targets: projTargets,
-			req: atP("secrets.delete"),
+			req: func(fx *fixtures, t tgt, _ byte) requirement {
+				return requirement{perms: []string{"secrets.delete"}, userPerms: []string{"secrets.read"}, scope: pid(fx, t)}
+			},
 			restOK: func(b []byte, fx *fixtures, t tgt) bool {
 				return jsonListHas(b, "deleted", fx.proj(byte(t)).secretID)
 			},

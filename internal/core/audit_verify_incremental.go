@@ -262,6 +262,12 @@ func (c *KeyorixCore) auditTailCheck(ctx context.Context, maxRows int, forWrite 
 	if err != nil {
 		return nil, fmt.Errorf("failed to load audit chain re-anchor: %w", err)
 	}
+	if anchor != nil && cp.HeadID < anchor.RowID {
+		// A sanctioned purge removed the certified head (#4351): there is no row
+		// to pin the tail on. The full walk (the write path's fallback) checks
+		// it against the anchor instead.
+		return &auditTail{noBaseReason: fmt.Sprintf("the head of %s (event #%d) was removed by a signed retention purge", auditBaseLabel(cp), cp.HeadID)}, nil
+	}
 	purged := anchorPurgedEvents(anchor)
 	// Read the high-water floor BEFORE the walk: a checkpoint written by another
 	// caller during the walk can only certify rows that existed before it, which

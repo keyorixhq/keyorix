@@ -66,32 +66,11 @@ func explain(r *caseResult) string {
 	na := func(lo *legOutcome) bool { return lo == nil || lo.NA != "" }
 	deniedOrNA := func(lo *legOutcome) bool { return na(lo) || is(lo, Denied) }
 	restBadStatus := is(rest, Other) && (rest.Detail == "Internal Server Error" || rest.Detail == "Bad Request")
-	pk := r.Principal
 	modelDenies := r.Model == Denied || r.Model == ModelNA
 
 	switch {
 	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies:
 		return "known-04"
-
-	// V5EXT3 known-10: a machine actor holds the router gate permission for
-	// bulk.rename, bulk.suspend or resume.all; it passes the gate but the core
-	// function rejects actorID=0, so REST answers 400/500. A business-rule
-	// exclusion, not an authorization gate; the model (router gate only)
-	// says "allowed". These ops have no gRPC surface.
-	// Tracked: #4514.
-	case pk == pkMachine && slices.Contains([]string{"bulk.rename", "bulk.suspend", "resume.all"}, r.Op) &&
-		na(core) && restBadStatus && deniedOrNA(grpc):
-		return "known-10"
-
-	// V5EXT3 known-11: bulk.delete with secrets.delete but not secrets.read.
-	// The router gate passes; BulkDeleteSecrets reads each item first and that
-	// read needs secrets.read, so the item is refused (core item-refused, REST
-	// 200 with an empty Deleted list). The model covers the gate, not the
-	// per-item data-access prerequisite. No gRPC surface.
-	// Tracked: #4515.
-	case r.Op == "bulk.delete" && is(core, Denied) && core.Detail == "item-refused" &&
-		is(rest, Denied) && rest.Detail == "2xx-item-refused" && deniedOrNA(grpc):
-		return "known-11"
 
 	// V5EXT5 known-12: mfa.activate, mfa.disable, mfa.recovery-codes.regenerate
 	// for a principal that lacks the required MFA account state (pending enrollment
@@ -116,8 +95,6 @@ func explain(r *caseResult) string {
 // is a decision recorded on its issue, not a date bump.
 var waivers = []struct{ id, issue, expires string }{
 	{"known-04", "#4161", "2027-02-13"},
-	{"known-10", "#4514", "2027-06-18"},
-	{"known-11", "#4515", "2027-06-18"},
 	{"known-12", "TODO-ISSUE", "2027-06-18"},
 }
 

@@ -85,6 +85,13 @@ var pgCases = []hostileCase{
 	{"copy-in-short", "query", pgMsg('G', 0)},
 	{"param-desc-huge", "query", pgMsg('t', 0xff, 0xff)},
 	{"notification-short", "query", pgMsg('A', 0, 0)},
+	// COPY sub-protocol answers to a plain statement (H6 report, pgx COPY harness).
+	{"copy-out-short", "query", pgMsg('H')},
+	{"copy-both-short", "query", pgMsg('W', 0)},
+	{"copy-data-unframed", "query", pgMsg('d', 1, 2, 3)},
+	{"copy-in-huge-columns", "query", pgMsg('G', 0, 0xff, 0xff)},
+	// SSL negotiation answered with something that is neither S nor N nor E.
+	{"auth-gss-continue-empty", "startup", pgMsg('R', be32(8)...)},
 }
 
 func pgHandler(tc hostileCase) func(net.Conn) {
@@ -170,6 +177,12 @@ var myCases = []hostileCase{
 	{"column-def-truncated", "query", append(myFrame(1, []byte{0x01}), myFrame(2, []byte{0x03, 'd', 'e', 'f'})...)},
 	{"local-infile-short", "query", myFrame(1, []byte{0xfb})},
 	{"eof-short", "query", myFrame(1, []byte{0xfe, 0x00})},
+	// Revoke/Issue run a prepared statement (SELECT ... WHERE user=?): the answer to
+	// COM_STMT_PREPARE is the frame (H6 report, prepared-statement harness).
+	{"prepare-ok-no-counts", "query", myFrame(1, []byte{0x00, 1, 0, 0, 0})},
+	{"prepare-ok-huge-param-count", "query", myFrame(1, []byte{0x00, 1, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0})},
+	{"prepare-ok-columns-then-eof-short", "query", append(myFrame(1, []byte{0x00, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}), myFrame(2, []byte{0xfe})...)},
+	{"multi-result-flag-short", "query", myFrame(1, []byte{0x00, 0x00, 0x00, 0x08})},
 }
 
 func myHandler(tc hostileCase) func(net.Conn) {

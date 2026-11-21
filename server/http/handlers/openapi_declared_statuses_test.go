@@ -9,6 +9,9 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -19,6 +22,11 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/faultstorage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
 // declaredStatuses returns the response status keys openapi.yaml declares for one operation.
@@ -107,4 +115,105 @@ func TestOpenAPIDeclaredStatuses_DeleteAndRestoreUserRefusals(t *testing.T) {
 			assert.True(t, declared["400"], "handler answers 400 but the spec declares only %v", sortedKeys(declared))
 		})
 	}
+}
+
+// ERRMAP-TAILS-NOV-6 item 2: assignUserRole answers 404 (absent target user) and 503 (read
+// fault) since ERRMAP-TAILS-NOV-4, classifySecret, getSecretByName and setSecretAutoRotate
+// answer 503 for a secret read fault; the spec left those statuses out. Each case drives
+// the real handler to the status (the same fault setups as assign_role_absent_user_test.go
+// and secrets_classify_rotate_byname_fault_test.go) and asserts the spec declares it.
+func TestOpenAPIDeclaredStatuses_AssignRoleAndSecretReadFaults(t *testing.T) {
+	assertDeclared := func(t *testing.T, method, path string, answered map[int]bool) {
+		t.Helper()
+		declared := declaredStatuses(t, method, path)
+		for code := range answered {
+			assert.True(t, declared[strconv.Itoa(code)], "%s %s answers %d but the spec declares only %v", method, path, code, sortedKeys(declared))
+		}
+	}
+
+	t.Run("assignUserRole", func(t *testing.T) {
+		_, db := freshCoreS12WithAdmin(t)
+		faulty := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), nil)
+		h := NewRBACHandler(core.NewKeyorixCore(faulty))
+		role := &models.Role{Name: "declared-status-role", Description: "d", AssignableScope: models.RoleAssignableAny}
+		require.NoError(t, db.Create(role).Error)
+		existing := &models.User{Username: "declared-status-user", Email: "declared-status-user@example.test", AccountState: "active"}
+		require.NoError(t, db.Create(existing).Error)
+		assign := func(target uint) *httptest.ResponseRecorder {
+			body, err := json.Marshal(map[string]any{"user_id": target, "role_id": role.ID})
+			require.NoError(t, err)
+			req := withUserCtxID(httptest.NewRequest(http.MethodPost, "/api/v1/user-roles", bytes.NewReader(body)), secretsAdminID, "actor")
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			h.AssignRole(w, req)
+			return w
+		}
+		answered := map[int]bool{}
+		w := assign(999999)
+		require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+		answered[w.Code] = true
+		faulty.Arm(&faultstorage.FaultSpec{Method: "GetUser", NthCall: 1, Kind: faultstorage.KindError, Err: errSchemaLeak})
+		w = assign(existing.ID)
+		require.True(t, faulty.Fired(), "the GetUser read fault must be reached")
+		faulty.Arm(nil)
+		require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+		answered[w.Code] = true
+		w = assign(existing.ID)
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		answered[w.Code] = true
+		assertDeclared(t, http.MethodPost, "/api/v1/user-roles", answered)
+	})
+
+	t.Run("secret reads", func(t *testing.T) {
+		_, db, fx := newSecretsHandlerWithDB(t, "en")
+		faulty := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), nil)
+		h, err := NewSecretHandler(core.NewKeyorixCore(faulty))
+		require.NoError(t, err)
+		byName := func(name string) *httptest.ResponseRecorder {
+			target := fmt.Sprintf("/?name=%s&project_id=%d&environment_id=%d", name, fx.projectID, fx.envID)
+			w := httptest.NewRecorder()
+			h.GetSecretByName(w, withUserCtxID(httptest.NewRequest(http.MethodGet, target, nil), secretsAdminID, "actor"))
+			return w
+		}
+		cases := []struct {
+			method, path, fault string
+			call                func(missing bool) *httptest.ResponseRecorder
+		}{
+			{http.MethodPatch, "/api/v1/secrets/{id}/classification", "GetSecret", func(missing bool) *httptest.ResponseRecorder {
+				id := fx.id()
+				if missing {
+					id = secretsMissingID
+				}
+				return secretsDo(h.ClassifySecret, http.MethodPatch, `{"classification":"internal"}`, id, secretsAdminID)
+			}},
+			{http.MethodPatch, "/api/v1/secrets/{id}/auto-rotate", "GetSecret", func(missing bool) *httptest.ResponseRecorder {
+				id := fx.id()
+				if missing {
+					id = secretsMissingID
+				}
+				return secretsDo(h.SetAutoRotate, http.MethodPatch, `{"enabled":false}`, id, secretsAdminID)
+			}},
+			{http.MethodGet, "/api/v1/secrets/by-name", "GetSecretByName", func(missing bool) *httptest.ResponseRecorder {
+				if missing {
+					return byName("no-such-secret")
+				}
+				return byName("ec-secret")
+			}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.path, func(t *testing.T) {
+				answered := map[int]bool{}
+				w := tc.call(true)
+				require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+				answered[w.Code] = true
+				faulty.Arm(&faultstorage.FaultSpec{Method: tc.fault, NthCall: 1, Kind: faultstorage.KindError, Err: errSchemaLeak})
+				w = tc.call(false)
+				require.True(t, faulty.Fired(), "the %s read fault must be reached", tc.fault)
+				faulty.Arm(nil)
+				require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
+				answered[w.Code] = true
+				assertDeclared(t, tc.method, tc.path, answered)
+			})
+		}
+	})
 }

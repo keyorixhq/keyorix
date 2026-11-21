@@ -26,6 +26,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/envflag"
+	"github.com/keyorixhq/keyorix/internal/smtpauth"
 )
 
 const (
@@ -75,7 +76,7 @@ func newEmail(cfg EmailConfig, baseBackoff time.Duration) (*EmailSink, error) {
 	case "", "starttls", "implicit":
 	case "none":
 		if !envflag.Enabled(envflag.AllowInsecureSMTP) {
-			return nil, fmt.Errorf("notifychan: email smtp tls=none sends the message and the relay username unencrypted; the mail library never sends a PLAIN or LOGIN password without TLS, so a relay that offers only PLAIN or LOGIN will fail authentication; refusing unless the operator explicitly opts in by setting %s=true", envflag.AllowInsecureSMTP)
+			return nil, fmt.Errorf("notifychan: email smtp tls=none sends the message and the relay username unencrypted; PLAIN, LOGIN and SCRAM are never used without TLS, so a relay that offers only those will fail authentication; refusing unless the operator explicitly opts in by setting %s=true", envflag.AllowInsecureSMTP)
 		}
 		log.Printf("notifychan: WARNING email smtp tls=none is ACTIVE — notification email will be sent over CLEARTEXT SMTP; dev/test only, never use in production")
 	default:
@@ -140,12 +141,12 @@ func (s *EmailSink) send(ctx context.Context, ev core.NotificationEvent) (retrya
 }
 
 // emailPlainLoginNoTLSCause names why a tls=none send with a username fails at auth
-// discovery: go-mail's SMTPAuthAutoDiscover drops PLAIN and LOGIN on an unencrypted
-// connection (it will not send a password in cleartext), so a relay offering only
-// those has no mechanism left.
-const emailPlainLoginNoTLSCause = "server offers only PLAIN/LOGIN and TLS is disabled (notify email tls=none); use starttls or implicit TLS, or a relay that offers CRAM-MD5/SCRAM"
+// selection: smtpauth offers only CRAM-MD5 and NTLM on an unencrypted connection (no
+// password on the wire, no relay-chosen CPU cost), so a relay offering only PLAIN,
+// LOGIN or SCRAM has no mechanism left.
+const emailPlainLoginNoTLSCause = "server offers no AUTH mechanism usable without TLS (notify email tls=none): PLAIN, LOGIN and SCRAM are only used over TLS; use starttls or implicit TLS, or a relay that offers CRAM-MD5 or NTLM"
 
-// plainLoginOnlyWithoutTLS reports whether a send error is go-mail's auth-discovery
+// plainLoginOnlyWithoutTLS reports whether a send error is the no-usable-mechanism
 // failure under tls=none with auth configured — the one case the generic error
 // does not explain.
 func (s *EmailSink) plainLoginOnlyWithoutTLS(err error) bool {
@@ -170,11 +171,9 @@ func (s *EmailSink) newClient() (*mail.Client, error) {
 		opts = append(opts, mail.WithTLSPolicy(mail.TLSMandatory))
 	}
 	if s.cfg.Username != "" {
-		opts = append(opts,
-			mail.WithSMTPAuth(mail.SMTPAuthAutoDiscover),
-			mail.WithUsername(s.cfg.Username),
-			mail.WithPassword(s.cfg.Password),
-		)
+		// The mechanism is chosen by smtpauth, not by go-mail's auto-discovery: SCRAM,
+		// PLAIN and LOGIN only over TLS, SCRAM with a bounded iteration count (#4383).
+		opts = append(opts, mail.WithSMTPAuthCustom(smtpauth.New(s.cfg.Username, s.cfg.Password, s.cfg.Host)))
 	}
 	return mail.NewClient(s.cfg.Host, opts...)
 }

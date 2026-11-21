@@ -1,0 +1,1 @@
+store:SetSQLiteReadAuditDB:first-param	#2507	construction-time setter: the storage factory hands the SQLite read-audit connection over before the store serves traffic (ADR-112 Amendment 7); no statement runs in it

@@ -1,0 +1,1 @@
+require-reauth-lock-recheck-002	./internal/core	TestRequireReauth_RecheckFaultCostsTheSameAsAWrongCode	default-ci	pending-merge	2888	Companion to require-reauth-lock-recheck-001: a LockUserForUpdate fault in requireReauth's lock re-check after a correct code costs the same lockout progress as a wrong code (#2740 option C), via DisableMFA
