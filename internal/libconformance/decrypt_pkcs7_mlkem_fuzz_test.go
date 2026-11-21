@@ -35,9 +35,10 @@ package libconformance
 //
 // # Scope narrowing (documented choice)
 //
-// Only ML-KEM-768 is covered (not 1024).  The kem.go code path is identical
-// for both; only key size and ciphertext length differ.  The 768 harness
-// exercises the full parsing and decapsulation logic.
+// Only ML-KEM-768 is covered here (not 1024).  ML-KEM-1024 is covered by
+// FuzzPKCS7DecryptMLKEM1024 (decrypt_pkcs7_mlkem1024_fuzz_test.go, LS6).
+// The kem.go code path is identical for both; only key size and ciphertext
+// length differ.
 //
 // # Oracle
 //
@@ -47,7 +48,7 @@ package libconformance
 // # What this oracle does NOT verify
 //
 //   - Correct decrypted plaintext (not checked)
-//   - ML-KEM-1024 decapsulation path (identical code, only size differs)
+//   - ML-KEM-1024 decapsulation path (covered by FuzzPKCS7DecryptMLKEM1024)
 //   - Bounded allocation for the decapsulation path (covered by
 //     FuzzDigitorusPKCS7BoundedWork for the BER-decode step; symmetric
 //     decryption allocation is bounded by already-decoded ciphertext size)
