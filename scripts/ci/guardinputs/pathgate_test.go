@@ -459,14 +459,24 @@ func TestPathGateIsInertOutsideTheFastProfile(t *testing.T) {
 						if !r.selfConf && !r.verifyConf {
 							t.Errorf("%s %v: the ADR conformance ledger is verified by neither step", ev, out)
 						}
+						// CI-ROUND-CUT-NOV-1: exactly once, not at least once. The
+						// self-test's exit code includes the real-ledger result, so
+						// a plain Verify next to it only repeats ~3 min of work.
+						if r.selfClos == r.verifyClos || r.selfConf == r.verifyConf {
+							t.Errorf("%s %v: a ledger is verified %d/%d times (closures/conformance), want exactly once", ev, out,
+								b2i(r.selfClos)+b2i(r.verifyClos), b2i(r.selfConf)+b2i(r.verifyConf))
+						}
 						if full != "true" {
 							continue
 						}
 						if want := docs != "true"; r.selfClos != want || r.selfConf != want {
 							t.Errorf("%s %v (FULL): self-tests ran=%v/%v, want %v (docs_only only, as before)", ev, out, r.selfClos, r.selfConf, want)
 						}
-						if !r.verifyClos || !r.verifyConf || !r.shards {
-							t.Errorf("%s %v (FULL): a verify or the shard step is skipped (%+v)", ev, out, r)
+						if !r.shards {
+							t.Errorf("%s %v (FULL): the shard step is skipped (%+v)", ev, out, r)
+						}
+						if want := docs == "true"; r.verifyClos != want || r.verifyConf != want {
+							t.Errorf("%s %v (FULL): plain verify ran=%v/%v, want %v (only where the self-test is skipped)", ev, out, r.verifyClos, r.verifyConf, want)
 						}
 					}
 				}
@@ -547,14 +557,21 @@ func TestPathGateOnRealPRs(t *testing.T) {
 			t.Errorf("#%s (%s): self-tests=%v assert-leg job=%v shard step=%v, want %v %v %v", pr, w.class, got.self, got.leg, got.shards, w.self, w.leg, w.shards)
 		}
 		mg := g.eval(t, "merge_group", runFilter(t, g.filter, "merge_group", changed))
-		if (mg.leg && !mg.shards) || !mg.verifyClos || !mg.verifyConf {
-			t.Errorf("#%s on merge_group: a step skipped although the gates are inert there (%+v)", pr, mg)
+		if (mg.leg && !mg.shards) || mg.verifyClos == mg.selfClos || mg.verifyConf == mg.selfConf {
+			t.Errorf("#%s on merge_group: the gates are inert there, so the shard step must run and each ledger be verified exactly once (%+v)", pr, mg)
 		}
 		table = append(table, fmt.Sprintf("#%s\t%d files\t%s\tself-tests=%s verify=%s assert-leg=%s shards=%s",
 			pr, len(changed), w.class, runSkip(r.selfClos), runSkip(r.verifyClos), runSkip(r.leg), runSkip(r.leg && r.shards)))
 	}
 	sort.Strings(table)
 	t.Logf("FAST pull_request replay:\n%s", strings.Join(table, "\n"))
+}
+
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func runSkip(b bool) string {
