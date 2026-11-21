@@ -49,8 +49,20 @@ func TestOfflineInstallFinishLineIsRunnable(t *testing.T) {
 
 	// Invoke the script by a RELATIVE path and a RELATIVE --dir, from elsewhere:
 	// the printed line must not depend on either.
-	cwd := filepath.Dir(dir)
-	relScript, err := filepath.Rel(cwd, script)
+	//
+	// Resolve symlinks first: the child's cwd is the kernel's physical path
+	// (macOS: t.TempDir() under /var, a symlink to /private/var, is one level
+	// deeper), so a relative path computed from the lexical cwd climbs one "../"
+	// too few. repoRoot may sit behind a symlink too.
+	cwd, err := filepath.EvalSymlinks(filepath.Dir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	realScript, err := filepath.EvalSymlinks(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relScript, err := filepath.Rel(cwd, realScript)
 	if err != nil {
 		t.Skipf("no relative path to the script: %v", err)
 	}
