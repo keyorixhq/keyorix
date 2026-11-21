@@ -49,18 +49,41 @@ type AuditKeyChangePrepare func(newAuditCheckpointKey []byte, newKeyVersion stri
 // RotateKEKPassphraseWithPrepare is RotateKEKPassphrase calling prepare (when
 // non-nil) after the old passphrase is verified and before the key files are
 // written.
+//
+// It holds rotateMu and the DEK flock for the whole rotation but never mu, so
+// readers (GetDEK, GetKeyVersion, the KEK-derived key getters) keep returning
+// the old keys while the key files are written and fsynced, and the new keys
+// from the moment they are durable (#4376). The superseded KEK-derived keys are
+// wiped afterwards under mu.Lock, once no reader can be copying them.
 func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase string, prepare AuditKeyChangePrepare) error {
-	km.mu.Lock()
-	defer km.mu.Unlock()
+	km.rotateMu.Lock()
+	defer km.rotateMu.Unlock()
 
-	if km.currentDEK == nil {
-		return fmt.Errorf("key manager not initialized — cannot rotate KEK")
+	superseded, err := km.rotateKEKPassphrase(oldPassphrase, newPassphrase, prepare)
+	if err != nil {
+		return err
+	}
+	km.mu.Lock()
+	wipeBytes(superseded.evidenceSignKey)
+	wipeBytes(superseded.auditCheckpointKey)
+	wipeBytes(superseded.backupManifestKey)
+	km.mu.Unlock()
+	return nil
+}
+
+// rotateKEKPassphrase is the rotation itself, under rotateMu. It returns the
+// state it replaced; the caller wipes its KEK-derived keys (not its dek, which
+// the new state shares). It releases the DEK flock before returning, so the
+// caller's mu.Lock never nests inside the flock (keymanager_state.go).
+func (km *KeyManager) rotateKEKPassphrase(oldPassphrase, newPassphrase string, prepare AuditKeyChangePrepare) (*keyState, error) {
+	if km.published().dek == nil {
+		return nil, fmt.Errorf("key manager not initialized — cannot rotate KEK")
 	}
 	if oldPassphrase == "" {
-		return fmt.Errorf("rotate KEK: old passphrase must not be empty")
+		return nil, fmt.Errorf("rotate KEK: old passphrase must not be empty")
 	}
 	if newPassphrase == "" {
-		return fmt.Errorf("rotate KEK: new passphrase must not be empty")
+		return nil, fmt.Errorf("rotate KEK: new passphrase must not be empty")
 	}
 
 	// Acquire the same cross-process exclusive DEK lock that RewrapDEK and
@@ -68,9 +91,12 @@ func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphras
 	// path and must never interleave with a concurrent rotation.
 	lock, err := km.acquireExclusiveKeyLock()
 	if err != nil {
-		return fmt.Errorf("rotate KEK: %w", err)
+		return nil, fmt.Errorf("rotate KEK: %w", err)
 	}
 	defer lock.release()
+	// Loaded under the flock: from here until the release, no other writer
+	// changes dek or dekSnapshot.
+	cur := km.published()
 
 	// Re-read the on-disk wrapped DEK under the exclusive lock and compare it
 	// against the snapshot taken when currentDEK was last set. If another
@@ -79,20 +105,20 @@ func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphras
 	// RewrapDEK's staleness check, #195).
 	onDisk, err := securefiles.SafeReadFile(km.baseDir, km.dekPath)
 	if err != nil {
-		return fmt.Errorf("rotate KEK: re-read active DEK under lock: %w", err)
+		return nil, fmt.Errorf("rotate KEK: re-read active DEK under lock: %w", err)
 	}
-	if !bytes.Equal(onDisk, km.dekSnapshot) {
-		return fmt.Errorf("rotate KEK: the on-disk DEK changed since this process started — a concurrent DEK rotation likely completed in the meantime; re-run rotate-kek now that the rotation has finished")
+	if !bytes.Equal(onDisk, cur.dekSnapshot) {
+		return nil, fmt.Errorf("rotate KEK: the on-disk DEK changed since this process started — a concurrent DEK rotation likely completed in the meantime; re-run rotate-kek now that the rotation has finished")
 	}
 
 	// Read the current salt from disk so we can derive the current KEK and
 	// verify oldPassphrase is correct before touching any file.
 	currentSalt, err := securefiles.SafeReadFile(km.baseDir, km.saltPath)
 	if err != nil {
-		return fmt.Errorf("rotate KEK: read current salt: %w", err)
+		return nil, fmt.Errorf("rotate KEK: read current salt: %w", err)
 	}
 	if len(currentSalt) != 32 {
-		return fmt.Errorf("rotate KEK: invalid current salt size: expected 32 bytes, got %d", len(currentSalt))
+		return nil, fmt.Errorf("rotate KEK: invalid current salt size: expected 32 bytes, got %d", len(currentSalt))
 	}
 
 	// Derive the current KEK from the old passphrase and verify it unwraps the
@@ -102,13 +128,13 @@ func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphras
 	defer wipeBytes(currentKEK)
 
 	if _, err := unwrapKey(onDisk, currentKEK); err != nil {
-		return fmt.Errorf("rotate KEK: old passphrase is incorrect — aborting without modifying any file: %w", err)
+		return nil, fmt.Errorf("rotate KEK: old passphrase is incorrect — aborting without modifying any file: %w", err)
 	}
 
 	// Generate a fresh 32-byte salt for the new KEK.
 	newSalt := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, newSalt); err != nil {
-		return fmt.Errorf("rotate KEK: generate new salt: %w", err)
+		return nil, fmt.Errorf("rotate KEK: generate new salt: %w", err)
 	}
 
 	// Derive the new KEK from newPassphrase + newSalt.
@@ -116,9 +142,9 @@ func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphras
 	defer wipeBytes(newKEK)
 
 	// Wrap the current (unchanged) DEK with the new KEK.
-	newWrappedDEK, err := wrapKey(km.currentDEK, newKEK)
+	newWrappedDEK, err := wrapKey(cur.dek, newKEK)
 	if err != nil {
-		return fmt.Errorf("rotate KEK: wrap DEK with new KEK: %w", err)
+		return nil, fmt.Errorf("rotate KEK: wrap DEK with new KEK: %w", err)
 	}
 
 	// Derive new evidence-signing and audit-checkpoint keys from the new KEK,
@@ -127,25 +153,25 @@ func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphras
 	// audit-checkpoint key while the old one is still the active one.
 	newESK, newESKID, err := deriveEvidenceSignKey(newKEK)
 	if err != nil {
-		return fmt.Errorf("rotate KEK: re-derive evidence-signing key: %w", err)
+		return nil, fmt.Errorf("rotate KEK: re-derive evidence-signing key: %w", err)
 	}
 	newACK, newACKID, err := deriveAuditCheckpointKey(newKEK)
 	if err != nil {
 		wipeBytes(newESK)
-		return fmt.Errorf("rotate KEK: re-derive audit-checkpoint key: %w", err)
+		return nil, fmt.Errorf("rotate KEK: re-derive audit-checkpoint key: %w", err)
 	}
 	newBMK, newBMKID, err := auditverify.DeriveBackupManifestKey(newKEK)
 	if err != nil {
 		wipeBytes(newESK)
 		wipeBytes(newACK)
-		return fmt.Errorf("rotate KEK: re-derive backup-manifest key: %w", err)
+		return nil, fmt.Errorf("rotate KEK: re-derive backup-manifest key: %w", err)
 	}
 	if prepare != nil {
 		if err := prepare(newACK, newACKID); err != nil {
 			wipeBytes(newESK)
 			wipeBytes(newACK)
 			wipeBytes(newBMK)
-			return fmt.Errorf("rotate KEK: aborted before any key file was written: %w", err)
+			return nil, fmt.Errorf("rotate KEK: aborted before any key file was written: %w", err)
 		}
 	}
 
@@ -153,25 +179,24 @@ func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphras
 		wipeBytes(newESK)
 		wipeBytes(newACK)
 		wipeBytes(newBMK)
-		return err
+		return nil, err
 	}
 
-	// Update in-memory state under the already-held mu.Lock.
-	wipeBytes(km.evidenceSignKey)
-	km.evidenceSignKey = newESK
-	km.evidenceSignKeyID = newESKID
+	// Publish the new keys in one Store, now that the key files are durable.
+	// cur was loaded under the flock, which every other writer of dek and
+	// dekSnapshot also holds (Initialize and Wipe are kept out by rotateMu), so
+	// next is cur with exactly this rotation's changes.
+	next := km.nextState()
+	next.evidenceSignKey = newESK
+	next.evidenceSignKeyID = newESKID
+	next.auditCheckpointKey = newACK
+	next.auditCheckpointKeyID = newACKID
+	next.backupManifestKey = newBMK
+	next.backupManifestKeyID = newBMKID
+	next.dekSnapshot = append([]byte(nil), newWrappedDEK...)
+	km.state.Store(next)
 
-	wipeBytes(km.auditCheckpointKey)
-	km.auditCheckpointKey = newACK
-	km.auditCheckpointKeyID = newACKID
-
-	wipeBytes(km.backupManifestKey)
-	km.backupManifestKey = newBMK
-	km.backupManifestKeyID = newBMKID
-
-	km.dekSnapshot = append([]byte(nil), newWrappedDEK...)
-
-	return nil
+	return cur, nil
 }
 
 // commitNewKEKFiles writes newSalt and newWrappedDEK as pending files and then
@@ -225,7 +250,7 @@ func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 		// into three outcomes instead of two, and fail-safe (delete nothing) on
 		// genuine uncertainty rather than treating uncertainty as "safe to
 		// clean up."
-		switch classifyDEKRename(km.baseDir, km.dekPath, pendingDEKFull, km.dekSnapshot, newWrappedDEK) {
+		switch classifyDEKRename(km.baseDir, km.dekPath, pendingDEKFull, km.published().dekSnapshot, newWrappedDEK) {
 		case dekRenameNotApplied:
 			_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
 			_ = os.Remove(pendingDEKFull)
@@ -304,7 +329,7 @@ const (
 // classifyDEKRename determines which of the three outcomes above applies.
 // pendingDEKFull is the rename's source path (baseDir/dekPath+".pending");
 // oldWrapped/newWrapped are the wrapped-DEK bytes active before/after this
-// rotation (the caller's km.dekSnapshot, and the value this call tried to
+// rotation (the caller's published dekSnapshot, and the value this call tried to
 // promote, respectively).
 //
 // Deliberately read-and-compare, not a size/mtime heuristic: a stat-only
