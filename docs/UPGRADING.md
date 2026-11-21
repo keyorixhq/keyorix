@@ -1437,6 +1437,444 @@ someone who can already write the key directory. See
 [`operator/startup-refusals.md`](operator/startup-refusals.md) ("Key file set
 incomplete or mixed", "Key operation interrupted mid-commit").
 
+## 6zb. `admin backup` refusals after a key rotation (#4104, #4105)
+
+- On PostgreSQL, `keyorix-server admin backup` now refuses (non-zero exit, no archive) when its
+  key directory's DEK is not the one the database's `dek.epoch` names. With several key directories
+  (`storage.encryption.key_dir_lock: database`) that is every replica that has not received the new
+  key set after a DEK rotation: distribute it (`docs/multi-replica-keys.md`) before backing up from
+  that replica. Scripts that back up from an arbitrary replica right after a rotation should expect
+  this refusal until the rotation is finished and distributed.
+- `admin validate --posture` now reports a `[backup]` deviation while a key-rotation staging file
+  (`<dek_path>.pending`, `<salt_path>.pending`) makes `admin backup` refuse, so its exit code is
+  non-zero in that state.
+
+## 6zc. `audit verify` right after a v0.96.x upgrade
+
+Plain `keyorix audit verify` (and `GET /api/v1/audit/verify`) reports `VALID` only when a full
+re-walk of the audit chain has completed recently. v0.96.x kept no record of one, so the first
+answer after the upgrade is `NOT PROVEN` with `no full verification has completed yet` (exit code
+1). That is the fail-closed answer, not damage to the chain: a break reads `BROKEN` and names the
+first bad event.
+
+What changed (#3743): before, the new server waited behind the checkpoint v0.96.x had just
+written and ran its first re-walk up to 24 hours after the start, so `audit verify` said
+`NOT PROVEN` all that time. Now the server runs the first re-walk at once when no full verification
+is on record. The start log says `Audit-checkpoint scheduler enabled ... first tick in 0s`.
+
+- A chain of up to 100,000 audit events is re-walked in that first tick: plain `audit verify`
+  reads `VALID` within seconds of the start.
+- A longer chain is re-walked in 7 segments, one per daily tick, so plain `audit verify` stays
+  `NOT PROVEN` for up to a week. To prove it now, run `keyorix audit verify --full` once. It runs
+  the whole walk as a background job on the server and prints `Audit chain: VALID`, and later plain
+  calls are `VALID` too.
+
+A post-upgrade check script should call `keyorix audit verify --full`: it gives the same answer
+for every chain length.
+
+## 6zd. Boot failures now exit 78 or 75, and the shipped systemd unit stops restarting on 78
+
+`keyorix-server` used to exit 1 for every start-up failure, so under `Restart=always` a missing
+passphrase file, a refused config or an unreachable KMS all became a restart every five seconds.
+It now exits with a status that says which kind of failure it was, and prints one hint line last
+on stderr (`keyorix-server: exit 78 ...` / `exit 75 ...`; no secret, no path):
+
+| Exit status | Meaning | Shipped `deploy/edge/keyorix-server.service` |
+|---|---|---|
+| 78 | Refused configuration or missing/unusable key material: an operator must fix it. | `RestartPreventExitStatus=78`: not restarted; fix, then `systemctl restart keyorix-server`. |
+| 75 | A dependency that may come back (cloud KMS, its sign-in endpoint or remote database unreachable, a KMS answering 5xx or throttling, or a key-provider fallback chain with a member that could not be reached). | Retried every `RestartSec`. |
+| 1 | Everything else, as before. | Retried every `RestartSec`. |
+
+**What to do when upgrading:**
+
+- If you installed `keyorix-server.service` from `deploy/edge/`, copy the new file over yours
+  (or add `RestartPreventExitStatus=78` and set `RestartSec=30`), then `systemctl daemon-reload`.
+  The unit's `RestartSec` rose from 5 to 30: it is one delay for every restart, so after a crash
+  the server is back after 30 s, not 5. systemd's growing delay (`RestartSteps=`) needs v254 and no
+  minimum systemd version is documented, so the delay is fixed.
+- A supervisor of your own (a `restart: always` container policy, a wrapper script, monitoring)
+  that treats any non-zero exit as "retry" keeps working. One that alerts on exit status 1
+  specifically should also match 78 and 75. No config key changed.
+- Checked natively against the built binary (missing passphrase file, missing key file, unparseable
+  config, `aws-kms` access denied: 78; unreachable `aws-kms` endpoint, `aws-kms` answering 500 or
+  throttling, Postgres not listening: 75; malformed Postgres DSN: 78). A real systemd and a container start are pending
+  e2e VM. See `docs/edge-deployment.md` §7a, "Start after a reboot".
+
+## 6ze. BREAKING: a `*` in a CORS origin refuses to start (#4382)
+
+`server.http.allowed_origins` entries such as `https://*` or `https://*.example.com`
+were accepted and treated by the CORS layer as patterns, giving every matching
+origin a credentialed response. The same applied to `server.http.domain` when
+`allowed_origins` is empty (the default origin is `https://<domain>`). Both now
+refuse to start, naming the setting. Before upgrading, check your config:
+
+```sh
+grep -nE 'allowed_origins|domain:' /etc/keyorix/keyorix.yaml
+```
+
+and replace any pattern with the exact origins your web UI is served from, e.g.
+`allowed_origins: ["https://keyorix.example.com"]`.
+
+## 6zf. Dynamic-secret configs whose `admin_dsn` names a server file
+
+A dynamic-secret config stored before #3952 can carry an `admin_dsn` option that
+makes the driver read a file on the Keyorix server: PostgreSQL `sslrootcert`,
+`sslcert`, `sslkey`, `passfile`, `service`, `servicefile`; MySQL `allowAllFiles`;
+MongoDB `tlsCAFile` and the other `tls*File` / `ssl*File` options, or an
+`authMechanism` of `MONGODB-AWS`, `MONGODB-OIDC` or `GSSAPI`.
+
+- **Issue and renew from such a config fail** with an error naming the option.
+- **Revoke and the expiry sweep still drop its leases (#3980)**: the option is
+  removed and the named file is never read. A CA file is replaced by the system
+  trust store, so a target signed by a private CA fails the TLS handshake and
+  the lease stays `revoke_failed` with the option named in the error. PostgreSQL
+  `service`/`servicefile` and the MongoDB mechanisms above cannot be removed, so
+  their leases stay `revoke_failed`.
+
+After the upgrade, look for `WARNING: dynamic secrets:` in the server log at
+startup: it counts these configs and their live leases and lists each config. List
+them with `keyorix dynamic-secret refused-dsn --project-id <id>` and replace the
+stored `admin_dsn` of each with `keyorix dynamic-secret set-admin-dsn <config-id>`
+(the DSN is read from `KEYORIX_DYNAMIC_ADMIN_DSN` or stdin, never the command line).
+Drop by hand the database user of every lease that stays
+`revoke_failed`, especially on MongoDB and MySQL, whose users never expire on
+their own. The full table is in
+[CONFIGURATION.md](CONFIGURATION.md#revoking-leases-of-a-config-whose-admin_dsn-names-a-server-file).
+
+## 6zg. Config keys that are ignored today and will be rejected after the next minor release
+
+On every start the server prints `WARNING: deprecated config key: "<key>" is deprecated and
+ignored ... it will be rejected after the next minor release` for each key below that is present
+in `keyorix.yaml`. No Keyorix feature reads them, so nothing changes while they stay; remove them
+now so the config still loads at the next minor release. None has a replacement: the setting
+never took effect.
+
+| Key | Written by | What to do |
+|---|---|---|
+| `secrets.chunking` (the whole block) | `admin init` up to v0.96.x | delete the `chunking:` line and its indented sub-keys |
+| `secrets.limits.max_secrets_per_user` | `admin init` up to v0.96.x | delete that one line; keep the other `limits:` keys such as `max_secret_size` |
+| `server.http.keepalive` (the whole block) | hand-written configs only | delete it; only `server.grpc.keepalive` is read |
+
+A config written by the current `admin init` contains none of them. A v0.96.x config contains the
+first two. To check a file: `grep -n -E 'chunking|max_secrets_per_user|keepalive' keyorix.yaml`.
+Take a copy first (`cp keyorix.yaml keyorix.yaml.bak`), edit with the server stopped, and confirm
+the warnings are gone from the next start's log.
+
+Renamed keys (old name still accepted, with a warning, and rewritten in memory) are a different
+case; they are listed in the renamed-settings table in `docs/CONFIGURATION.md`.
+
+Also on the first start after a v0.96.x upgrade: `keyorix audit verify` reports `NOT PROVEN`
+until the first full re-walk of the chain completes; see `audit-verify-after-v096-upgrade.md`.
+
+## 6zh. The legacy roles can no longer be granted on a project (#3605)
+
+`admin`, `editor`, `viewer`, `auditor` and `super_admin` are now install-wide only (`assignable_scope`
+`global`), so the ADR-021 two-tier model is the only one: `system_*` and these roles without a project,
+`project_*` roles on a project. This replaces what §6z says about the legacy roles staying `any`.
+
+**What stops being accepted.** A new grant of one of these roles with a project, for users, groups,
+machine identities and invitations, on every API, gRPC and CLI path. The refusal is a 400 (gRPC
+`InvalidArgument`) that names the role to use:
+
+```
+role viewer is install-wide and can no longer be granted on a project; grant project_viewer on the project instead
+```
+
+Re-running an automated grant (for example `keyorix machine grant-role ci --project default --role viewer`)
+counts as a new grant and is refused even if the machine already holds it. Update such scripts.
+Grants of these roles without a project are still accepted. Machine identities always hold their
+grants on a project, so they can no longer be given a legacy role at all: use the project role.
+
+| Legacy role at a project | Grant instead | Difference |
+|---|---|---|
+| `viewer` | `project_viewer` | `project_viewer` has no `audit.read`; use `project_auditor` to keep it |
+| `editor` | `project_developer` | same permissions |
+| `admin`, `super_admin` | `project_admin` | both bypass permission checks at their project; `project_admin` cannot manage the install |
+| `auditor` | `project_auditor` | compare with your own `auditor` role, which is not seeded on new installs |
+
+**Check two settings and requests.** Break-glass grants at a project, so a legacy
+`break_glass.emergency_role` (`editor`, `viewer`, `auditor`) now refuses every activation: set it to a
+contained project role such as `project_developer` before you need it. It is logged at startup and is a
+deviation in the posture report. A pending access request that suggests a legacy role is refused
+when approved; a single approver can grant a project role instead, and a request under M-of-N approval,
+whose role is fixed, must be made again.
+
+**What does not change.** Grants already held on a project are not removed, narrowed or converted,
+and they keep authorizing exactly as before. Removing them, and setting a role set that keeps them, still
+work. The first start of this version (or the first `keyorix-server admin` command, which migrates
+too) sets the five roles to `global`, whichever older version you come from; it changes no grant,
+adds no schema and leaves the schema epoch and its floor alone. That start logs one line, `storage: tightened
+assignable_scope of N legacy role row(s) from any to global`, and only when it changed a row.
+
+**How to find what to replace.** With the server stopped, as for every posture check:
+
+```
+keyorix-server admin validate --posture
+```
+
+The `WARN` section lists every existing per-project grant of a legacy role (user, group or machine
+identity, role, project), the exact commands to replace it, pending access requests that suggest a legacy
+role (request id, requester, project and the project role to approve it as) and pending invitations that
+can no longer be accepted. A name that holds a newline or another control character is shown quoted, and
+gets no copy-and-paste command. It does not count toward the exit code. A check that could not read the database reports
+a deviation instead of an empty list. The same list appears as a `WARNING` at every server start
+(the first 50 grants). Grant the project role first and remove the legacy grant second, so access is
+never interrupted. A time-bound grant needs `--ttl` on the replacement to stay time-bound.
+
+**Rolling back the binary.** The roles stay `global`, and an older binary reads the same column, so
+it refuses these grants too, without naming the replacement.
+
+## 6zi. MongoDB dynamic-secret configs whose `admin_dsn` has `tlsInsecure=true`
+
+A MongoDB dynamic-secret config can carry `tlsInsecure=true` (or its alias
+`sslInsecure=true`, in any option-name case) in its `admin_dsn`, for example
+`mongodb://admin:password@mongo.internal:27017/?tls=true&tlsInsecure=true`. The driver
+then connects over TLS without checking the server certificate or host name. From this
+release (#4374):
+
+- **Issue from such a config fails** with an error naming `tlsInsecure`, unless
+  `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport` is enabled. With
+  that setting on, the connection is made and the server logs
+  `WARNING: mongodb admin_dsn host "<host>" has tlsInsecure=true`.
+- **Saving such a DSN is not refused yet**: the check runs when a credential is issued
+  or revoked, not when the config is created or updated.
+- **Revoke and the expiry sweep still drop the users**: with that setting off,
+  `tlsInsecure` is removed and the certificate is verified. A target whose certificate
+  is not trusted by the Keyorix server fails the handshake, and the lease stays
+  `revoke_failed` with an error that names `tlsInsecure`. MongoDB users have no native
+  expiry, so such a user stays able to log in until it is dropped.
+- **A `mongodb+srv://` `admin_dsn` that turns TLS off** with `TLS=false` or `SSL=false`
+  (any case other than lower case) is now refused like `tls=false`, unless the same
+  setting is enabled.
+
+What to do, before or after upgrading:
+
+- Before upgrading, you can revoke the leases issued from such configs while the old
+  release still connects to the target.
+- Give the MongoDB server a certificate the Keyorix server's system trust store accepts
+  (an `admin_dsn` cannot name a CA file: `tlsCAFile` is refused on issue and removed on
+  revoke), then replace the stored `admin_dsn`
+  without `tlsInsecure` using `keyorix dynamic-secret set-admin-dsn <config-id>` (the
+  DSN is read from `KEYORIX_DYNAMIC_ADMIN_DSN` or stdin, never the command line).
+- Drop by hand (`db.dropUser("<username>")` in the `admin` database) the MongoDB user of
+  every lease that stays `revoke_failed`.
+
+## 6zj. MySQL admin DSNs with `compress=true`
+
+The MySQL clients Keyorix builds for operator-supplied endpoints (dynamic MySQL credentials and
+MySQL password rotation) now dial through a guard that bounds what a server can make the driver
+allocate (#4567). The guard follows the plaintext packet framing and does not support the
+compressed protocol, so from this release:
+
+- **A MySQL `admin_dsn` or rotation DSN with `compress=true` fails to connect.** Issue, revoke
+  and rotation against such a target fail with `invalid connection`; the server log carries the
+  driver's `[mysql]` line `netutil: MySQL packet rejected: compressed protocol is not supported
+  on a guarded connection`.
+- **Saving such a DSN is not refused**: the failure appears at the first connection.
+
+What to do: remove `compress=true` from the DSN (for a dynamic-secret config, replace the stored
+`admin_dsn` with `keyorix dynamic-secret set-admin-dsn <config-id>`, which reads the DSN from
+`KEYORIX_DYNAMIC_ADMIN_DSN` or stdin). Connections that use TLS (`tls=true` and the other `tls=`
+modes) are not affected by this change.
+
+## 6zk. Project names are unique ignoring case and Unicode normalization on both backends
+
+The unique index on live project names (`uniq_projects_name_active`) used SQL `LOWER(name)`.
+SQLite's `LOWER` folds ASCII only and PostgreSQL's follows the database locale, so the two
+backends accepted different sets of names. Projects now carry a `name_folded` column (NFC plus
+case folding, computed in Go like `username_folded`); the same index name is rebuilt on it and
+`GetProjectByName` looks up by it. This is schema epoch 10.
+
+**What you will see on upgrade.** The column is added and backfilled for live projects, then the
+old index is dropped and rebuilt. If two live projects fold to the same name, the server refuses
+to start and changes nothing: no row is renamed, backfilled or deleted, and the old index stays.
+The error ends with:
+
+```
+(project names must be unique ignoring case and Unicode normalization. The server cannot start to
+rename them itself: with the server stopped, rename one project of each listed group directly,
+e.g. UPDATE projects SET name = '<new name>' WHERE id = <id>, then start it again; nothing was
+changed by this check)
+```
+
+and names the folded value and the project ids of each colliding group.
+
+**What to do.** With the server stopped, rename one project of each listed group, for example:
+
+```sql
+UPDATE projects SET name = '<new name>' WHERE id = <id>;
+```
+
+then start the server again. Soft-deleted projects are not checked.
+
+Project names created through the API, CLI or gRPC were already limited to letters, digits,
+spaces, `-` and `_`, so existing installs are unlikely to be affected. A pair can exist only if
+it was created before the ASCII-only name check applied to every writer.
+
+**Mixed versions.** Do not run a pre-release build with a schema epoch from 3 to 9 together with
+this build against the same database: such a build writes projects without `name_folded`. No
+released version is affected (v0.96.3 is at epoch 2 or lower, and the epoch floor refuses it).
+
+## 6zl. Redis dynamic-secret configs whose `admin_dsn` has `skip_verify=true`
+
+A Redis dynamic-secret config can carry `skip_verify=true` (or `skip_verify=1`) in its
+`admin_dsn`, for example `rediss://:password@redis.internal:6380/0?skip_verify=true`.
+go-redis then connects over TLS without checking the server certificate. From this
+release (#4377):
+
+- **Issue from such a config fails** with an error naming `skip_verify`, unless
+  `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport` is enabled. With
+  that setting on, the connection is made and the server logs
+  `WARNING: redis admin_dsn "<host:port>" has skip_verify=true`.
+- **Saving such a DSN is not refused yet**: the check runs when a credential is issued,
+  not when the config is created or updated.
+- **Revoke and the expiry sweep still drop the leases**: with that setting off,
+  `skip_verify` is removed and the certificate is verified. A target whose certificate is not trusted by the Keyorix
+  server fails the handshake, and the lease stays `revoke_failed` with an error that
+  names `skip_verify`.
+
+What to do: give the Redis server a certificate the Keyorix server trusts, then replace
+the stored `admin_dsn` without `skip_verify` using
+`keyorix dynamic-secret set-admin-dsn <config-id>` (the DSN is read from
+`KEYORIX_DYNAMIC_ADMIN_DSN` or stdin, never the command line). Delete by hand the ACL
+user of every lease that stays `revoke_failed`: Redis ACL users never expire on their own.
+
+## 6zm. Relative key paths must be used from the config file's directory (#4249)
+
+- A relative `storage.encryption.dek_path`, `salt_path` or key-provider path
+  (`wrapped_key_path`, `shamir_share_files`, `file_path`) is now defined against the config
+  file's directory, the base a relative `storage.database.path` already used. Key files are
+  still opened from the working directory, so the server, and `admin encryption` commands,
+  started from any other directory now refuse to start with
+  `storage.encryption.dek_path "keys/dek.key" is relative, and relative key paths are resolved
+  against the config file's directory (...)`, naming the key and the fix. Before, such a start
+  used (or generated) another key set under the working directory and took another DEK lock,
+  so a second server on the same database was not excluded.
+- Nothing changes for an install started from its config directory
+  (`KEYORIX_CONFIG_PATH=./keyorix.yaml`, the layout `admin init` writes) or one using absolute
+  key paths (the container and Helm configs). The configured values are not rewritten, so
+  existing backup archives restore as before.
+- If a service manager starts Keyorix with `KEYORIX_CONFIG_PATH=/abs/keyorix.yaml` from
+  another working directory, either set the key paths to absolute paths of the files the
+  install has been using, or set the working directory to the config file's directory.
+
+## 6zn. Setting a member's roles needs authority over every requested role
+
+`PUT /api/v1/projects/{id}/members/{userId}` and `PUT /api/v1/users/{id}/roles` now check the
+granter ceiling on every requested role, not only on roles the request adds.
+
+Before: a `roles.assign` holder who could not grant role X got 200 when the target already held X,
+either because nothing changed or because the request only removed the target's other roles.
+
+Now: the same request answers 403 and changes nothing. The caller must hold every permission each
+requested role bundles. Roles the request removes are not judged, so removing a role the caller
+could not grant still works when every role that stays is within the caller's authority.
+
+What to do: an integration that sends a member's full role set through either route with a
+credential that cannot grant one of those roles must use a credential that can, or stop sending
+the request. `POST /api/v1/projects/{id}/memberships` also now answers 403 instead of 500 for a
+role the caller may not grant.
+
+## 6zo. A Shamir share file that fails the owner and mode rule now stops the server
+
+**Who is affected:** deployments with `storage.encryption.key_provider.type: shamir`, or a
+`shamir` entry in `fallbacks`, that read shares from `shamir_share_files`. Shares from
+`shamir_share_env` and its `_FILE` form were already refused.
+
+**Old behaviour:** a too-open or foreign-owned share file was refused only by the startup
+permission check. With `security.enable_file_permission_check` off, with
+`security.allow_unsafe_file_permissions` on, or during the ADR-112 upgrade grace it was a warning
+and the server unsealed anyway.
+
+**New behaviour:** the file is refused whenever it is read, in every one of those modes, and in the
+admin commands that unseal (`rotate-kek`, `migrate-provider`, restore). None of those settings
+changes this. A loose share file that only warned before now stops the server from booting, and
+the error names the file:
+
+```text
+shamir key provider: read share /etc/keyorix/share-1.hex: mode 0644 is too open (accessible to other users) -- refusing to trust it; ...
+```
+
+If a `fallbacks` provider is configured, the server logs that error and tries the next provider
+instead of stopping, so a refused share can move the server onto a weaker provider. Check the
+boot log for `key provider: shamir failed`.
+
+The rule is the one every key-material secret follows. The file must be owned by the server's user
+or by root, with mode `0600` or `0400`. The one exception is an orchestrator mount (Kubernetes
+`fsGroup`, Docker `group_add`): owned by root, in a group the server belongs to, mode `0440`.
+
+**What to do, before upgrading:** on each host, for every path in `shamir_share_files`:
+
+```bash
+stat -c '%a %U:%G %n' /etc/keyorix/share-*.hex
+chmod 0600 /etc/keyorix/share-1.hex
+chown keyorix /etc/keyorix/share-1.hex   # the user the server runs as
+```
+
+Do this with `chmod` and `chown`. `keyorix-server admin encryption fix-perms` unseals the KEK before
+it touches any file, so after the upgrade it stops at the same refusal.
+
+## 6zp. SQLite accepts `audit_durability: standard` (read audits only)
+
+**Nothing changes unless you set it.** SQLite installs stay on `strict`, the
+SQLite default, and open no extra connection.
+
+Before: `storage.database.audit_durability: standard` (or the deprecated
+`insecure_audit_skip_durable_sync: true`) on a SQLite backend refused to start
+with `standard is only supported with PostgreSQL`.
+
+Now (ADR-112 Amendment 7) a SQLite server set to `standard` starts and opens
+one extra connection to the same database file with `synchronous=NORMAL`. The
+audit flusher commits a batch on it only when every row is a successful
+secret-value read audit (`secret.read`, `connect.secret_read`). Secret writes,
+revocations, rotations, the audit rows of every mutation, denied reads and
+mixed batches stay on the `synchronous=FULL` pool. The start-up log says so:
+
+```
+INFO: audit durability: standard (committed before every disclosure; secret mutations and their audit rows are synced to disk, successful read audits are not: ...)
+storage: audit_durability standard: successful secret-read audits commit on a dedicated synchronous=NORMAL connection; every other transaction stays synchronous=FULL (ADR-112 Amendment 7)
+```
+
+What it costs: a server process crash still loses nothing. An OS crash or
+power loss can lose the read-audit rows (and their access-log rows) committed
+since the last disk sync, as a tail; never a gap or fork in the audit chain and
+never a committed mutation. SQLite has no background WAL writer, so no timer
+bounds that window; the next write or checkpoint ends it. On an in-memory
+database the setting has no effect.
+
+To stay as you are, do nothing, or write `audit_durability: strict`. The level
+is recorded by the start-to-start settings diff like any other change.
+
+## 6zq. Outbound webhooks to 100.64.0.0/10 (CGNAT) are now refused
+
+**Who is affected:** deployments that send a notification channel, a notification webhook or chat
+message, an audit SIEM forward or an evidence webhook to an address in RFC 6598 shared address
+space, 100.64.0.0/10. A common case is a receiver reached over a Tailscale or carrier-grade NAT
+address (100.x.y.z).
+
+**Old behaviour:** these guards used Go's `ip.IsPrivate()`, which does not include 100.64.0.0/10,
+so such a receiver was reachable. So was Alibaba Cloud's instance-metadata endpoint,
+100.100.100.200, which is why this changed.
+
+**New behaviour:** the address is refused like any RFC 1918 address, directly and in every
+IPv6 form that embeds it (`::ffff:100.64.0.1`, `64:ff9b::6440:1`, ...). The check runs when the
+URL is saved and again on every dial, so an existing receiver on 100.64.0.0/10 starts failing at
+send time after the upgrade. The error says the target resolves to a private/link-local address.
+
+**What to do, before upgrading:** look for receivers on 100.64.0.0/10 in your channel URLs and in
+the `audit.siem`, `evidence_delivery.webhook` and `notifications.webhook` endpoints.
+
+- Move the receiver to a public address or a hostname that resolves to one, where you can.
+- For an audit SIEM, evidence webhook or notification webhook that must stay on the internal
+  network, set its existing opt-out: `audit.siem.insecure_allow_private_network_siem_target`,
+  `evidence_delivery.webhook.insecure_allow_private_network_evidence_target` or
+  `notifications.webhook.insecure_allow_private_network_notify_target`. It turns off the
+  private-address check for that endpoint, CGNAT included.
+- Notification channels and the notifications chat sink have no opt-out. A receiver for them
+  must be on a public address.
+
+The connect and OIDC outbound clients only refuse link-local addresses and are not affected.
+
 ## 7. Rollback
 
 The step-by-step version, with the commands verified on v0.96.1 → v0.96.3 (Docker
