@@ -132,9 +132,15 @@ func FuzzDSNHostsCoverDriverHosts(f *testing.F) {
 	})
 }
 
+// stripBrackets removes ALL outer bracket pairs (e.g. "[[::1]]" → "::1").
+// SplitDSNHostList now loop-strips brackets for the same reason: a
+// double-bracket-wrapped literal would otherwise reach the validator as "[::1]"
+// rather than "::1", causing net.LookupHost to fail and silently skipping the
+// private-IP check. The oracle must use the same multi-level normalization so
+// that covered("[[::1]]") and covered("::1") treat both as the same address.
 func stripBrackets(h string) string {
-	if len(h) > 1 && h[0] == '[' && h[len(h)-1] == ']' {
-		return h[1 : len(h)-1]
+	for len(h) > 1 && h[0] == '[' && h[len(h)-1] == ']' {
+		h = h[1 : len(h)-1]
 	}
 	return h
 }

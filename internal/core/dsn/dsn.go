@@ -90,16 +90,26 @@ func SplitDSNHostList(field string) []string {
 		// net.SplitHostPort requires an explicit port, so a bracket-quoted
 		// IPv6 literal with NO port (e.g. "[64:ff9b::8.8.8.8]" -- a legal
 		// PostgreSQL multi-host URI entry that just uses the default port)
-		// fails that call for want of one. Strip the brackets before giving
-		// up, rather than carrying them into the "host" -- net.ParseIP (and
-		// every guard downstream of it) rejects a bracket-wrapped literal
+		// fails that call for want of one. Strip ALL bracket layers before
+		// giving up, rather than carrying them into the "host" -- net.ParseIP
+		// (and every guard downstream of it) rejects a bracket-wrapped literal
 		// outright, which would otherwise fall through to net.LookupHost and
 		// silently skip validation for exactly this shape.
 		//
+		// Loop, not a single if: a double-bracket-wrapped literal (e.g.
+		// "[[::1]]"), while un-dialable by pgx (which stores the full
+		// "[[::1]]" string and can't resolve it), still passes through the
+		// validator as "[::1]" after a single strip -- net.LookupHost("[::1]")
+		// errors, so the check is silently skipped. FuzzDSNHostsCoverDriverHosts
+		// (internal/dynamic) confirmed the oracle discrepancy: pgx reports a
+		// host the validator never checked in the right form. Loop-stripping
+		// makes [[::1]] reach the validator as ::1, which net.ParseIP
+		// recognises as an IPv6 loopback and isPrivateIP blocks correctly.
+		//
 		// An empty bracket pair ("[]") would strip to "" and be dropped by
 		// every caller, hiding a host the driver still sees (pgx dials the
-		// literal "[]"); keep the entry as written so it stays a candidate.
-		if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 2 {
+		// literal "[]"); the len(part) > 2 guard keeps it as written.
+		for strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 2 {
 			part = part[1 : len(part)-1]
 		}
 		hosts = append(hosts, part)
