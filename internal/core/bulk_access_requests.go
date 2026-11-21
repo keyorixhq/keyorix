@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -36,6 +37,23 @@ func approverPrincipal(approverID, approverMachineID uint) (actorType string, pr
 		return ActorTypeMachine, approverMachineID
 	}
 	return ActorTypeUser, approverID
+}
+
+// requireBulkAccessRequestGate is the bulk routes' own gate — roles.assign at the
+// GLOBAL scope (RequirePermission(permRolesAssign) on /access-requests/bulk-approve
+// and bulk-reject) — decided in core (#4161). The approver tuple is already
+// resolved by approverPrincipal, so this takes the principal directly instead of
+// going through gateActor; a (0, 0) approver has no roles and is refused, as the
+// per-item check always refused it.
+func (k *KeyorixCore) requireBulkAccessRequestGate(ctx context.Context, actorType string, principalID uint) error {
+	allowed, err := k.AuthorizePrincipal(ctx, actorType, principalID, permRolesAssign, Scope{})
+	if err != nil {
+		return gateResolutionError(err)
+	}
+	if !allowed {
+		return permissionDeniedf("%s: insufficient permissions", i18n.T("ErrorPermissionDenied", nil))
+	}
+	return nil
 }
 
 // bulkAccessRequestNotFound is the per-item answer for a request ID that does not
@@ -112,6 +130,13 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 	if len(requestIDs) > maxBulkAccessRequestBatchSize {
 		return nil, fmt.Errorf("request_ids exceeds the maximum batch size of %d", maxBulkAccessRequestBatchSize)
 	}
+	actorType, principalID := approverPrincipal(approverID, approverMachineID)
+	// #4161: the route gate (roles.assign at the GLOBAL scope, POST
+	// /access-requests/bulk-approve) is decided here as well; the per-item
+	// roles.assign check at each request's project stays.
+	if err := k.requireBulkAccessRequestGate(ctx, actorType, principalID); err != nil {
+		return nil, err
+	}
 
 	// Pre-fetch all requests in one query so we can resolve projectID per item
 	// without N individual GetAccessRequest round trips.
@@ -125,7 +150,6 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 		byID[r.ID] = r
 	}
 
-	actorType, principalID := approverPrincipal(approverID, approverMachineID)
 	result := &BulkApproveResult{}
 	for _, id := range requestIDs {
 		req, ok := byID[id]
@@ -210,6 +234,11 @@ func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs [
 	}
 
 	actorType, principalID := approverPrincipal(approverID, approverMachineID)
+	// #4161: the bulk-reject route's own global roles.assign gate, decided here as
+	// well (see BulkApproveAccessRequests).
+	if err := k.requireBulkAccessRequestGate(ctx, actorType, principalID); err != nil {
+		return nil, err
+	}
 	result := &BulkRejectResult{}
 	for _, id := range requestIDs {
 		req, ok := byID[id]

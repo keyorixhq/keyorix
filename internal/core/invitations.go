@@ -508,6 +508,11 @@ func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRol
 	if err := c.requireActorActive(ctx, invitedBy); err != nil { // #4159
 		return nil, nil, err
 	}
+	// #4161: the route gate (users.write at the GLOBAL scope, POST /invitations) is
+	// decided here as well; the escalation-by-proxy ceiling in buildGlobalInvite stays.
+	if err := c.requireScopedGate(ctx, invitedBy, permUsersWrite, Scope{}); err != nil {
+		return nil, nil, err
+	}
 	invCtx, inv, sysRole, clean, err := c.buildGlobalInvite(ctx, email, systemRole, assignments, invitedBy, invitedByMachineID)
 	if err != nil {
 		return nil, nil, err
