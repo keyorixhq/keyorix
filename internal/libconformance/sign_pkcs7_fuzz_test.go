@@ -52,6 +52,31 @@ package libconformance
 //     verifiable by VerifyWithChain because authenticated attributes are
 //     required; see FuzzPKCS7SignWithoutAttr for that target's oracle)
 //
+// # RemoveAuthenticatedAttributes COMPOSE (LS5 addition)
+//
+// Both FuzzPKCS7Sign and FuzzPKCS7SignWithChain carry a fuzz-driven boolean
+// toggle `removeAuthAttrs` (LS5 COMPOSE decision).  When true, the harness
+// calls sd.RemoveAuthenticatedAttributes() between AddSigner/AddSignerChain
+// and Finish(), producing a token with no authenticated attributes in its
+// ASN.1 encoding.
+//
+// Oracle when removeAuthAttrs == true: VerifyWithChain MUST return a non-nil
+// error.  Rationale: AddSigner computed the ECDSA signature over
+// marshalAttributes(finalAttrs) (authenticated attrs); after removal,
+// verifySignature takes the else-branch of len(AuthenticatedAttributes)>0 and
+// calls ee.CheckSignature(sigalg, p7.Content, sig_over_attrs) — the data
+// argument is the raw content, not the attrs the signature was over, so
+// CheckSignature returns a mismatch error.  The oracle asserts this code path
+// returns error (not panic) on every fuzz input.
+//
+// Oracle when removeAuthAttrs == false: existing round-trip oracle (verify
+// must succeed).
+//
+// What this COMPOSE oracle does NOT verify:
+//   - Which specific error VerifyWithChain returns (only non-nil is checked)
+//   - RemoveAuthenticatedAttributes on a SignedData with zero signerInfos
+//     (safe by Go range semantics but not explicitly exercised here)
+//
 // # Signature drift check (LS3 requirement)
 //
 // Confirmed from `go doc github.com/digitorus/pkcs7` against pinned version
@@ -172,28 +197,32 @@ func buildSignFuzzPKI(tb testing.TB) *signFuzzPKI {
 	}
 }
 
-// FuzzPKCS7Sign fuzzes NewSignedData → AddSigner → Finish with arbitrary
-// content.  Uses a 2-tier PKI (root → leaf) where AddSigner is called with
-// no parent certificates (the common case).  Carries a sign-then-verify
-// round-trip oracle (LS4): when Finish() succeeds, the token is parsed and
-// verified against pki.roots.
+// FuzzPKCS7Sign fuzzes NewSignedData → AddSigner → [RemoveAuthenticatedAttributes →] Finish
+// with arbitrary content.  Uses a 2-tier PKI (root → leaf) where AddSigner is called with
+// no parent certificates (the common case).  Carries a sign-then-verify round-trip oracle
+// (LS4) and a RemoveAuthenticatedAttributes COMPOSE oracle (LS5); see file header for details.
 func FuzzPKCS7Sign(f *testing.F) {
 	pki := buildVerifyFuzzPKI(f) // 2-tier PKI reused from verify harness
 
-	f.Add([]byte("ls3-sign-fuzz-seed-content"))
-	f.Add([]byte{})
-	f.Add(make([]byte, 1024))
-	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01})
+	f.Add([]byte("ls3-sign-fuzz-seed-content"), false)
+	f.Add([]byte("ls5-remove-auth-attrs-seed"), true)
+	f.Add([]byte{}, false)
+	f.Add([]byte{}, true)
+	f.Add(make([]byte, 1024), false)
+	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01}, false)
 
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(t *testing.T, data []byte, removeAuthAttrs bool) {
 		var token []byte
-		fuzzutil.Guard(t.Fatalf, "pkcs7.NewSignedData+AddSigner+Finish", func() {
+		fuzzutil.Guard(t.Fatalf, "pkcs7.NewSignedData+AddSigner+[RemoveAuthAttrs+]Finish", func() {
 			sd, err := pkcs7.NewSignedData(data)
 			if err != nil {
 				return
 			}
 			if err := sd.AddSigner(pki.leaf, pki.leafKey, pkcs7.SignerInfoConfig{}); err != nil {
 				return
+			}
+			if removeAuthAttrs {
+				sd.RemoveAuthenticatedAttributes()
 			}
 			out, err := sd.Finish()
 			if err != nil {
@@ -204,38 +233,46 @@ func FuzzPKCS7Sign(f *testing.F) {
 		if len(token) == 0 {
 			return
 		}
-		// Round-trip oracle: a token produced by our own signing must verify.
-		fuzzutil.Guard(t.Fatalf, "pkcs7.AddSigner-sign-then-verify-roundtrip", func() {
+		// Oracle: depends on removeAuthAttrs (see file header for full reasoning).
+		fuzzutil.Guard(t.Fatalf, "pkcs7.AddSigner-verify-oracle", func() {
 			p7, err := pkcs7.Parse(token)
 			if err != nil {
-				t.Fatalf("sign-then-verify: Parse failed on our own output: %v", err)
+				t.Fatalf("verify-oracle: Parse failed on our own output: %v", err)
 			}
-			if err := p7.VerifyWithChain(pki.roots); err != nil {
-				t.Fatalf("sign-then-verify: VerifyWithChain rejected our own signed token: %v", err)
+			verifyErr := p7.VerifyWithChain(pki.roots)
+			if removeAuthAttrs {
+				if verifyErr == nil {
+					t.Fatalf("remove-auth-attrs oracle: VerifyWithChain should return error on auth-attr-stripped token but returned nil")
+				}
+			} else {
+				if verifyErr != nil {
+					t.Fatalf("sign-then-verify: VerifyWithChain rejected our own signed token: %v", verifyErr)
+				}
 			}
 		})
 	})
 }
 
-// FuzzPKCS7SignWithChain fuzzes NewSignedData → AddSignerChain → Finish with
-// arbitrary content.  Uses a 3-tier PKI (root → intermediate → leaf) to
-// exercise the intermediate-certificate code path in AddSignerChain.  Carries
-// a sign-then-verify round-trip oracle (LS4): when Finish() succeeds, the
-// token is parsed and verified against pki.root's pool.
+// FuzzPKCS7SignWithChain fuzzes NewSignedData → AddSignerChain → [RemoveAuthenticatedAttributes →]
+// Finish with arbitrary content.  Uses a 3-tier PKI (root → intermediate → leaf) to exercise the
+// intermediate-certificate code path in AddSignerChain.  Carries the same round-trip oracle (LS4)
+// and RemoveAuthenticatedAttributes COMPOSE oracle (LS5) as FuzzPKCS7Sign; see file header.
 func FuzzPKCS7SignWithChain(f *testing.F) {
 	pki := buildSignFuzzPKI(f)
 
 	chainRoots := x509.NewCertPool()
 	chainRoots.AddCert(pki.root)
 
-	f.Add([]byte("ls3-sign-chain-fuzz-seed-content"))
-	f.Add([]byte{})
-	f.Add(make([]byte, 1024))
-	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01})
+	f.Add([]byte("ls3-sign-chain-fuzz-seed-content"), false)
+	f.Add([]byte("ls5-chain-remove-auth-attrs-seed"), true)
+	f.Add([]byte{}, false)
+	f.Add([]byte{}, true)
+	f.Add(make([]byte, 1024), false)
+	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01}, false)
 
-	f.Fuzz(func(t *testing.T, data []byte) {
+	f.Fuzz(func(t *testing.T, data []byte, removeAuthAttrs bool) {
 		var token []byte
-		fuzzutil.Guard(t.Fatalf, "pkcs7.NewSignedData+AddSignerChain+Finish", func() {
+		fuzzutil.Guard(t.Fatalf, "pkcs7.NewSignedData+AddSignerChain+[RemoveAuthAttrs+]Finish", func() {
 			sd, err := pkcs7.NewSignedData(data)
 			if err != nil {
 				return
@@ -244,6 +281,9 @@ func FuzzPKCS7SignWithChain(f *testing.F) {
 			if err := sd.AddSignerChain(pki.leaf, pki.leafKey, parents, pkcs7.SignerInfoConfig{}); err != nil {
 				return
 			}
+			if removeAuthAttrs {
+				sd.RemoveAuthenticatedAttributes()
+			}
 			out, err := sd.Finish()
 			if err != nil {
 				return
@@ -253,15 +293,21 @@ func FuzzPKCS7SignWithChain(f *testing.F) {
 		if len(token) == 0 {
 			return
 		}
-		// Round-trip oracle: AddSignerChain embeds the intermediate in the token;
-		// VerifyWithChain must find it and accept the resulting chain.
-		fuzzutil.Guard(t.Fatalf, "pkcs7.AddSignerChain-sign-then-verify-roundtrip", func() {
+		// Oracle: depends on removeAuthAttrs (see file header for full reasoning).
+		fuzzutil.Guard(t.Fatalf, "pkcs7.AddSignerChain-verify-oracle", func() {
 			p7, err := pkcs7.Parse(token)
 			if err != nil {
-				t.Fatalf("sign-then-verify: Parse failed on our own output: %v", err)
+				t.Fatalf("verify-oracle: Parse failed on our own output: %v", err)
 			}
-			if err := p7.VerifyWithChain(chainRoots); err != nil {
-				t.Fatalf("sign-then-verify: VerifyWithChain rejected our own signed token: %v", err)
+			verifyErr := p7.VerifyWithChain(chainRoots)
+			if removeAuthAttrs {
+				if verifyErr == nil {
+					t.Fatalf("remove-auth-attrs oracle: VerifyWithChain should return error on auth-attr-stripped token but returned nil")
+				}
+			} else {
+				if verifyErr != nil {
+					t.Fatalf("sign-then-verify: VerifyWithChain rejected our own signed token: %v", verifyErr)
+				}
 			}
 		})
 	})
