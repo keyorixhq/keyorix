@@ -37,7 +37,7 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	if km.currentDEK == nil {
+	if km.published().dek == nil {
 		return fmt.Errorf("key manager not initialized — cannot rotate")
 	}
 
@@ -94,7 +94,7 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 	// swept, active DEK still the old one. See FuzzDEKSweepCrashConsistency.
 	rotationCheckpointHook("sweep:after-write-dek-pending")
 
-	oldEncSvc, err := NewEncryptionService(km.currentDEK)
+	oldEncSvc, err := NewEncryptionService(km.published().dek)
 	if err != nil {
 		wipeBytes(newDEK)
 		_ = os.Remove(filepath.Join(km.baseDir, pendingDEKPath))
@@ -154,13 +154,17 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 	rotationCheckpointHook("sweep:after-syncdir")
 	km.commitKeySet(keyfiles.OpRotateDEK, newFiles)
 
-	wipeBytes(km.currentDEK)
-	km.currentDEK = newDEK
-	km.dekSnapshot = append([]byte(nil), wrapped...)
-	km.keyVersion = newKeyVersion
+	// Field moves only (#4376): the lock scope and the publish point are as
+	// before, mu.Lock is held so no reader is mid-copy of the wiped DEK.
+	next := km.nextState()
+	wipeBytes(next.dek)
+	next.dek = newDEK
+	next.dekSnapshot = append([]byte(nil), wrapped...)
+	next.keyVersion = newKeyVersion
+	km.state.Store(next)
 	km.deleteBackupFiles()
 
-	fmt.Printf("✅ DEK rotated and full re-encryption sweep complete. New version: %s\n", km.keyVersion)
+	fmt.Printf("✅ DEK rotated and full re-encryption sweep complete. New version: %s\n", newKeyVersion)
 	return nil
 }
 
@@ -188,7 +192,7 @@ func (km *KeyManager) deleteBackupFiles() {
 // pending file it promotes was fsync'd — data and directory entry both — before the sweep's
 // redo marker committed, so whenever a marker says "promote", this file is present.
 //
-// A pure file rename: it does NOT touch km.currentDEK or any in-memory state, because
+// A pure file rename: it does NOT touch keyState.dek or any in-memory state, because
 // recovery runs before Initialize, which then loads the freshly-promoted active DEK. Safe
 // to call with no pending file present (no-op) — so a crash after the rename but before the
 // marker is cleared replays harmlessly.

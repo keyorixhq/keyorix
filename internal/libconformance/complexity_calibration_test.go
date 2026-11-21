@@ -8,9 +8,9 @@ import (
 
 	"github.com/beevik/etree"
 	"github.com/golang-jwt/jwt/v5"
+	yaml "go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
-	"gopkg.in/yaml.v3"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/complexity"
 	"github.com/keyorixhq/keyorix/internal/identity"
@@ -82,7 +82,7 @@ func TestComplexityCalibration(t *testing.T) {
 }
 
 // yamlBomb builds a billion-laughs document with `levels` anchors, each a
-// 2-element list referencing the previous anchor twice. If yaml.v3's alias
+// 2-element list referencing the previous anchor twice. If yaml v4's alias
 // budget is absent, the decoded structure has ~2^levels leaves.
 func yamlBomb(levels int) []byte {
 	var b strings.Builder

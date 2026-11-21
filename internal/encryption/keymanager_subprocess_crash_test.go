@@ -175,7 +175,7 @@ func TestCrashHelperProcess(t *testing.T) {
 			fmt.Fprintln(os.Stderr, "init failed:", err)
 			os.Exit(1)
 		}
-		es, err := NewEncryptionService(km.currentDEK)
+		es, err := NewEncryptionService(km.published().dek)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "canary encryption service failed:", err)
 			os.Exit(1)
@@ -270,11 +270,11 @@ func TestCrashHelperProcess(t *testing.T) {
 			fmt.Fprintln(os.Stderr, "check (post-crash reload) failed:", err)
 			os.Exit(1)
 		}
-		if km.currentDEK == nil || len(km.currentDEK) != 32 {
+		if km.published().dek == nil || len(km.published().dek) != 32 {
 			fmt.Fprintln(os.Stderr, "check: DEK did not load correctly")
 			os.Exit(1)
 		}
-		es, err := NewEncryptionService(km.currentDEK)
+		es, err := NewEncryptionService(km.published().dek)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "check: encryption service from recovered DEK failed:", err)
 			os.Exit(1)

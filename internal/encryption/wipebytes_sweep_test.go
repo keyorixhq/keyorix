@@ -42,7 +42,7 @@
 //   - sources bound by a `var v = f()` declaration or a multi-call assignment
 //     (only `v, ... := f(...)` / `v, ... = f(...)` with one call is a source);
 //   - key material that reaches a variable without a call (slicing, copy,
-//     make+fill, struct field reads such as km.currentDEK);
+//     make+fill, struct field reads such as km.published().dek);
 //   - that a struct field holding key material is wiped before it is
 //     overwritten or on shutdown (keymanager_io.go's Wipe and
 //     g62_dek_safety_test.go cover the fields individually);
@@ -112,6 +112,8 @@ var notKeyMaterialCallees = map[string]string{
 	"ReconcileKeySet":          "key-set manifest result (warnings, renamed paths), not key bytes",
 	"AdoptProvenKeySet":        "key-set manifest result (warnings, adopted paths), not key bytes",
 	"CheckRelativeKeyPathBase": "a key-path configuration error (#4249), not key bytes",
+	"rotateKEKPassphrase": "the superseded *keyState, not a []byte: RotateKEKPassphraseWithPrepare wipes its " +
+		"KEK-derived keys under mu.Lock after the new state is published (#4376)",
 }
 
 // retainingCallees keep the key slice they are passed: passing v to one hands

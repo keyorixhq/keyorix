@@ -1,6 +1,7 @@
 # Key-custody availability: coalescer Stop + KeyManager fsync-under-lock
 
 Date: 2026-11-15 · Branch: `fuzz/s3-key-custody` · Task S3 (design phase)
+Status (2026-11-21, #4376): §2 implemented for `RotateKEKPassphraseWithPrepare` and `RewrapDEKWithPrepare` (`rotateMu` + an immutable `keyState` published with `atomic.Pointer`); `RotateDEKWithSweep` is unchanged and still holds `KeyManager.mu` across its sweep (follow-up).
 Source: fuzz-corpus issue 114 (two availability/integrity risks in key custody).
 
 This document covers two findings:

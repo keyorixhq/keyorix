@@ -35,11 +35,17 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 // RewrapDEKWithPrepare is RewrapDEK calling prepare (when non-nil) with the
 // audit-checkpoint key the new KEK derives, after the staleness check and
 // before the new wrapped DEK is written (see AuditKeyChangePrepare).
+//
+// It holds rotateMu and the DEK flock for the whole re-wrap but never mu, so
+// readers keep running while the pending DEK is written, renamed and fsynced;
+// the new dekSnapshot is published with one state.Store once the rename and
+// directory fsync are durable (#4376). The DEK and the KEK-derived keys in
+// memory do not change here, so nothing is superseded and nothing is wiped.
 func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepare AuditKeyChangePrepare) error {
-	km.mu.Lock()
-	defer km.mu.Unlock()
+	km.rotateMu.Lock()
+	defer km.rotateMu.Unlock()
 
-	if km.currentDEK == nil {
+	if km.published().dek == nil {
 		return fmt.Errorf("key manager not initialized — cannot re-wrap DEK")
 	}
 	if newProvider == nil {
@@ -69,8 +75,11 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 		return fmt.Errorf("re-wrap DEK: %w", err)
 	}
 	defer lock.release()
+	// Loaded under the flock: from here until the release, no other writer
+	// changes dek or dekSnapshot (keymanager_state.go).
+	cur := km.published()
 
-	// Mutual exclusion alone is not sufficient: km.currentDEK was captured
+	// Mutual exclusion alone is not sufficient: the in-memory DEK was captured
 	// whenever this process's own Initialize() ran, which may be long before
 	// this call and long before the lock above was even contended for. If a
 	// concurrent RotateDEKWithSweep replaced dek.key with a NEW DEK (and
@@ -85,11 +94,11 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 	if err != nil {
 		return fmt.Errorf("re-wrap DEK: re-read active DEK under lock: %w", err)
 	}
-	if !bytes.Equal(onDisk, km.dekSnapshot) {
+	if !bytes.Equal(onDisk, cur.dekSnapshot) {
 		return fmt.Errorf("re-wrap DEK: the on-disk DEK changed since this process started — a concurrent DEK rotation likely completed in the meantime, so the in-memory DEK here is stale. Aborting without writing to avoid discarding the newer key; re-run migrate-provider now that the rotation has finished")
 	}
 
-	wrapped, err := wrapKey(km.currentDEK, newKEK)
+	wrapped, err := wrapKey(cur.dek, newKEK)
 	if err != nil {
 		return fmt.Errorf("re-wrap DEK: wrap DEK with new KEK: %w", err)
 	}
@@ -137,6 +146,8 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 	// Crash-consistency checkpoint (nil in production): the rewrap is fully durable.
 	rotationCheckpointHook("rewrap:after-syncdir")
 	km.commitKeySet(keyfiles.OpRewrapDEK, newFiles)
-	km.dekSnapshot = append([]byte(nil), wrapped...)
+	next := km.nextState()
+	next.dekSnapshot = append([]byte(nil), wrapped...)
+	km.state.Store(next)
 	return nil
 }

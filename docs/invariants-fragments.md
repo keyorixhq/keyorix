@@ -105,15 +105,17 @@ guard. Nobody in the queue uses fragments yet, so the fragment rule blocks no ex
 
 What the guard does **not** check: that a named guard test exists or passes (that is
 `scripts/check-closures.sh`'s / `check-adr-conformance.sh`'s job for ledgered claims), that an
-issue number is real or open, or the hand-maintained count table in `docs/INVARIANTS.md`.
+issue number is real or open, or that the generated count table in `docs/INVARIANTS.md` is
+fresh (that is `internal/docsdrift`'s `TestInvariantsIndexBlockIsGenerated`).
 
 ## Adding an invariant
 
-Create `<pkg>/INVARIANTS.d/INV-<PKG>-<slug>.md` as above. For a package's first fragment, also
-add its row to the table in `docs/INVARIANTS.md` (the index is hand-written; the guard fails
-without the row). Do not append a bullet to
-`INVARIANTS.md` and do not take "the next number". Run
-`go test ./internal/statemap/ -run InvariantDocs`.
+Create `<pkg>/INVARIANTS.d/INV-<PKG>-<slug>.md` as above, then run
+`scripts/gen-invariants-index.sh` to refresh the generated package table in
+`docs/INVARIANTS.md` (a package's first fragment gets its row that way; never edit the
+generated block by hand, and on a conflict in it take main's file and rerun the script). Do not
+append a bullet to `INVARIANTS.md` and do not take "the next number". Run
+`go test ./internal/statemap/ -run InvariantDocs` and `go test ./internal/docsdrift/ -run InvariantsIndex`.
 
 ## Migrating a package (coordinator, in a quiet window)
 
@@ -144,6 +146,5 @@ Migration is opt-in per package, not automatic, for that reason. Until a package
 both layouts coexist: legacy numbered bullets stay where they are and new invariants go in as
 fragments, and the guard treats both as one namespace.
 
-After migrating, `docs/INVARIANTS.md`'s counts are re-derived from fragments
-(`ls <pkg>/INVARIANTS.d | wc -l`; per fragment, whether it contains `UNGUARDED`) instead of
-by counting bullets.
+After migrating, run `scripts/gen-invariants-index.sh`: it counts fragments instead of bullets
+by itself, so the migration changes no number in `docs/INVARIANTS.md`.
