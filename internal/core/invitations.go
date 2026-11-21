@@ -508,6 +508,11 @@ func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRol
 	if err := c.requireActorActive(ctx, invitedBy); err != nil { // #4159
 		return nil, nil, err
 	}
+	// #4161: the route gate (users.write at the GLOBAL scope, POST /invitations) is
+	// decided here as well; the escalation-by-proxy ceiling in buildGlobalInvite stays.
+	if err := c.requireScopedGate(ctx, invitedBy, permUsersWrite, Scope{}); err != nil {
+		return nil, nil, err
+	}
 	invCtx, inv, sysRole, clean, err := c.buildGlobalInvite(ctx, email, systemRole, assignments, invitedBy, invitedByMachineID)
 	if err != nil {
 		return nil, nil, err
@@ -880,7 +885,10 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 	if err := refuseMachineActor(ctx, userID); err != nil { // #4162
 		return nil, err
 	}
-	if err := c.requireActorActive(ctx, userID); err != nil { // #4159
+	// #4159/#4161: the route has no permission gate (any authenticated user may ask
+	// for access), so the only decision core has to share with the transports is the
+	// account state: a suspended requester is refused at authentication there.
+	if err := c.requireActorActive(ctx, userID); err != nil {
 		return nil, err
 	}
 	if projectID == 0 || userID == 0 {

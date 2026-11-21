@@ -138,6 +138,12 @@ func TestAddUserToGroup_EscalationByProxyBlocked(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	attacker := seedUserWithRole(t, st, "grp-attacker", "project_viewer", storage.Scope{ProjectID: 1})
+	// #4161: core also decides the /groups route gate (users.read + roles.assign at
+	// the GLOBAL scope). The attacker holds exactly that through an ordinary role —
+	// a roles.assign holder, nothing admin-tier — so the escalation-by-proxy
+	// ceiling is what refuses, as the route gate would have let this request
+	// through to it.
+	grantGateHolder(t, st.DB(), attacker, Scope{}, permUsersRead, permRolesAssign)
 
 	adminRole, err := c.storage.GetRoleByName(ctx, "admin")
 	require.NoError(t, err)
@@ -222,6 +228,7 @@ func TestAssignRoleToGroup_EscalationByProxyBlocked(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	attacker := seedUserWithRole(t, st, "artg-attacker", "project_viewer", storage.Scope{ProjectID: 1})
+	grantGateHolder(t, st.DB(), attacker, Scope{}, permUsersRead, permRolesAssign) // #4161: the route gate, as above
 	group, err := c.CreateGroup(ctx, 0, &CreateGroupRequest{Name: "g1"})
 	require.NoError(t, err)
 	adminRole, err := c.storage.GetRoleByName(ctx, "admin")

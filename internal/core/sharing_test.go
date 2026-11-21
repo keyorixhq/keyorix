@@ -366,6 +366,8 @@ func TestKeyorixCore_RevokeShare(t *testing.T) {
 	// Mock expectations
 	mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+	// #4161: the owner also holds the route gate (secrets.write at the secret's scope).
+	stubAuthorizedPrincipal(mockStorage, 1, Scope{}, permSecretsWrite)
 	// RevokeShare verifies the owner is still a live project member (RBAC-001).
 	mockStorage.On("IsProjectMember", ctx, uint(1), uint(0)).Return(true, nil)
 	mockStorage.On("DeleteShareRecord", ctx, uint(1)).Return(nil)
@@ -416,6 +418,8 @@ func TestKeyorixCore_RevokeShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
 	// RevokeShare verifies the owner is still a live project member (RBAC-001).
 	mockStorage.On("IsProjectMember", ctx, uint(1), uint(0)).Return(true, nil)
 	mockStorage.On("DeleteShareRecord", ctx, uint(1)).Return(errors.New("storage unavailable"))
+	// #4161: the owner also holds the route gate (secrets.write at the secret's scope).
+	stubAuthorizedPrincipal(mockStorage, 1, Scope{}, permSecretsWrite)
 
 	stubActiveActors(mockStorage) // the acting user is active (#4159)
 	err := core.RevokeShare(ctx, 1, 1)
@@ -672,6 +676,9 @@ func TestKeyorixCore_RevokeShare_DepartedOwnerDenied(t *testing.T) {
 		mockStorage.On("DeleteShareRecord", ctx, uint(1)).Return(nil)
 		mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
 		mockStorage.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).Return(&models.Notification{}, nil)
+		// #4161: RevokeShare decides the route gate (secrets.write at the secret's
+		// scope) in core; the live owner holds it through an ordinary role.
+		stubAuthorizedPrincipal(mockStorage, 1, Scope{ProjectID: 5}, permSecretsWrite)
 
 		stubActiveActors(mockStorage) // the acting user is active (#4159)
 		err := core.RevokeShare(ctx, 1, 1)

@@ -260,6 +260,11 @@ func (c *KeyorixCore) CreateUserAudited(ctx context.Context, req *CreateUserRequ
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
 		return nil, err
 	}
+	// #4161: the route gate (users.read for the /users group, users.write for the
+	// create, both GLOBAL) is decided here as well; the baseline-role ceiling stays.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permUsersRead, Scope{}}, scopedGate{permUsersWrite, Scope{}}); err != nil {
+		return nil, err
+	}
 	if err := c.requireBaselineRoleGrantAuthority(ctx, actorID, actorIsMachine); err != nil {
 		return nil, err
 	}
@@ -478,6 +483,11 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 		return nil, fmt.Errorf("assignments exceeds the maximum batch size of %d", maxUserCreateAssignments)
 	}
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return nil, err
+	}
+	// #4161: the route gate (users.read for the /users group, users.write for the
+	// create, both GLOBAL) is decided here as well; the per-grant ceilings below stay.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permUsersRead, Scope{}}, scopedGate{permUsersWrite, Scope{}}); err != nil {
 		return nil, err
 	}
 	user, hash, err := c.buildUserForCreate(ctx, req)

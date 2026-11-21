@@ -30,6 +30,10 @@ func TestNamedLockOverlap_RestoreGroup_ConcurrentWriteTransactions_Postgres(t *t
 	require.NoError(t, setupDB.Create(&admin).Error)
 	require.NoError(t, setupDB.Create(&assigner).Error)
 	require.NoError(t, setupDB.Create(&models.RolePermission{RoleID: assigner.ID, PermissionID: assign.ID}).Error)
+	// #4161: RestoreGroup decides the route gate (users.read + roles.assign, global) in core.
+	var usersRead models.Permission
+	require.NoError(t, setupDB.Where(&models.Permission{Name: "users.read"}).Attrs(&models.Permission{Resource: "users", Action: "read"}).FirstOrCreate(&usersRead).Error)
+	require.NoError(t, setupDB.Create(&models.RolePermission{RoleID: assigner.ID, PermissionID: usersRead.ID}).Error)
 	restorer := models.User{Username: "rg-assigner", UsernameFolded: "rg-assigner", IsActive: true, AccountState: AccountActive}
 	granter := models.User{Username: "rg-admin", UsernameFolded: "rg-admin", IsActive: true, AccountState: AccountActive}
 	require.NoError(t, setupDB.Create(&restorer).Error)

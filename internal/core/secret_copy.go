@@ -116,6 +116,13 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	if err != nil || targetEnv.ProjectID != source.ProjectID {
 		return nil, errSecretTargetInvalidf("%s: target environment %d is not an environment of the source's project", i18n.T("ErrorValidation", nil), targetEnvID)
 	}
+	// #4161: creating in the target environment needs secrets.write at its scope
+	// — the check the REST handler makes before calling here — decided in core as
+	// well, after the source read and the same-project guard so it discloses
+	// nothing those did not.
+	if err := c.requireScopedGate(ctx, actorID, permSecretsWrite, Scope{ProjectID: source.ProjectID, EnvironmentID: targetEnvID}); err != nil {
+		return nil, err
+	}
 	// SESSION-PERF #2403 follow-up (item 3): fail closed, matching this function's
 	// own stated reason for auditing the source read at all — a copy whose audit
 	// write failed would be exactly the invisible-to-anomaly-detection exfil

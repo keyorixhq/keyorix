@@ -573,6 +573,12 @@ func (c *KeyorixCore) RestoreProject(ctx context.Context, actorID, id uint) erro
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return err
 	}
+	// #4161: the route gate (roles.assign at the project's scope, POST
+	// /projects/{id}/restore) is decided here as well; the admin-reinstatement
+	// ceiling below stays.
+	if err := c.requireScopedGate(ctx, actorID, permRolesAssign, Scope{ProjectID: id}); err != nil {
+		return err
+	}
 	if err := c.requireAuthorityToReinstateProjectRoles(ctx, actorID, id, "project"); err != nil {
 		return err
 	}

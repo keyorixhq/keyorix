@@ -1,0 +1,23 @@
+{
+  "target": "precis_enforce",
+  "platform": "unsupported",
+  "factor": 4,
+  "seeds": 32,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 37680,
+      "per_byte": 4186.666666666667,
+      "abs_max": 150720
+    },
+    "mallocs": {
+      "floor": 13,
+      "per_byte": 2.5,
+      "abs_max": 52
+    },
+    "wall_ns": {
+      "floor": 89167,
+      "per_byte": 9907.444444444445,
+      "abs_max": 356668
+    }
+  }
+}

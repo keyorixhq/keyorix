@@ -22,7 +22,8 @@ func rollbackCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	// #1632: enforceSecretReadGuards (reached via RotateSecret) now calls
 	// c.now() -- see secret_schedule_test.go's newScheduleCore for the same fix.
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
-	ensureActiveActor(t, c.storage, 5) // the acting user of these tests (#4159)
+	ensureActiveActor(t, c.storage, 5)                   // the acting user of these tests (#4159)
+	grantGateHolder(t, db, 5, Scope{}, permSecretsWrite) // #4161: RollbackSecret decides the route gate in core
 	return c, db
 }
 
