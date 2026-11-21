@@ -139,7 +139,7 @@ const redisDeclaredAllowance = 4096
 // deliberately conservative: a "$..." line inside a bulk body is treated as a header
 // too, which only ever skips more, never less.
 func redisDeclaredLenExceeds(reply []byte) bool {
-	for _, line := range bytes.Split(reply, []byte("\r\n")) {
+	for line := range bytes.SplitSeq(reply, []byte("\r\n")) {
 		if len(line) < 2 || !strings.ContainsRune("$*%~>|=!", rune(line[0])) {
 			continue
 		}
