@@ -63,14 +63,7 @@ func (s *spShape) kinds() map[string]map[string]string {
 // fresh database. A key is "kind:key" (see spShape), optionally prefixed with
 // "sqlite|" or "postgres|" to apply to one backend. The value is why the
 // difference is expected, or the issue that tracks it.
-var spAllowlist = map[string]string{
-	// migrate_users.go adds the column NOT NULL DEFAULT false with a safe backfill;
-	// the model (models.go MFAEnrolmentRequired, no not-null gorm tag) makes a fresh
-	// install nullable. Already recorded for a fresh install in the committed
-	// schema-epoch snapshots (testdata/schema_epoch/epoch-*.txt) and in
-	// pgSchemaIgnored. Stricter on upgrade, every row has a value either way.
-	"columns:users.mfa_enrolment_required": "EXPECTED: upgrade adds NOT NULL DEFAULT false, fresh AutoMigrate leaves it nullable; every row defaulted",
-}
+var spAllowlist = map[string]string{}
 
 // spDiff returns one line per difference not covered by the allowlist, plus one
 // per allowlist entry that matched nothing for this backend.

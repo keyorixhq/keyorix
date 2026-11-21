@@ -127,7 +127,6 @@ func ugSchemaDiff(fresh, upgraded []string) []string {
 
 const (
 	ugWhyFreshOnly = "open #4518: only the fresh-install tail creates this and no step adds it to an existing table; below the v0.93.x support floor"
-	ugWhyNotNull   = "open #4517: the upgrade's ALTER declares NOT NULL, the model does not"
 	ugWhyRetained  = "by design: an upgrade does not drop a column a later release stopped using"
 )
 
@@ -156,10 +155,6 @@ var ugExpectedSchemaDiffs = []struct {
 	}},
 	{ugWhyFreshOnly, []string{"v0.91.0", "v0.92.1"}, []string{
 		"only in fresh: column sso_login_states.code_verifier TEXT notnull=0 default= pk=0",
-	}},
-	{ugWhyNotNull, []string{"v0.92.1", "v0.93.0", "v0.94.0", "v0.95.3", "v0.96.3"}, []string{
-		"only in fresh: column users.mfa_enrolment_required NUMERIC notnull=0 default=false pk=0",
-		"only in upgraded: column users.mfa_enrolment_required NUMERIC notnull=1 default=false pk=0",
 	}},
 	{ugWhyRetained, []string{"v0.91.0"}, []string{
 		"only in upgraded: column sessions.encrypted_session_token BLOB notnull=0 default= pk=0",

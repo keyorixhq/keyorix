@@ -571,13 +571,6 @@ type pgSchemaDifference struct {
 //     reviewed_by index was this drift (#4091, fixed by #4100, so it is no longer
 //     ignored here; schema_parity_guard_test.go guards the class).
 var pgSchemaIgnored = map[string]string{
-	// Stricter-on-upgrade, harmless, and already recorded for a fresh install in
-	// the committed schema-epoch snapshots (epoch-8/9/10 postgres.txt show
-	// nullable=YES): migrate_users.go adds the column NOT NULL DEFAULT false with a
-	// safe backfill, while the model (models.go MFAEnrolmentRequired, no not-null
-	// gorm tag) makes a fresh install nullable. Every row has a value either way.
-	"columns:users.mfa_enrolment_required": "EXPECTED: migration adds NOT NULL DEFAULT false; AutoMigrate on a fresh install makes it nullable (see schema_epoch testdata). Stricter on upgrade, every row defaulted.",
-
 	// Since-removed column retained by the no-drop policy; v0.95.x had it, v0.96
 	// dropped it from the model, the migration leaves the old column in place.
 	"v0.95.3|columns:notification_channels.url": "EXPECTED: column removed from the model after v0.95.x; migrations never drop columns, so it survives on an upgraded database and is absent from a fresh install.",
