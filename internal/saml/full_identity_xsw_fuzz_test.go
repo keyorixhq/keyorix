@@ -174,7 +174,7 @@ func sortedCopy(s []string) []string {
 }
 
 // fidFixture is a real signed SAML response asserting the full distinct identity, plus the
-// provider that verifies it. Shared by FuzzSAMLFullIdentity and the red/green scratch proof.
+// provider that verifies it. Shared by FuzzSAMLFullIdentity and TestFullIdentity_*.
 type fidFixture struct {
 	p         *Provider
 	signedXML []byte
@@ -284,7 +284,8 @@ func fidWantGroups() []string { return sortedCopy([]string{fidGroup1, fidGroup2}
 // checkFullIdentity is the oracle: given a parse result (info, perr), it returns a non-empty
 // failure string iff the result is an acceptance whose derived identity deviates from the
 // signed fixture identity in ANY field. Returns "" for a rejection (safe) or an exact match.
-// Factored out so the red/green scratch proof exercises the SAME comparison the fuzzer uses.
+// Factored out so TestFullIdentity_OracleRejectsForgedResults exercises the SAME comparison
+// the fuzzer uses.
 func checkFullIdentity(info *AssertionInfo, perr error, op uint8, off uint16) string {
 	if perr != nil {
 		return "" // correctly rejected — the safe outcome for a tampered response
@@ -312,7 +313,12 @@ func FuzzSAMLFullIdentity(f *testing.F) {
 
 	// Sanity: the pristine fixture must parse to exactly the signed identity in every field.
 	// If this fails the harness is miswired (fixture attr names vs maker), not a finding.
+	// checkFullIdentity treats a parse error as a safe rejection, so a fixture that stops
+	// verifying would reject every op and keep the fuzzer green: fail on perr explicitly.
 	info, op, off, perr := mustParse(fx)
+	if perr != nil {
+		f.Fatalf("harness: pristine signed fixture was rejected by ParseResponse: %v", perr)
+	}
 	if msg := checkFullIdentity(info, perr, op, off); msg != "" {
 		f.Fatalf("harness: pristine signed fixture did not yield the signed identity: %s", msg)
 	}

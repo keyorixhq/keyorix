@@ -12,7 +12,10 @@
   closes the privilege-escalation XSW gap the Subject-only oracles leave: the real
   ACS handler (`internal/core.(*KeyorixCore).CompleteSAML`) maps `info.Groups` to
   Keyorix roles, so an accepted response that keeps the signed NameID but carries an
-  injected group would be an escalation the prior oracles pass clean. The oracle's
-  comparison is red/green-proven (fires on a simulated XSW-vulnerable extractor that
-  reads attributes regardless of signature; silent on the real parser, which rejects
-  every injection). Registered in `scripts/fuzzing/targets.d/`.
+  injected group would be an escalation the prior oracles pass clean. Deterministic
+  tests (`full_identity_xsw_test.go`) pin the oracle: it fires on forged results in
+  every field (subject, email, name, groups added/swapped/dropped) and stays silent on
+  the pristine signed identity and on a rejection; the pristine fixture must verify;
+  the attribute mutators (ops 15-20) must change the document; and each of those ops,
+  run through the real parser, is rejected or yields exactly the signed identity.
+  Registered in `scripts/fuzzing/targets.d/`.
