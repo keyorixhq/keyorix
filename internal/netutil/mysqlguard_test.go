@@ -182,7 +182,7 @@ func myReference(evs []myEv, maxCols uint64) bool {
 func TestMySQLScannerMatchesReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
 	counts := []uint64{0, 1, 5, 250, 251, 1000, 65535, 65536, 65537, 1 << 24, 1 << 40, ^uint64(0)}
-	for i := 0; i < 20000; i++ {
+	for i := range 20000 {
 		var evs []myEv
 		for k, n := 0, 1+rng.Intn(8); k < n; k++ {
 			switch rng.Intn(7) {
@@ -301,7 +301,9 @@ func TestMySQLGuardConnTLSStepsAside(t *testing.T) {
 	if _, err := c.Write(myResponse(0x820d|0x800, 32).data); err != nil {
 		t.Fatal(err)
 	}
-	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := c.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	buf := make([]byte, 16)
 	if n, err := c.Read(buf); err != nil || n == 0 {
 		t.Fatalf("after SSLRequest the guard must pass bytes through, got n=%d err=%v", n, err)

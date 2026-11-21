@@ -13,7 +13,6 @@ import (
 // not a socket.
 type memConn struct {
 	r *bytes.Reader
-	w io.Writer
 }
 
 func (m *memConn) Read(p []byte) (int, error)       { return m.r.Read(p) }
@@ -31,7 +30,7 @@ func resultStream(cols, rows, rowBytes int) []byte {
 	var s []byte
 	seq := byte(1)
 	s = append(s, myPkt(seq, myLenEnc(uint64(cols)))...)
-	for i := 0; i < cols; i++ {
+	for range cols {
 		seq++
 		s = append(s, myPkt(seq, append([]byte{3, 'd', 'e', 'f', 0, 0, 0, 1, 'c', 0}, make([]byte, 11)...))...)
 	}
@@ -39,7 +38,7 @@ func resultStream(cols, rows, rowBytes int) []byte {
 	for i := range row {
 		row[i] = 'x'
 	}
-	for i := 0; i < rows; i++ {
+	for range rows {
 		seq++
 		s = append(s, myPkt(seq, row)...)
 	}
