@@ -1,0 +1,28 @@
+{
+  "target": "cors_serve",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 36,
+  "meters": {
+    "alloc_bytes": {
+      "floor": 6584,
+      "per_byte": 896,
+      "abs_max": 26336
+    },
+    "cpu_ns": {
+      "floor": 783000,
+      "per_byte": 220000,
+      "abs_max": 3132000
+    },
+    "mallocs": {
+      "floor": 23,
+      "per_byte": 8,
+      "abs_max": 92
+    },
+    "wall_ns": {
+      "floor": 18432,
+      "per_byte": 18432,
+      "abs_max": 73728
+    }
+  }
+}
