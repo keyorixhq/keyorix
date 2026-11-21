@@ -123,6 +123,9 @@ func TestDeleteProjectCascade_RevokesSecretACLs_NotRevivedByRestoreProject(t *te
 	ctx := context.Background()
 	ls := newRestoreTestStore(t)
 	projectID, secretID := seedProjectWithSecret(t, ls)
+	// #4533: a grantee must be a member of the secret's project when the grant commits.
+	require.NoError(t, ls.db.AutoMigrate(&models.UserRole{}))
+	require.NoError(t, ls.db.Create(&models.UserRole{UserID: 10, RoleID: 1, ProjectID: projectID}).Error)
 
 	require.NoError(t, ls.CreateOrUpdateSecretACL(ctx, &models.SecretACL{
 		SecretID: secretID, UserID: 10, Permissions: `["secrets.read"]`, GrantedBy: 1,
