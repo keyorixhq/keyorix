@@ -1,0 +1,194 @@
+FOLLOWUP1 — close the two CANDIDATE items left open by the TRIAGE1 session
+(fuzz-corpus #153 variant sweep, fuzz-corpus #171 Nov-event confirmation).
+Investigation + a narrow, test-evidenced fix ONLY if the investigation proves
+a real, live gap. If either item turns out to need a security-sensitive
+production-code change beyond a one-line/local fix, STOP and write it up as
+CANDIDATE instead — do not ship a speculative fix. Budget: ~2.5 hours total,
+split roughly evenly between the two items. Branch:
+fuzz/followup1-153-171-confirm, base: current origin/main (fetch fresh, do
+not reuse any stale local ref).
+
+====================================================================
+PART A — fuzz-corpus #153 (FuzzDSNHostsCoverDriverHosts), variant sweep
+====================================================================
+
+Context already established (do not re-derive, just verify):
+
+- internal/core/dsn/dsn.go's SplitDSNHostList (around line 79) strips bracket
+  wraps around a host= field ONCE:
+    if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 2 {
+        part = part[1 : len(part)-1]
+    }
+  For the already-triaged crasher `host=[[]]`, part="[[]]" strips once to
+  "[]" — a bracket pair with nothing inside, which nothing downstream can
+  dial or resolve, so it's benign (that's why #153 was filed as CANDIDATE
+  rather than closed: the *mechanism* is real, but that exact input is a
+  dead end).
+
+- The UNEXAMINED case is a double-bracket wrap of a VALID IPv6 literal, e.g.
+  host=[[::1]] (or [[fe80::1]], [[2001:db8::1]], etc). Trace it by hand first
+  to know what to test for: part="[[::1]]" (7 chars) strips ONCE to "[::1]"
+  — still bracket-wrapped, because the strip only runs once, not in a loop.
+  That stripped-once value is what SplitDSNHostList returns as the "host".
+
+- Then validateAdminDSNSingleHost (internal/core/dynamic_secrets.go, near
+  line 170) is given that string:
+    - net.ParseIP("[::1]") returns nil (ParseIP does not accept bracket
+      syntax), so it does NOT take the literal-IP branch.
+    - No "%" present, so the zone-ID branch is skipped.
+    - Falls to net.LookupHost("[::1]") — confirm experimentally what this
+      actually returns on this system/Go version. If it errors (which the
+      zone-ID comment two lines above implies is the expected shape for a
+      non-parseable-as-IP, non-resolvable string), validateAdminDSNSingleHost
+      returns nil — "unresolvable at register time, skip validation" — i.e.
+      this host is NOT checked against the private/link-local blocklist at
+      all.
+
+The open question: does the ACTUAL DRIVER (pgx/pgconn for Postgres,
+go-sql-driver/mysql for MySQL — this is key-value host= syntax, so Postgres
+and MySQL both apply; mongo uses URI syntax, out of scope for this exact
+variant) end up dialing that same "[::1]"-shaped string as the literal
+address ::1 (or whatever address was double-bracketed), i.e. does validation
+get SKIPPED on a host the driver WILL successfully resolve/dial? That's the
+bypass. Or does the driver also choke on the double-bracket residue and
+simply fail to connect (benign, same shape as the already-triaged `[[]]`
+case)?
+
+Do this, mirroring what internal/dynamic's FuzzDSNHostsCoverDriverHosts
+already does (read that fuzzer first — it directly drives pgx's own
+config-parsing / mysql driver's own DSN parsing and compares against
+dsn.ParseDSNHosts's output; reuse its harness functions rather than
+hand-rolling new driver calls):
+  1. Write a focused unit test (not a fuzz corpus addition yet) that feeds
+     `host=[[::1]]`, `host=[[fe80::1]]`, `host=[[::1]],otherhost` (multi-host
+     list, since SplitDSNHostList is comma-split per entry) through
+     dsn.ParseDSNHosts and asserts what comes out.
+  2. Feed the SAME dsn string to pgconn.ParseConfig (postgres) and to
+     go-sql-driver/mysql's own DSN parser, and compare: does the driver's own
+     notion of "host to dial" match, or diverge from, what ParseDSNHosts
+     returned? Specifically: does the driver successfully extract a dialable
+     address from the double-bracket form (meaning it WILL try to connect to
+     it, defeating the purpose of validateAdminDSNHost skipping it), or does
+     it also fail/reject (benign)?
+  3. If step 2 shows the driver treats it as dialable while validation skips
+     it: confirm end-to-end by actually registering a dynamic-secrets config
+     with that admin_dsn against validateAdminDSNHost directly (call it, not
+     just the pieces) and confirm no error is returned, THEN confirm (via a
+     short net.Dial-level check, not a real backend — e.g. that
+     net.ResolveTCPAddr or an equivalent on "[::1]:5432"-shaped input
+     succeeds) that this host is in fact reachable/dialable. That combination
+     (validator says OK, network layer says reachable) is the actual bypass;
+     either alone is not.
+  4. If the bypass is confirmed live: the fix is almost certainly making the
+     bracket-strip in SplitDSNHostList a loop (`for strings.HasPrefix(...) &&
+     strings.HasSuffix(...) { part = part[1:len(part)-1] }`) instead of a
+     single `if`, so "[[::1]]" fully unwraps to "::1" and is then correctly
+     recognized by net.ParseIP as a checkable literal. Before writing it,
+     confirm this loop form doesn't change behavior for any EXISTING passing
+     test or seed corpus entry (run the existing dsn package tests and the
+     FuzzDSNHostsCoverDriverHosts seed corpus first to get a baseline). Red
+     proof: a test with the double-bracket valid-literal input fails pre-fix
+     (validator wrongly skips a private/link-local address) and passes
+     post-fix. This is a one-function, mechanical fix (loop instead of if) —
+     write it and the red/green test if and only if step 3 actually confirms
+     a live bypass. If step 2 or 3 shows it's benign (driver also can't dial
+     it), do NOT write a fix — write up why it's benign and add one pinned
+     regression seed (same treatment as the `[[]]` case) so the behavior is
+     locked in either way.
+  5. Either way, add whatever input(s) you tested as seeds under
+     testdata/fuzz/FuzzDSNHostsCoverDriverHosts/ (or wherever the existing
+     seeds for that fuzzer live — check first) so this exact variant space
+     doesn't go unwatched again.
+
+Do NOT touch validateAdminDSNHost itself unless step 3 proves it's wrong —
+the likely fix, if any is needed, is in SplitDSNHostList's bracket-stripping,
+not in the validator.
+
+====================================================================
+PART B — fuzz-corpus #171, November event (FuzzConcurrentOpsLinearizable)
+====================================================================
+
+Context already established (do not re-derive):
+
+- fuzz-corpus issue #171 has TWO distinct events on the same harness,
+  FuzzConcurrentOpsLinearizable in server/http. The September one had a
+  committed crasher+log ("NOT LINEARIZABLE: register [sqlite] session
+  revuser") and was already triaged by TRIAGE1 as a real, now-fixed bug
+  (PR #1955 / ca0666b05, Sept 2026 — a DELETE-then-invalidate race in session
+  revocation).
+- The November event (issue opened 2026-11-20T12:09:20Z) has NO committed
+  crasher bytes anywhere in fuzz-corpus (confirmed: no commit touches the
+  FuzzConcurrentOpsLinearizable corpus path since Nov 20 — the orchestrator
+  already checked this from outside pve01's network, where fuzz-corpus is
+  reachable; it is NOT reachable from pve01, so don't waste time retrying
+  that fetch here). You cannot reproduce from the original bytes. This part
+  is a code-level investigation + reconstructed repro, not a byte-for-byte
+  reproduction.
+- Found independently: commit 6737a47eb ("fix(auth): re-check a cached PAT's
+  owner account on every cache hit"), landed 2026-11-20T14:11:11+01:00 — about
+  2 hours after the issue was filed. Read its full message and diff first.
+  It is NOT the same bug class as the September fix (that one was a DELETE-
+  then-invalidate timing race; this one is a plain missing-check: the PAT
+  branch of serveAuthCacheHit (server/middleware/auth.go, function starting
+  ~line 610) never re-read the PAT's owner account on a cache hit at all,
+  regardless of timing — session and machine-token branches already did via
+  an owner/liveness gate, PAT was the one branch missing it until this fix).
+
+What to actually determine — three sub-questions, in order:
+
+  1. Read server/middleware/auth.go's serveAuthCacheHit in full (the switch
+     has four branches: PAT, machine-token, federated-machine-identity, and
+     the default/session branch). Confirm, as of current main, that ALL FOUR
+     branches now perform a live owner/account/identity-state recheck on
+     every cache hit with no silent pass-through. This is the "sibling call
+     site" check CLAUDE.md asks for: if 6737a47eb genuinely closes the only
+     remaining gap in this function, say so explicitly with the specific
+     line ranges for all four branches as evidence, rather than taking the
+     commit message's word for it.
+  2. Read the FuzzConcurrentOpsLinearizable harness itself (find it under
+     server/http) and enumerate what op kinds and which "registers" it
+     tracks for linearizability. Determine whether its op mix includes
+     anything that exercises serveAuthCacheHit's PAT branch specifically —
+     i.e. an op sequence like (mint/cache a PAT, deactivate/suspend/delete
+     its owner, cache-hit-auth with that PAT) that the pre-fix code would
+     have let through (cached PAT keeps authenticating) and that a
+     linearizability checker would flag as "deactivated owner's PAT still
+     authenticated" or similar. If such an op sequence IS possible in the
+     harness's grammar, that's strong circumstantial evidence the Nov crash
+     was exactly this bug.
+  3. If step 2 finds such an op sequence: construct a MINIMAL reproduction —
+     not from real crasher bytes (none exist), but a hand-written or
+     harness-generated seed exercising exactly that sequence — and run it as
+     a red/green pair: checked out at the parent of 6737a47eb (or with that
+     commit's change temporarily reverted in a worktree/stash, NOT in a
+     committed state) it should fail; at current main (or HEAD with the
+     change applied) it should pass. This is reconstructed evidence, not
+     proof the ORIGINAL Nov crasher was this exact sequence, so classify
+     honestly: if it reproduces the right failure SHAPE (PAT cache hit
+     authenticating past owner deactivation), report it as "strong evidence
+     #171-Nov is the same bug as 6737a47eb, now fixed" rather than "confirmed
+     identical to the original crasher." If no such op sequence exists in the
+     harness at all, report that plainly too — it means #171-Nov remains
+     genuinely unconfirmed, not fixed-by-inference.
+
+Do NOT write any new production-code fix for Part B — 6737a47eb already
+landed on main. Your job is confirming whether it's suficient (closing out
+#171-Nov) or whether step 1 finds a sibling gap it missed (in which case:
+STOP, do not fix it yourself, write it up as a new CANDIDATE with full detail
+— a second gap in this exact function is exactly the kind of thing that needs
+a human look before anyone touches auth.go again).
+
+====================================================================
+Report (/mnt/data/wave8/out/followup1-REPORT.md), same format as TRIAGE1's:
+====================================================================
+
+- One line per part: #153 → {ARTIFACT (benign, seed pinned) | CANDIDATE
+  (fix landed, red/green evidence) | CANDIDATE (still unconfirmed, needs
+  human review — say exactly why)}; #171-Nov → {CLOSED (6737a47eb confirmed
+  sufficient, all 4 branches symmetric) | CANDIDATE (sibling gap found —
+  describe it) | still unconfirmed (no reproducible op sequence found)}.
+- Full reasoning and code citations (file:line) for both.
+- Test evidence table: what ran, red/green, where.
+- Any new seeds added and their paths.
+- Final commit message, no production fix beyond the narrow #153 loop-fix
+  (only if proven necessary) — no fix at all for Part B.
