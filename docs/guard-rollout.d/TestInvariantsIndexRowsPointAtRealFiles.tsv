@@ -1,0 +1,1 @@
+TestInvariantsIndexRowsPointAtRealFiles	internal/docsdrift	#4572	new guard: every package row of the generated docs/INVARIANTS.md block must name an existing INVARIANTS.md; reported only until the open INVARIANTS PRs (#4570, #4526, #4500, #4567) have rerun the generator

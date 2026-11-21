@@ -5,6 +5,7 @@
 package encryption
 
 import (
+	"bytes"
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -12,13 +13,20 @@ import (
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
+// The getters below take mu.RLock only around one state Load and the copy:
+// a KEK rotation or DEK re-wrap publishes with state.Store and never holds mu
+// across its disk I/O, so they do not wait on its fsync; RLock still orders them against the
+// writers that hold mu for their whole run (Initialize, Wipe,
+// RotateDEKWithSweep) and against the wipe of a superseded key
+// (keymanager_state.go).
+
 // GetDEK returns a copy of the current DEK (thread-safe).
 func (km *KeyManager) GetDEK() []byte {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
-
-	dek := make([]byte, len(km.currentDEK))
-	copy(dek, km.currentDEK)
+	cur := km.published().dek
+	dek := make([]byte, len(cur))
+	copy(dek, cur)
 	return dek
 }
 
@@ -26,7 +34,7 @@ func (km *KeyManager) GetDEK() []byte {
 func (km *KeyManager) GetKeyVersion() string {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
-	return km.keyVersion
+	return km.published().keyVersion
 }
 
 // GetEvidenceSignKey returns a copy of the KEK-derived evidence-signing key and its
@@ -35,12 +43,11 @@ func (km *KeyManager) GetKeyVersion() string {
 func (km *KeyManager) GetEvidenceSignKey() (key []byte, keyID string, ok bool) {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
-	if len(km.evidenceSignKey) == 0 {
+	st := km.published()
+	if len(st.evidenceSignKey) == 0 {
 		return nil, "", false
 	}
-	key = make([]byte, len(km.evidenceSignKey))
-	copy(key, km.evidenceSignKey)
-	return key, km.evidenceSignKeyID, true
+	return bytes.Clone(st.evidenceSignKey), st.evidenceSignKeyID, true
 }
 
 // GetAuditCheckpointKey returns a copy of the KEK-derived audit-checkpoint signing
@@ -49,12 +56,11 @@ func (km *KeyManager) GetEvidenceSignKey() (key []byte, keyID string, ok bool) {
 func (km *KeyManager) GetAuditCheckpointKey() (key []byte, keyID string, ok bool) {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
-	if len(km.auditCheckpointKey) == 0 {
+	st := km.published()
+	if len(st.auditCheckpointKey) == 0 {
 		return nil, "", false
 	}
-	key = make([]byte, len(km.auditCheckpointKey))
-	copy(key, km.auditCheckpointKey)
-	return key, km.auditCheckpointKeyID, true
+	return bytes.Clone(st.auditCheckpointKey), st.auditCheckpointKeyID, true
 }
 
 // GetBackupManifestKey returns a copy of the KEK-derived backup-manifest
@@ -66,12 +72,11 @@ func (km *KeyManager) GetAuditCheckpointKey() (key []byte, keyID string, ok bool
 func (km *KeyManager) GetBackupManifestKey() (key []byte, keyID string, ok bool) {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
-	if len(km.backupManifestKey) == 0 {
+	st := km.published()
+	if len(st.backupManifestKey) == 0 {
 		return nil, "", false
 	}
-	key = make([]byte, len(km.backupManifestKey))
-	copy(key, km.backupManifestKey)
-	return key, km.backupManifestKeyID, true
+	return bytes.Clone(st.backupManifestKey), st.backupManifestKeyID, true
 }
 
 // ValidateKeyFiles checks that key files exist and have correct permissions
@@ -145,23 +150,20 @@ func (km *KeyManager) keyFileSpecs(enc *config.EncryptionConfig, registryBase st
 // Wipe securely removes the DEK, the evidence-signing key, the
 // audit-checkpoint signing key, and the backup-manifest signing key from memory.
 func (km *KeyManager) Wipe() {
+	km.rotateMu.Lock()
+	defer km.rotateMu.Unlock()
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	if km.currentDEK != nil {
-		wipeBytes(km.currentDEK)
-		km.currentDEK = nil
-	}
-	if km.evidenceSignKey != nil {
-		wipeBytes(km.evidenceSignKey)
-		km.evidenceSignKey = nil
-	}
-	if km.auditCheckpointKey != nil {
-		wipeBytes(km.auditCheckpointKey)
-		km.auditCheckpointKey = nil
-	}
-	if km.backupManifestKey != nil {
-		wipeBytes(km.backupManifestKey)
-		km.backupManifestKey = nil
-	}
+	st := km.published()
+	wipeBytes(st.dek)
+	wipeBytes(st.evidenceSignKey)
+	wipeBytes(st.auditCheckpointKey)
+	wipeBytes(st.backupManifestKey)
+	next := km.nextState()
+	next.dek = nil
+	next.evidenceSignKey = nil
+	next.auditCheckpointKey = nil
+	next.backupManifestKey = nil
+	km.state.Store(next)
 }
