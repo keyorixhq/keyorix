@@ -121,7 +121,7 @@ func TestDisableMFA_KeepSessionLookupFailure_WidensAndAudits(t *testing.T) {
 	faultErr := errors.New("fault-fuzz injected failure")
 	c.storage = getSessionErrStub(realStorage, faultErr)
 
-	err = c.DisableMFA(ctx, 1, disCode, "caller-token")
+	err = c.DisableMFA(ctx, 1, disCode, "", "caller-token")
 	require.NoError(t, err, "a keep-session lookup failure must not fail MFA disable itself")
 
 	var remaining int64

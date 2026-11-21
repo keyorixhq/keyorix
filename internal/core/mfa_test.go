@@ -204,7 +204,7 @@ func TestMFA_FullFlow(t *testing.T) {
 	// grant, e.g. from an ordinary login, would not satisfy this gate — see
 	// TestUpdateOwnProfile_EmailChange_AmbientLoginPurposeGrantRejected).
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
-	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword, ""))
+	require.NoError(t, c.DisableMFA(ctx, 1, "", mfaTestPassword, ""))
 	require.NoError(t, db.First(&user, 1).Error)
 	assert.False(t, user.MFAEnabled)
 	_, err = c.storage.GetMFASecret(ctx, 1)
@@ -337,7 +337,7 @@ func TestMFA_RegenerateRecoveryCodes(t *testing.T) {
 	// MFAStepUpPurposeReauth grant, proving the caller recently re-verified the
 	// second factor FOR THIS SPECIFIC PURPOSE.
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
-	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, "", mfaTestPassword)
 	require.NoError(t, err)
 	require.Len(t, fresh, 10)
 	assert.NotEqual(t, original, fresh, "regenerated codes differ from the originals")
@@ -357,7 +357,7 @@ func TestMFA_RegenerateRecoveryCodes(t *testing.T) {
 	// Regenerate with a current TOTP code also works (re-auth via code path).
 	totpCode, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, totpCode)
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, totpCode, "")
 	require.NoError(t, err)
 }
 
@@ -367,14 +367,14 @@ func TestMFA_RegenerateRequiresReauth(t *testing.T) {
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
 
-	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "wrong-password")
+	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "", "wrong-password")
 	require.Error(t, err, "regenerate must reject a bad code/password")
 }
 
 func TestMFA_RegenerateRequiresMFAEnabled(t *testing.T) {
 	t.Parallel()
 	c, _, _ := newMFATestCore(t)
-	_, err := c.RegenerateMFARecoveryCodes(context.Background(), 1, mfaTestPassword)
+	_, err := c.RegenerateMFARecoveryCodes(context.Background(), 1, "", mfaTestPassword)
 	require.Error(t, err, "regenerate requires MFA to be enabled")
 }
 
@@ -564,7 +564,7 @@ func TestDisableMFA_FailedCodesFeedAccountLockout(t *testing.T) {
 	secret, _ := activateMFAForTest(t, c, fixed)
 
 	for range 3 {
-		err := c.DisableMFA(ctx, 1, "000000", "")
+		err := c.DisableMFA(ctx, 1, "000000", "", "")
 		require.Error(t, err)
 	}
 
@@ -576,7 +576,7 @@ func TestDisableMFA_FailedCodesFeedAccountLockout(t *testing.T) {
 	// Even a VALID TOTP code is now refused while the lock is active.
 	good, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	err = c.DisableMFA(ctx, 1, good, "")
+	err = c.DisableMFA(ctx, 1, good, "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "locked")
 
@@ -597,7 +597,7 @@ func TestDisableMFA_SuccessClearsLoginFailures(t *testing.T) {
 
 	// Two wrong attempts accrue failures but don't yet reach the lockout threshold.
 	for range 2 {
-		require.Error(t, c.DisableMFA(ctx, 1, "000000", ""))
+		require.Error(t, c.DisableMFA(ctx, 1, "000000", "", ""))
 	}
 	var mid models.User
 	require.NoError(t, db.First(&mid, 1).Error)
@@ -609,7 +609,7 @@ func TestDisableMFA_SuccessClearsLoginFailures(t *testing.T) {
 	// MFAStepUpPurposeReauth grant, proving the caller recently re-verified the
 	// second factor FOR THIS SPECIFIC PURPOSE.
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
-	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword, ""))
+	require.NoError(t, c.DisableMFA(ctx, 1, "", mfaTestPassword, ""))
 	var after models.User
 	require.NoError(t, db.First(&after, 1).Error)
 	assert.Zero(t, after.FailedLoginAttempts)
@@ -627,7 +627,7 @@ func TestRegenerateMFARecoveryCodes_FailedCodesFeedAccountLockout(t *testing.T) 
 	secret, original := activateMFAForTest(t, c, fixed)
 
 	for range 3 {
-		_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "000000")
+		_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "000000", "")
 		require.Error(t, err)
 	}
 
@@ -639,7 +639,7 @@ func TestRegenerateMFARecoveryCodes_FailedCodesFeedAccountLockout(t *testing.T) 
 	// Even a VALID TOTP code is now refused while the lock is active.
 	good, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, good)
+	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, good, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "locked")
 	assert.Nil(t, fresh)
@@ -820,7 +820,7 @@ func TestDisableMFA_PasswordAloneRefusedWhenMFAEnabled(t *testing.T) {
 	ctx := context.Background()
 	activateMFAForTest(t, c, fixed)
 
-	err := c.DisableMFA(ctx, 1, mfaTestPassword, "")
+	err := c.DisableMFA(ctx, 1, "", mfaTestPassword, "")
 	require.Error(t, err, "the CORRECT password alone must not satisfy DisableMFA's re-auth once MFA is enabled")
 
 	u, gerr := c.storage.GetUser(ctx, 1)

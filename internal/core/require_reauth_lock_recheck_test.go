@@ -52,7 +52,7 @@ func TestRequireReauth_RecheckFaultCostsTheSameAsAWrongCode(t *testing.T) {
 	cc.loginLockout = postVerdictParityPolicy
 	activateMFAForTest(t, cc, cfixed)
 	putAtThresholdMinusOne(t, cdb, 1)
-	require.Error(t, cc.DisableMFA(ctx, 1, "000000", ""))
+	require.Error(t, cc.DisableMFA(ctx, 1, "000000", "", ""))
 	control := readLockoutState(t, cdb, 1)
 
 	pc, pdb, pfixed := newMFATestCore(t)
@@ -62,7 +62,7 @@ func TestRequireReauth_RecheckFaultCostsTheSameAsAWrongCode(t *testing.T) {
 	good, err := totp.GenerateCode(secret, pfixed)
 	require.NoError(t, err)
 	fs, restore := armRecheckFault(pc)
-	perr := pc.DisableMFA(ctx, 1, good, "")
+	perr := pc.DisableMFA(ctx, 1, good, "", "")
 	restore()
 	require.True(t, fs.Fired(), "the recheck's LockUserForUpdate must have been reached")
 	require.Error(t, perr, "a correct code with a failed lock recheck must not disable MFA")
