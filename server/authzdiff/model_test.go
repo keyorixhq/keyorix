@@ -186,6 +186,14 @@ func (m model) allowed(p *principal, req requirement) bool {
 			return false
 		}
 	}
+	if !p.isMachine() {
+		for _, perm := range req.userPerms {
+			if !m.holds(p, perm, req.scope, req.env) ||
+				(p.pat != nil && !p.pat.Allows(perm, core.Scope{ProjectID: req.scope, EnvironmentID: req.env})) {
+				return false
+			}
+		}
+	}
 	for _, perm := range req.globalPerms {
 		if !m.holds(p, perm, 0, 0) || (p.pat != nil && !p.pat.Allows(perm, core.Scope{})) {
 			return false
@@ -320,6 +328,12 @@ type requirement struct {
 	// whatever it holds (humanOnlyOps, set by withDerived).
 	humanOnly bool
 	perms     []string
+	// userPerms are additionally required, at the same scope, when the actor
+	// is a user: a per-item data-access check core makes for a user only.
+	// bulk.delete reads each item through GetSecretWithPermissionCheck
+	// (secrets.read) before deleting it; a machine actor takes the actorID=0
+	// path, which reads without a check (#4515, formerly waiver known-11).
+	userPerms []string
 	scope     uint     // project id the perms are checked at, 0 = global
 	env       uint     // environment id the perms are checked at, 0 = project-wide (all environments)
 	ceiling   []roleAt // roles the op grants (a group join grants all the group's roles); nil = not a grant

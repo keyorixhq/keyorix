@@ -98,19 +98,23 @@ func EncodePATCIDRs(cidrs []string) (string, error) { // NOSONAR -- cognitive co
 		if c == "" {
 			continue
 		}
-		// Accept a bare IP by promoting it to a host route.
+		// Accept a bare IP by promoting it to a host route, built from the parsed
+		// address: "::ffff:1.2.3.4" has To4() != nil, and "::ffff:1.2.3.4/32" is the
+		// IPv6 network ::/32 (#4520 sibling).
 		if !strings.Contains(c, "/") {
 			if ip := net.ParseIP(c); ip != nil {
-				if ip.To4() != nil {
-					c += "/32"
+				if ip4 := ip.To4(); ip4 != nil {
+					c = ip4.String() + "/32"
 				} else {
-					c += "/128"
+					c = ip.String() + "/128"
 				}
 			}
 		}
-		if _, _, err := net.ParseCIDR(c); err != nil {
+		canon, err := NormalizeIPv4MappedCIDR(c)
+		if err != nil {
 			return "", fmt.Errorf("invalid CIDR %q", c)
 		}
+		c = canon
 		if _, dup := seen[c]; dup {
 			continue
 		}
@@ -154,4 +158,63 @@ func DecodePATCIDRs(raw string) []string {
 		return PATCIDRCorrupted
 	}
 	return out
+}
+
+// ParseAllowlistCIDR parses one STORED CIDR allowlist entry (a PAT or
+// machine-token network restriction), for matching. It differs from
+// net.ParseCIDR only for an IPv4-mapped address (::ffff:a.b.c.d) written with a
+// prefix below 96, which net.ParseCIDR reads as the IPv6 network ::/N.
+// Before #4520's sibling fix, EncodePATCIDRs stored exactly "::ffff:a.b.c.d/32"
+// for a bare "::ffff:a.b.c.d", so that one shape is read as the IPv4 host it was
+// meant to be (a narrowing: the stored ::/32 never matched an IPv4 client). Any
+// other mapped prefix below 96 is refused, so a reader skips it (fail closed):
+// reading "::ffff:10.0.0.0/8" as 10.0.0.0/8 would WIDEN a stored row that, as
+// ::/8, admitted no IPv4 client. Mapped prefixes from 96 up are ordinary IPv6
+// networks over the mapped range and are kept. Other IPv6 forms with a dotted
+// tail (NAT64 64:ff9b::a.b.c.d, ::a.b.c.d) are not IPv4-mapped and are unchanged.
+func ParseAllowlistCIDR(c string) (*net.IPNet, error) {
+	ip, n, ones, mapped, err := parseAllowlistEntry(c)
+	if err != nil || !mapped || ones >= 96 {
+		return n, err
+	}
+	if ones == 32 {
+		return &net.IPNet{IP: ip.To4(), Mask: net.CIDRMask(32, 32)}, nil
+	}
+	return nil, fmt.Errorf("IPv4-mapped CIDR %q with prefix /%d is ambiguous", strings.TrimSpace(c), ones)
+}
+
+// NormalizeIPv4MappedCIDR is the form of a NEW (not stored) CIDR entry: an
+// IPv4-mapped entry with a prefix of 32 or less becomes the IPv4 network it
+// names, a mapped prefix from 33 to 95 is refused, and every other entry is
+// kept as written. Used by the token encoder (a new entry, so nothing stored is
+// reinterpreted) and by server/middleware's trusted-proxy parser (operator
+// config re-read at every boot), so "::ffff:1.2.3.4/32" means the IPv4 host on
+// both sides rather than the IPv6 network ::/32 (#4520).
+func NormalizeIPv4MappedCIDR(c string) (string, error) {
+	ip, _, ones, mapped, err := parseAllowlistEntry(c)
+	if err != nil {
+		return "", err
+	}
+	if !mapped || ones >= 96 {
+		return strings.TrimSpace(c), nil
+	}
+	if ones <= 32 {
+		return (&net.IPNet{IP: ip.To4().Mask(net.CIDRMask(ones, 32)), Mask: net.CIDRMask(ones, 32)}).String(), nil
+	}
+	return "", fmt.Errorf("IPv4-mapped CIDR %q has a prefix with no IPv4 meaning", strings.TrimSpace(c))
+}
+
+// parseAllowlistEntry parses an entry and reports whether its address is an
+// IPv4-mapped address written in IPv6 form: the parsed address has an IPv4 form
+// (To4) AND the text is IPv6 (holds ':'). Decided from the address, not the
+// text alone, so NAT64 or IPv4-compatible dotted tails are not "mapped".
+func parseAllowlistEntry(c string) (ip net.IP, n *net.IPNet, ones int, mapped bool, err error) {
+	c = strings.TrimSpace(c)
+	ip, n, err = net.ParseCIDR(c)
+	if err != nil {
+		return nil, nil, 0, false, err
+	}
+	addr, _, _ := strings.Cut(c, "/")
+	ones, _ = n.Mask.Size()
+	return ip, n, ones, ip.To4() != nil && strings.Contains(addr, ":"), nil
 }

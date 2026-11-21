@@ -706,6 +706,21 @@ func (c *KeyorixCore) requireOwnerHoldsGatePermission(ctx context.Context, pc *P
 	return permissionDeniedf("%s: insufficient permissions", i18n.T("ErrorPermissionDenied", nil))
 }
 
+// enforceSecretWriteGate is checkSecretPermission(PermissionWrite, checkAction)
+// followed by requireOwnerHoldsGatePermission(secrets.write, gateAction): the core
+// decision for a write that the transports gate on secrets.write with no owner
+// pass. #4508: SetSecretTags, SetSecretDescription and MoveSecret took the owner
+// pass alone, so a viewer who owned a secret could change its tags, description
+// or location through a direct core call while REST refused them (the known-03
+// pattern #4160 closed for update and delete).
+func (c *KeyorixCore) enforceSecretWriteGate(ctx context.Context, secretID, userID uint, checkAction, gateAction SecretAction) error {
+	pc, secret, err := c.checkSecretPermission(ctx, secretID, userID, PermissionWrite, checkAction)
+	if err != nil {
+		return err
+	}
+	return c.requireOwnerHoldsGatePermission(ctx, pc, secret, userID, "secrets.write", gateAction)
+}
+
 // updateSecretAction classifies an update for the share allowlist: SecretActionUpdate
 // (value, type, description, metadata, tags) unless it CHANGES the expiry or the read
 // limit, which is SecretActionUpdateLifecycle. Re-sending the stored values is not a

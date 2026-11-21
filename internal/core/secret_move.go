@@ -35,8 +35,9 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 		return nil, err
 	}
 
-	// Authorization: the actor must be able to write the secret.
-	if _, err := c.EnforceSecretWritePermission(ctx, secretID, actorID); err != nil {
+	// Authorization: the actor must be able to write the secret, and an owner must
+	// also hold the route's gate permission (#4508).
+	if err := c.enforceSecretWriteGate(ctx, secretID, actorID, "", SecretActionMove); err != nil {
 		return nil, err
 	}
 
