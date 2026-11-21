@@ -32,12 +32,14 @@ func IsSecretACLNotFound(err error) bool {
 // cascade (DeleteSecretACLsByUserAndProject) without seeing the grant, so the grant
 // committed for a removed member: inert for authorization (HasSecretACL re-checks
 // membership) but still listed to the removed user through the ACL listing source,
-// and live again when an admin re-adds them. The storage layer therefore re-asks the
-// membership question AFTER the write, inside the write's own transaction, with the
-// grantee's direct project grants read FOR SHARE on Postgres — lockLiveParent's
-// write-then-check argument applied to a membership parent: RemoveAllProjectRoleGrants
-// row-locks those rows before the cascade sweeps the ACLs, so either the cascade sees
-// the committed grant and sweeps it, or this grant fails closed. Core maps the sentinel
+// and live again when an admin re-adds them. The storage layer therefore locks the
+// grantee's live direct project grants FOR SHARE on Postgres BEFORE the write, then
+// re-asks the membership question AFTER it, inside the write's own transaction:
+// RemoveAllProjectRoleGrants row-locks those rows before the removal touches the
+// secret or sweeps the ACLs, so either the removal waits and its cascade sweeps the
+// committed grant, or this grant waits for the removal and fails closed. Locking the
+// membership rows first gives both transactions the same lock order, so a re-grant
+// cannot deadlock against (and abort) the removal. Core maps the sentinel
 // to the same invalid-request refusal its pre-check gives for a non-member, so a client
 // cannot tell the race from a serial remove-then-grant.
 var ErrSecretACLGranteeNotMember = errors.New("grantee is not a member of the secret's project")

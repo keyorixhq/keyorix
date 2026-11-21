@@ -1,11 +1,12 @@
 // cta_review_grant_acl_vs_remove_member_postgres_test.go — #4533, the second variant
 // #2649 names: GrantSecretACL racing RemoveProjectMember(grantee). #2785 closed the
 // DeleteSecret half; this half is closed by the membership re-check in
-// LocalStorage.CreateOrUpdateSecretACL (write first, then FOR SHARE on the grantee's
-// direct project grants and the membership question again, in the upsert's own
-// transaction). The two forced tests pin the window before and after the upsert;
-// the unforced loop at the end lets the database pick the ordering, including the
-// one where A's lock lands first and B's DELETE waits for it.
+// LocalStorage.CreateOrUpdateSecretACL (FOR SHARE on the grantee's live direct project
+// grants, then the write, then the membership question again, in the upsert's own
+// transaction). The two forced tests pin the window before A's membership lock and the
+// one after A's upsert; the unforced loop at the end lets the database pick the
+// ordering. The lock-order tests (re-grant, grant to the owner) are in
+// cta_review_regrant_acl_vs_remove_member_postgres_test.go.
 //
 // Bug origin (#4533):
 //
@@ -42,9 +43,10 @@ import (
 // order leaves an ACL row for a removed member, which is the invariant asserted here;
 // the listing and re-add checks below make the eventual fix prove both consequences.
 //
-// B runs synchronously inside A's GORM hook. If the fix takes a lock B needs before
-// A's upsert, this hangs to the timeout instead of failing: switch to beforeA plus a
-// goroutine for B then.
+// B runs synchronously inside A's GORM hook, immediately before A's FOR SHARE on the
+// grantee's user_roles (which precedes the upsert since REVIEW-4557-DEEP-1 MEDIUM-1):
+// the latest point B can still commit first. A holds no lock B needs there; a hook
+// after that lock would hang (B queues behind A), see the AfterUpsert test below.
 func TestCTAReview_GrantSecretACL_vs_RemoveProjectMember_CrossReplicaPostgres(t *testing.T) {
 	t.Parallel()
 	f := newCTAReview(t)
@@ -52,13 +54,14 @@ func TestCTAReview_GrantSecretACL_vs_RemoveProjectMember_CrossReplicaPostgres(t 
 	s := f.secret("cta-aclmember-secret", f.adminID)
 
 	var errB error
-	fired := f.beforeA("create", "secret_acls", func() {
+	fired := f.aroundALockingRead(false, "user_roles", func() {
 		errB = f.coreB.RemoveProjectMember(f.ctx, f.adminID, f.projectID, grantee.ID)
 	})
 	errA := f.coreA.GrantSecretACL(f.ctx, f.adminID, s.ID, grantee.ID, []string{"secrets.read"})
 	t.Logf("GrantSecretACL (A) err=%v, RemoveProjectMember (B) err=%v", errA, errB)
-	require.True(t, fired(), "the hook must have interleaved B's RemoveProjectMember before A's ACL upsert")
+	require.True(t, fired(), "the hook must have interleaved B's RemoveProjectMember before A's membership lock and upsert")
 	require.NoError(t, errB)
+	assert.Error(t, errA, "A must fail closed: its grantee was removed before it locked the membership rows")
 
 	assert.Zero(t, f.countLive(&models.SecretACL{}, "secret_id = ? AND user_id = ?", s.ID, grantee.ID),
 		"CWE-284: an ACL grant survives for a user removed from the project")
@@ -80,28 +83,32 @@ func TestCTAReview_GrantSecretACL_vs_RemoveProjectMember_CrossReplicaPostgres(t 
 }
 
 // TestCTAReview_GrantSecretACL_RemoveProjectMemberAfterUpsert_CrossReplicaPostgres:
-// B's RemoveProjectMember commits after A's ACL upsert ran but before A commits, so
-// B's cascade cannot see A's row. A membership check before the upsert would pass
-// here; only the write-then-check in CreateOrUpdateSecretACL refuses it. B does not
-// block on anything A holds at that point (A's uncommitted secret_acls row is
-// invisible to B's DELETE; A takes its user_roles FOR SHARE only after this hook),
-// so B can run synchronously inside the hook.
+// B's RemoveProjectMember starts after A's ACL upsert ran but before A commits, when
+// B's cascade cannot see A's row. Before the #4533 fix B committed there and the row
+// survived; with the first fix B committed and A's check after the write refused.
+// Since A's user_roles FOR SHARE precedes the upsert, B's DELETE must queue behind A,
+// so A commits and B's cascade (a fresh snapshot) then sweeps the grant. B runs on its
+// own goroutine (synchronously it would hang on A's lock).
 func TestCTAReview_GrantSecretACL_RemoveProjectMemberAfterUpsert_CrossReplicaPostgres(t *testing.T) {
 	t.Parallel()
 	f := newCTAReview(t)
 	grantee := f.user("cta-aclmember-after", "project_viewer")
 	s := f.secret("cta-aclmember-after-secret", f.adminID)
 
-	var errB error
+	var waitB func() (bool, error)
 	fired := f.afterA("create", "secret_acls", func() {
-		errB = f.coreB.RemoveProjectMember(f.ctx, f.adminID, f.projectID, grantee.ID)
+		waitB = f.startUntilBlocked(func() error {
+			return f.coreB.RemoveProjectMember(f.ctx, f.adminID, f.projectID, grantee.ID)
+		})
 	})
 	errA := f.coreA.GrantSecretACL(f.ctx, f.adminID, s.ID, grantee.ID, []string{"secrets.read"})
-	t.Logf("GrantSecretACL (A) err=%v, RemoveProjectMember (B) err=%v", errA, errB)
-	require.True(t, fired(), "the hook must have run B's RemoveProjectMember after A's ACL upsert")
+	require.True(t, fired(), "the hook must have started B's RemoveProjectMember after A's ACL upsert")
+	blocked, errB := waitB()
+	t.Logf("GrantSecretACL (A) err=%v, RemoveProjectMember (B) err=%v, B blocked on A=%v", errA, errB, blocked)
 	require.NoError(t, errB)
 
-	assert.Error(t, errA, "A must fail closed: its grantee was removed before it committed")
+	assert.True(t, blocked, "B must have queued behind A's lock on the grantee's user_roles")
+	assert.NoError(t, errA, "B waited for A, so A's grant commits and is then swept")
 	assert.Zero(t, f.countLive(&models.SecretACL{}, "secret_id = ? AND user_id = ?", s.ID, grantee.ID),
 		"CWE-284: an ACL grant survives for a user removed from the project")
 }
