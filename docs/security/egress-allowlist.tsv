@@ -41,7 +41,7 @@ internal/k8ssync/rest_sink.go	E14	keyorix-k8s-sync writes Kubernetes Secrets thr
 internal/mcp/keyorix.go	E17	keyorix-mcp calls the configured Keyorix server
 internal/netutil/dialer.go	E19	Egress-guarded dialer: resolves and checks a destination configured for E02-E06 before connecting
 internal/netutil/egress.go	E19	Egress-guarded http.Client builder used by the webhook-style sinks
-internal/netutil/mysqlguard.go	E19	Wraps the connection a MySQL dial returns to bound the announced column count; falls back to a plain net.Dialer only when the caller passes no dialer, and the callers pass the egress-guarded one where the network is restricted
+internal/netutil/mysqlguard.go	E19	Wraps the connection a MySQL dial returns to bound the announced column count; dials through the dialer the caller passes, or a plain net.Dialer when it passes none: internal/dynamic passes the egress-guarded dialer when private networks are disallowed, internal/rotation passes none and so dials without the egress guard (as it did before this wrapper)
 internal/notary/rfc3161.go	E05	RFC 3161 timestamp request to audit.checkpoint_notary.url
 internal/notifychan/chat.go	E02	Slack / Teams incoming-webhook POST, notifications.slack / notifications.teams
 internal/notifychan/email.go	E02	Notification email through the operator's SMTP relay, notifications.email
