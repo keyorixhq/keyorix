@@ -16,13 +16,17 @@ func TestCoreGateParity_ProjectsSharesInvitationsBulk(t *testing.T) {
 	t.Parallel()
 	runGateCases(t, func(w *parityWorld) []gateCase {
 		ctx, t := w.ctx, w.t
+		// Gate-isolating: system.read and roles.assign held globally pass the
+		// escalation-by-proxy ceiling for an explicit system_viewer grant, which
+		// already refused padminA; users.write is all it lacks.
+		inviter, inviterRole := w.globalHolder("parity-gate-inviter", permSystemRead, permRolesAssign)
 		return []gateCase{
-			{op: "invitation.global", deniedBy: w.padminA, allowedBy: w.admin, run: func(a string) func(uint) error {
+			{op: "invitation.global", deniedBy: inviter, allowedBy: w.admin, run: func(a string) func(uint) error {
 				return func(actor uint) error {
 					_, _, err := w.c.InviteGlobalWithLink(ctx, "parity-inv-"+a+"@example.com", "system_viewer", nil, actor, 0)
 					return err
 				}
-			}},
+			}, grantGate: func() { w.grantToRole(inviterRole, permUsersWrite) }},
 			{op: "project.restore", deniedBy: w.viewerB, allowedBy: w.admin, run: func(a string) func(uint) error {
 				// A fresh soft-deleted project per attempt; viewerB holds project_viewer
 				// at it (a real grant short of roles.assign).

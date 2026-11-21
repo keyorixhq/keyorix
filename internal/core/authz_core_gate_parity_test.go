@@ -8,7 +8,14 @@
 // a project_viewer for the secret-scoped write gates (secrets.read but not
 // secrets.write), a project_admin of project A for the GLOBAL gates (roles.assign
 // and users.read at A, nothing at the global scope) — so the test cannot pass by
-// refusing an unknown or roleless actor. The strict differential sweep
+// refusing an unknown or roleless actor. Where an older core ceiling already
+// refuses that principal (the baseline-role and escalation-by-proxy ceilings, the
+// #169 self-permission rule), the case uses a gate-isolating principal instead:
+// one that passes every ceiling core had before #4161 and lacks only the route
+// gate, and its grantGate step then grants exactly the gate permission and
+// requires the same principal to succeed. That second step is what keeps such a
+// case red when its gate is deleted, instead of green on an older ceiling. The
+// strict differential sweep
 // (server/authzdiff) covers every principal shape, including machines and PATs;
 // these files are the per-op guard a reviewer can run in seconds. The fixture and
 // the runner live here; the cases are split by family across
@@ -97,6 +104,23 @@ func (w *parityWorld) customRole(name string) *models.Role {
 	return r
 }
 
+// globalHolder seeds an active user holding exactly perms at the global scope,
+// through a fresh custom role it returns so a case can grant more to it later.
+func (w *parityWorld) globalHolder(name string, perms ...string) (uint, *models.Role) {
+	w.t.Helper()
+	r := w.customRole(name)
+	w.grantToRole(r, perms...)
+	return seedUserWithRole(w.t, w.st, name+"-user", r.Name, storage.Scope{}), r
+}
+
+// grantToRole adds perms to role r.
+func (w *parityWorld) grantToRole(r *models.Role, perms ...string) {
+	w.t.Helper()
+	for _, p := range perms {
+		require.NoError(w.t, w.st.AssignPermissionToRole(w.ctx, r.ID, w.permissionID(p)))
+	}
+}
+
 func (w *parityWorld) group(name string) *models.Group {
 	w.t.Helper()
 	g, err := w.st.CreateGroup(w.ctx, &models.Group{Name: name, NameFolded: name})
@@ -127,10 +151,15 @@ type gateCase struct {
 	// run is built per attempt so each one gets fresh fixture rows where the
 	// op consumes them (a role to delete, a user to create, ...).
 	run func(attempt string) func(actor uint) error
+	// grantGate, when set, grants deniedBy exactly the route-gate permission it
+	// lacks; deniedBy must then succeed. It proves the refusal came from the
+	// route gate and not from a ceiling that existed before #4161.
+	grantGate func()
 }
 
 // runGateCases drives every case: the refused principal gets a typed
-// ErrPermissionDenied and nothing else, the admitted principal succeeds.
+// ErrPermissionDenied and nothing else, the admitted principal succeeds, and
+// (grantGate) the refused principal succeeds once it holds the route gate.
 func runGateCases(t *testing.T, build func(w *parityWorld) []gateCase) {
 	t.Helper()
 	w := newParityWorld(t)
@@ -141,6 +170,12 @@ func runGateCases(t *testing.T, build func(w *parityWorld) []gateCase) {
 			require.ErrorIs(t, err, ErrPermissionDenied, "%s: the refusal must be typed", tc.op)
 
 			require.NoError(t, tc.run("allowed")(tc.allowedBy), "%s: an authorised caller must still succeed", tc.op)
+
+			if tc.grantGate != nil {
+				tc.grantGate()
+				require.NoError(t, tc.run("gated")(tc.deniedBy),
+					"%s: the denied principal must lack only the route gate (with it granted, core must allow)", tc.op)
+			}
 		})
 	}
 }
