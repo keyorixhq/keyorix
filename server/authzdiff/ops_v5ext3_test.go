@@ -45,9 +45,10 @@ import (
 // # What these oracles do NOT verify
 //
 //   - Ownership-only grants: a user who owns a secret but lacks the RBAC
-//     permission can delete/write it via ownership; the REST router gate denies
-//     them (the router gate checks only RBAC, not ownership). That difference is
-//     by design and is an EXPECTED-DIFFERENCE not modelled here.
+//     permission is skipped per secret by rename, suspend-all, resume-all and
+//     extend-expiring since CORE-AUTHZ-RACE-NOV-1 item 2 (enforceSecretWriteGate,
+//     the #4508 sibling), as the REST router gate refuses them; bulk-delete keeps
+//     its own owner rule. The owner principal is not among these ops' fixtures.
 //   - Env-scoped grants: CheckSecretPermission checks {project, secret.env};
 //     a grant scoped to a specific environment is exercised by the secret.read.env
 //     binding (ops_v5b_test.go), not here.

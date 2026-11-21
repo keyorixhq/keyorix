@@ -42,6 +42,7 @@ func TestBulkRenameSecrets(t *testing.T) {
 	// CheckSecretPermission gates the owner path on IsProjectMember (RBAC-001); seed
 	// user 1 so the owning actor passes the project-membership guard.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	grantProjectSecretsWrite(t, db, 1, p.ID) // the owner also holds the route's gate (CORE-AUTHZ-RACE-NOV-1 item 2)
 
 	mk := func(name string, projectID uint, isSecret bool) uint {
 		s, e := c.storage.CreateSecret(ctx, &models.SecretNode{
