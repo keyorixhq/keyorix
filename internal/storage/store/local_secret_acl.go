@@ -99,7 +99,7 @@ func (ls *LocalStorage) CreateOrUpdateSecretACL(ctx context.Context, acl *models
 // member), and a group-membership removal has no ACL cascade at all; that is a
 // separate, pre-existing gap, not this race. Expired rows are locked too (harmless);
 // the membership question itself is asked by isProjectMemberOn.
-func lockDirectProjectGrants(tx *gorm.DB, userID, projectID uint) error {
+func lockDirectProjectGrants(tx *gorm.DB, userID, projectID uint) error { // nosemgrep: keyorix-role-grant-query-missing-expiry-filter -- row lock only: it must lock expired rows too, because RemoveProjectMember deletes live and expired grants alike (see doc comment above)
 	if tx.Dialector.Name() != "postgres" {
 		return nil
 	}

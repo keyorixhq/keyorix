@@ -12,7 +12,7 @@
   (the INV-STORE-21 argument with the membership rows as the parent). Why: #4533 (the
   second variant #2649 names): a removal committing between core's membership pre-check and
   the upsert left an ACL row for a removed member, listed to them through the ACL listing
-  source and live again on re-add. Guard (pg-gated, two replicas):
+  source and live again on re-add. Guard: (pg-gated, two replicas)
   `TestCTAReview_GrantSecretACL_vs_RemoveProjectMember_CrossReplicaPostgres`,
   `TestCTAReview_GrantSecretACL_RemoveProjectMemberAfterUpsert_CrossReplicaPostgres`,
   `TestLivenessRace_GrantSecretACL_vs_RemoveProjectMember_Postgres`; single process:
