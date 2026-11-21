@@ -1,0 +1,2 @@
+### Documentation
+- **CRA reporting process (draft).** New `docs/security/cra-reporting-process.md`: the 24 h early warning, 72 h notification and final report path for actively exploited vulnerabilities and severe incidents, roles, timeline and notification templates, evidence list and checklist. Draft for review; unconfirmed legal points are marked `[VERIFY]`, open product-status choices `[DECISION]`.
