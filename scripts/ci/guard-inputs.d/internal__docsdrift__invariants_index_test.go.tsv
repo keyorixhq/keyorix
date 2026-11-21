@@ -1,0 +1,1 @@
+internal/docsdrift/invariants_index_test.go	scripts/gen-invariants-index.sh,**/INVARIANTS.md,**/INVARIANTS.d/**	the generator script and every INVARIANTS.md / INVARIANTS.d fragment it counts (docs/INVARIANTS.md included)
