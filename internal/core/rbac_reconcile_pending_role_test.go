@@ -177,6 +177,7 @@ func requireReconcilesSerialised(t *testing.T, c *KeyorixCore, storeA, storeB st
 	case <-time.After(2 * time.Second):
 	}
 	close(resume)
+	require.False(t, ranWhilePaused, "a second reconcile ran while the first held its debt")
 	require.NoError(t, <-errA)
 	require.NoError(t, <-errB)
 
@@ -184,7 +185,6 @@ func requireReconcilesSerialised(t *testing.T, c *KeyorixCore, storeA, storeB st
 	removeConnectReadFrom(t, c, "admin")
 	require.NoError(t, c.ReconcileRBACPermissions(ctx))
 	require.False(t, roleHasPerm(t, c, "admin", "connect.read"), "a stale debt saved by the paused run re-granted an operator removal")
-	require.False(t, ranWhilePaused, "a second reconcile ran while the first held its debt")
 
 	var n int64
 	require.NoError(t, db.Model(&models.Permission{}).Where("name = ?", "connect.read").Count(&n).Error)
