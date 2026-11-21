@@ -575,29 +575,13 @@ var pgSchemaIgnored = map[string]string{
 	// dropped it from the model, the migration leaves the old column in place.
 	"v0.95.3|columns:notification_channels.url": "EXPECTED: column removed from the model after v0.95.x; migrations never drop columns, so it survives on an upgraded database and is absent from a fresh install.",
 
-	// --- v0.91.0 is BELOW the documented v0.93.x upgrade floor (UPGRADING.md). ---
-	// The machine-identity actor columns and their composite unique index, the
-	// SSO PKCE code_verifier, and the pre-v0.91 session-token columns are all
-	// AutoMigrate-only (or since-removed) objects with no backfill migration;
-	// upgrading from v0.91.0 is out of support and these are expected there. They
-	// are the same class as the SQLite leg's owner_machine_identity_id finding.
-	"v0.91.0|columns:access_request_approvals.approver_machine_identity_id":  "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
-	"v0.91.0|columns:access_requests.resolved_by_machine_identity_id":        "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
-	"v0.91.0|columns:access_review_campaigns.closed_by_machine_identity_id":  "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
-	"v0.91.0|columns:access_review_campaigns.created_by_machine_identity_id": "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
-	"v0.91.0|columns:break_glass_activations.revoked_by_machine_identity_id": "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
-	"v0.91.0|columns:machine_identities.created_by_machine_identity_id":      "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
-	"v0.91.0|columns:project_invitations.invited_by_machine_identity_id":     "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
-	"v0.91.0|columns:project_memberships.invited_by_machine_identity_id":     "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
-	"v0.91.0|columns:secret_dependencies.created_by_machine_identity_id":     "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
-	"v0.91.0|columns:setup_tokens.created_by_machine_identity_id":            "below v0.93.x floor: AutoMigrate-only machine-identity actor column, no backfill migration.",
-	"v0.91.0|indexes:ux_access_request_approver":                             "below v0.93.x floor: fresh unique index includes approver_machine_identity_id, a column absent on an upgraded v0.91.0 database (see above).",
-	"v0.91.0|columns:sessions.encrypted_session_token":                       "below v0.93.x floor: pre-v0.91 session-token column removed from the model later; no-drop policy keeps it on upgrade.",
-	"v0.91.0|columns:sessions.session_token_metadata":                        "below v0.93.x floor: pre-v0.91 session-token column removed from the model later; no-drop policy keeps it on upgrade.",
-	"v0.91.0|columns:sso_login_states.code_verifier":                         "below v0.93.x floor: AutoMigrate-only SSO PKCE column (added v0.93), no backfill migration.",
-
-	// v0.92.1 is also below the v0.93.x floor; it predates the SSO PKCE column.
-	"v0.92.1|columns:sso_login_states.code_verifier": "below v0.93.x floor: AutoMigrate-only SSO PKCE column (added v0.93), no backfill migration.",
+	// v0.91.0 is below the documented v0.93.x upgrade floor (UPGRADING.md); the two
+	// pre-v0.91 session-token columns are since-removed objects the no-drop policy
+	// keeps. (The machine-identity actor columns, ux_access_request_approver's widening
+	// and sso_login_states.code_verifier used to be listed here too; migration steps
+	// add them now, #4518.)
+	"v0.91.0|columns:sessions.encrypted_session_token": "below v0.93.x floor: pre-v0.91 session-token column removed from the model later; no-drop policy keeps it on upgrade.",
+	"v0.91.0|columns:sessions.session_token_metadata":  "below v0.93.x floor: pre-v0.91 session-token column removed from the model later; no-drop policy keeps it on upgrade.",
 }
 
 func pgSchemaDiff(tag string, got, want *pgSchema) []pgSchemaDifference {

@@ -131,6 +131,12 @@ func createSetupTokens(db *gorm.DB, setupTokenExists bool) error {
 		if err := db.AutoMigrate(&models.SetupToken{}); err != nil {
 			return fmt.Errorf("failed to migrate setup_tokens table: %w", err)
 		}
+	} else if !db.Migrator().HasColumn(&models.SetupToken{}, "CreatedByMachineIdentityID") {
+		// #1573, #4518: the machine-identity actor column a database first installed
+		// before v0.92 never got.
+		if err := db.Migrator().AddColumn(&models.SetupToken{}, "CreatedByMachineIdentityID"); err != nil {
+			return fmt.Errorf("failed to add setup_tokens.created_by_machine_identity_id column: %w", err)
+		}
 	}
 	return nil
 }

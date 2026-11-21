@@ -126,8 +126,7 @@ func ugSchemaDiff(fresh, upgraded []string) []string {
 }
 
 const (
-	ugWhyFreshOnly = "open #4518: only the fresh-install tail creates this and no step adds it to an existing table; below the v0.93.x support floor"
-	ugWhyRetained  = "by design: an upgrade does not drop a column a later release stopped using"
+	ugWhyRetained = "by design: an upgrade does not drop a column a later release stopped using"
 )
 
 // ugExpectedSchemaDiffs is every difference between an upgraded and a fresh
@@ -139,23 +138,6 @@ var ugExpectedSchemaDiffs = []struct {
 	Scenarios []string
 	Lines     []string
 }{
-	{ugWhyFreshOnly, []string{"v0.91.0"}, []string{
-		"only in fresh: column access_request_approvals.approver_machine_identity_id INTEGER notnull=1 default=0 pk=0",
-		"only in fresh: column access_requests.resolved_by_machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: column access_review_campaigns.closed_by_machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: column access_review_campaigns.created_by_machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: column break_glass_activations.revoked_by_machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: column machine_identities.created_by_machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: column project_invitations.invited_by_machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: column project_memberships.invited_by_machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: column secret_dependencies.created_by_machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: column setup_tokens.created_by_machine_identity_id INTEGER notnull=0 default= pk=0",
-		"only in fresh: index access_request_approvals.ux_access_request_approver unique=1 partial=0 on request_id,approver_id,approver_machine_identity_id",
-		"only in upgraded: index access_request_approvals.ux_access_request_approver unique=1 partial=0 on request_id,approver_id",
-	}},
-	{ugWhyFreshOnly, []string{"v0.91.0", "v0.92.1"}, []string{
-		"only in fresh: column sso_login_states.code_verifier TEXT notnull=0 default= pk=0",
-	}},
 	{ugWhyRetained, []string{"v0.91.0"}, []string{
 		"only in upgraded: column sessions.encrypted_session_token BLOB notnull=0 default= pk=0",
 		"only in upgraded: column sessions.session_token_metadata BLOB notnull=0 default= pk=0",

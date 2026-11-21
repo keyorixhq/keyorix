@@ -31,7 +31,9 @@ func createBreakGlassActivations(db *gorm.DB, breakGlassExists bool) error {
 		// them an upgraded install's degraded commit (audit log down) would fail, and
 		// break-glass would be refused exactly when it is needed.
 		m := db.Migrator()
-		for _, col := range []string{"ReviewedBy", "ReviewedAt", "ReviewNote", "Degraded", "AuditSettledAt"} {
+		//
+		// RevokedByMachineIdentityID (#1573, #4518) the same way.
+		for _, col := range []string{"ReviewedBy", "ReviewedAt", "ReviewNote", "Degraded", "AuditSettledAt", "RevokedByMachineIdentityID"} {
 			if !m.HasColumn(&models.BreakGlassActivation{}, col) {
 				if err := m.AddColumn(&models.BreakGlassActivation{}, col); err != nil {
 					return fmt.Errorf("failed to add break_glass_activations.%s column: %w", col, err)
