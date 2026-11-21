@@ -101,7 +101,7 @@ func explain(r *caseResult) string {
 	// coreEnforced=false for all three ops. The core leg returns a business-logic
 	// error (not ErrPermissionDenied) for these; !is(core,Allowed) prevents this
 	// from absorbing a hypothetical core-allows case.
-	// TODO-ISSUE — file tracking issue; see report LEFTOVERS.
+	// Tracking issue: #4525.
 	case slices.Contains([]string{"mfa.activate", "mfa.disable", "mfa.recovery-codes.regenerate"}, r.Op) &&
 		!is(core, Allowed) && restBadStatus && modelDenies && na(grpc):
 		return "known-12"
@@ -115,7 +115,7 @@ func explain(r *caseResult) string {
 // is a decision recorded on its issue, not a date bump.
 var waivers = []struct{ id, issue, expires string }{
 	{"known-04", "#4161", "2027-02-13"},
-	{"known-12", "TODO-ISSUE", "2027-06-18"},
+	{"known-12", "#4525", "2027-06-18"},
 }
 
 // waiverIDs is waivers' ids (the dead-waiver check's population).
@@ -132,11 +132,10 @@ var waiverIDs = func() []string {
 // expiry; guardrules.CheckExpiry compares the date only in the nightly job
 // (no calendar at PR time, docs/guard-rollout-contract.md).
 func TestAuthzDiffWaiversNotExpired(t *testing.T) {
-	// TODO-ISSUE is a valid placeholder when no tracking issue has been filed yet.
-	issue := regexp.MustCompile(`^(#[0-9]+|TODO-ISSUE)$`)
+	issue := regexp.MustCompile(`^#[0-9]+$`)
 	for _, w := range waivers {
 		if !issue.MatchString(w.issue) {
-			t.Errorf("waiver %s: issue %q is not #NNNN or TODO-ISSUE", w.id, w.issue)
+			t.Errorf("waiver %s: issue %q is not #NNNN", w.id, w.issue)
 		}
 		guardrules.CheckExpiry(t, guardrules.Expiry{
 			Source:  "server/authzdiff/partition_test.go waivers",
