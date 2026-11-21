@@ -1,9 +1,10 @@
 package core
 
 // kdf_enumeration_oracle_fuzz_test.go — KDF1 account-enumeration-by-difference
-// oracle, built on the EX1 existence-oracle idea (EX1's
-// server/http/existence_cost_oracle_fuzz_test.go is NOT present in this clone, so
-// this is the reimplemented minimal core-level version).
+// oracle, built on the EX1 existence-oracle idea. EX1's
+// server/http/existence_cost_oracle_fuzz_test.go covers the HTTP login
+// account-existence pair by DB cost; this is the core-level version that counts the
+// KDF itself.
 //
 // # What it checks
 //
@@ -37,7 +38,9 @@ package core
 //   - It does not measure wall-clock timing (deliberately: the KDF count is the
 //     deterministic proxy for it) and cannot see KDF work that bypasses the shared
 //     internal/kdfmeter wrapper (a direct golang.org/x/crypto/bcrypt call would be
-//     invisible; the kdfmeter guard test forbids new production bypasses).
+//     invisible, and no test currently forbids one: the kdfmeter guard tests only
+//     keep SetObserver out of production code. Today the only direct callers are the
+//     dummy-hash builders in bcrypt_cost.go, which are correctly not metered).
 //   - "Wrong-tenant account" is N/A: Keyorix users are global (no per-tenant user
 //     namespace; username has one partial-unique index), so there is no
 //     wrong-tenant existence class on this path. Documented, not silently dropped.
