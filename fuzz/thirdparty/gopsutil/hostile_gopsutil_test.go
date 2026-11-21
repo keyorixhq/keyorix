@@ -40,6 +40,8 @@ import (
 	"github.com/shirou/gopsutil/v4/common"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
+
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
 // One fake HOST_PROC dir per worker PROCESS (go fuzz workers are separate
@@ -100,9 +102,8 @@ func FuzzGopsutilProc(f *testing.F) {
 				_, _ = mem.VirtualMemoryWithContext(ctx)
 			}
 		}()
-		select {
-		case <-done:
-		case <-time.After(12 * time.Second):
+		if _, ok, fz := fuzzutil.Wait(done, 12*time.Second); !ok {
+			t.Logf("stall monitor: process frozen %s of the wait window", fz)
 			t.Fatalf("bounded-work: gopsutil parse of %s did not return in 12s for %d-byte input", files[which], len(data))
 		}
 	})

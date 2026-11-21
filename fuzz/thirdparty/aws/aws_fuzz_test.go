@@ -61,6 +61,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
@@ -117,15 +118,13 @@ func runWithWatchdog(t *testing.T, label string, fn func() (any, error)) (out an
 		}()
 		out, err = fn()
 	}()
-	select {
-	case <-done:
-		if err != nil && strings.HasPrefix(err.Error(), "PANIC") {
-			t.Fatalf("%v", err)
-		}
-		return out, err, false
-	case <-time.After(20 * time.Second):
+	if _, ok, _ := fuzzutil.Wait(done, 20*time.Second); !ok {
 		return nil, nil, true
 	}
+	if err != nil && strings.HasPrefix(err.Error(), "PANIC") {
+		t.Fatalf("%v", err)
+	}
+	return out, err, false
 }
 
 // oracleResult is the pure (t-free) verdict of the oracles, so the oracle logic
