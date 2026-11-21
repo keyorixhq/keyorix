@@ -13,11 +13,18 @@ package redishostile
 // from the driver's. No net/sleep meters (loopback fake server, not a connector).
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"net"
 	"os"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/keyorixhq/keyorix/fuzz/thirdparty/internal/hostile"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
 )
 
@@ -112,4 +119,100 @@ func TestResguardRedisRedGreen(t *testing.T) {
 		t.Fatalf("RED: failure message should name alloc_bytes: %q", msg)
 	}
 	t.Logf("GREEN alloc=%d passes; RED alloc=%d fires: %s", green.AllocBytes, red.AllocBytes, msg)
+}
+
+// redisDeclaredAllowance is the largest RESP length header (bulk bytes or
+// element/pair count) FuzzRedisReply will execute. go-redis sizes its buffers from
+// the server-DECLARED length before any body bytes arrive and has no option to cap
+// it, so allocation is proportional to a number the fuzzer can set freely. That is
+// a known upstream behaviour (LF3-F3, details tracked privately), not something a
+// per-input budget can police: calibrating the budget to one declared size only
+// moves the failure to the next digit, and executing such inputs at -parallel=6
+// would exhaust the rig's memory cgroup. So FuzzRedisReply skips them and
+// TestRedisDeclaredLengthCharacterisation records what the driver does. Everything
+// within the allowance (and every other amplification shape: nesting, many small
+// elements) stays under the budget.
+const redisDeclaredAllowance = 4096
+
+// redisDeclaredLenExceeds reports whether any RESP header line in reply declares a
+// length above redisDeclaredAllowance (or one too large to parse). It is
+// deliberately conservative: a "$..." line inside a bulk body is treated as a header
+// too, which only ever skips more, never less.
+func redisDeclaredLenExceeds(reply []byte) bool {
+	for _, line := range bytes.Split(reply, []byte("\r\n")) {
+		if len(line) < 2 || !strings.ContainsRune("$*%~>|=!", rune(line[0])) {
+			continue
+		}
+		n, err := strconv.ParseInt(string(line[1:]), 10, 64)
+		if err != nil {
+			if ne, ok := err.(*strconv.NumError); ok && ne.Err == strconv.ErrRange {
+				return true
+			}
+			continue
+		}
+		if n > redisDeclaredAllowance {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRedisDeclaredLenExceeds(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"+OK\r\n", false},
+		{"$5\r\nhello\r\n", false},
+		{"$4096\r\nshort\r\n", false},
+		{"$4097\r\nshort\r\n", true},
+		{"$9999999\r\nshort\r\n", true},
+		{"*100000000\r\n:1\r\n", true},
+		{"%50000000\r\n+k\r\n+v\r\n", true},
+		{"*2\r\n$99999999\r\nx\r\n:1\r\n", true},
+		{"$9223372036854775807\r\n", true},
+		{"$99999999999999999999999\r\n", true}, // overflows int64
+		{"$-1\r\n", false},
+		{",3.14\r\n", false},
+		{"", false},
+	} {
+		if got := redisDeclaredLenExceeds([]byte(tc.in)); got != tc.want {
+			t.Errorf("redisDeclaredLenExceeds(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestRedisDeclaredLengthCharacterisation records, without asserting, what go-redis
+// does with a server-declared length far above the real body (LF3-F3). It is a log,
+// not a gate: a go-redis fix would change the numbers, and the right response is
+// then to revisit redisDeclaredAllowance, not to fail a dependency bump. Sizes stay
+// at 16 MB-class so it is safe on CI; the unbounded extremes are described in
+// FuzzRESP3BulkDeclared and not re-run here.
+func TestRedisDeclaredLengthCharacterisation(t *testing.T) {
+	for _, tc := range []struct{ name, reply string }{
+		{"bulk 1e6 declared, 5 B body", "$1000000\r\nshort\r\n"},
+		{"bulk 1e7 declared, 5 B body", "$9999999\r\nshort\r\n"},
+		{"array 1e6 declared, 1 element", "*1000000\r\n:1\r\n"},
+		{"map 5e5 declared, 1 pair", "%500000\r\n+k\r\n+v\r\n"},
+	} {
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		srv := hostile.NewServer(t, func(c net.Conn) { serveUntilRealCommand(c, []byte(tc.reply)) })
+		client := newClient(srv.Addr())
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Logf("%s: driver panicked: %v", tc.name, r)
+				}
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = client.Do(ctx, "ACL", "SETUSER", "kx_dyn_x", "on", ">pw").Err()
+		}()
+		runtime.ReadMemStats(&after)
+		_ = client.Close()
+		srv.Close()
+		t.Logf("%-34s reply=%2d B  alloc=%6.1f MB", tc.name, len(tc.reply), float64(after.TotalAlloc-before.TotalAlloc)/(1<<20))
+	}
 }
