@@ -48,8 +48,7 @@ func FuzzWebAuthnParsePublicKey(f *testing.F) {
 	f.Add([]byte{0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}) // array w/ huge declared length
 
 	// PK2: resguard resource oracle (see resguard_webauthn_test.go).
-	rgBudget, rgErr := resguard.LoadBudget(rgBudgetPath)
-	rgHaveBudget := rgErr == nil
+	rgBudget := rgLoadBudget(f) // fails closed: no budget, no fuzzing
 	rgProbe := resguard.New(f, resguard.Options{SampleEvery: 16})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -61,9 +60,7 @@ func FuzzWebAuthnParsePublicKey(f *testing.F) {
 		start := time.Now()
 		c := rgProbe.Measure(len(data), func() { _, _ = parseKey(data) }) // reject is fine; assert no panic + bounded time
 		resguard.FeedCoverage(c)
-		if rgHaveBudget {
-			rgBudget.Check(t.Fatalf, c)
-		}
+		rgBudget.Check(t.Fatalf, c)
 		if elapsed := time.Since(start); elapsed > parseDeadline {
 			t.Fatalf("ParsePublicKey took %v (> %v) on %d bytes — unbounded work", elapsed, parseDeadline, len(data))
 		}

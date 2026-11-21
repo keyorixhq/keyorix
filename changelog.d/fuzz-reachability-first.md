@@ -11,5 +11,8 @@
   (identity name normalization), `bcrypt` round-trip + fail-closed + cost-bomb
   bound (login), `ssh.ParseAuthorizedKey` round-trip stability (admin
   recovery-key recipient), `webauthncose.ParsePublicKey` bounded-work
-  (WebAuthn COSE classify), and `yaml.v3` bounded-work/anti-alias-bomb
-  (config + credstore). Targets live under `fuzz/thirdparty/`.
+  (WebAuthn COSE classify), and `go.yaml.in/yaml/v4` bounded-work/anti-alias-bomb
+  (config + credstore). Targets live under `fuzz/thirdparty/`. The precis, ssh
+  and webauthn targets are direct library-level complements to existing
+  Keyorix-level targets (`internal/identity` fold oracles,
+  `server/admin` recovery-key recipient, `internal/libconformance` COSE key).
