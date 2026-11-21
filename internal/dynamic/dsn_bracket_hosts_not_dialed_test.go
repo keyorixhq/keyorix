@@ -19,7 +19,7 @@ func TestPgxNeverDialsMalformedBracketHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	port := ln.Addr().(*net.TCPAddr).Port
 	hits := make(chan struct{}, 16)
 	go func() {
