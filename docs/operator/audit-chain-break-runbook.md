@@ -88,6 +88,31 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
    `--db` / `--pg-dsn` take no lock and never write. Without `--db`/`--pg-dsn` the command
    verifies the configured live database under the exclusive admin lock, so the server must
    be stopped (`--force` overrides the refusal; do not use it for evidence).
+
+   A keyorix SQLite database is in WAL mode, and SQLite cannot read a WAL-mode file without
+   creating `-wal`/`-shm` files beside it. So `--db` verifies a private copy instead: the
+   database and its `-wal` (if present) are copied into a new `0700` directory under
+   `$TMPDIR`, verified there, and the copy is deleted when the command ends, also on error
+   and on Ctrl-C or SIGTERM (exit 130 or 143, no verdict). The copy is the whole vault
+   database (secret ciphertext, password and token hashes, user data, the audit trail), so
+   point `TMPDIR` at the evidence volume, or another volume with the same protection, not
+   at a shared or unencrypted `/tmp`. A SIGKILL, an out-of-memory kill or a crash cannot
+   run that cleanup: after one, delete any `keyorix-audit-verify-*` directory left under
+   `$TMPDIR`. Only `--db` copies: `verify-audit` without `--db` (the configured database,
+   under the admin lock) and the automatic verify after `admin restore` read the
+   server's own database in place and need no `$TMPDIR`. A `-wal` beside the `--db` file
+   that is not a regular file (a directory, a FIFO, a symlink) is refused (exit 3) rather
+   than left out of the copy.
+   The evidence directory can be read-only (an evidence share, `chmod 0500`), and its
+   listing and bytes stay unchanged. An un-checkpointed `-wal` shipped with the copy is
+   read, never skipped. The copy needs free space under `$TMPDIR` equal to the database
+   plus its `-wal`; if that is not available the command exits 3 and names the shortfall,
+   so set `TMPDIR` to a directory with room. A database whose `-wal` and `-shm` are both
+   present in a writable directory may be in use by a SQLite process, so it is read in place
+   (a copy taken under a live writer could be torn): no entry is added and the database and
+   `-wal` bytes stay as they were, but SQLite may rewrite the `-shm`, its shared-memory index.
+   To keep the `-shm` of an evidence copy untouched as well, make its directory read-only
+   (`chmod 0500`); it is then verified from a private copy.
 4. Re-run it with the checkpoint key, which is what makes truncation visible. Derive the key
    with the server stopped and keep the file off the audited host (it is a shared secret:
    with the database it can forge a history):
