@@ -73,6 +73,7 @@ func TestCopySecret_PanicInAccessLogDuringSourceRead_StillSucceeds(t *testing.T)
 	staging, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "staging", ProjectID: p1.ID})
 	prod, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p1.ID})
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p1.ID}).Error)
+	grantGateHolder(t, db, 1, Scope{ProjectID: p1.ID}, permSecretsWrite) // #4161: CopySecret decides the route gate in core
 
 	src, err := c.CreateSecret(ctx, &CreateSecretRequest{
 		Name: "db-url", Value: []byte("postgres://secret"), ProjectID: p1.ID, EnvironmentID: staging.ID,

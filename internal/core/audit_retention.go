@@ -73,6 +73,10 @@ func (c *KeyorixCore) PurgeAuditLogs(ctx context.Context, cfg AuditLogRetentionC
 		// delete and under its lock, so no concurrent purge can interleave. A
 		// previous anchor that does not authenticate contributes 0: the count can
 		// only be under-stated, never inflated by an unauthenticated value.
+		//
+		// #4351: a purge that empties the table (or leaves only rows that start
+		// at genesis) gets a restart anchor (genesis prev_hash, no entry_hash), so
+		// that count is recorded too rather than lost with the last row.
 		if anchor != nil {
 			prev, err := c.loadAuditRetentionAnchorFrom(ctx, tx)
 			if err != nil {
@@ -184,8 +188,50 @@ func (c *KeyorixCore) VerifyAuditChain(ctx context.Context) (*storage.AuditChain
 	if v.Reanchored != nil {
 		anchor = v.Reanchored
 	}
-	if err := c.enforceAuditCheckpoint(ctx, v, anchorPurgedEvents(anchor)); err != nil {
+	if err := c.checkRestartAnchorBoundary(ctx, v, anchor); err != nil {
+		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
+	}
+	if err := c.enforceAuditCheckpoint(ctx, v, anchor); err != nil {
 		return nil, fmt.Errorf("failed to verify audit checkpoint: %w", err)
 	}
 	return v, nil
+}
+
+// isRestartAnchor reports whether a is a restart anchor: written by a purge that
+// removed every chained row before the survivors (or every row), after which
+// the chain starts again at genesis. It has no entry_hash (#4351); every other
+// anchor names its surviving row's.
+func isRestartAnchor(a *storage.AuditChainAnchor) bool {
+	return a != nil && a.EntryHash == ""
+}
+
+// checkRestartAnchorBoundary marks v broken when an authenticated restart
+// anchor is in force but a row with an id below its RowID exists. The anchor
+// says the purge removed every row before RowID, so such a row was put back,
+// or the anchor was copied from another chain signed under the same key. A
+// chain the walk already found broken is left as it is.
+func (c *KeyorixCore) checkRestartAnchorBoundary(ctx context.Context, v *storage.AuditChainVerification, anchor *storage.AuditChainAnchor) error {
+	if !v.Valid || !isRestartAnchor(anchor) || anchor.RowID <= 1 {
+		return nil
+	}
+	after, upTo := uint(0), anchor.RowID-1
+	below, _, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{AfterID: &after, UpToID: &upTo, Ascending: true, PageSize: 1})
+	if err != nil {
+		return err
+	}
+	if len(below) == 0 {
+		return nil
+	}
+	id := below[0].ID
+	v.Valid = false
+	v.FirstBrokenID = &id
+	v.Reason = restartAnchorBoundaryReason(id, anchor.RowID)
+	return nil
+}
+
+// restartAnchorBoundaryReason is the verdict text for checkRestartAnchorBoundary
+// (the offline verifier words it identically).
+func restartAnchorBoundaryReason(id, rowID uint) string {
+	return fmt.Sprintf("audit event #%d is below #%d, the first id the signed retention anchor says survived a purge "+
+		"that removed every earlier row (rows put back, or the anchor belongs to another chain)", id, rowID)
 }

@@ -406,11 +406,13 @@ func (ls *LocalStorage) CountUnusedSecretsByProject(ctx context.Context, project
 // lock — taking the mutex here would invert that order and stall a concurrent
 // append until its write deadline drops it).
 //
-// candidate is nil when nothing was deleted, the table is now empty, or the
-// new earliest surviving row already legitimately starts at genesis (the
-// purge only removed the unchained legacy prefix) — nothing to re-anchor.
-// Otherwise its PurgedEvents is the number of chained rows this delete
-// removed (#3257).
+// candidate is nil when nothing chained was deleted (nothing at all, or only
+// the unchained legacy prefix) — nothing to re-anchor. When chained rows went
+// and the table is now empty, or the survivors start at genesis, it is a
+// restart anchor (#4351): PrevHash is the genesis hash, EntryHash is empty and
+// RowID is the first id the purge did not remove, so the count is still
+// signed. Its PurgedEvents is the number of chained rows this delete removed
+// (#3257).
 func (ls *LocalStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, *storage.AuditChainAnchor, error) {
 	var (
 		deleted int64
@@ -460,6 +462,15 @@ func (ls *LocalStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.T
 			Count(&chainedDeleted).Error; err != nil {
 			return err
 		}
+		// The highest id about to go: when the delete empties the table, the
+		// restart anchor below names the first id after it (#4351).
+		var lastDeleted []uint
+		if err := prefix(tx.Model(&models.AuditEvent{})).
+			Order("id DESC").
+			Limit(1).
+			Pluck("id", &lastDeleted).Error; err != nil {
+			return err
+		}
 		result := prefix(tx).Delete(&models.AuditEvent{})
 		deleted = result.RowsAffected
 		if result.Error != nil || result.RowsAffected == 0 {
@@ -478,12 +489,26 @@ func (ls *LocalStorage) DeleteAuditLogsBefore(ctx context.Context, cutoff time.T
 			Scan(&head).Error; err != nil {
 			return err
 		}
-		if head.ID == 0 || head.PrevHash == "" || head.PrevHash == auditGenesisHash {
-			// Table now empty, or the surviving prefix already legitimately starts at
-			// genesis (the purge only removed pre-ADR-029 legacy/unchained rows, or
-			// the next append will restart the chain from genesis) — no re-anchor
-			// needed; VerifyAuditChain's normal genesis walk already handles this.
+		if head.ID == 0 || head.PrevHash == auditGenesisHash {
+			// Table now empty (the next append restarts the chain from genesis), or
+			// the survivors already start at genesis. The walk needs no seed, but
+			// chained rows that went must still be counted, or a checkpoint that
+			// certified them reads as a truncation (#4351): a restart anchor
+			// (genesis prev_hash, no entry_hash) carries the count, its RowID the
+			// first id the purge did not remove. Nothing chained removed (only
+			// pre-ADR-029 legacy rows): nothing to record.
+			if chainedDeleted == 0 || len(lastDeleted) == 0 {
+				return nil
+			}
+			rowID := head.ID
+			if rowID == 0 {
+				rowID = lastDeleted[0] + 1
+			}
+			anchor = &storage.AuditChainAnchor{RowID: rowID, PrevHash: auditGenesisHash, PurgedEvents: chainedDeleted}
 			return nil
+		}
+		if head.PrevHash == "" {
+			return nil // an unchained legacy row: no chain position to re-anchor
 		}
 		anchor = &storage.AuditChainAnchor{
 			RowID:        head.ID,

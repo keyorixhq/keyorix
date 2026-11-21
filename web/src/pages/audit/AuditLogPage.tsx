@@ -904,6 +904,10 @@ const TabToggle: React.FC<TabToggleProps> = ({ activeTab, openCount, onChange })
     </div>
 );
 
+// ?filter=failed: a wrong password and a wrong second factor (TOTP or passkey). The
+// dashboard's "Failed Second Factors" card links here too (#3363).
+const FAILED_AUTH_EVENT_TYPES = new Set(['auth.login_failed', 'mfa.failed', 'webauthn.failed']);
+
 const URL_FILTER_LABELS: Record<string, string> = {
     failed: 'Failed auth attempts',
     reads: 'Secret reads',
@@ -1084,7 +1088,7 @@ export const AuditLogPage: React.FC = () => {
         (entries: AuditLogEntry[]) => {
             return entries
                 .filter((e) => {
-                    if (urlFilter === 'failed') return e.event_type === 'auth.login_failed';
+                    if (urlFilter === 'failed') return FAILED_AUTH_EVENT_TYPES.has(e.event_type);
                     if (urlFilter === 'reads') return e.event_type === 'secret.read';
                     if (urlFilter === 'logins') return e.event_type === 'auth.login';
                     return true;

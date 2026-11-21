@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -180,6 +181,9 @@ var ErrBulkSuspendAuditUnavailable = errors.New("bulk suspend audit event could 
 // other clusters is never taken without a trail. A plain suspend keeps its historical
 // best-effort audit. The per-secret events (secret.suspended) are unchanged.
 func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, projectID, actorID uint, reason string, opts SuspendOptions) (int, error) {
+	if err := refuseMachineActor(ctx, actorID); err != nil { // #4514
+		return 0, err
+	}
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return 0, err
 	}
@@ -200,8 +204,9 @@ func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, proj
 		// secrets.write route gate is not sufficient on its own — the single-secret PUT
 		// path enforces this too, so a caller who can't update a secret individually must
 		// not be able to via the bulk op (mirrors ExtendExpiringSecrets). Skip (don't
-		// abort) on denial.
-		if _, err := c.EnforceSecretWritePermission(ctx, s.ID, actorID); err != nil {
+		// abort) on denial. An OWNER who holds no secrets.write is skipped as well
+		// (#4508 sibling, CORE-AUTHZ-RACE-NOV-1 item 2): the route gate refuses them.
+		if err := c.enforceSecretWriteGate(ctx, s.ID, actorID, SecretActionSuspend, SecretActionSuspend); err != nil {
 			// A denial (or a secret deleted since the list) is a skip. Any other error
 			// is a failed re-check, not a denial: a plain suspend still skips it, but a
 			// clear-synced-copies suspend counts it as a secret it could not suspend.
@@ -296,6 +301,9 @@ func (e *BulkSuspendPartialError) Unwrap() error {
 // ResumeProjectSecrets restores value reads of every suspended secret in a project and
 // returns how many it resumed. See SuspendProjectSecrets for semantics.
 func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actorID uint) (int, error) {
+	if err := refuseMachineActor(ctx, actorID); err != nil { // #4514
+		return 0, err
+	}
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return 0, err
 	}
@@ -313,7 +321,10 @@ func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actor
 		}
 		// Re-check per-secret write authorization — see the matching check in
 		// SuspendProjectSecrets above.
-		if _, err := c.EnforceSecretWritePermission(ctx, s.ID, actorID); err != nil {
+		if err := c.enforceSecretWriteGate(ctx, s.ID, actorID, SecretActionResume, SecretActionResume); err != nil {
+			if IsStorageReadUnavailable(err) {
+				log.Printf("bulk resume: secret %d skipped, permission re-check read failed: %s", s.ID, StorageReadFaultDetail(err))
+			}
 			continue
 		}
 		if _, err := c.ResumeSecret(ctx, s.ID, actorID); err == nil {

@@ -434,6 +434,17 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	if err := c.requireInvitationGrantScopesValid(ctx, inv); err != nil {
 		return nil, err
 	}
+	// #4507: a suspended (or otherwise inactive) inviter's invitation grants
+	// nothing. Refused before anything is written, so the same link works again
+	// once the inviter is reactivated; applyInvitationGrants re-checks.
+	if err := c.requireInviterActive(ctx, inv); err != nil {
+		// A read FAULT is post-verdict (the token was valid), so the handler audits
+		// it setup_token.consume_error, not as a dead link (AUTH-ENDPOINT-OUTAGE-1).
+		if errors.Is(err, ErrStorageReadUnavailable) {
+			return nil, fmt.Errorf("%w: %w", ErrSetupPostVerdict, err)
+		}
+		return nil, err
+	}
 	username, err := c.deriveUsername(ctx, inv.Email)
 	if err != nil {
 		return nil, err

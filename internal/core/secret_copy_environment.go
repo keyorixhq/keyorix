@@ -47,6 +47,14 @@ func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sou
 	if err != nil {
 		return 0, 0, err
 	}
+	// #4161: the route gate — secrets.write on the project and secrets.read on the
+	// source environment — is decided here as well (see CloneEnvironment).
+	if err := c.requireScopedGates(ctx, actorID,
+		scopedGate{permSecretsWrite, Scope{ProjectID: projectID}},
+		scopedGate{permSecretsRead, Scope{ProjectID: projectID, EnvironmentID: sourceEnvID}},
+	); err != nil {
+		return 0, 0, err
+	}
 
 	// Page through the source environment's secrets.
 	for page := 1; ; page++ {

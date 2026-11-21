@@ -268,9 +268,10 @@ func TestKeyTransitionHeadGone(t *testing.T) {
 	assert.Equal(t, VerdictBroken, res.Verdict)
 
 	// A head removed by an authenticated retention purge is fine, but only a head
-	// that sits before the gap.
+	// that sits before the authenticated anchor's RowID (#4351: a restart anchor
+	// leaves no visible gap, so the anchor, not the gap, is what counts).
 	purged := func() *Result {
-		r := &Result{Verdict: VerdictValid}
+		r := &Result{Verdict: VerdictValid, retentionAnchorRowID: 50}
 		r.RetentionGap = RetentionGapStatus{Present: true, Sanctioned: true, RowID: 50}
 		return r
 	}
@@ -285,6 +286,8 @@ func TestKeyTransitionHeadGone(t *testing.T) {
 	res = &Result{Verdict: VerdictValid}
 	res.RetentionGap = RetentionGapStatus{Present: true, Sanctioned: false, RowID: 50}
 	assert.True(t, broken(&KeyTransition{Seq: 1, HeadID: 49, HeadHash: "x"}, res), "an unsanctioned gap excuses nothing")
+	res = &Result{Verdict: VerdictValid}
+	assert.True(t, broken(&KeyTransition{Seq: 1, HeadID: 49, HeadHash: "x"}, res), "no authenticated anchor excuses nothing")
 }
 
 // --- verify.go ---

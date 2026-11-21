@@ -48,6 +48,8 @@ type scimErrorClass struct {
 //     the conditional write (nothing written, safe to retry), or a
 //     create whose outcome could not be read back (#3225: a retry
 //     creates the account or finds it)                                -> 503 + Retry-After
+//   - the audit log refused the mutation's row (rolled back), or a storage
+//     read failed (ErrStorageReadUnavailable): nothing applied        -> 503 + Retry-After
 //   - anything else: transient, deadlock, rolled back, canceled       -> 500, generic detail
 //
 // A PartialMutationError is not classified here (scimPartialMutation answers it first).
@@ -78,7 +80,9 @@ func classifySCIMError(err error) scimErrorClass {
 	case corestorage.IsWriteContention(err),
 		errors.Is(err, core.ErrUserActiveStateConflict),
 		errors.Is(err, core.ErrUserAccountStateConflict),
-		errors.Is(err, core.ErrUserCreateOutcomeUnknown):
+		errors.Is(err, core.ErrUserCreateOutcomeUnknown),
+		errors.Is(err, core.ErrMutationAuditUnavailable),
+		errors.Is(err, core.ErrStorageReadUnavailable):
 		return scimErrorClass{status: http.StatusServiceUnavailable, detail: scimBusyDetail}
 	default:
 		return scimErrorClass{status: http.StatusInternalServerError}

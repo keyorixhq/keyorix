@@ -58,6 +58,10 @@ func TestSharingIntegrationSimple(t *testing.T) {
 		require.NoError(t, db.Create(&models.UserRole{UserID: uint(i), RoleID: 1, ProjectID: 1}).Error)
 	}
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "test-group"}).Error)
+	// #4161: RevokeShare decides the route gate (secrets.write at the secret's scope) in
+	// core; global, because this fixture has no projects table row for project 1 and
+	// a project-scoped grant counts only at a live project.
+	grantGateHolder(t, db, 1, Scope{}, permSecretsWrite)
 	// ShareSecretWithGroup verifies the group is scoped to the secret's project (1).
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1, ProjectID: 1}).Error)
 

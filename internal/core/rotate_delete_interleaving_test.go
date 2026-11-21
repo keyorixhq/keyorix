@@ -146,6 +146,7 @@ func runRotateDeleteInterleaving(t *testing.T, tc rotateDeleteCase, db *gorm.DB,
 		// rollback returns "the acting account is not active" before it reaches
 		// the hold point, which is not the interleaving under test.
 		require.NoError(t, db.Create(&models.User{ID: 1, Username: "rollback-operator", UsernameFolded: "rollback-operator", Email: "rollback-operator@example.com", EmailFolded: "rollback-operator@example.com", IsActive: true, AccountState: AccountActive}).Error)
+		grantGateHolder(t, db, 1, Scope{}, permSecretsWrite) // #4161: RollbackSecret decides the route gate in core, before the hold point
 	}
 	id := seedRotateDeleteSecret(t, db, tc.backend, seeded)
 

@@ -3503,6 +3503,7 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /api/v1/secrets/by-name:
     get:
       tags: [Secrets]
@@ -3530,6 +3531,7 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /api/v1/secrets/value:
     get:
       tags: [Secrets]
@@ -4490,6 +4492,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /api/v1/secrets/{id}/audit:
     get:
       tags: [Secrets]
@@ -6683,7 +6686,9 @@ paths:
                       expires_at: {type: string, format: date-time, nullable: true}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuditUnavailable'}
     delete:
       tags: [UserRoles]
       summary: Remove role from user at a scope

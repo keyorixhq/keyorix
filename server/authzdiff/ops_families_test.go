@@ -218,8 +218,16 @@ func familyOps() []opSpec {
 		// ---- access requests ----
 		{
 			// no gate beyond authentication: any live user may ask for access.
+			//
+			// coreGateExcluded (#4161): there is no router permission gate for core to
+			// re-derive; core's typed refusals here are business rules (a machine actor,
+			// a suspended requester since #4161, a duplicate pending request, a deleted
+			// project). The one model rule that applies, a restricted PAT may not call an
+			// ungated write route (RestrictedPATWriteRefusal), is a transport policy keyed
+			// by route, so the core leg is recorded and not compared against the model.
 			name: "accessrequest.create", row: "RequestProjectAccess", targets: projTargets,
-			req: func(fx *fixtures, t tgt, _ byte) requirement { return requirement{scope: pid(fx, t)} },
+			coreGateExcluded: true,
+			req:              func(fx *fixtures, t tgt, _ byte) requirement { return requirement{scope: pid(fx, t)} },
 			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
 				_, err := lg.c.RequestProjectAccess(ctx, pid(lg.fx, t), p.userID, "project_viewer", "synthetic")
 				return err
@@ -246,7 +254,17 @@ func familyOps() []opSpec {
 			// global roles.assign gate, then per-item roles.assign at the request's
 			// project, then the approval ceiling (the suggested project_viewer).
 			// 200 with a per-item failure is "denied" (restOK / errItemRefused).
+			//
+			// coreGateExcluded (#4161): the router's gate is roles.assign at the GLOBAL
+			// scope; core's own rule is the finer per-item roles.assign at each
+			// request's project (the single-request ceiling), which also lets a
+			// machine approver — never a global role holder — act in bulk (#2495).
+			// Core is an authorization layer here, but not one that re-derives the
+			// router's global gate, so its leg is recorded and not compared against
+			// the model. Deliberately kept, not moved into core: moving the global
+			// gate into core would end machine bulk approvals at the core level.
 			name: "accessrequest.bulk.approve", row: "BulkApproveAccessRequests", targets: projTargets,
+			coreGateExcluded: true,
 			restOK: func(b []byte, fx *fixtures, t tgt) bool {
 				return jsonListHas(b, "approved", fx.proj(byte(t)).accessRequestID)
 			},
@@ -270,7 +288,9 @@ func familyOps() []opSpec {
 			},
 		},
 		{
+			// coreGateExcluded for the same reason as bulk.approve above.
 			name: "accessrequest.bulk.reject", row: "BulkRejectAccessRequests", targets: projTargets,
+			coreGateExcluded: true,
 			restOK: func(b []byte, fx *fixtures, t tgt) bool {
 				return jsonListHas(b, "rejected", fx.proj(byte(t)).accessRequestID)
 			},

@@ -1,0 +1,1 @@
+scripts/hw	none	-	test-only package: scripts/hw holds the bench-host matrix shell harness (run-matrix.sh, sample.sh, summarize.py) plus run_matrix_guard_test.go, which runs the real run-matrix.sh against a fake temperature sensor to pin its live abort contract; no non-test Go code and nothing imported by the production binaries	test-helper

@@ -23,6 +23,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -91,13 +92,25 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 	if err != nil {
 		return err
 	}
+	// #4161: the route gate (secrets.manage on the node: RequireScopedSecretPermission
+	// at REST, AuthorizeSecretPrincipalForSecretAction at gRPC) is decided here as
+	// well, so core refuses what the transports refuse.
+	if err := c.requireSecretActionGate(ctx, actorID, secret, permSecretsManage, ""); err != nil {
+		return err
+	}
 
 	// Check that the grant target is a project member — granting access to a
-	// non-member is confusing and potentially unintended.
+	// non-member is confusing and potentially unintended. This read is NOT
+	// serialized against RemoveProjectMember (#4533): the storage upsert below
+	// re-asks the question after its write, inside its own transaction, and the
+	// same refusal is returned from there (notMember below).
+	notMember := func() error {
+		return invalidACLRequest(fmt.Errorf("%s: user %d is not a member of this secret's project", i18n.T("ErrorValidation", nil), userID))
+	}
 	if isMember, merr := c.IsProjectMember(ctx, userID, secret.ProjectID); merr != nil {
 		return fmt.Errorf("failed to verify project membership: %w", merr)
 	} else if !isMember {
-		return invalidACLRequest(fmt.Errorf("%s: user %d is not a member of this secret's project", i18n.T("ErrorValidation", nil), userID))
+		return notMember()
 	}
 
 	permsJSON, err := EncodeSecretACLPerms(perms)
@@ -116,6 +129,12 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 	projectID := secret.ProjectID
 	return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		if err := tx.CreateOrUpdateSecretACL(ctx, acl); err != nil {
+			if errors.Is(err, storage.ErrSecretACLGranteeNotMember) {
+				// #4533: the grantee was removed from the project between the
+				// pre-check above and the upsert; the row was rolled back. Same
+				// refusal as a serial remove-then-grant.
+				return notMember()
+			}
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 		c.writeAuditEventFullOn(ctx, tgt, EventSecretACLGranted, actorPtr(actorID), &secretID, &projectID, "",
@@ -130,6 +149,19 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 func (c *KeyorixCore) RevokeSecretACL(ctx context.Context, actorID, secretID, aclID uint) error {
 	if aclID == 0 {
 		return invalidACLRequest(fmt.Errorf("%s: ACL ID is required", i18n.T("ErrorValidation", nil)))
+	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
+	// #4161: the route gate (secrets.manage on the node, see GrantSecretACL) is
+	// decided here as well; a machine actor is authorized through its own roles, as
+	// the transports do for this op.
+	node, err := c.requireSecretOrFolderNode(ctx, secretID)
+	if err != nil {
+		return err
+	}
+	if err := c.requireSecretActionGate(ctx, actorID, node, permSecretsManage, ""); err != nil {
+		return err
 	}
 
 	// Look up all ACLs for this secret to verify the aclID belongs here.

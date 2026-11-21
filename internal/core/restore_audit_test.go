@@ -32,7 +32,8 @@ func TestRestoreOperationsAudit(t *testing.T) {
 		&models.User{}, // the acting user's account (#4159)
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
-	ensureActiveActor(t, c.storage, 42) // the acting user of the restores is active (#4159)
+	ensureActiveActor(t, c.storage, 42)                  // the acting user of the restores is active (#4159)
+	grantGateHolder(t, db, 42, Scope{}, permRolesAssign) // #4161: RestoreProject decides the route gate in core
 	ctx := context.Background()
 
 	auditActor := func(eventType string) *uint {
