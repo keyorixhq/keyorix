@@ -831,12 +831,22 @@ func (ls *LocalStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, sc
 // wide role (project_id = 0) does NOT count — break-glass and similar controls must
 // distinguish a project member from any user who merely holds the install baseline.
 func (ls *LocalStorage) IsProjectMember(ctx context.Context, userID, projectID uint) (bool, error) {
+	return ls.isProjectMemberOn(ls.db.WithContext(ctx), userID, projectID)
+}
+
+// isProjectMemberOn is IsProjectMember's body over an explicit handle, so a
+// transaction that already holds the grantee's direct project grants FOR SHARE
+// (CreateOrUpdateSecretACL, #4533) asks the SAME question — the one definition of
+// project membership, internal/core/project_membership_definition.go — through its
+// own tx instead of through a second copy of the query. Not a second definition:
+// IsProjectMember is this, over ls.db.
+func (ls *LocalStorage) isProjectMemberOn(db *gorm.DB, userID, projectID uint) (bool, error) {
 	if projectID == 0 {
 		return false, nil
 	}
 	now := ls.rbacEffectiveNow(time.Now().UTC())
 	var direct int64
-	if err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
+	if err := db.Model(&models.UserRole{}).
 		Where("user_id = ? AND project_id = ?", userID, projectID).
 		Where(sqlWhereURNotExpired, now).
 		Count(&direct).Error; err != nil {
@@ -846,7 +856,7 @@ func (ls *LocalStorage) IsProjectMember(ctx context.Context, userID, projectID u
 		return true, nil
 	}
 	var viaGroup int64
-	if err := ls.db.WithContext(ctx).Table("group_roles").
+	if err := db.Table("group_roles").
 		Joins(sqlJoinUserGroups).
 		Joins(sqlJoinGroups).
 		Where("user_groups.user_id = ? AND group_roles.project_id = ?", userID, projectID).
