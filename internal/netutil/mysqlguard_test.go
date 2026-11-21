@@ -5,8 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"math/rand"
+	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- seeded, reproducible test-input generator, not a secret
 	"net"
+	"slices"
 	"testing"
 	"time"
 )
@@ -44,8 +45,20 @@ func myResponse(caps uint32, plen int) myEv {
 }
 func myOK(seq byte) myEv     { return myEv{true, myPkt(seq, []byte{0, 0, 0, 2, 0, 0, 0})} }
 func myCmd() myEv            { return myEv{false, myPkt(0, []byte{0x03, 'S', 'E', 'L', 'E', 'C', 'T'})} }
+func myCmdByte(c byte) myEv  { return myEv{false, myPkt(0, []byte{c, 1, 0, 0, 0})} }
 func myHeader(n uint64) myEv { return myEv{true, myPkt(1, myLenEnc(n))} }
 func myRaw(p []byte) myEv    { return myEv{true, myPkt(1, p)} }
+
+// myOKStatus is an OK packet with the given server status (0x0008: more results follow).
+func myOKStatus(status uint16) []byte { return []byte{0, 0, 0, byte(status), byte(status >> 8), 0, 0} }
+
+// myMariaResponse is a MariaDB handshake response (CLIENT_MYSQL clear) with extended caps.
+func myMariaResponse(caps, ext uint32) myEv {
+	pl := make([]byte, 40)
+	binary.LittleEndian.PutUint32(pl, caps)
+	binary.LittleEndian.PutUint32(pl[28:], ext)
+	return myEv{false, myPkt(1, pl)}
+}
 
 func runMySQL(evs []myEv, chunk int, lim MySQLLimits) error {
 	sc := newMySQLScanner(lim)
@@ -87,7 +100,40 @@ func TestMySQLScannerVerdicts(t *testing.T) {
 		{"ok response", session(myCmd(), myRaw([]byte{0, 0, 0, 2, 0, 0, 0})), false},
 		{"err response", session(myCmd(), myRaw([]byte{0xff, 0x15, 0x04, '#', '4', '2', '0', '0', '0', 'x'})), false},
 		{"local infile request", session(myCmd(), myRaw([]byte{0xfb, 'f'})), false},
-		{"0xfe short packet is EOF, not a header", session(myCmd(), myRaw([]byte{0xfe, 0, 0, 2, 0})), false},
+		// The driver never reads a first-response 0xfe as EOF: it decodes 8 bytes and panics on fewer.
+		{"0xfe short packet is a truncated header", session(myCmd(), myRaw([]byte{0xfe, 0, 0, 2, 0})), true},
+		{"0xfe alone", session(myCmd(), myRaw([]byte{0xfe})), true},
+		{"more results: header after OK is checked", session(myCmd(), myRaw(myOKStatus(0x0008)), myHeader(5_000_000)), true},
+		{"more results: small header after OK", session(myCmd(), myRaw(myOKStatus(0x0008)), myHeader(3)), false},
+		{"more results: chain of empty results", session(myCmd(), myRaw(myOKStatus(0x000a)), myRaw(myOKStatus(0x0008)), myHeader(1<<40)), true},
+		{"more results: short 0xfe after OK", session(myCmd(), myRaw(myOKStatus(0x0008)), myRaw([]byte{0xfe, 1, 0, 0, 0})), true},
+		{"OK without more results ends the response", session(myCmd(), myRaw(myOKStatus(0x0002)), myHeader(5_000_000)), false},
+		{"more results on a later command", session(myCmd(), myHeader(1), myCmd(), myRaw(myOKStatus(0x0008)), myHeader(5_000_000)), true},
+		{"local infile: header after the closing OK is checked", session(myCmd(), myRaw([]byte{0xfb, 'f'}), myRaw(myOKStatus(0x0008)), myHeader(5_000_000)), true},
+		{"local infile: plain closing OK", session(myCmd(), myRaw([]byte{0xfb, 'f'}), myRaw(myOKStatus(0x0002)), myHeader(5_000_000)), false},
+		{"OK with 8-byte lengths", session(myCmd(), myRaw(append(append([]byte{0}, myLenEnc(1<<40)...), append(myLenEnc(1<<41), 2, 0, 0, 0)...))), false},
+		{"truncated OK: marker only", session(myCmd(), myRaw([]byte{0})), true},
+		{"truncated OK: no status", session(myCmd(), myRaw([]byte{0, 0, 0, 2})), true},
+		{"truncated OK: cut length", session(myCmd(), myRaw([]byte{0, 0xfc, 1})), true},
+		{"truncated OK answers a ping too", session(myCmdByte(0x0e), myRaw([]byte{0, 0})), true},
+		{"prepare response is not an OK packet", session(myCmdByte(0x16), myRaw([]byte{0, 0xfe, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0})), false},
+		{"prepare response with more-results bits does not arm", session(myCmdByte(0x16), myRaw([]byte{0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0}), myHeader(5_000_000)), false},
+		{"truncated prepare response", session(myCmdByte(0x16), myRaw([]byte{0, 1, 0, 0, 0, 0})), true},
+		{"prepare error", session(myCmdByte(0x16), myRaw([]byte{0xff, 0x15, 0x04, 'x'})), false},
+		{"truncated error: no state marker byte", session(myCmd(), myRaw([]byte{0xff, 0x15, 0x04})), true},
+		{"truncated error: cut SQL state", session(myCmd(), myRaw([]byte{0xff, 0x15, 0x04, '#', '4', '2'})), true},
+		{"truncated error answers a prepare too", session(myCmdByte(0x16), myRaw([]byte{0xff})), true},
+		{"error without SQL state", session(myCmd(), myRaw([]byte{0xff, 0x15, 0x04, 'n', 'o'})), false},
+		{"execute response is checked", session(myCmdByte(0x16), myRaw([]byte{0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}), myCmdByte(0x17), myHeader(5_000_000)), true},
+		{"statement close has no response", session(myCmdByte(0x19), myHeader(5_000_000)), false},
+		{"long data has no response", session(myCmdByte(0x18), myHeader(5_000_000)), false},
+		{"mariadb cache metadata: count without flag byte", []myEv{myGreeting(), myMariaResponse(0x820c, 0x10), myOK(2), myCmd(), myRaw([]byte{0x01})}, true},
+		{"mariadb cache metadata: count with flag byte", []myEv{myGreeting(), myMariaResponse(0x820c, 0x10), myOK(2), myCmd(), myRaw([]byte{0x01, 0x01})}, false},
+		{"mariadb without cache metadata", []myEv{myGreeting(), myMariaResponse(0x820c, 0x04), myOK(2), myCmd(), myRaw([]byte{0x01})}, false},
+		{"ext caps ignored when CLIENT_MYSQL is set", []myEv{myGreeting(), myMariaResponse(0x820d, 0x10), myOK(2), myCmd(), myRaw([]byte{0x01})}, false},
+		{"seq-1 packet after the handshake does not seal", session(myResponse(0x800, 32), myCmd(), myHeader(5_000_000)), true},
+		{"seq-1 packet after the handshake is not a compression request", session(myResponse(0x20, 8)), false},
+		{"command before the handshake does not arm", []myEv{myGreeting(), myCmd(), myHeader(5_000_000)}, false},
 		{"truncated 2-byte count", session(myCmd(), myRaw([]byte{0xfc, 1})), true},
 		{"truncated 3-byte count", session(myCmd(), myRaw([]byte{0xfd, 1, 2})), true},
 		{"unsolicited header is not a response", session(myHeader(5_000_000)), false},
@@ -113,67 +159,119 @@ func TestMySQLScannerVerdicts(t *testing.T) {
 	}
 }
 
-// reference derives the verdict from the structured dialogue, with no byte state.
-func myReference(evs []myEv, maxCols uint64) bool {
-	armed, sealed := false, false
-	for _, e := range evs {
-		if sealed {
-			return false
+// myDriverLenEnc is go-sql-driver/mysql v1.10.1 readLengthEncodedInteger (utils.go),
+// including its unchecked slicing, so a truncated value panics here as it does there.
+func myDriverLenEnc(b []byte) (uint64, int) {
+	if len(b) == 0 {
+		return 0, 1
+	}
+	switch b[0] {
+	case 0xfb:
+		return 0, 1
+	case 0xfc:
+		return uint64(binary.LittleEndian.Uint16(b[1:])), 3
+	case 0xfd:
+		v := b[1:]
+		return uint64(v[0]) | uint64(v[1])<<8 | uint64(v[2])<<16, 4
+	case 0xfe:
+		return binary.LittleEndian.Uint64(b[1:]), 9
+	}
+	return uint64(b[0]), 1
+}
+
+// myDriverHead reads pl (capacity capped at its length) the way the v1.10.1 driver reads a response head
+// (readPrepareResultPacket for COM_STMT_PREPARE, else readResultSetHeaderPacket and
+// handleOkPacket): whether it panics, the column count it sizes a slice from, and
+// whether it reads the next packet as another result set header (rows.NextResultSet
+// after an OK with SERVER_MORE_RESULTS_EXISTS, the OK after a LOCAL INFILE request).
+func myDriverHead(cmd byte, pl []byte, cacheMeta bool) (panicked bool, cols uint64, next bool) {
+	defer func() {
+		if recover() != nil {
+			panicked = true
 		}
+	}()
+	if pl[0] == 0xff { // handleErrorPacket
+		if _ = pl[1:3]; pl[3] == '#' {
+			_ = pl[4 : 4+5]
+		}
+		return false, 0, false
+	}
+	if cmd == 0x16 {
+		if pl[0] == 0x00 {
+			_, _, _ = pl[1:5], pl[5:7], pl[7:9]
+		}
+		return false, 0, false
+	}
+	switch pl[0] {
+	case 0x00:
+		_, n := myDriverLenEnc(pl[1:])
+		_, m := myDriverLenEnc(pl[1+n:])
+		return false, 0, binary.LittleEndian.Uint16(pl[1+n+m:1+n+m+2])&0x0008 != 0
+	case 0xfb:
+		return false, 0, true
+	}
+	cols, n := myDriverLenEnc(pl)
+	if cacheMeta {
+		_ = pl[n]
+	}
+	return false, cols, false
+}
+
+// myReference derives the verdict from whole packets with no byte state: violation
+// when the driver, reading the packets it reads as response heads, would panic or
+// size a column slice above maxCols. It shares no code with the scanner.
+func myReference(evs []myEv, maxCols uint64) bool {
+	armed, sealed, hsDone, cacheMeta := false, false, false, false
+	var cmd byte
+	for _, e := range evs {
 		d := e.data
-		for len(d) >= 4 {
+		for len(d) >= 4 && !sealed {
 			plen := int(d[0]) | int(d[1])<<8 | int(d[2])<<16
 			seq := d[3]
 			pl := d[4:]
 			if plen < len(pl) {
 				pl = pl[:plen]
 			}
-			if e.server {
-				if armed {
-					armed = false
-					if len(pl) > 0 {
-						b := pl[0]
-						var cols uint64
-						switch {
-						case b == 0 || b == 0xff || b == 0xfb:
-						case b < 0xfb:
-							cols = uint64(b)
-						case b == 0xfc:
-							if plen < 3 {
-								return true
-							}
-							cols = uint64(binary.LittleEndian.Uint16(pl[1:3]))
-						case b == 0xfd:
-							if plen < 4 {
-								return true
-							}
-							cols = uint64(pl[1]) | uint64(pl[2])<<8 | uint64(pl[3])<<16
-						default:
-							if plen >= 9 {
-								cols = binary.LittleEndian.Uint64(pl[1:9])
-							}
-						}
-						if cols > maxCols {
-							return true
-						}
-					}
+			// Cap the capacity: a slice expression past the packet end, which the driver's
+			// buffer would satisfy with the following bytes, then panics here instead.
+			pl = slices.Clip(pl)
+			d = d[min(4+plen, len(d)):]
+			if len(pl) < plen {
+				continue // the event ends mid-packet: nothing is complete to judge
+			}
+			switch {
+			case e.server && armed:
+				armed = false
+				if plen == 0 {
+					continue // the driver rejects an empty packet itself
 				}
-			} else {
-				if seq == 0 {
-					armed = true
+				panicked, cols, next := myDriverHead(cmd, pl, cacheMeta)
+				if panicked || cols > maxCols {
+					return true
 				}
-				if seq == 1 && plen >= 4 {
-					caps := binary.LittleEndian.Uint32(pl[:4])
-					if caps&0x20 != 0 {
-						return true
-					}
-					if plen == 32 && caps&0x800 != 0 {
-						sealed = true
-						break
-					}
+				armed = next
+			case e.server:
+			case !hsDone && seq == 1:
+				hsDone = true
+				if plen < 4 {
+					continue
+				}
+				caps := binary.LittleEndian.Uint32(pl)
+				if caps&0x20 != 0 {
+					return true
+				}
+				if plen == 32 && caps&0x800 != 0 {
+					sealed = true
+				} else if caps&1 == 0 && plen >= 32 {
+					cacheMeta = binary.LittleEndian.Uint32(pl[28:])&0x10 != 0
+				}
+			case hsDone && seq == 0:
+				if plen == 0 {
+					armed, cmd = true, 0
+				} else if c := pl[0]; c != 0x01 && c != 0x18 && c != 0x19 {
+					armed, cmd = true, c
 				}
 			}
-			d = d[4+plen:]
 		}
 	}
 	return false
@@ -182,10 +280,12 @@ func myReference(evs []myEv, maxCols uint64) bool {
 func TestMySQLScannerMatchesReference(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
 	counts := []uint64{0, 1, 5, 250, 251, 1000, 65535, 65536, 65537, 1 << 24, 1 << 40, ^uint64(0)}
+	cmds := []byte{0x03, 0x03, 0x17, 0x16, 0x0e, 0x19, 0x18, 0x01}
+	lenencHeads := []byte{0, 1, 0xfb, 0xfc, 0xfd, 0xfe, 0xff}
 	for i := range 20000 {
 		var evs []myEv
-		for k, n := 0, 1+rng.Intn(8); k < n; k++ {
-			switch rng.Intn(7) {
+		for k, n := 0, 1+rng.Intn(10); k < n; k++ {
+			switch rng.Intn(10) {
 			case 0:
 				evs = append(evs, myCmd())
 			case 1:
@@ -201,6 +301,15 @@ func TestMySQLScannerMatchesReference(t *testing.T) {
 				evs = append(evs, myResponse(caps, 4+rng.Intn(40)))
 			case 5:
 				evs = append(evs, myEv{false, myPkt(byte(rng.Intn(3)), make([]byte, rng.Intn(6)))})
+			case 6:
+				// OK packets with every length-encoding head, cut at a random length.
+				pl := []byte{0, lenencHeads[rng.Intn(len(lenencHeads))], 1, 2, 3, 4, 5, 6, 7, 8, lenencHeads[rng.Intn(len(lenencHeads))], 1, 2, 3, 4, 5, 6, 7, 8}
+				pl = append(pl, byte(rng.Intn(16)), 0, 0, 0)
+				evs = append(evs, myRaw(pl[:rng.Intn(len(pl)+1)]))
+			case 7:
+				evs = append(evs, myCmdByte(cmds[rng.Intn(len(cmds))]))
+			case 8:
+				evs = append(evs, myMariaResponse(uint32(rng.Intn(1<<16)), uint32(rng.Intn(32))))
 			default:
 				evs = append(evs, myGreeting())
 			}
@@ -208,7 +317,46 @@ func TestMySQLScannerMatchesReference(t *testing.T) {
 		want := myReference(evs, DefaultMySQLMaxColumns)
 		for _, chunk := range []int{0, 1, 3} {
 			if got := runMySQL(evs, chunk, MySQLLimits{}) != nil; got != want {
-				t.Fatalf("case %d chunk %d: scanner violation=%v, reference=%v", i, chunk, got, want)
+				t.Fatalf("case %d chunk %d: scanner violation=%v, reference=%v; dialogue %+v", i, chunk, got, want, evs)
+			}
+		}
+	}
+}
+
+// A packet of 0xffffff bytes continues in the next one, whatever its sequence id: the
+// continuation of a large command is not a handshake response, and the continuation of
+// a large response head is not another head.
+func TestMySQLScannerContinuationPackets(t *testing.T) {
+	big := func(first byte) []byte {
+		pl := make([]byte, 0xffffff)
+		pl[0] = first
+		return pl
+	}
+	bigCmd := myEv{false, myPkt(0, big(0x03))}
+	cont := func(server bool, seq byte, pl []byte) myEv { return myEv{server, myPkt(seq, pl)} }
+	sslCaps := make([]byte, 32)
+	binary.LittleEndian.PutUint32(sslCaps, 0x820d|0x800)
+	compCaps := make([]byte, 40)
+	binary.LittleEndian.PutUint32(compCaps, 0x820d|0x20)
+	bigOK := big(0)
+	bigOK[3] = 0x08 // status: more results
+	tests := []struct {
+		name    string
+		evs     []myEv
+		wantErr bool
+	}{
+		{"command continuation with the SSL bit does not seal", session(bigCmd, cont(false, 1, sslCaps), myHeader(5_000_000)), true},
+		{"command continuation with the compress bit is not refused", session(bigCmd, cont(false, 1, compCaps), myHeader(3)), false},
+		{"continuation after a wrapped sequence id does not arm", session(myCmd(), myHeader(1), bigCmd, cont(false, 0, []byte{0x03}), myHeader(1), myHeader(5_000_000)), false},
+		{"continuation of a large header is not a header", session(myCmd(), myEv{true, myPkt(1, big(3))}, cont(true, 2, []byte{0xfd, 0xff, 0xff, 0xff})), false},
+		{"header after the continuation of a more-results OK is checked", session(myCmd(), myEv{true, myPkt(1, bigOK)}, cont(true, 2, []byte{1}), myHeader(5_000_000)), true},
+		{"continuation of a more-results OK is not the header", session(myCmd(), myEv{true, myPkt(1, bigOK)}, cont(true, 2, []byte{0xfd, 0xff, 0xff, 0xff}), myHeader(3)), false},
+	}
+	for _, tc := range tests {
+		for _, chunk := range []int{0, 4093} {
+			err := runMySQL(tc.evs, chunk, MySQLLimits{})
+			if (err != nil) != tc.wantErr {
+				t.Errorf("%s (chunk %d): err = %v, wantErr %v", tc.name, chunk, err, tc.wantErr)
 			}
 		}
 	}
