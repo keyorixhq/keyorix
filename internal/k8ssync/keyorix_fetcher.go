@@ -393,6 +393,12 @@ func (f *KeyorixFetcher) loadEnvironmentsLocked(ctx context.Context) error {
 	}
 	m := make(map[string]uint, len(body.Environments))
 	for _, e := range body.Environments {
+		// The server keeps (project, name) unique, so a name listed twice is not an
+		// honest answer. Taking either id could read a secret from an environment the
+		// operator did not name; refuse the whole list instead.
+		if _, dup := m[e.Name]; dup {
+			return fmt.Errorf("list environments in project %d: environment %q is listed more than once", f.projectID, e.Name)
+		}
 		m[e.Name] = e.ID
 	}
 	f.envByName = m
