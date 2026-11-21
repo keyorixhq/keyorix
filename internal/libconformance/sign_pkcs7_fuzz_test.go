@@ -35,12 +35,22 @@ package libconformance
 // exercise the intermediate-certificate code path in AddSignerChain that
 // FuzzPKCS7Sign's AddSigner (empty parents) does not reach.
 //
-// # What these oracles do NOT verify
+// # Round-trip oracle (LS4 addition)
 //
-//   - Correctness of the signed output (no independent verifier is applied)
+// Both FuzzPKCS7Sign and FuzzPKCS7SignWithChain carry a sign-then-verify
+// round-trip oracle (LS3 LEFTOVERS item 3, completed in LS4): when Finish()
+// succeeds, the resulting token is parsed via pkcs7.Parse and verified against
+// the signing PKI's own root pool via VerifyWithChain.  This asserts that a
+// token the library itself produced is verifiable by that same library's
+// verifier — a failure here would indicate a sign/verify asymmetry in the
+// library (e.g. a digest or encoding bug that makes the token unverifiable).
+//
+// What the round-trip oracle does NOT verify:
+//   - Interoperability with OTHER PKCS7 implementations
 //   - Determinism of the output (signing uses a random nonce via ECDSA)
-//   - Interoperability with other PKCS7 implementations
-//   - SignWithoutAttr (similar to AddSigner; left as TODO-ISSUE if needed)
+//   - Correctness of SignWithoutAttr output (SignWithoutAttr tokens are NOT
+//     verifiable by VerifyWithChain because authenticated attributes are
+//     required; see FuzzPKCS7SignWithoutAttr for that target's oracle)
 //
 // # Signature drift check (LS3 requirement)
 //
@@ -164,7 +174,9 @@ func buildSignFuzzPKI(tb testing.TB) *signFuzzPKI {
 
 // FuzzPKCS7Sign fuzzes NewSignedData → AddSigner → Finish with arbitrary
 // content.  Uses a 2-tier PKI (root → leaf) where AddSigner is called with
-// no parent certificates (the common case).
+// no parent certificates (the common case).  Carries a sign-then-verify
+// round-trip oracle (LS4): when Finish() succeeds, the token is parsed and
+// verified against pki.roots.
 func FuzzPKCS7Sign(f *testing.F) {
 	pki := buildVerifyFuzzPKI(f) // 2-tier PKI reused from verify harness
 
@@ -174,6 +186,7 @@ func FuzzPKCS7Sign(f *testing.F) {
 	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
+		var token []byte
 		fuzzutil.Guard(t.Fatalf, "pkcs7.NewSignedData+AddSigner+Finish", func() {
 			sd, err := pkcs7.NewSignedData(data)
 			if err != nil {
@@ -182,16 +195,38 @@ func FuzzPKCS7Sign(f *testing.F) {
 			if err := sd.AddSigner(pki.leaf, pki.leafKey, pkcs7.SignerInfoConfig{}); err != nil {
 				return
 			}
-			_, _ = sd.Finish()
+			out, err := sd.Finish()
+			if err != nil {
+				return
+			}
+			token = out
+		})
+		if len(token) == 0 {
+			return
+		}
+		// Round-trip oracle: a token produced by our own signing must verify.
+		fuzzutil.Guard(t.Fatalf, "pkcs7.AddSigner-sign-then-verify-roundtrip", func() {
+			p7, err := pkcs7.Parse(token)
+			if err != nil {
+				t.Fatalf("sign-then-verify: Parse failed on our own output: %v", err)
+			}
+			if err := p7.VerifyWithChain(pki.roots); err != nil {
+				t.Fatalf("sign-then-verify: VerifyWithChain rejected our own signed token: %v", err)
+			}
 		})
 	})
 }
 
 // FuzzPKCS7SignWithChain fuzzes NewSignedData → AddSignerChain → Finish with
 // arbitrary content.  Uses a 3-tier PKI (root → intermediate → leaf) to
-// exercise the intermediate-certificate code path in AddSignerChain.
+// exercise the intermediate-certificate code path in AddSignerChain.  Carries
+// a sign-then-verify round-trip oracle (LS4): when Finish() succeeds, the
+// token is parsed and verified against pki.root's pool.
 func FuzzPKCS7SignWithChain(f *testing.F) {
 	pki := buildSignFuzzPKI(f)
+
+	chainRoots := x509.NewCertPool()
+	chainRoots.AddCert(pki.root)
 
 	f.Add([]byte("ls3-sign-chain-fuzz-seed-content"))
 	f.Add([]byte{})
@@ -199,6 +234,7 @@ func FuzzPKCS7SignWithChain(f *testing.F) {
 	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
+		var token []byte
 		fuzzutil.Guard(t.Fatalf, "pkcs7.NewSignedData+AddSignerChain+Finish", func() {
 			sd, err := pkcs7.NewSignedData(data)
 			if err != nil {
@@ -208,7 +244,25 @@ func FuzzPKCS7SignWithChain(f *testing.F) {
 			if err := sd.AddSignerChain(pki.leaf, pki.leafKey, parents, pkcs7.SignerInfoConfig{}); err != nil {
 				return
 			}
-			_, _ = sd.Finish()
+			out, err := sd.Finish()
+			if err != nil {
+				return
+			}
+			token = out
+		})
+		if len(token) == 0 {
+			return
+		}
+		// Round-trip oracle: AddSignerChain embeds the intermediate in the token;
+		// VerifyWithChain must find it and accept the resulting chain.
+		fuzzutil.Guard(t.Fatalf, "pkcs7.AddSignerChain-sign-then-verify-roundtrip", func() {
+			p7, err := pkcs7.Parse(token)
+			if err != nil {
+				t.Fatalf("sign-then-verify: Parse failed on our own output: %v", err)
+			}
+			if err := p7.VerifyWithChain(chainRoots); err != nil {
+				t.Fatalf("sign-then-verify: VerifyWithChain rejected our own signed token: %v", err)
+			}
 		})
 	})
 }
