@@ -1,0 +1,137 @@
+TRIAGE1 — triage 6 new fuzz-corpus crash issues: repro, classify, write up
+
+GOAL: for each of the 6 GitHub issues below (keyorixhq/fuzz-corpus, all opened
+2026-11-18 through 2026-11-20, all against keyorix), get a local reproduction
+where possible, classify it honestly, and write up findings. This is a TRIAGE
+session, not a fix session: do NOT write a production-code fix for anything
+found here unless a sub-task below explicitly says to. Where a real defect is
+confirmed, propose the fix in the write-up (issue-ready) rather than
+implementing it, UNLESS noted otherwise below.
+
+You have `gh` available and keyorixhq/fuzz-corpus is public — you can read
+issues and the corpus/crashers tree directly:
+  gh api repos/keyorixhq/fuzz-corpus/issues/<N>
+  gh api repos/keyorixhq/fuzz-corpus/contents/<path>   # --jq '.content' | base64 -d for file bytes
+
+Some crasher bytes are NOT committed to fuzz-corpus (intentionally, for
+disclosure safety, per each issue's own text) — for those you'll need to
+reconstruct a plausible crashing input from the issue description and the
+harness source itself, exactly as KFZ-2026-159/fuzz-corpus#154 (DSCFG1, already
+closed) did it: reproduce the MECHANISM the issue describes, document clearly
+that the bytes are reconstructed not the original, and say so in the report.
+
+For each of the 6, I (the orchestrator) already did a first pass against the
+public fuzz-corpus repo — here's what's there right now, verify it yourself
+rather than trusting this blindly (the repo may have changed):
+
+=== #153 — FuzzDSNHostsCoverDriverHosts (keyorix repo, internal/dynamic) ===
+Crasher IS committed: path
+`crashers/keyorix/github.com_keyorixhq_keyorix_internal_dynamic/FuzzDSNHostsCoverDriverHosts/f0520501354fcac9`,
+decodes to a Go fuzz corpus file: `string("host=[[]]")`.
+Issue body: for host=[[]], pgx dials the literal host [[]], but
+dsn.ParseDSNHosts returns ["[]"] — a different string. ParseDSNHosts feeds
+internal/core/dsn/revoke_target.go's RevokeTarget, documented to fail-closed on
+a "same target" comparison for credential revocation safety. The issue itself
+says: "Needs a security-sensitive-code review pass before any public
+disclosure or fix PR."
+TASK: reproduce (`go test -run='^FuzzDSNHostsCoverDriverHosts$' ./internal/dynamic/...`
+with this seed added to the testdata corpus, or via -run with the literal
+input), read dsn.ParseDSNHosts and RevokeTarget in full, confirm or refute the
+claimed mismatch and its actual blast radius (does a real revoke call path
+reach this with attacker-influenced input, or is `host=[[]]` an input DSN
+never actually accepted by validation upstream — check reachability, don't
+assume). Classify honestly (VULNERABILITY / CANDIDATE / HARDENING /
+EXPECTED-DIFFERENCE). DO NOT propose or write a fix in code. Write the finding
+to docs/findings/2026-11-21-triage1-fuzz-corpus-153-dsn-hosts.md and stop there
+— this one explicitly needs a human security review pass before anything else
+happens to it, per the issue's own text. Flag it at the TOP of your final
+report in bold as needing Andrei's attention first, separate from the other 5.
+
+=== #156 — FuzzGoMailRenderRoundTrip (keyorix repo, internal/libconformance) ===
+Two crasher files exist for this harness (both committed 2026-11-16, before
+this issue's 2026-11-19 event — try both, the harness is deterministic so
+either may reproduce the same bug class):
+  crashers/keyorix/github.com_keyorixhq_keyorix_internal_libconformance/FuzzGoMailRenderRoundTrip/e76e262291d311f9
+    -> string("0@0"), string("0"), string("\r\x1f\n")
+  crashers/keyorix/github.com_keyorixhq_keyorix_internal_libconformance/FuzzGoMailRenderRoundTrip/faaa790bef48816e
+    -> string("<0@0>"), string("=??B??="), string("0")
+TASK: add both as seed corpus entries, run
+`go test -run='^FuzzGoMailRenderRoundTrip$' github.com/keyorixhq/keyorix/internal/libconformance`,
+see which (if either) still reproduces against current main. Read the harness
+source to understand what round-trip property is being checked. Classify.
+
+=== #157 — FuzzJSONSchemaRefDifferential (keyorix repo, internal/libconformance) ===
+No crasher committed anywhere in fuzz-corpus (checked: 404). Reconstruct from
+the harness source + issue title (a $ref differential — almost certainly a
+schema with a $ref the two compared implementations resolve differently, or a
+cyclic $ref). Read the harness, build a plausible crashing/differing input,
+confirm it actually triggers a difference, document it's reconstructed.
+
+=== #171 — FuzzConcurrentOpsLinearizable (keyorix repo, server/http) ===
+IMPORTANT — two distinct things here, don't conflate them:
+(1) There IS an OLD crasher+log committed for this harness (from a long soak
+    run, NOT from this week's issue): path
+    crashers/keyorix/github.com_keyorixhq_keyorix_server_http/FuzzConcurrentOpsLinearizable/3592f150b06c097f/
+    meta.txt shows: host=dashdiag-fuzz, input_mtime=2026-09-20, from a soak run
+    at commit 33d7550265a10b42e7b4792ac8f16c826a2441e4. The log shows:
+    `NOT LINEARIZABLE: register "[sqlite] session revuser" — history is
+    inconsistent with any sequential order` with a specific interleaving of
+    set(false)/read() calls across 4 clients. THIS HAS NEVER BEEN TRIAGED in
+    our backlog (checked: no mention anywhere in corobix-private/docs/) despite
+    being 2 months old — it may be a real, still-live concurrency bug in
+    session revocation visibility, or it may be a known/accepted relaxation
+    (e.g. eventual consistency is fine for this register in practice). Try
+    this crasher against current main first.
+(2) Issue #171 itself was opened 2026-11-20T12:09:20Z — a SEPARATE, more recent
+    event with no crasher bytes committed publicly. It may be the SAME
+    underlying bug resurfacing, or a different one. Note explicitly whether
+    reproducing (1) also plausibly explains (2), or whether they look like
+    different root causes, rather than assuming they're the same.
+TASK: reproduce the Sept crasher against current main (`go test -run=...`),
+read the linearizability checker and "session revuser" register code, determine
+if this is still live, classify its severity (a revocation-visibility
+inconsistency is potentially security-relevant — treat with the same care as
+#153 if it turns out to be), and write up both (1) and (2) with your
+reachability/root-cause assessment of whether they're linked. DO NOT write a
+fix — if (1) looks like a real live defect, flag it prominently like #153,
+separate from the routine findings.
+
+=== #173 — FuzzConnectRefScopingGRPC (keyorix repo, server/http) ===
+No crasher committed anywhere (404). Reconstruct from the harness source +
+issue title (a reference-scoping check over a Connect/gRPC path — likely a
+cross-tenant or cross-scope reference that should be rejected and isn't, or a
+panic). Read the harness, build a plausible input, confirm what it actually
+exercises, classify.
+
+=== #175 — FuzzMultiTenantIsolationGRPC (keyorix repo, server/http) ===
+No crasher committed anywhere (404). Reconstruct from the harness source +
+issue title (almost certainly a multi-tenant isolation violation — same
+security-sensitivity class as #153/#171(1) if it turns out real: one tenant
+observing or affecting another's data via gRPC). Read the harness, build a
+plausible input, confirm, classify. If this one looks like a real live
+isolation violation, flag it prominently too, same treatment as #153.
+
+GENERAL RULES FOR THIS SESSION
+- Read each harness's source file in full before trying to reconstruct an
+  input — don't guess blindly from the issue title alone.
+- For anything you classify above HARDENING/EXPECTED-DIFFERENCE (i.e. anything
+  that looks like a real security-relevant defect: #153, #171's linearizability
+  finding if confirmed live, #175 if confirmed, or any surprise you find along
+  the way), do NOT write or even sketch a fix in code, and say explicitly in
+  the report that it is being held for review rather than fixed, per the
+  project's own instruction for security-sensitive findings.
+- For routine/benign findings (most likely #156, #157, #173 unless they
+  surprise you), a documented repro + classification is enough; you MAY
+  propose an issue-ready fix description in the write-up but do not implement
+  it in code this session either — this is a triage session, scope is
+  reproduce-and-classify for all 6, not fix-and-merge for any of them.
+- One finding doc per issue (or one combined doc with clear per-issue
+  sections — your call, whichever reads better), in docs/findings/, named
+  2026-11-21-triage1-fuzz-corpus-<issue-number>-<slug>.md.
+- Commit the finding docs and any seed-corpus entries you add (testdata/fuzz/...)
+  with DCO sign-off, no AI attribution. No production code changes this
+  session unless you hit something trivially, unambiguously cosmetic (e.g. a
+  typo) — default to NOT touching production code.
+- If a harness simply does not exist in the current tree (renamed/removed
+  since the issue was filed), say so plainly and move to the next one rather
+  than guessing at a replacement.
