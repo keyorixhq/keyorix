@@ -175,9 +175,23 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   its end-to-end case back.
 - **INV-CORE-21** On every startup, newly-added canonical permissions reconcile additively
   into existing installs' baseline roles — non-clobbering of existing grants, no-op on a
-  pre-bootstrap install, idempotent, and the grant itself audited. Why: ADR-044. Guard:
-  `rbac_reconcile_test.go` (`TestReconcileRBAC_*`), `alerts_write_role_reconcile_test.go`,
-  `user_baseline_role_reconcile_test.go`.
+  pre-bootstrap install, idempotent, and the grant itself audited. The one exception
+  to "existing permissions are never granted" is a (permission, role) pair still on the
+  pending-grants row (`rbac_reconcile_pending_grants_v2`): that role's first grant has
+  not landed. A pair leaves the row durably BEFORE its grant is attempted, and is listed
+  again only if that grant fails, so a failed row save after the grants (a write error,
+  or the lock-loss path cancelling the run) never leaves a landed pair listed; a role
+  seen holding it leaves the row too, and no role off the row is re-granted it. If
+  re-listing a failed grant fails as well, or the process stops between the settling save
+  and the grant, the pair is dropped (logged by name on a failed save): a missed
+  baseline grant, never a re-grant. Old per-permission (v1) entries, an unreadable v2
+  row and v2 entries that are not a baseline (permission, role) pair are
+  dropped, not granted, and the rest of the reconcile still runs. The run
+  holds the `rbac-permission-reconcile` named lock. Why: ADR-044, REVIEW-4542-M1,
+  REVIEW-4560 M1. Guard:
+  `rbac_reconcile_test.go` (`TestReconcileRBAC_*`), `rbac_reconcile_pending_role_test.go`,
+  `rbac_reconcile_corrupt_pending_test.go`, `rbac_reconcile_settle_before_grant_test.go`,
+  `alerts_write_role_reconcile_test.go`, `user_baseline_role_reconcile_test.go`.
 
 ## Audit (ADR-029)
 

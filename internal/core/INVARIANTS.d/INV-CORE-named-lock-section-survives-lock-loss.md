@@ -22,5 +22,6 @@
   every competing writer locks (grant rows, then user rows), then re-runs the section's
   own check through `tx`; one SQLite overlap test and one pg-gated concurrent test per family
   (`named_lock_overlap_*_test.go`). Not covered: a section added later must bring its own
-  fence; the inventory guard only makes it write down its verdict.
+  fence; the inventory guard only makes it write down its verdict. `ReconcileRBACPermissions` (startup only) has no fence: accepted, see "Not fixed" in
+  docs/design/named-lock-overlap.md.
 <!-- section: Atomicity / transactions -->
