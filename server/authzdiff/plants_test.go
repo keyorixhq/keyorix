@@ -365,6 +365,51 @@ var plants = append([]plant{
 		op:             "mfaReset.cancel",
 		minUnexplained: 1,
 	},
+	{
+		// V5EXT9: removes the impersonation-session check from EndImpersonation.
+		// Without the check, any authenticated user's regular session is accepted —
+		// DeleteSession consumes it and the handler returns 200 (Allowed). The model
+		// (impersonatingSession: true) denies all non-impersonating sessions →
+		// O2:allowed-but-model-denies:REST → "unexplained".
+		//
+		// The anchor covers both the nil check and the dereference so the replacement
+		// avoids a nil-pointer panic on the subsequent *session.ImpersonatedBy read.
+		name: "impersonation-end-session-check-removed",
+		file: "internal/core/impersonation.go",
+		anchor: "\tif session.ImpersonatedBy == nil {\n" +
+			"\t\treturn 0, fmt.Errorf(\"not an impersonation session\")\n" +
+			"\t}\n" +
+			"\tadminID := *session.ImpersonatedBy\n",
+		repl: "\tvar adminID uint // PLANT: impersonation session check removed\n" +
+			"\tif session.ImpersonatedBy != nil {\n" +
+			"\t\tadminID = *session.ImpersonatedBy\n" +
+			"\t}\n",
+		op:             "impersonation.end",
+		minUnexplained: 4,
+	},
+	{
+		// V5EXT9: removes the error-handling in DeleteWebAuthnCredential so a
+		// "requireReauth rejected" (HTTP 400 / PreconditionFailed) response becomes
+		// a 200 success for principals who do not have MFA enabled. With the error
+		// swallowed, the REST leg returns 200 (Allowed) where the model says
+		// PreconditionFailed or Denied — an O2:allowed-but-model-* disagreement the
+		// strict sweep catches.
+		name: "webauthn-delete-credential-error-swallowed",
+		file: "server/http/handlers/webauthn.go",
+		anchor: "\terr = h.coreService.DeleteWebAuthnCredential(r.Context(), userCtx.UserID, uint(id), proof)\n" +
+			"\th.settleCredentialCheck(r, att, userCtx, \"webauthn_delete\", err)\n" +
+			"\tif err != nil {\n" +
+			"\t\th.writeWebAuthnErr(w, err)\n" +
+			"\t\treturn\n" +
+			"\t}\n" +
+			"\tsendSuccess(w, map[string]any{\"id\": id, \"deleted\": true}, \"Passkey removed.\")\n",
+		repl: "\terr = h.coreService.DeleteWebAuthnCredential(r.Context(), userCtx.UserID, uint(id), proof)\n" +
+			"\th.settleCredentialCheck(r, att, userCtx, \"webauthn_delete\", err)\n" +
+			"\t_ = err // PLANT: V5EXT9 — 400 swallowed → 200\n" +
+			"\tsendSuccess(w, map[string]any{\"id\": id, \"deleted\": true}, \"Passkey removed.\")\n",
+		op:             "webauthn.deleteCredential",
+		minUnexplained: 3,
+	},
 }, fixRegressionPlants...)
 
 // fixRegressionPlants revert, one each, the authorization fixes merged after

@@ -76,6 +76,15 @@ const (
 	// (accessrequest.withdraw), whose rule no other principal can satisfy.
 	pkRequester principalKind = "requester-A"
 
+	// pkImpersonating is a session started by adminID over targetUserID (V5EXT9).
+	// Not in namedPrincipalKinds — used only as controlAs for impersonation.end.
+	pkImpersonating principalKind = "impersonating-session"
+
+	// pkMFAResetActor is a global admin with TOTP enrolled and enabled (V5EXT9).
+	// Not in namedPrincipalKinds — used only as controlAs for mfaReset.request
+	// and mfaReset.approve.
+	pkMFAResetActor principalKind = "mfa-reset-actor"
+
 	// pkMFAUser is a user with MFA enrolled and enabled in the fixture (TOTP).
 	// It is the positive control for mfa.stepup (VerifyMFAStepUp), which
 	// requires the caller to have MFA enabled — no other namedPrincipalKind does.
@@ -256,6 +265,30 @@ type fixtures struct {
 	// the template so CancelMFAReset can be exercised without going through
 	// RequestMFAReset's requireReauth TOTP gate.
 	mfaResetRequestID uint
+
+	// V5EXT9: impersonation.end fixture.
+	// impersonationEndToken is the plain session token for the V5EXT9 impersonation
+	// session (adminID impersonating targetUserID). Used as the token argument to
+	// EndImpersonation in the core leg for all principals, and as bearer for
+	// pkImpersonating (the controlAs positive control for impersonation.end).
+	impersonationEndToken string
+
+	// V5EXT9: MFA reset actor fixtures (mfaReset.request and mfaReset.approve).
+	// mfaResetActorUserID and mfaResetActorTOTPSecret belong to u-v9-mfa-admin-a,
+	// a global admin with TOTP enrolled and enabled, used as pkMFAResetActor
+	// (controlAs for both request and approve). mfaResetRequestV9ID is a pending
+	// request (requester=u-v9-mfa-admin-b, target=u-v9-mfa-reset-target) for
+	// the mfaReset.approve binding; it differs from mfaResetRequestID (V5EXT8),
+	// which targets targetUserID.
+	mfaResetActorUserID    uint
+	mfaResetActorTOTPSecret string
+	mfaResetRequestV9ID    uint
+
+	// V5EXT9: WebAuthn credential fixture (webauthn.deleteCredential).
+	// webAuthnCredentialID is the row ID of a WebAuthnCredential for pkMFAUser,
+	// inserted directly (placeholder blob; no real crypto needed — TOTP is the
+	// proof). The DELETE /auth/webauthn/credentials/{id} binding targets this row.
+	webAuthnCredentialID uint
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -862,6 +895,118 @@ func seed(ctx context.Context, db *gorm.DB, enc *encryption.Service) (fx *fixtur
 		return nil, fmt.Errorf("seed: create mfa reset request fixture: %w", err)
 	}
 	fx.mfaResetRequestID = mfaResetReq.ID
+
+	// ---- V5EXT9 fixtures ----
+
+	// impersonation.end: start a real impersonation session so EndImpersonation
+	// has a valid session to end. adminID impersonates targetUserID. The plain
+	// session token is stored in impersonationEndToken for the core leg (all
+	// principals); pkImpersonating uses it as bearer (the positive control).
+	impersonateSess, _, err := c.StartImpersonation(ctx, fx.adminID, fx.targetUserID, "127.0.0.1")
+	if err != nil {
+		return nil, fmt.Errorf("seed: StartImpersonation for V5EXT9: %w", err)
+	}
+	fx.impersonationEndToken = impersonateSess.SessionToken
+	fx.principals[pkImpersonating] = &principal{
+		kind:     pkImpersonating,
+		userID:   fx.targetUserID,
+		token:    impersonateSess.SessionToken,
+		username: "u-target",
+	}
+
+	// MFA reset actor A (pkMFAResetActor): global admin + TOTP enrolled/enabled.
+	// Positive control for mfaReset.request and mfaReset.approve (controlAs).
+	// Login is obtained BEFORE MFA is enabled (same pattern as pkMFAUser/pkMFAEnrollee).
+	mfaResetActorA := mkUser("u-v9-mfa-admin-a")
+	grant(mfaResetActorA.ID, fx.roleIDs["admin"], 0, nil)
+	mfaResetActorATok, _ := mustLogin(ctx, c, "u-v9-mfa-admin-a") // BEFORE mfa_enabled=true
+	mfaResetActorKey, err := totp.Generate(totp.GenerateOpts{
+		Issuer: "keyorix-authzdiff-test", AccountName: mfaResetActorA.Email,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("seed: totp.Generate (mfa-reset-actor-a): %w", err)
+	}
+	mfaResetActorSecretEnc, _, err := enc.EncryptSecretWithAAD(
+		[]byte(mfaResetActorKey.Secret()), ports.MFASecretAAD(mfaResetActorA.ID))
+	if err != nil {
+		return nil, fmt.Errorf("seed: encrypt mfa-reset-actor-a totp secret: %w", err)
+	}
+	if e := db.Create(&models.MFASecret{
+		UserID: mfaResetActorA.ID, SecretEnc: mfaResetActorSecretEnc, Activated: true,
+	}).Error; e != nil {
+		return nil, fmt.Errorf("seed: create MFASecret for mfa-reset-actor-a: %w", e)
+	}
+	db.Exec("UPDATE users SET mfa_enabled = true WHERE id = ?", mfaResetActorA.ID)
+	fx.mfaResetActorUserID = mfaResetActorA.ID
+	fx.mfaResetActorTOTPSecret = mfaResetActorKey.Secret()
+	fx.principals[pkMFAResetActor] = &principal{
+		kind:     pkMFAResetActor,
+		userID:   mfaResetActorA.ID,
+		token:    mfaResetActorATok,
+		username: "u-v9-mfa-admin-a",
+	}
+
+	// MFA reset actor B: second global admin + TOTP enrolled/enabled. Provides
+	// the dual-control for mfaReset.approve (it is the REQUESTER of
+	// mfaResetRequestV9ID; pkMFAResetActor is the APPROVER). Never probed as a
+	// sweep principal — not added to fx.principals.
+	mfaResetActorB := mkUser("u-v9-mfa-admin-b")
+	grant(mfaResetActorB.ID, fx.roleIDs["admin"], 0, nil)
+	mfaResetActorBKey, err := totp.Generate(totp.GenerateOpts{
+		Issuer: "keyorix-authzdiff-test", AccountName: mfaResetActorB.Email,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("seed: totp.Generate (mfa-reset-actor-b): %w", err)
+	}
+	mfaResetActorBSecretEnc, _, err := enc.EncryptSecretWithAAD(
+		[]byte(mfaResetActorBKey.Secret()), ports.MFASecretAAD(mfaResetActorB.ID))
+	if err != nil {
+		return nil, fmt.Errorf("seed: encrypt mfa-reset-actor-b totp secret: %w", err)
+	}
+	if e := db.Create(&models.MFASecret{
+		UserID: mfaResetActorB.ID, SecretEnc: mfaResetActorBSecretEnc, Activated: true,
+	}).Error; e != nil {
+		return nil, fmt.Errorf("seed: create MFASecret for mfa-reset-actor-b: %w", e)
+	}
+	db.Exec("UPDATE users SET mfa_enabled = true WHERE id = ?", mfaResetActorB.ID)
+
+	// MFA reset target: a plain user with no special roles. Used as the target
+	// for mfaResetRequestV9ID (mfaReset.approve) and NOT for mfaReset.request
+	// (which uses freshUserID to avoid conflicts with the pre-seeded request).
+	mfaResetTarget := mkUser("u-v9-mfa-reset-target")
+
+	// mfaResetRequestV9ID: pre-seeded pending request (requester=actor-B,
+	// target=mfaResetTarget). mfaReset.approve's core/REST legs use this ID.
+	// Direct insert bypasses requireReauth intentionally, same as mfaResetRequestID.
+	mfaResetReqV9 := models.MFAResetRequest{
+		TargetUserID: mfaResetTarget.ID,
+		RequestedBy:  mfaResetActorB.ID,
+		Reason:       "fixture: authorized test request v9",
+		VerifiedBy:   "ticket",
+		Evidence:     "fixture-ticket-v5ext9",
+		Status:       models.MFAResetStatusPending,
+		CreatedAt:    time.Now().UTC(),
+		ExpiresAt:    time.Now().UTC().Add(24 * time.Hour),
+	}
+	if err := db.Create(&mfaResetReqV9).Error; err != nil {
+		return nil, fmt.Errorf("seed: create mfa reset request V9: %w", err)
+	}
+	fx.mfaResetRequestV9ID = mfaResetReqV9.ID
+
+	// WebAuthn credential for pkMFAUser: a placeholder row for the
+	// DELETE /auth/webauthn/credentials/{id} binding. The core's requireReauth
+	// uses pkMFAUser's TOTP code (mfaUserTOTPSecret) — no real passkey crypto.
+	webauthnCred := models.WebAuthnCredential{
+		UserID:         fx.principals[pkMFAUser].userID,
+		CredentialID:   []byte("v5ext9-fixture-credential-id"),
+		Name:           "fixture-passkey",
+		CredentialBlob: []byte(`{"id":"djVleHQ5","rawId":"djVleHQ5","type":"public-key"}`),
+		CreatedAt:      time.Now().UTC(),
+	}
+	if err := db.Create(&webauthnCred).Error; err != nil {
+		return nil, fmt.Errorf("seed: create WebAuthnCredential for V5EXT9: %w", err)
+	}
+	fx.webAuthnCredentialID = webauthnCred.ID
 
 	return fx, nil
 }

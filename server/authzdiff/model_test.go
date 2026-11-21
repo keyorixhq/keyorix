@@ -1,6 +1,8 @@
 package authzdiff
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"slices"
@@ -286,6 +288,13 @@ func (m model) allowed(p *principal, req requirement) bool {
 		// A user with mfa_enabled=true cannot re-enroll without disabling first.
 		return false
 	}
+	if req.impersonatingSession && !m.isImpersonatingSession(p) {
+		// EndImpersonation: the bearer must be an impersonation session
+		// (sessions.impersonated_by IS NOT NULL). A regular session token
+		// returns 400 "not an impersonation session"; the model denies all
+		// non-impersonating callers. Only pkImpersonating satisfies this.
+		return false
+	}
 	return true
 }
 
@@ -380,6 +389,11 @@ type requirement struct {
 	// cannot re-enroll. Machines and actor-0 always satisfy this check (they never have
 	// MFA enabled, so the check passes for them and they are denied for other reasons).
 	noMFARequired bool
+	// impersonatingSession: the op requires the caller to be authenticated via an
+	// impersonation session (sessions.impersonated_by IS NOT NULL). Only pkImpersonating
+	// satisfies this — every other principal uses a regular session token. Used by
+	// impersonation.end (EndImpersonation), which checks session.ImpersonatedBy != nil.
+	impersonatingSession bool
 }
 
 // mfaEnabled: p has MFA enrolled and enabled (users.mfa_enabled = true).
@@ -401,6 +415,24 @@ func (m model) pendingMFAEnrollment(p *principal) bool {
 	}
 	var n int64
 	m.db.Raw(`SELECT COUNT(*) FROM mfa_secrets WHERE user_id = ? AND activated = false`, p.userID).Scan(&n)
+	return n > 0
+}
+
+// isImpersonatingSession: p's bearer token is the token of an impersonation
+// session (sessions.impersonated_by IS NOT NULL). Only pkImpersonating satisfies
+// this — every other principal uses a regular (non-impersonating) session token.
+// Machines and actor-0 never have sessions, so they always return false.
+//
+// What this does NOT verify: session expiry (the middleware checks it), or whether
+// the impersonated user is the same as p.userID (p is derived from the session).
+func (m model) isImpersonatingSession(p *principal) bool {
+	if p.token == "" || p.machineID != 0 || p.systemActor {
+		return false
+	}
+	sum := sha256.Sum256([]byte(p.token))
+	h := hex.EncodeToString(sum[:])
+	var n int64
+	m.db.Raw(`SELECT COUNT(*) FROM sessions WHERE session_token = ? AND impersonated_by IS NOT NULL`, h).Scan(&n)
 	return n > 0
 }
 

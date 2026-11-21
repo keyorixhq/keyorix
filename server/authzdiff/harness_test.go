@@ -149,15 +149,16 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 				return Allowed
 			}
 			// PreconditionFailed: principal passes all RBAC and account-state
-			// checks but fails an MFA business-rule precondition on the caller's
-			// own account. Strip the MFA flags and re-evaluate: allowed without
+			// checks but fails a session-state or MFA business-rule precondition.
+			// Strip all such precondition flags and re-evaluate: allowed without
 			// them → the denial is the precondition, not a permission gap.
-			// Closes known-12 (#4525).
-			if req.mfaRequired || req.pendingMFARequired || req.noMFARequired {
+			// MFA flags close known-12 (#4525); impersonatingSession added for V5EXT9.
+			if req.mfaRequired || req.pendingMFARequired || req.noMFARequired || req.impersonatingSession {
 				noMFA := req
 				noMFA.mfaRequired = false
 				noMFA.pendingMFARequired = false
 				noMFA.noMFARequired = false
+				noMFA.impersonatingSession = false
 				if (model{lg.db}).allowed(p, noMFA) && !patRefusesUngatedWrite(tb, lg.fx, spec, p) {
 					return PreconditionFailed
 				}

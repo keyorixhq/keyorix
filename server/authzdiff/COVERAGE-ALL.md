@@ -12,8 +12,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
 | secrets | 43 | 38 | 10 | 10 |
-| other | 128 | 37 | 22 | 11 |
-| **total** | **212** | **116** | **47** | **36** |
+| other | 128 | 41 | 22 | 11 |
+| **total** | **212** | **120** | **47** | **36** |
 
 ## groups
 
@@ -173,7 +173,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST DELETE /api/v1/auth/sessions/{id}` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
 - [ ] `REST DELETE /api/v1/auth/tokens/expired` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
 - [ ] `REST DELETE /api/v1/auth/tokens/{id}` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
-- [ ] `REST DELETE /api/v1/auth/webauthn/credentials/{id}` — fixture: needs a WebAuthn authenticator
+- [x] `REST DELETE /api/v1/auth/webauthn/credentials/{id}` — webauthn.deleteCredential
 - [ ] `REST DELETE /api/v1/connect/ref-grants/{id}` — fixture: needs a Keyorix Connect connector configured
 - [ ] `REST DELETE /api/v1/environments/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST DELETE /api/v1/folders/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
@@ -215,7 +215,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/audit/checkpoint` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/audit/migrate-chain-encoding` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/auth/change-password` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
-- [ ] `REST POST /api/v1/auth/end-impersonation` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
+- [x] `REST POST /api/v1/auth/end-impersonation` — impersonation.end
 - [x] `REST POST /api/v1/auth/mfa/activate` — mfa.activate
 - [x] `REST POST /api/v1/auth/mfa/disable` — mfa.disable
 - [x] `REST POST /api/v1/auth/mfa/enroll` — mfa.enroll
@@ -238,8 +238,8 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `REST POST /api/v1/folders` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/legal-hold` — model: legal-hold rules are not in the reference model
-- [ ] `REST POST /api/v1/mfa-reset-requests` — model: MFA-reset approval rules are not in the reference model
-- [ ] `REST POST /api/v1/mfa-reset-requests/{id}/approve` — model: MFA-reset approval rules are not in the reference model
+- [x] `REST POST /api/v1/mfa-reset-requests` — mfaReset.request
+- [x] `REST POST /api/v1/mfa-reset-requests/{id}/approve` — mfaReset.approve
 - [x] `REST POST /api/v1/mfa-reset-requests/{id}/cancel` — mfaReset.cancel
 - [ ] `REST POST /api/v1/notification-channels` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/notifications/read-all` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound

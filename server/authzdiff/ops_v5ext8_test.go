@@ -61,7 +61,7 @@ func v5ext8Ops() []opSpec {
 			},
 		},
 		{
-			name: "mfaReset.cancel", row: "CancelMFAReset", targets: []tgt{tGlobal},
+			name: "mfaReset.cancel", row: "CancelMFAReset", targets: []tgt{tGlobal}, globalHandler: true,
 			req: func(*fixtures, tgt, byte) requirement {
 				return requirement{globalAdminRole: true, humanOnly: true}
 			},
