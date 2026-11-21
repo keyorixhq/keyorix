@@ -81,3 +81,49 @@ func TestFetchRunSecrets_AmbiguousEnvironmentNameReadsNothing(t *testing.T) {
 		t.Fatalf("listed secrets for environment_id %v after an ambiguous name; want none", a)
 	}
 }
+
+// A project holding both "Development" and "development": the default environment of
+// `secret create` is the exact "development", whichever is listed first, never the other.
+func TestDefaultEnvironmentForProject_ExactDevelopmentWinsOverCaseFold(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/projects/2/environments" {
+			_, _ = fmt.Fprint(w, `{"data":{"environments":[{"id":8,"name":"Development"},{"id":9,"name":"development"}]}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	setPATCreds(t, srv)
+	client, err := apiClientWithSkewCheck(context.Background())
+	if err != nil {
+		t.Fatalf("apiClientWithSkewCheck: %v", err)
+	}
+	id, ok, err := defaultEnvironmentForProject(context.Background(), client, 2)
+	if err != nil || !ok || id != 9 {
+		t.Fatalf("got id=%d ok=%v err=%v; want id 9 (\"development\")", id, ok, err)
+	}
+}
+
+// Two environments that fold to "development" and neither is exact: refuse and ask for
+// --environment instead of writing the secret into whichever is listed first.
+func TestDefaultEnvironmentForProject_AmbiguousFoldRequiresExplicitEnvironment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/projects/2/environments" {
+			_, _ = fmt.Fprint(w, `{"data":{"environments":[{"id":8,"name":"Development"},{"id":9,"name":"DEVELOPMENT"}]}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	setPATCreds(t, srv)
+	client, err := apiClientWithSkewCheck(context.Background())
+	if err != nil {
+		t.Fatalf("apiClientWithSkewCheck: %v", err)
+	}
+	id, ok, err := defaultEnvironmentForProject(context.Background(), client, 2)
+	if err == nil || !strings.Contains(err.Error(), "--environment is required") {
+		t.Fatalf("got id=%d ok=%v err=%v; want an error asking for --environment", id, ok, err)
+	}
+}

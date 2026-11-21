@@ -314,9 +314,11 @@ func parseRef(ref string) (env, name string, err error) {
 //
 // The scoping above is requested, not trusted: the entry that matches name must itself
 // say it belongs to this fetcher's project and to envID, or the lookup fails closed.
-// Without that check a server-side filter bug, or a hostile server, would have the
-// agent materialise another environment's secret under this one's name. It returns the
-// secret id and the environment id it was found under, which fetchValue checks again.
+// Without that check a server-side filter or lookup bug would have the agent
+// materialise another environment's secret under this one's name. It is not a defence
+// against a malicious server: one that controls the whole response can stamp the
+// expected scope on anything. It returns the secret id and the environment id it was
+// found under, which fetchValue checks again.
 func (f *KeyorixFetcher) resolveID(ctx context.Context, env, name string) (id, envID uint, err error) {
 	envID, err = f.resolveEnvironmentID(ctx, env)
 	if err != nil {
