@@ -2,11 +2,20 @@ package rotation
 
 import (
 	"context"
+	"fmt"
 	"io"
+	stdlog "log"
 	"net"
+	"os"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // fakeMySQLHostile speaks just enough of the MySQL protocol for go-sql-driver/mysql to
@@ -87,9 +96,35 @@ func fakeMySQLHostile(t *testing.T, hostile []byte) string {
 	return ln.Addr().String()
 }
 
+type mysqlLogSink struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (l *mysqlLogSink) Print(v ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	fmt.Fprintln(&l.buf, v...)
+}
+
+func (l *mysqlLogSink) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+// Rotate runs ALTER USER through ExecContext, which skips result set columns without
+// sizing a slice from the count, so without the guard this only stalls on the reply;
+// the assertion that matters is that the guard refused it (on the driver's log, since
+// the driver reports the guard's read error as ErrInvalidConn).
 func TestMySQLRotateRejectsHostileColumnCount(t *testing.T) {
 	addr := fakeMySQLHostile(t, []byte{0xfd, 0x20, 0x4e, 0x4c}) // 5,000,000 columns
 	e := NewMySQLExecutor("m", "root@tcp("+addr+")/db", []string{"app_"})
+	log := &mysqlLogSink{}
+	if err := mysql.SetLogger(log); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = mysql.SetLogger(stdlog.New(os.Stderr, "[mysql] ", stdlog.Ldate|stdlog.Ltime)) })
 
 	var before, after runtime.MemStats
 	runtime.GC()
@@ -109,5 +144,8 @@ func TestMySQLRotateRejectsHostileColumnCount(t *testing.T) {
 	}
 	if elapsed > 10*time.Second {
 		t.Fatalf("took %s; the guard should fail the rotation immediately", elapsed)
+	}
+	if !strings.Contains(log.String(), netutil.ErrMySQLLimit.Error()) {
+		t.Fatalf("Rotate failed (%v), but not because the guard refused the reply; driver log: %q", err, log.String())
 	}
 }
