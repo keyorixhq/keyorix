@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -321,6 +322,9 @@ func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actor
 		// Re-check per-secret write authorization — see the matching check in
 		// SuspendProjectSecrets above.
 		if err := c.enforceSecretWriteGate(ctx, s.ID, actorID, SecretActionResume, SecretActionResume); err != nil {
+			if IsStorageReadUnavailable(err) {
+				log.Printf("bulk resume: secret %d skipped, permission re-check read failed: %s", s.ID, StorageReadFaultDetail(err))
+			}
 			continue
 		}
 		if _, err := c.ResumeSecret(ctx, s.ID, actorID); err == nil {

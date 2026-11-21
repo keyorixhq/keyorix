@@ -139,7 +139,18 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 		// can't update individually. And the other way round (#4508 sibling,
 		// CORE-AUTHZ-RACE-NOV-1 item 2): an OWNER who holds no secrets.write is skipped,
 		// as the route gate refuses them.
-		if perr := c.enforceSecretWriteGate(ctx, secret.ID, actorID, SecretActionUpdateMetadata, SecretActionUpdateMetadata); perr != nil {
+		//
+		// The check action is "" (not share-elevating), as in MoveSecret: the bulk
+		// route gates on project-scope secrets.write with no share term, so a write
+		// share alone must not let a caller rename a secret here that the route
+		// refuses them (REVFIX-4559-1). The gate action still names the rename.
+		if perr := c.enforceSecretWriteGate(ctx, secret.ID, actorID, "", SecretActionUpdateMetadata); perr != nil {
+			if IsStorageReadUnavailable(perr) {
+				// A role/ACL read fault is a retry, not a verdict on the secret.
+				log.Printf("bulk rename: secret %d skipped, permission re-check read failed: %s", rn.ID, StorageReadFaultDetail(perr))
+				skip(rn.ID, "", newName, StorageReadUnavailableMessage)
+				continue
+			}
 			skip(rn.ID, "", newName, "secret not found")
 			continue
 		}

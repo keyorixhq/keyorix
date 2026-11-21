@@ -18,5 +18,10 @@
   owns every secret in the project renames, suspends, resumes and extends nothing; the
   developer owner acts on all of them). In a bulk op the refusal is a per-secret SKIP, as every
   other per-secret refusal there is, so the op's count is of the secrets the actor may actually
-  affect and a viewer-owner gets zero. **Not covered**: other owner-gated core paths (share,
+  affect and a viewer-owner gets zero. The bulk ops' per-secret check action never elevates a
+  share (rename passes `""`, as `MoveSecret` does; suspend, resume and extend name actions the
+  share allowlist does not elevate): the bulk routes have no share term, so a write share alone
+  must not act there either. Guard: `TestWriteShareHolderWithoutSecretsWrite_BulkOpsSkip`
+  (a viewer holding a write share on a developer-owned secret changes
+  nothing). **Not covered**: other owner-gated core paths (share,
   ownership transfer, ACL grant) keep their own owner rules.
