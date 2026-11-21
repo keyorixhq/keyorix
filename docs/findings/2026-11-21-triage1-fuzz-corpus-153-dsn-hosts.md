@@ -4,11 +4,71 @@
 **Corpus issue:** keyorixhq/fuzz-corpus #153
 **Harness:** `internal/dynamic/dsn_driver_differential_fuzz_test.go` / `FuzzDSNHostsCoverDriverHosts`
 **Component:** `internal/core/dsn/dsn.go` — `ParseDSNHosts`, `SplitDSNHostList`
-**Status:** **CLOSED — variant sweep complete, no live bypass found.**
-**Classification: ARTIFACT** — real oracle differential (ParseDSNHosts vs. pgconn's own
-normalisation), but confirmed benign: no double-bracket form, with or without a valid literal
-inside, is dialable by the real driver while validation skips it. See "Variant sweep" below.
-**Severity: None** — see "Variant sweep" below for why.
+**Status:** **FIXED — correction 2026-11-22, see "Correction" below. Fix on branch
+`fuzz/followup1-153-171-confirm` (commit `a00c38c0`), NOT YET MERGED (no PR opened pending
+the security-sensitive-code review and Andrei's word).**
+**Classification: DEFECT (validation fail-open, no live SSRF path for the forms checked)** —
+this file's own 2026-11-21 "Variant sweep" and "Optional hardening" sections below concluded
+ARTIFACT/no-action from an incomplete premise. Correcting here rather than rewriting history
+below; see "Correction" immediately after this header block for what was wrong and what's
+actually true.
+**Severity: Low** (was stated as None; see "Correction").
+
+---
+
+## Correction (2026-11-22, FOLLOWUP1 session)
+
+The "Variant sweep" and "Optional hardening" sections below reached the right answer about
+**dialability** (no double-bracket form is dialable by the real driver — that part holds up
+and is reconfirmed by FOLLOWUP1) but drew the wrong conclusion from it. They treated
+`net.LookupHost(host)` returning an error inside `validateAdminDSNSingleHost`
+(`internal/core/dynamic_secrets.go`) as "rejected at API time" / "DNS lookup ... errors, so
+registration fails." It does not: that function's actual behaviour on a `LookupHost` error is
+
+```go
+addrs, err := net.LookupHost(host)
+if err != nil {
+    return nil // unresolvable at register time — actual connection fails at issue time
+}
+```
+
+— an unresolvable host is **not an error**, it's treated as "can't check yet, allow it, the
+real connection will fail later if it's bad." For `host=[[::1]]`, after `SplitDSNHostList`'s
+single-strip it becomes `"[::1]"`; `net.ParseIP("[::1]")` returns `nil` (ParseIP doesn't accept
+brackets); `net.LookupHost("[::1]")` errors (not a valid hostname) → `validateAdminDSNSingleHost`
+returns `nil` → **the admin DSN registration succeeds**, without ever having correctly
+classified `::1` as the loopback address it actually is.
+
+So "the validator skips the check" (said below) was true but understated: skipping the check
+here means *accepting the registration*, not rejecting it. The reason this was still not a live
+SSRF — and the reason severity is Low, not the Medium/High an accepted-but-unvalidated loopback/
+link-local/IMDS admin DSN would otherwise warrant — is exactly what the sweep below already
+proved: the *driver* independently can't dial this same malformed string either
+(`net.JoinHostPort`/`SplitHostPort` both fail on it before any network access). The bug is real
+(the validator and the driver disagree about what `[[::1]]` names, and the validator's
+disagreement is a fail-open, not a fail-closed, outcome) but it is not currently exploitable
+*for this exact string shape*, because the one thing that would make it dangerous — the driver
+successfully dialing what the validator waved through — doesn't happen either. A future change
+to bracket-handling in either the validator or the driver (or a future pgconn/pgx version) could
+desynchronise them differently and make this exploitable; "no live bypass today" was correct,
+"so no fix is needed" was not — see "Optional hardening" below, which called the fix cosmetic.
+It isn't: it closes a validator fail-open, not just an oracle-hygiene complaint.
+
+**Fix** (FOLLOWUP1, 2026-11-21, branch `fuzz/followup1-153-171-confirm`, commit `a00c38c0`):
+`SplitDSNHostList`'s single `if`-strip changed to a `for`-loop, so `[[::1]]` reaches
+`validateAdminDSNSingleHost` as the fully-stripped `::1`; `net.ParseIP("::1")` now succeeds;
+`isPrivateIP` correctly blocks it. `FuzzDSNHostsCoverDriverHosts`'s own `stripBrackets` oracle
+helper updated to match (also a loop), so the oracle and the real pgconn/driver behaviour agree
+again. Red/green: `TestAdminDSNHost_DoubleBracketIPv6_Blocked` (red at `origin/main`, green at
+this commit). Security closure fragment added: `dsn-double-bracket-ipv6-001`. Three new
+corpus seeds pin the loopback, link-local, and multi-host double-bracket variants.
+
+**Not yet landed**: this fix sits on an unpushed-then-pushed branch (now at
+`origin/fuzz/followup1-153-171-confirm`), no PR opened. This touches the SSRF guard for admin
+DSN registration — squarely a secretenv-adjacent security-sensitive change per CLAUDE.md's
+testing/approval rules (Opus review required before merge, same category as KFZ-2026-157's
+`internal/k8ssync` fix, which *did* get merged once without that review — see that finding for
+what went wrong there). Do not repeat that: get the review before opening the PR, not after.
 
 ---
 
@@ -55,7 +115,14 @@ This confirms the differential: `ParseDSNHosts` sees `[[]]` as the IPv6-bracket 
 
 1. `net.JoinHostPort("[[]]", "5432")` → `"[[]]:5432"`.
 2. `net.SplitHostPort("[[]]:5432")`: starts with `[`, finds first `]` at position 2, next char is `]` not `:` → error. Go's net stack cannot dial `[[]]`.
-3. `validateAdminDSNHost` (`internal/dynamic/`) calls `net.LookupHost` on the parsed host before persisting a DSN. `net.LookupHost("[]")` returns an error → DSN registration is rejected at API time.
+3. `validateAdminDSNHost` (`internal/core/dynamic_secrets.go`) calls `net.LookupHost` on the
+   parsed host before persisting a DSN. **Correction (2026-11-22): `net.LookupHost("[]")`
+   returning an error does NOT reject the registration** — `validateAdminDSNSingleHost` treats
+   an unresolvable host as "skip the check, allow it" (`return nil` on the `LookupHost` error
+   path), not as a rejection. See "Correction" above. The registration for `host=[[]]` itself
+   still succeeds, same as the `[[::1]]` case below; it just also isn't dialable afterward,
+   which is why this specific shape was never exploitable, for a different reason than
+   originally stated here.
 4. Double-bracket wraps of real IPs (e.g. `[[169.254.169.254]]`) follow the same parse failure path; none are dialable.
 
 **Resolved 2026-11-21 (post-triage, same day):** traced the remaining variant space by hand
@@ -122,19 +189,43 @@ in the original triage) does not apply.
 
 ---
 
-## Optional hardening (not required, not landed)
+## Optional hardening (SUPERSEDED — this section was wrong, see "Correction" above)
 
-`SplitDSNHostList`'s bracket-strip could still be made a loop instead of a single `if`, purely
-for oracle hygiene — it would stop `FuzzDSNHostsCoverDriverHosts` from flagging this shape as a
-differential at all, even though the differential has no security consequence. Not landed here:
-no live bypass means no proving test obligation, and a change to this function for cosmetic-only
-reasons is exactly the kind of unforced production edit CLAUDE.md's engineering practices caution
-against. Leave as a LEFTOVER if Andrei wants the oracle quieted.
+*Original 2026-11-21 text, kept for the record rather than deleted:* "`SplitDSNHostList`'s
+bracket-strip could still be made a loop instead of a single `if`, purely for oracle hygiene —
+it would stop `FuzzDSNHostsCoverDriverHosts` from flagging this shape as a differential at
+all, even though the differential has no security consequence. Not landed here: no live bypass
+means no proving test obligation, and a change to this function for cosmetic-only reasons is
+exactly the kind of unforced production edit CLAUDE.md's engineering practices caution against."
+
+This was wrong on the premise, not just the conclusion: the differential is not cosmetic-only
+(see "Correction") — it's a validator fail-open on malformed double-bracket hosts, independently
+not exploitable today only because the driver also can't dial the same strings. FOLLOWUP1 landed
+the loop-fix for the right reason (closing the fail-open) rather than the one speculated here
+(quieting the oracle).
 
 ---
 
 ## Action required
 
-None. Closed — see "Variant sweep" above. (FOLLOWUP1, launched before this confirmation landed,
-is independently re-deriving the same conclusion with a real `pgx` module build and will add a
-pinned regression seed; that's expected redundancy, not wasted work.)
+**Get the PR opened and merged**, with the Opus security review CLAUDE.md requires for this
+category happening *before* that PR merges, not retroactively:
+1. Branch `fuzz/followup1-153-171-confirm` (commit `a00c38c0`) is pushed to `origin` but has no
+   PR yet.
+2. Open the PR, request the security-sensitive-code review (this is an SSRF-guard change,
+   same category as auth/SSO/role-scope/secretenv/storage per CLAUDE.md's testing/approval
+   rules), and do not merge until that review is recorded — unlike KFZ-2026-157/#4568, which
+   merged without it and had to be reviewed after the fact.
+3. Once merged, cite the merge-queue run's go1.27 test evidence for
+   `TestAdminDSNHost_DoubleBracketIPv6_Blocked` (same pattern as KFZ-2026-157: the PR's own
+   FAST-profile check reports `test-suite` skipped by design — the real evidence is in the
+   `merge_group` run).
+4. Update the corpus issue (keyorixhq/fuzz-corpus#153 — note: this issue was already closed
+   2026-11-21 on the strength of this file's *original*, now-corrected, ARTIFACT/no-action
+   conclusion; it needs a correcting comment, not just a registry update, and arguably
+   shouldn't have been closed as ARTIFACT in the first place) and the KFZ registry entry with
+   the actual merge SHA once this lands.
+
+(FOLLOWUP1 was launched before this file's original, wrong confirmation landed, and
+independently re-derived the correct answer with a real `pgx` module build rather than
+inheriting this file's mistake — that's the useful kind of redundancy.)
