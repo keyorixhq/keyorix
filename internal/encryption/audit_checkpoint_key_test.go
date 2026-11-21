@@ -163,7 +163,7 @@ func TestAuditCheckpointKey_WipedOnShutdown(t *testing.T) {
 	}
 
 	svc.keyManager.mu.RLock()
-	keyRef := svc.keyManager.auditCheckpointKey // same backing array wipeBytes must zero in place
+	keyRef := svc.keyManager.published().auditCheckpointKey // same backing array wipeBytes must zero in place
 	svc.keyManager.mu.RUnlock()
 	if allZeroBytes(keyRef) {
 		t.Fatal("test setup bug: audit-checkpoint key was already all-zero before Wipe()")

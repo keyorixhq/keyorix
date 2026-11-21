@@ -166,7 +166,7 @@ func TestBackupManifestKey_WipedOnShutdown(t *testing.T) {
 	}
 
 	svc.keyManager.mu.RLock()
-	keyRef := svc.keyManager.backupManifestKey
+	keyRef := svc.keyManager.published().backupManifestKey
 	svc.keyManager.mu.RUnlock()
 	if allZeroBytes(keyRef) {
 		t.Fatal("test setup bug: backup-manifest key was already all-zero before Wipe()")

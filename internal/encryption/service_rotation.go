@@ -210,7 +210,7 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 		return nil, fmt.Errorf("failed to recreate encryption service after rotation: %w", err)
 	}
 	// The old encryption service wraps the now-superseded DEK (a distinct copy from
-	// s.keyManager.GetDEK(), not the km.currentDEK slice the key manager itself
+	// s.keyManager.GetDEK(), not the keyState.dek slice the key manager itself
 	// already wipes) and is about to be discarded — wipe its DEK copy from memory
 	// here, like every other DEK-bearing variable in this package.
 	if s.encryptionService != nil {
@@ -610,7 +610,7 @@ func (s *Service) Shutdown() {
 	if s.keyManager != nil {
 		s.keyManager.Wipe()
 	}
-	// s.keyManager.Wipe() only zeroes km.currentDEK — s.encryptionService.dek is a
+	// s.keyManager.Wipe() only zeroes keyState.dek — s.encryptionService.dek is a
 	// separate copy (made via s.keyManager.GetDEK() in Initialize/RotateDEKWithSweep)
 	// and was never wiped, unlike every other DEK-bearing variable in this package.
 	if s.encryptionService != nil {
