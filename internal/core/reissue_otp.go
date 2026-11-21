@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -95,7 +95,7 @@ func (c *KeyorixCore) ReissueOneTimePassword(ctx context.Context, adminID, userI
 	if err != nil {
 		return nil, err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(otp), PasswordHashCost())
+	hash, err := kdfmeter.GenerateFromPassword([]byte(otp), PasswordHashCost())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

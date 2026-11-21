@@ -16,8 +16,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // UpdateOwnProfile updates the caller's display name and email only. It delegates
@@ -117,10 +117,10 @@ func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, display
 // factor's guesses feed, exactly as the password step of an MFA login does not.
 func (c *KeyorixCore) verifyCurrentPassword(ctx context.Context, user *models.User, password string) error {
 	if c.loginLocked(user) {
-		_ = bcrypt.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
+		_ = kdfmeter.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
 		return fmt.Errorf("%w: account temporarily locked due to repeated failed logins", ErrIncorrectCurrentPassword)
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	if err := kdfmeter.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		c.recordFailedLogin(ctx, user)
 		return fmt.Errorf("%w: current password is incorrect", ErrIncorrectCurrentPassword)
 	}
@@ -420,7 +420,7 @@ func (c *KeyorixCore) validateNewPasswordAs(ctx context.Context, user *models.Us
 	}
 	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
 	if c.passwordHistoryEnabled() {
-		if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPassword)) == nil {
+		if kdfmeter.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPassword)) == nil {
 			if currentVerified {
 				// The caller already knows the current password (ChangePassword verified
 				// it first), so naming it discloses nothing and costs nothing.
@@ -501,7 +501,7 @@ func (e policyRefusal) Is(target error) bool {
 // UpdateUser. Both writes run inside one transaction so a partial application (hash
 // persisted but the state clear lost, or vice versa) can't happen.
 func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, newPassword string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), int(bcryptCost.Load()))
+	hash, err := kdfmeter.GenerateFromPassword([]byte(newPassword), int(bcryptCost.Load()))
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -593,7 +593,7 @@ func (c *KeyorixCore) passwordReused(ctx context.Context, user *models.User, new
 	if !c.passwordHistoryEnabled() {
 		return false
 	}
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPassword)) == nil {
+	if kdfmeter.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPassword)) == nil {
 		return true
 	}
 	return c.passwordInHistory(ctx, user, newPassword)
@@ -609,7 +609,7 @@ func (c *KeyorixCore) passwordInHistory(ctx context.Context, user *models.User, 
 		return false // best-effort: a history lookup failure must not block a change
 	}
 	for _, h := range hashes {
-		if bcrypt.CompareHashAndPassword([]byte(h), []byte(newPassword)) == nil {
+		if kdfmeter.CompareHashAndPassword([]byte(h), []byte(newPassword)) == nil {
 			return true
 		}
 	}

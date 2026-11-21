@@ -7,9 +7,9 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 	"github.com/keyorixhq/keyorix/internal/recoverykey"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Audit event types of `admin reset-mfa`.
@@ -91,7 +91,7 @@ func performResetMFA(ctx context.Context, store corestorage.Storage, ref, rawRec
 	if err != nil {
 		return nil, fmt.Errorf("generate one-time password: %w", err)
 	}
-	otpHash, err := bcrypt.GenerateFromPassword([]byte(otp), core.PasswordHashCost())
+	otpHash, err := kdfmeter.GenerateFromPassword([]byte(otp), core.PasswordHashCost())
 	if err != nil {
 		return nil, fmt.Errorf("hash one-time password: %w", err)
 	}
