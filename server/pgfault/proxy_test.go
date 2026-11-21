@@ -24,9 +24,13 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // faultMode selects what the proxy does when it reaches its armed fault point.
@@ -257,10 +261,15 @@ func be32(b []byte) uint32 {
 }
 
 // proxyClientDSN rewrites base's host:port to point at proxyAddr (the proxy's
-// listen address) while keeping userinfo, database, and every query parameter.
-// It returns the rewritten client DSN and the original upstream host:port the
-// proxy must dial. base must be a postgres:// URL DSN (the KEYORIX_TEST_PG_DSN form).
+// listen address) while keeping credentials, database, and every other
+// parameter. It returns the rewritten client DSN and the original upstream
+// host:port the proxy must dial. base may be either form KEYORIX_TEST_PG_DSN is
+// allowed to take: a postgres:// URL or a libpq keyword/value string
+// ("host=localhost port=5432 dbname=x ..."), which is what CI uses.
 func proxyClientDSN(base, proxyAddr string) (clientDSN, upstream string, err error) {
+	if !strings.HasPrefix(base, "postgres://") && !strings.HasPrefix(base, "postgresql://") {
+		return proxyClientKeywordDSN(base, proxyAddr)
+	}
 	u, err := url.Parse(base)
 	if err != nil {
 		// Never echo base: it carries the password.
@@ -275,4 +284,25 @@ func proxyClientDSN(base, proxyAddr string) (clientDSN, upstream string, err err
 	}
 	u.Host = proxyAddr
 	return u.String(), upstream, nil
+}
+
+// proxyClientKeywordDSN is proxyClientDSN for the keyword/value form. pgconn
+// reads the upstream host and port (it applies libpq's defaults and quoting
+// rules); the client DSN is base with host= and port= appended, which libpq and
+// pgconn resolve last-wins, so every other field is kept byte for byte.
+func proxyClientKeywordDSN(base, proxyAddr string) (clientDSN, upstream string, err error) {
+	cfg, err := pgconn.ParseConfig(base)
+	if err != nil {
+		// Never echo base or err: either may carry the password.
+		return "", "", errors.New("pgfault: cannot parse base DSN (details withheld: contains password)")
+	}
+	if cfg.Host == "" {
+		return "", "", errors.New("pgfault: base DSN has no host:port")
+	}
+	proxyHost, proxyPort, err := net.SplitHostPort(proxyAddr)
+	if err != nil {
+		return "", "", errors.New("pgfault: bad proxy address")
+	}
+	upstream = net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))
+	return base + " host=" + proxyHost + " port=" + proxyPort, upstream, nil
 }
