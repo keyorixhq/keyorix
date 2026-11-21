@@ -74,6 +74,64 @@ import (
 	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 )
 
+// buildTSAVerifyFuzzSeed builds a valid PKCS7 SignedData token signed by a
+// leaf certificate that carries ExtKeyUsageTimeStamping.  This seed increases
+// coverage of the EKU-specific chain-verification code path in VerifyWithOpts,
+// which the real production caller (internal/notary/notary.go:179) exercises
+// via KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping}.
+//
+// The seed is intentionally signed by the SAME pki.root used in
+// FuzzPKCS7VerifyWithOpts so that the existing differential oracle
+// (ACCEPT ⇒ verifyPKCS7ReferenceAccepts) still fires: the TSA leaf chains to
+// the harness root, so the reference oracle accepts the seed without EKU
+// restriction, keeping the oracle consistent.
+//
+// What this seed does NOT verify: the oracle still uses no EKU restriction
+// (broader than production). A tighter oracle specific to TimeStamping EKU
+// would require a separate accept⇒TSA-accept differential, which is left as
+// a future enhancement.
+func buildTSAVerifyFuzzSeed(tb testing.TB, pki *verifyFuzzPKI) []byte {
+	tb.Helper()
+	nb := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	na := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	tsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		tb.Fatalf("buildTSAVerifyFuzzSeed: generating TSA key: %v", err)
+	}
+	tsaTmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(3),
+		Subject:               pkix.Name{CommonName: "LS3 Fuzz TSA Leaf"},
+		NotBefore:             nb,
+		NotAfter:              na,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+	}
+	tsaDER, err := x509.CreateCertificate(rand.Reader, tsaTmpl, pki.root, &tsaKey.PublicKey, pki.rootKey)
+	if err != nil {
+		tb.Fatalf("buildTSAVerifyFuzzSeed: creating TSA cert: %v", err)
+	}
+	tsaCert, err := x509.ParseCertificate(tsaDER)
+	if err != nil {
+		tb.Fatalf("buildTSAVerifyFuzzSeed: parsing TSA cert: %v", err)
+	}
+
+	content := []byte("ls3-tsa-eku-verify-fuzz-seed")
+	sd, err := pkcs7.NewSignedData(content)
+	if err != nil {
+		tb.Fatalf("buildTSAVerifyFuzzSeed: NewSignedData: %v", err)
+	}
+	if err := sd.AddSignerChain(tsaCert, tsaKey, nil, pkcs7.SignerInfoConfig{}); err != nil {
+		tb.Fatalf("buildTSAVerifyFuzzSeed: AddSignerChain: %v", err)
+	}
+	out, err := sd.Finish()
+	if err != nil {
+		tb.Fatalf("buildTSAVerifyFuzzSeed: Finish: %v", err)
+	}
+	return out
+}
+
 // verifyFuzzFixedTime is the fixed CurrentTime used in all verify harnesses.
 // It is inside the PKI certs' validity window (2000–2100) and is constant so
 // every run uses the same reference point.
@@ -173,11 +231,22 @@ func buildVerifyFuzzSeed(tb testing.TB, pki *verifyFuzzPKI) []byte {
 // chains to the given root pool at the given time, using crypto/x509 directly
 // (never via pkcs7's own verification logic).  Returns true only when:
 //   - GetOnlySigner returns exactly one cert
-//   - That cert chains to roots at currentTime with no EKU restriction
+//   - That cert chains to roots at currentTime
+//
+// KeyUsages is set to ExtKeyUsageAny to match pkcs7.VerifyWithOpts' own
+// default: when VerifyWithOpts receives a nil KeyUsages, it inserts
+// ExtKeyUsageAny before calling the x509 chain verifier (LS3: discovered when
+// adding the TSA-EKU seed — a TimeStamping-EKU leaf was accepted by
+// VerifyWithOpts but rejected by the previous reference oracle, which left
+// KeyUsages unset and thereby defaulted to x509's ExtKeyUsageServerAuth check).
+// Without this fix the oracle fires on any cert with a specific EKU, which is
+// an expected difference, not a bypass.
 //
 // What this does NOT check:
 //   - The PKCS7 message-digest signature (not a chain-trust check)
-//   - Any specific EKU; using a broader check to match the harness's opts
+//   - Specific EKU policies (ExtKeyUsageAny is used to match the harness's
+//     no-EKU-restriction opts; the production caller's TimeStamping EKU
+//     restriction is exercised by the TSA seed but not enforced in the oracle)
 func verifyPKCS7ReferenceAccepts(p7 *pkcs7.PKCS7, roots *x509.CertPool, currentTime time.Time) bool {
 	signer := p7.GetOnlySigner()
 	if signer == nil {
@@ -191,6 +260,7 @@ func verifyPKCS7ReferenceAccepts(p7 *pkcs7.PKCS7, roots *x509.CertPool, currentT
 		Roots:         roots,
 		Intermediates: intermediates,
 		CurrentTime:   currentTime,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	})
 	return err == nil
 }
@@ -221,7 +291,13 @@ func FuzzPKCS7VerifyWithOpts(f *testing.F) {
 		f.Fatalf("positive control: reference crypto/x509 check rejected the seed token — fixture is broken")
 	}
 
+	// tsaSeed: a valid token signed by a TSA-EKU leaf (LS3 addition).
+	// Increases coverage of the EKU-specific chain-verification path that the
+	// real production caller (notary.go:179 KeyUsages: TimeStamping) exercises.
+	// The oracle is unchanged (no EKU restriction, broader than production).
+	tsaSeed := buildTSAVerifyFuzzSeed(f, pki)
 	f.Add(seed)
+	f.Add(tsaSeed)
 	f.Add([]byte{0x30, 0x03, 0x02, 0x01, 0x01}) // minimal DER SEQUENCE
 	f.Add([]byte("0\x81\xc400\x02\x01\xf8"))    // BER-ish prefix (from existing pkcs7 seeds)
 	f.Add([]byte{})
