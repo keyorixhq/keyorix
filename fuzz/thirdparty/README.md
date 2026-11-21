@@ -15,6 +15,19 @@ upstream-reportable, independent of Keyorix's own response handling.
 - `azure/` — Azure `azsecrets` Key Vault client over azcore's pipeline (retry +
   bearer-token challenge-authentication). Target: `FuzzAzureGetSecret`. Serves TLS
   because azcore refuses to attach a bearer token over plaintext http.
+- `oapiruntime/` — `github.com/oapi-codegen/runtime/types` (pinned v1.7.0,
+  `cli/go.mod`): the four custom JSON/text marshal types (`Email`, `Date`,
+  `Duration`, `File`) reached via `encoding/json` reflection from
+  `cli/internal/apiclient/types.gen.go`'s `openapi_types.Email` fields when a
+  generated `Parse*Response` function unmarshals a hostile server's response body.
+  **No loopback server** — pure `[]byte → value` parsing calls, fed directly.
+  Targets: `FuzzOapiRuntimeEmail`, `FuzzOapiRuntimeDate`,
+  `FuzzOapiRuntimeDuration`, `FuzzOapiRuntimeFile`. Note: the DEPMATRIX1 gap
+  doc's "Suggested target" describes feeding `http.Response` bodies into
+  `oapi-codegen/runtime`'s response-decoding path — that path does not exist;
+  `StyleParamWithLocation` is outbound-only and the generated `Parse*Response`
+  functions call no `runtime.` function at all; this harness covers the actual
+  attacker-reachable surface.
 
 ## Oracles (identical four classes in both packages)
 
