@@ -327,6 +327,55 @@ func stripMongoRevokeOptions(adminURI string) (string, []string) {
 	return adminURI[:q+1] + strings.Join(kept, "&"), removed
 }
 
+// mongoInsecureTLSKeys are the mongodb options (lower case) that make the driver
+// accept any server certificate and hostname. The pinned driver reads only these two
+// (tlsAllowInvalidCertificates and tlsAllowInvalidHostnames are kept as unknown
+// options and do nothing); connectMongo checks the parsed options, so a spelling the
+// driver learns later is refused there whether or not it is listed here.
+var mongoInsecureTLSKeys = []string{"tlsinsecure", "sslinsecure"}
+
+// mongoURIWithoutInsecureTLS returns adminURI without its mongoInsecureTLSKeys
+// options, and whether it removed any, so a revoke connects with certificate
+// verification on (the Redis revoke does the same for skip_verify). Options are
+// split on '&' and ';' as the driver splits them, and rejoined with '&'. Anything it
+// does not understand is returned unchanged: connectMongo then refuses what is left.
+func mongoURIWithoutInsecureTLS(adminURI string) (string, bool) {
+	scheme := strings.Index(adminURI, "://")
+	if scheme < 0 {
+		return adminURI, false
+	}
+	slash := strings.IndexByte(adminURI[scheme+3:], '/')
+	if slash < 0 {
+		return adminURI, false
+	}
+	q := strings.IndexByte(adminURI[scheme+3+slash:], '?')
+	if q < 0 {
+		return adminURI, false
+	}
+	q += scheme + 3 + slash
+	var kept []string
+	removed := false
+	for _, p := range strings.FieldsFunc(adminURI[q+1:], func(r rune) bool { return r == ';' || r == '&' }) {
+		rawKey, _, _ := strings.Cut(p, "=")
+		key := rawKey
+		if dec, err := url.QueryUnescape(rawKey); err == nil {
+			key = dec
+		}
+		if slices.Contains(mongoInsecureTLSKeys, strings.ToLower(key)) {
+			removed = true
+			continue
+		}
+		kept = append(kept, p)
+	}
+	if !removed {
+		return adminURI, false
+	}
+	if len(kept) == 0 {
+		return adminURI[:q], true
+	}
+	return adminURI[:q+1] + strings.Join(kept, "&"), true
+}
+
 // revokeStrippedError names the options a failed revoke connected without, so
 // an operator reading revoke_failed knows why a CA or client certificate the
 // stored DSN named was not used.

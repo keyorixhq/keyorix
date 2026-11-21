@@ -8,7 +8,6 @@ import (
 	"errors"
 	"net"
 	netmail "net/mail"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -26,15 +25,6 @@ const (
 	// dialogue completes in milliseconds.
 	smtpFuzzTimeCap = 4 * time.Second
 )
-
-// scramIterKnownFinding is the largest SCRAM iteration count the hostile-relay
-// target still judges under S3. Above it, finding TP1-GOMAIL-scram-iter
-// (#4383) applies: go-mail runs PBKDF2 with whatever count the relay sends (about 0.2 µs per
-// iteration here), so a larger count is a known unbounded-work case, pinned by
-// TestGoMailFindingSCRAMIterationsUnbounded, and would also stall the fuzz
-// worker. The excluded inputs are the ones go-mail itself would parse
-// (strconv.Atoi of the same text) as above the limit.
-const scramIterKnownFinding = 100000
 
 // smtpRelayIdle is how long the in-memory relay waits for the client's next
 // line before hanging up. A variable so a findings test can wait out a client
@@ -407,20 +397,23 @@ func envelopeAddr(arg, prefix string) string {
 //   - S1 NO CLEARTEXT PASSWORD (tls=none with a username, the
 //     KEYORIX_ALLOW_INSECURE_SMTP mode): no client line carries the relay
 //     password, raw or inside any base64 token. This is the property
-//     internal/delivery's tls=none refusal text states ("the mail library never
-//     sends a PLAIN or LOGIN password without TLS").
+//     internal/delivery's tls=none refusal text states (PLAIN, LOGIN and SCRAM are
+//     never used without TLS: internal/smtpauth).
 //   - S2 NOTHING BEFORE TLS (starttls, the default): when the relay never
 //     completes TLS, the client sends no AUTH, MAIL, RCPT or DATA, so neither the
 //     password nor the setup link leaves in cleartext.
 //   - S3 BOUNDED WORK: one send returns within smtpFuzzTimeCap, whatever the
-//     relay says (the client's own 10 s timeout bounds I/O waits, not CPU).
+//     relay says (the client's own 10 s timeout bounds I/O waits, not CPU). The
+//     SCRAM iteration count is part of what the relay says: without TLS SCRAM is
+//     never selected, and with TLS smtpauth refuses a count above its bound
+//     (#4383, TestSCRAMNotSelectedWithoutTLS).
 //   - S4 SUCCESS MEANS ACCEPTED: a nil send error implies the relay received one
 //     complete DATA payload and answered its end-of-data line with 2xx.
 //
 // What this does NOT verify: implicit TLS and real TLS handshakes (the relay
 // cannot speak TLS; a "220" to STARTTLS ends the dialogue); the strength of
-// challenge-response mechanisms a tls=none relay can still pick (CRAM-MD5, NTLM
-// and SCRAM responses are offline-guessable by whoever sees them, which is the
+// challenge-response mechanisms a tls=none relay can still pick (CRAM-MD5 and
+// NTLM responses are offline-guessable by whoever sees them, which is the
 // documented price of tls=none, not checked here); relay replies over 64 KiB per
 // line; DSN, PIPELINING and CHUNKING (go-mail does not use them here).
 func FuzzSetupLinkHostileSMTPServer(f *testing.F) {
@@ -437,9 +430,6 @@ func FuzzSetupLinkHostileSMTPServer(f *testing.F) {
 	f.Fuzz(func(t *testing.T, mode byte, ehlo, starttls, auth, salt, iter, end string) {
 		if len(ehlo)+len(starttls)+len(auth)+len(salt)+len(iter)+len(end) > 4<<10 {
 			return
-		}
-		if n, err := strconv.Atoi(firstLine(iter)); err == nil && n > scramIterKnownFinding {
-			return // TP1-GOMAIL-scram-iter, pinned by TestGoMailFindingSCRAMIterationsUnbounded
 		}
 		sc := &smtpScript{
 			ehlo:      splitNonEmpty(ehlo),

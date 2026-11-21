@@ -22,7 +22,7 @@ func (p panicMySQLConn) Close() error { *p.closed = true; return nil }
 
 // #4378 review: the MySQL executor as core gets it (through NewManager, so contained)
 // turns a driver panic during Rotate into *dynamic.EngineClientPanicError, still closes
-// the connection, and logs the panic with the DSN password masked.
+// the connection, and logs the panic without its value (and so without the DSN password).
 func TestMySQLExecutor_ContainedRotatePanic(t *testing.T) {
 	var logs bytes.Buffer
 	log.SetOutput(&logs)
@@ -58,7 +58,10 @@ func TestMySQLExecutor_ContainedRotatePanic(t *testing.T) {
 	if !closed {
 		t.Error("the connection must still be closed after a contained panic")
 	}
-	if out := logs.String(); strings.Contains(out, "hunter2") || !strings.Contains(out, "malformed reply") {
-		t.Errorf("want the panic logged with the password masked:\n%s", out)
+	// The panic is logged (where, and that its value was withheld: it may carry target
+	// reply bytes); neither the password nor the value's text is in the log.
+	if out := logs.String(); strings.Contains(out, "hunter2") || strings.Contains(out, "malformed reply") ||
+		!strings.Contains(out, `rotation executor "my" panicked in Rotate`) || !strings.Contains(out, "value withheld") {
+		t.Errorf("want the panic logged without its value or the password:\n%s", out)
 	}
 }

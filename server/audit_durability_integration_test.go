@@ -7,18 +7,16 @@ package main
 //
 // This harness's `admin init` generates a SQLite config, so what it exercises
 // end-to-end is the SQLite side: standard (by name or through the deprecated
-// alias) refuses to start, and a default install runs strict and says so in
-// one INFO line. The PostgreSQL side (standard by default) is
+// alias) boots with SQLite's meaning (Amendment 7), and a default install runs
+// strict and says so in one INFO line. The PostgreSQL side (standard by default) is
 // audit_durability_postgres_e2e_test.go, pg-gated.
 
 import (
-	"bytes"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -81,88 +79,64 @@ func legacyFastAuditStartupEventCount(t *testing.T, dbPath string) int {
 	return len(events)
 }
 
-// TestAuditDurability_SQLiteRefusesStandardEndToEnd: SQLite runs strict only.
-// A SQLite install set to standard -- by name or through the deprecated alias
-// -- must FAIL with the named error on every command that loads config, the
-// server itself first, rather than start while the operator believes the
-// audit commit no longer waits for the disk sync.
-func TestAuditDurability_SQLiteRefusesStandardEndToEnd(t *testing.T) {
+// TestAuditDurability_SQLiteStandardBootsEndToEnd: since ADR-112 Amendment 7
+// SQLite accepts standard (read audits on a dedicated synchronous=NORMAL
+// connection). By name or through the deprecated alias, the real binary boots,
+// says which level is in effect with SQLite's meaning (never PostgreSQL's
+// ~600 ms), logs that the read-audit connection is open, admin validate
+// reports it, and the chain verifies. Until Amendment 7 this config refused
+// to start.
+func TestAuditDurability_SQLiteStandardBootsEndToEnd(t *testing.T) {
 	bin := buildServerBinary(t)
-	for _, line := range []string{"audit_durability: standard", "insecure_audit_skip_durable_sync: true"} {
+	for i, line := range []string{"audit_durability: standard", "insecure_audit_skip_durable_sync: true"} {
 		t.Run(line, func(t *testing.T) {
 			dir := t.TempDir()
-			env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-audit-durability-sqlite-refusal")
+			env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=test-passphrase-audit-durability-sqlite-standard")
 
-			if out, err := runAdmin(t, bin, dir, env, "init", "--config", "./keyorix.yaml"); err != nil {
+			if out, err := runAdmin(t, bin, dir, env, "init", "--dev", "--config", "./keyorix.yaml"); err != nil {
 				t.Fatalf("admin init failed: %v\n%s", err, out)
 			}
-			// Positive control: the SAME config, before the one-line edit, works.
-			if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
-				t.Fatalf("control: admin migrate must succeed BEFORE the setting is added: %v\n%s", err, out)
-			}
-
 			addDatabaseLineToConfig(t, filepath.Join(dir, "keyorix.yaml"), line)
-
-			const wantErr = "audit_durability: standard is only supported with PostgreSQL"
-			serverOut := runServerExpectingExit(t, bin, dir, env)
-			if !strings.Contains(serverOut, wantErr) {
-				t.Errorf("the SERVER did not refuse to boot with the named refusal (%q) on a SQLite config with %q. "+
-					"Server output:\n%s", wantErr, line, serverOut)
-			}
-			if !strings.Contains(serverOut, "set it to strict") {
-				t.Errorf("the refusal must tell the operator what to DO. Output:\n%s", serverOut)
+			adminEncryptionInit(t, bin, dir, env)
+			if out, err := runAdmin(t, bin, dir, env, "migrate", "--config", "./keyorix.yaml"); err != nil {
+				t.Fatalf("admin migrate failed: %v\n%s", err, out)
 			}
 
-			// `admin validate` and `admin diagnose` both load AND validate
-			// config, so both refuse too. `admin migrate` does not call
-			// cfg.Validate at all (#2854).
-			for _, cmd := range []string{"validate", "diagnose"} {
-				out, err := runAdmin(t, bin, dir, env, cmd, "--config", "./keyorix.yaml")
-				if err == nil {
-					t.Errorf("`admin %s` SUCCEEDED on a SQLite config with %q; it must refuse. Output:\n%s", cmd, line, out)
-					continue
+			bootstrapAdminViaHTTP(t, bin, dir, env, pinFreeHTTPPort(t, dir),
+				"sqlitestd", fmt.Sprintf("sqlite-standard-%d@example.com", i), "InitialPassw0rd!")
+
+			serverLog, err := os.ReadFile(filepath.Join(dir, "bootstrap-server.log")) //nolint:gosec // test-generated path
+			if err != nil {
+				t.Fatalf("read server log: %v", err)
+			}
+			for _, want := range []string{
+				"INFO: audit durability: standard (committed before every disclosure; secret mutations and their audit rows are synced to disk",
+				"successful secret-read audits commit on a dedicated synchronous=NORMAL connection; every other transaction stays synchronous=FULL",
+			} {
+				if !strings.Contains(string(serverLog), want) {
+					t.Errorf("a SQLite boot at standard must log %q. Server log was:\n%s", want, serverLog)
 				}
-				if !strings.Contains(out, wantErr) {
-					t.Errorf("`admin %s` failed, but not with the named refusal (%q). Output:\n%s", cmd, wantErr, out)
-				}
+			}
+			if strings.Contains(string(serverLog), "600 ms") {
+				t.Errorf("the SQLite standard line must not claim PostgreSQL's ~600 ms bound. Server log was:\n%s", serverLog)
+			}
+
+			validateOut, err := runAdmin(t, bin, dir, env, "validate", "--config", "./keyorix.yaml")
+			if err != nil {
+				t.Fatalf("admin validate failed: %v\n%s", err, validateOut)
+			}
+			if !strings.Contains(validateOut, "Audit durability: standard (committed before every disclosure; secret mutations") {
+				t.Errorf("`admin validate` must report the effective SQLite level. Output:\n%s", validateOut)
+			}
+
+			verifyOut, err := runAdmin(t, bin, dir, env, "verify-audit", "--config", "./keyorix.yaml")
+			if err != nil {
+				t.Fatalf("`admin verify-audit` failed: %v\n%s", err, verifyOut)
+			}
+			if !strings.Contains(verifyOut, "VALID") {
+				t.Errorf("expected a VALID verdict from verify-audit, got:\n%s", verifyOut)
 			}
 		})
-	}
-}
-
-// runServerExpectingExit starts the built binary as a real server and expects
-// it to EXIT on its own rather than serve. Returns its combined output.
-//
-// Fails if the process is still alive after the grace period: a server that
-// keeps running is precisely the "silent ignore" outcome this test exists to
-// rule out, so a hang must be a failure rather than a timeout nobody reads.
-func runServerExpectingExit(t *testing.T, bin, dir string, env []string) string {
-	t.Helper()
-	cmd := exec.Command(bin) //nolint:gosec // bin is this suite's own freshly built binary
-	cmd.Dir = dir
-	cmd.Env = append(append([]string{}, env...), "KEYORIX_CONFIG_PATH=./keyorix.yaml")
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start server: %v", err)
-	}
-
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Errorf("the server exited with status 0 on a config it must REFUSE. A clean exit is not a "+
-				"refusal -- an operator's supervisor would read it as success. Output:\n%s", buf.String())
-		}
-		return buf.String()
-	case <-time.After(20 * time.Second):
-		_ = cmd.Process.Kill()
-		<-done
-		t.Fatalf("the server was STILL RUNNING 20s after being started with a config it must refuse. That is "+
-			"the silent-ignore outcome the Postgres-only decision rules out. Output:\n%s", buf.String())
-		return buf.String()
 	}
 }
 

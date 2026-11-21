@@ -41,7 +41,7 @@ func (c *KeyorixCore) storeSecretVersion(ctx context.Context, db storage.Storage
 		EncryptedValue:     storedValue,
 		EncryptionMetadata: metadata,
 		ReadCount:          0,
-		CreatedAt:          time.Now(),
+		CreatedAt:          time.Now().UTC(),
 	}
 	_, err = db.CreateSecretVersion(ctx, version)
 	return err

@@ -77,9 +77,9 @@ PgBouncer settings they need and what changes:
 
 `storage.database.audit_durability` (ADR-112 Amendment 3) chooses whether the
 audit commit for a secret read waits for the disk sync. On PostgreSQL the
-default is `standard`; SQLite runs `strict` only (`standard` refuses to start on
-SQLite). At `strict` a read waits for at least one disk sync; at `standard` it
-does not.
+default is `standard`; SQLite defaults to `strict`, and `standard` there relaxes
+only successful read audits (ADR-112 Amendment 7). At `strict` a read waits for
+at least one disk sync; at `standard` it does not.
 
 | | `strict` | `standard` (PostgreSQL default) | Vault / OpenBao file audit device |
 |---|---|---|---|

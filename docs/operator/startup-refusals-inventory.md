@@ -108,7 +108,6 @@ exits **2** (flag parsing).
 | R | config.go:3287 | `remote cannot back a server process` |
 | C | config.go:394, 438 | `server.log.format: unknown value`, `on_sink_stall: unknown value` |
 | C | config.go:892, 912 | `audit_durability: unknown value`, `audit_durability is ... but the deprecated` |
-| R | config.go:927 | `standard is only supported with PostgreSQL` |
 | R | secretenv.go:71 / config.go:2526 | `set exactly one (the secret may come from the environment or from a file, never both)` |
 | C | config.go:612 | `both metrics_token and metrics_token_file are set` |
 | C | config.go:3095-3098 | `is not a Go duration`, `is outside the allowed range` (one-time-password expiry) |
