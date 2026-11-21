@@ -63,7 +63,7 @@ func fakeRedisHostileOnCommand(t *testing.T, reply string) string {
 			return "", err
 		}
 		name := ""
-		for i := 0; i < n; i++ {
+		for i := range n {
 			hdr, err := r.ReadString('\n')
 			if err != nil || len(hdr) < 3 || hdr[0] != '$' {
 				return "", errors.New("bad bulk header")

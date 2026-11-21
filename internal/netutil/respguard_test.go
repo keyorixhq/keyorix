@@ -208,7 +208,7 @@ func TestRESPScannerMatchesReference(t *testing.T) {
 	frags := []string{"+OK\r\n", "-ERR x\r\n", ":1\r\n", "$3\r\nabc\r\n", "$0\r\n\r\n", "$-1\r\n", "*2\r\n", "*0\r\n", "%1\r\n",
 		"~1\r\n", ">1\r\n", "|1\r\n", "=7\r\ntxt:abc\r\n", "!3\r\nERR\r\n", "$100\r\n", "*300\r\n", "$99999\r\n", "%99\r\n", "_\r\n",
 		",1.5\r\n", "#t\r\n", "$5\r\n$9\r\n", "?\r\n", "$x\r\n", "$-2\r\n", "$\r\n"}
-	for iter := 0; iter < 20000; iter++ {
+	for range 20000 {
 		var b bytes.Buffer
 		for i, n := 0, 1+rng.Intn(6); i < n; i++ {
 			b.WriteString(frags[rng.Intn(len(frags))])
