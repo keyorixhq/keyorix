@@ -16,8 +16,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // defaultSessionAccessTTL is the access-token lifetime when no session config is
@@ -51,7 +51,7 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 	if err != nil {
 		// Spend an equivalent bcrypt comparison so a missing username doesn't return
 		// faster than a wrong password (account-enumeration timing side-channel).
-		_ = bcrypt.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
+		_ = kdfmeter.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
 		if !storage.IsUserNotFound(err) {
 			// AUTH-AUDIT-1 item 1 (#2745): a storage failure, not "no such user".
 			// The password was never checked, so the transport audits
@@ -70,10 +70,10 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 	// fast (no-bcrypt) response on a locked account is a username-existence oracle (the
 	// attacker first forces the lockout, then probes by timing).
 	if c.loginLocked(user) {
-		_ = bcrypt.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
+		_ = kdfmeter.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
 		return nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	if err := kdfmeter.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		c.recordFailedLogin(ctx, user) // increment + lock at the threshold
 		return nil, fmt.Errorf("invalid credentials")
 	}

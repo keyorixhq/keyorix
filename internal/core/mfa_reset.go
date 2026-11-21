@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
+	"github.com/keyorixhq/keyorix/internal/kdfmeter"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -457,7 +457,7 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 	if err != nil {
 		return nil, err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(otp), PasswordHashCost())
+	hash, err := kdfmeter.GenerateFromPassword([]byte(otp), PasswordHashCost())
 	if err != nil {
 		return nil, err
 	}

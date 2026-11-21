@@ -171,7 +171,8 @@ func FuzzRedisReply(f *testing.F) {
 	f.Add([]byte("-ERR nope\r\n"))
 	f.Add([]byte(":123\r\n"))
 	f.Add([]byte("$5\r\nhello\r\n"))
-	f.Add([]byte("$9999999\r\nshort\r\n"))           // huge declared bulk length
+	f.Add([]byte("$4096\r\nshort\r\n"))              // over-declared bulk, at the allowance
+	f.Add([]byte("$9999999\r\nshort\r\n"))           // huge declared bulk length (skipped: above allowance, see redisDeclaredAllowance)
 	f.Add([]byte("*2\r\n:1\r\n:2\r\n"))              // RESP2 array
 	f.Add([]byte("%1\r\n+k\r\n+v\r\n"))              // RESP3 map
 	f.Add([]byte("|1\r\n+a\r\n+b\r\n+OK\r\n"))       // RESP3 attribute then value
@@ -181,6 +182,9 @@ func FuzzRedisReply(f *testing.F) {
 	f.Add([]byte("_\r\n"))                           // null
 	probe, budget, haveBudget := redisResguardProbe(f, redisBudgetReply)
 	f.Fuzz(func(t *testing.T, reply []byte) {
+		if redisDeclaredLenExceeds(reply) {
+			t.Skip("declared length above redisDeclaredAllowance: go-redis pre-allocates it (LF3-F3); characterised in TestRedisDeclaredLengthCharacterisation")
+		}
 		measureRedis(t, probe, budget, haveBudget, reply, driveRedisReply)
 	})
 }

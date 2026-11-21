@@ -65,13 +65,14 @@ excluded from the counts table, which tracks production packages only.
 | `internal/secrettemplate` | [internal/secrettemplate/INVARIANTS.md](../internal/secrettemplate/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/i18n` | [internal/i18n/INVARIANTS.md](../internal/i18n/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 18 | 18 | 0 |
-| `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 4 | 4 | 0 |
+| `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 5 | 5 | 0 |
 | `fuzz/thirdparty/otp` | [fuzz/thirdparty/otp/INVARIANTS.md](../fuzz/thirdparty/otp/INVARIANTS.md) | 5 | 5 | 0 |
 | `fuzz/thirdparty/compress` | [fuzz/thirdparty/compress/INVARIANTS.md](../fuzz/thirdparty/compress/INVARIANTS.md) | 2 | 2 | 0 |
 | `fuzz/thirdparty/uuid` | [fuzz/thirdparty/uuid/INVARIANTS.md](../fuzz/thirdparty/uuid/INVARIANTS.md) | 2 | 2 | 0 |
 | `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |
 | `fuzz/thirdparty/cors` | [fuzz/thirdparty/cors/INVARIANTS.md](../fuzz/thirdparty/cors/INVARIANTS.md) | 4 | 4 | 0 |
 | `fuzz/thirdparty/kinopenapi` | [fuzz/thirdparty/kinopenapi/INVARIANTS.md](../fuzz/thirdparty/kinopenapi/INVARIANTS.md) | 3 | 3 | 0 |
+| `internal/kdfmeter` | [internal/kdfmeter/INVARIANTS.md](../internal/kdfmeter/INVARIANTS.md) | 4 | 4 | 0 |
 
 ## Highest-priority UNGUARDED gaps
 

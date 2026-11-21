@@ -1137,6 +1137,7 @@ func stampSecretPurgeAt(tx *gorm.DB, ids []uint, globalDays int) error {
 // the approval back. resolved_at is written explicitly as UTC because a map Updates
 // bypasses AccessRequest.BeforeSave (G81).
 func closeApprovedSecretAccessRequests(tx *gorm.DB, secretCond string, args ...any) error {
+	// safe-cas-writer-ok: AccessRequest: touches only approved rows (approved->expired); UpdateAccessRequest's state='pending' CAS never matches an approved row, and nothing moves a row back to pending (TestFullRowWriters_SecretDeleteCloseSurvivesStaleApprove_UpdateAccessRequest).
 	if err := tx.Model(&models.AccessRequest{}).
 		Where("secret_id IS NOT NULL AND state = ? AND "+secretCond, append([]any{"approved"}, args...)...).
 		Updates(map[string]any{"state": "expired", "resolved_at": time.Now().UTC()}).Error; err != nil {
