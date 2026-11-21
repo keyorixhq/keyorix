@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -46,6 +47,18 @@ func (e *RedisExecutor) conn(ctx context.Context) (redisConn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("redis: parse url: %w", err)
 	}
+	// Bound what a hostile or intercepted server can make this client allocate:
+	// go-redis sizes buffers from announced RESP lengths and has no cap of its own.
+	// Outermost dialer, so it reads plaintext RESP after any TLS layer. DialTimeout
+	// is fixed up first because NewDialer reads it at dial time.
+	if opt.DialTimeout == 0 {
+		opt.DialTimeout = 5 * time.Second
+	}
+	if opt.Dialer == nil {
+		opt.Dialer = redis.NewDialer(opt)
+	}
+	opt.Dialer = netutil.RESPGuardDialer(opt.Dialer, netutil.RESPLimits{})
+
 	return &redisClientConn{client: redis.NewClient(opt)}, nil
 }
 
