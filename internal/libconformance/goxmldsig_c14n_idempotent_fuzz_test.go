@@ -52,6 +52,7 @@ package libconformance
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/beevik/etree"
@@ -163,12 +164,19 @@ func FuzzGoxmldsigC14NIdempotent(f *testing.F) {
 			if haveBudget {
 				budget.Check(t.Fatalf, cost)
 			}
-			if !ok {
-				continue
-			}
-			if !bytes.Equal(b1, b2) {
-				t.Fatalf("C14N-NON-IDEMPOTENCE (%s): canonical form is not a fixed point\n input=%q\n b1=%q\n b2=%q", algo.name, data, b1, b2)
+			if msg := c14nFixedPointViolation(algo.name, data, b1, b2, ok); msg != "" {
+				t.Fatal(msg)
 			}
 		}
 	})
+}
+
+// c14nFixedPointViolation is the oracle's verdict, shared by the fuzz body and the red/green
+// proof so the proof exercises the exact comparison and message the fuzzer uses. It returns ""
+// when the pair is not comparable (ok false) or is a fixed point.
+func c14nFixedPointViolation(name string, data, b1, b2 []byte, ok bool) string {
+	if !ok || bytes.Equal(b1, b2) {
+		return ""
+	}
+	return fmt.Sprintf("C14N-NON-IDEMPOTENCE (%s): canonical form is not a fixed point\n input=%q\n b1=%q\n b2=%q", name, data, b1, b2)
 }

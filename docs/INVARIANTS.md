@@ -62,8 +62,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/delivery` | [internal/delivery/INVARIANTS.md](../internal/delivery/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/secrettemplate` | [internal/secrettemplate/INVARIANTS.md](../internal/secrettemplate/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/i18n` | [internal/i18n/INVARIANTS.md](../internal/i18n/INVARIANTS.md) | 1 | 1 | 0 |
-| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 7 | 7 | 0 |
-| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 4 | 4 | 0 |
+| `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 18 | 18 | 0 |
 | `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 4 | 4 | 0 |
 | `fuzz/thirdparty/otp` | [fuzz/thirdparty/otp/INVARIANTS.md](../fuzz/thirdparty/otp/INVARIANTS.md) | 5 | 5 | 0 |
 | `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |

@@ -105,7 +105,7 @@ func TestResguardDigitorusTimestampCalibrate(t *testing.T) {
 func TestResguardDigitorusTimestampBudgetRedGreen(t *testing.T) {
 	b, err := resguard.LoadBudget(digitorusTimestampBudgetPath)
 	if err != nil {
-		t.Skipf("no committed budget (%v); run calibrate first", err)
+		t.Fatalf("committed budget %s is missing or unreadable (%v); run the calibrate test with RESGUARD_CALIBRATE=1", digitorusTimestampBudgetPath, err)
 	}
 	seeds := validRequestSeeds(t)
 	if len(seeds) == 0 {

@@ -1,7 +1,6 @@
 package libconformance
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"testing"
@@ -43,26 +42,35 @@ func (c *nonIdempotentCanon) Algorithm() dsig.AlgorithmID { return c.inner.Algor
 func TestGoxmldsigC14NIdempotenceRedGreen(t *testing.T) {
 	seed := []byte(`<r xmlns:z="urn:z" xmlns:unused="urn:u"><z:e b="2" a="1">x</z:e><z:e a="1" b="2"/></r>`)
 
-	// GREEN: real canonicaliser is idempotent.
-	real := dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
-	b1, b2, ok := canonTwice(real, seed)
-	if !ok {
-		t.Fatalf("GREEN precondition: real canonicalisation of the seed must succeed twice")
+	// Both halves run over c14nAlgos(), the exact list the fuzz body iterates (real goxmldsig
+	// canonicalisers), and through c14nFixedPointViolation, the exact verdict the fuzz body
+	// uses. Only the canonicaliser differs between green and red.
+	algos := c14nAlgos()
+	if len(algos) == 0 {
+		t.Fatal("c14nAlgos() is empty: the fuzz body would check nothing")
 	}
-	if !bytes.Equal(b1, b2) {
-		t.Fatalf("GREEN: real exclusive-C14N is expected to be idempotent, but b1=%q b2=%q", b1, b2)
-	}
+	for _, algo := range algos {
+		// GREEN: the real canonicaliser is a fixed point.
+		b1, b2, ok := canonTwice(algo.c, seed)
+		if !ok {
+			t.Fatalf("GREEN precondition (%s): real canonicalisation of the seed must succeed twice", algo.name)
+		}
+		if msg := c14nFixedPointViolation(algo.name, seed, b1, b2, ok); msg != "" {
+			t.Fatalf("GREEN: real %s is expected to be idempotent: %s", algo.name, msg)
+		}
 
-	// RED: a non-idempotent canonicaliser must be caught by the same comparator.
-	bad := &nonIdempotentCanon{inner: dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")}
-	rb1, rb2, rok := canonTwice(bad, seed)
-	if !rok {
-		t.Fatalf("RED precondition: the non-idempotent stub must still canonicalise twice")
+		// RED: wrapping the same real canonicaliser so it is not a fixed point must be caught.
+		bad := &nonIdempotentCanon{inner: algo.c}
+		rb1, rb2, rok := canonTwice(bad, seed)
+		if !rok {
+			t.Fatalf("RED precondition (%s): the non-idempotent wrapper must still canonicalise twice", algo.name)
+		}
+		msg := c14nFixedPointViolation(algo.name, seed, rb1, rb2, rok)
+		if msg == "" {
+			t.Fatalf("RED (%s): the non-idempotent canonicaliser was not caught (b1==b2 %q)", algo.name, rb1)
+		}
+		t.Logf("RED fired as expected for %s", algo.name)
 	}
-	if bytes.Equal(rb1, rb2) {
-		t.Fatalf("RED: the non-idempotent canonicaliser was expected to break the fixed point, but b1==b2 (%q)", rb1)
-	}
-	t.Logf("RED fired as expected: b1=%q b2=%q", rb1, rb2)
 }
 
 // calibrateGoxmldsigC14N derives the resource budget from the benign seed corpus (every seed
@@ -128,7 +136,7 @@ func TestResguardGoxmldsigC14NCalibrate(t *testing.T) {
 func TestResguardGoxmldsigC14NBudgetRedGreen(t *testing.T) {
 	b, err := resguard.LoadBudget(goxmldsigC14NBudgetPath)
 	if err != nil {
-		t.Skipf("no committed budget (%v); run calibrate first", err)
+		t.Fatalf("committed budget %s is missing or unreadable (%v); run TestResguardGoxmldsigC14NCalibrate with RESGUARD_CALIBRATE=1", goxmldsigC14NBudgetPath, err)
 	}
 
 	// GREEN: a benign canonicalisation stays under budget.
