@@ -72,7 +72,7 @@ excluded from the counts table, which tracks production packages only.
 | `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |
 | `fuzz/thirdparty/cors` | [fuzz/thirdparty/cors/INVARIANTS.md](../fuzz/thirdparty/cors/INVARIANTS.md) | 4 | 4 | 0 |
 | `fuzz/thirdparty/kinopenapi` | [fuzz/thirdparty/kinopenapi/INVARIANTS.md](../fuzz/thirdparty/kinopenapi/INVARIANTS.md) | 3 | 3 | 0 |
-| `internal/kdfmeter` | [internal/kdfmeter/INVARIANTS.md](../internal/kdfmeter/INVARIANTS.md) | 3 | 3 | 0 |
+| `internal/kdfmeter` | [internal/kdfmeter/INVARIANTS.md](../internal/kdfmeter/INVARIANTS.md) | 4 | 4 | 0 |
 
 ## Highest-priority UNGUARDED gaps
 

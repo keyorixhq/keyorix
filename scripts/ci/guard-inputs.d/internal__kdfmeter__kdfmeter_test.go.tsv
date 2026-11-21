@@ -1,1 +1,1 @@
-internal/kdfmeter/kdfmeter_test.go	!operator/**	skips operator/; only reads internal/kdfmeter's own .go files and golang.org/x/crypto/bcrypt
+internal/kdfmeter/kdfmeter_test.go	!operator/**	walks every non-test .go file in the repo except operator/ (a separate module, skipped by productionGoFiles) and reads each one's imports or syntax tree; operator/ is not read

@@ -27,10 +27,18 @@
 // # Test-only enablement
 //
 // Installing an observer is test-only. SetObserver is exported only so the
-// resguard KDFMeter (a _test.go-only package) can install its counter;
-// TestKDFMeterSetObserver_NoProductionCallers fails the build if any non-_test.go
-// file in the repo calls it. The observer must itself be cheap and non-blocking
-// (resguard's is two atomic adds) because it runs inline on every credential op.
+// resguard KDFMeter can install its counter. That package is a normal (non-_test.go)
+// file set kept test-only by TestResguardImportedOnlyFromTests, and is the one path
+// TestKDFMeterSetObserver_NoProductionCallers excludes: that test fails the build if
+// any other non-_test.go file references SetObserver. The observer must itself be
+// cheap and non-blocking (resguard's is two atomic adds) because it runs inline on
+// every credential op.
+//
+// # Only path to bcrypt
+//
+// TestBcryptImportedOnlyThroughKDFMeter fails if any production file outside a short,
+// reasoned allowlist imports golang.org/x/crypto/bcrypt directly, since a direct call
+// is invisible to the meter.
 package kdfmeter
 
 import (

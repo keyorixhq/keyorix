@@ -1,14 +1,24 @@
 package kdfmeter_test
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/keyorixhq/keyorix/internal/kdfmeter"
+)
+
+const (
+	kdfmeterImportPath = "github.com/keyorixhq/keyorix/internal/kdfmeter"
+	bcryptImportPath   = "golang.org/x/crypto/bcrypt"
 )
 
 // TestKDFMeter_CountsGenerateAndCompare is the red/green proof that the seam
@@ -76,53 +86,269 @@ func TestKDFMeter_BehaviourIdenticalToBcrypt(t *testing.T) {
 	}
 }
 
+// bcryptAllowlist is the complete set of non-test Go files that may import
+// golang.org/x/crypto/bcrypt directly, keyed by repo-relative slash path. Every
+// other production file must go through internal/kdfmeter, or the KDF-count oracle
+// (internal/core/kdf_enumeration_oracle_fuzz_test.go) cannot see its KDF work.
+// Each entry carries the reason it is exempt; TestBcryptImportedOnlyThroughKDFMeter
+// also fails if an entry stops importing bcrypt, so the list cannot go stale.
+var bcryptAllowlist = map[string]string{
+	"internal/kdfmeter/kdfmeter.go": "the metered seam itself",
+	"internal/core/bcrypt_cost.go": "builds the timing-equaliser sentinel hash at init and in " +
+		"SetBcryptCostForTesting; not a credential operation, and metering it would count work " +
+		"outside any logical operation",
+	"scripts/timing-constant-time/main.go": "manual one-off timing-measurement tool; not a credential " +
+		"path and not wired into CI",
+}
+
+// TestBcryptImportedOnlyThroughKDFMeter fails if any non-_test.go file outside
+// bcryptAllowlist imports golang.org/x/crypto/bcrypt. It reads the import
+// declarations, not the file text, so an aliased import cannot hide and a mention in
+// a comment or string cannot trip it.
+//
+// It does NOT verify that every KDF call goes through the seam in a file that does
+// not import bcrypt (e.g. a different KDF such as scrypt or argon2, which the meter
+// does not wrap at all), nor that a metered call is made exactly once per logical
+// operation: that is the oracle's job, per path it exercises.
+func TestBcryptImportedOnlyThroughKDFMeter(t *testing.T) {
+	root := repoRoot(t)
+	var offenders []string
+	seenAllowed := map[string]bool{}
+	for _, rel := range productionGoFiles(t, root) {
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		imports, err := importsOf(rel, b)
+		if err != nil {
+			t.Fatalf("parse %s: %v", rel, err)
+		}
+		if !imports[bcryptImportPath] {
+			continue
+		}
+		if _, ok := bcryptAllowlist[rel]; ok {
+			seenAllowed[rel] = true
+			continue
+		}
+		offenders = append(offenders, rel)
+	}
+	if len(offenders) > 0 {
+		t.Fatalf("production file(s) import %s directly and bypass the KDF meter; use "+
+			"internal/kdfmeter, or add the file to bcryptAllowlist with a reason: %s",
+			bcryptImportPath, strings.Join(offenders, ", "))
+	}
+	for rel := range bcryptAllowlist {
+		if !seenAllowed[rel] {
+			t.Errorf("bcryptAllowlist entry %q no longer imports bcrypt (or no longer exists): remove it", rel)
+		}
+	}
+}
+
+// TestBcryptImportGuard_Calibration watches the import check fail and pass on
+// synthetic sources: a guard nobody has seen go red is not a guard.
+func TestBcryptImportGuard_Calibration(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"plain import", "package p\nimport \"golang.org/x/crypto/bcrypt\"\n", true},
+		{"aliased import", "package p\nimport bc \"golang.org/x/crypto/bcrypt\"\n", true},
+		{"grouped import", "package p\nimport (\n\t\"fmt\"\n\t\"golang.org/x/crypto/bcrypt\"\n)\n", true},
+		{"blank import", "package p\nimport _ \"golang.org/x/crypto/bcrypt\"\n", true},
+		{"only through the seam", "package p\nimport \"" + kdfmeterImportPath + "\"\n", false},
+		{"path only in a comment", "package p\n// golang.org/x/crypto/bcrypt\nimport \"fmt\"\n", false},
+		{"path only in a string", "package p\nvar s = \"golang.org/x/crypto/bcrypt\"\n", false},
+	}
+	for _, tc := range cases {
+		imports, err := importsOf("calibration.go", []byte(tc.src))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", tc.name, err)
+		}
+		if got := imports[bcryptImportPath]; got != tc.want {
+			t.Errorf("%s: imports bcrypt = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestKDFMeterSetObserver_NoProductionCallers fails the build if any non-_test.go
-// file in the repo calls kdfmeter.SetObserver. Enablement is test-only: the only
-// legitimate caller is the resguard KDFMeter from a _test.go file. This is the
-// machine-checked guard that keeps the seam zero-cost in production.
+// file references kdfmeter.SetObserver. Enablement is test-only: the only
+// legitimate caller is the resguard KDFMeter, a normal (non-_test.go) file kept
+// test-only by TestResguardImportedOnlyFromTests and excluded here by package path.
+// This is the machine-checked guard that keeps the seam zero-cost in production.
+//
+// The check resolves the file's own import of internal/kdfmeter, so an aliased
+// import, a dot import, a method-value reference (f := kdfmeter.SetObserver) and a
+// call from inside package kdfmeter itself are all caught. It does NOT see a
+// reference built through reflection or go:linkname.
 func TestKDFMeterSetObserver_NoProductionCallers(t *testing.T) {
 	root := repoRoot(t)
 	var offenders []string
+	for _, rel := range productionGoFiles(t, root) {
+		// Excluded BY PACKAGE PATH, not by call shape, so the exclusion is a checkable
+		// constant and stays sound if the installer moves between files in that package.
+		if strings.HasPrefix(rel, "internal/fuzzutil/resguard/") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		// The identifier cannot appear in a Go file without this substring (Go
+		// identifiers have no escapes), so skipping the parse is sound and keeps
+		// the repo-wide walk cheap.
+		if !strings.Contains(string(b), "SetObserver") {
+			continue
+		}
+		hits, err := setObserverReferences(rel, b)
+		if err != nil {
+			t.Fatalf("parse %s: %v", rel, err)
+		}
+		if len(hits) > 0 {
+			offenders = append(offenders, rel)
+		}
+	}
+	if len(offenders) > 0 {
+		t.Fatalf("kdfmeter.SetObserver is test-only but is referenced from production file(s): %s",
+			strings.Join(offenders, ", "))
+	}
+}
+
+// TestSetObserverGuard_Calibration watches the reference check fail on every shape
+// it claims to catch and pass on the clean shapes, so neither direction is assumed.
+func TestSetObserverGuard_Calibration(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"qualified call", "package p\nimport \"" + kdfmeterImportPath + "\"\nfunc f() { kdfmeter.SetObserver(nil) }\n", true},
+		{"aliased import", "package p\nimport km \"" + kdfmeterImportPath + "\"\nfunc f() { km.SetObserver(nil) }\n", true},
+		{"dot import", "package p\nimport . \"" + kdfmeterImportPath + "\"\nfunc f() { SetObserver(nil) }\n", true},
+		{"method value", "package p\nimport \"" + kdfmeterImportPath + "\"\nvar f = kdfmeter.SetObserver\n", true},
+		{"call inside the package", "package kdfmeter\nfunc g() { SetObserver(nil) }\n", true},
+		{"declaration only", "package kdfmeter\nfunc SetObserver(fn func(Op)) func(Op) { return nil }\n", false},
+		{"counting call only", "package p\nimport \"" + kdfmeterImportPath + "\"\nfunc f() { _ = kdfmeter.CompareHashAndPassword(nil, nil) }\n", false},
+		{"name in comment and string", "package p\nimport \"" + kdfmeterImportPath + "\"\n// kdfmeter.SetObserver is test-only\nvar s = \"kdfmeter.SetObserver\"\n", false},
+		{"unrelated SetObserver", "package p\nimport \"other\"\nfunc f() { other.SetObserver(nil) }\n", false},
+	}
+	for _, tc := range cases {
+		hits, err := setObserverReferences("calibration.go", []byte(tc.src))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", tc.name, err)
+		}
+		if got := len(hits) > 0; got != tc.want {
+			t.Errorf("%s: flagged = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// importsOf returns the set of import paths declared by one Go source file.
+func importsOf(filename string, src []byte) (map[string]bool, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), filename, src, parser.ImportsOnly)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, imp := range f.Imports {
+		p, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			return nil, err
+		}
+		out[p] = true
+	}
+	return out, nil
+}
+
+// setObserverReferences returns every reference to kdfmeter's SetObserver in one
+// Go source file. A reference is a selector on the name the file imports
+// internal/kdfmeter under, a bare identifier in a file that dot-imports it, or a
+// bare identifier inside package kdfmeter other than its own declaration.
+func setObserverReferences(filename string, src []byte) ([]string, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filename, src, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, err
+	}
+	local, dot := "", false
+	for _, imp := range f.Imports {
+		p, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			return nil, err
+		}
+		if p != kdfmeterImportPath {
+			continue
+		}
+		switch {
+		case imp.Name == nil:
+			local = "kdfmeter"
+		case imp.Name.Name == ".":
+			dot = true
+		case imp.Name.Name == "_":
+			// A blank import brings no identifiers into scope.
+		default:
+			local = imp.Name.Name
+		}
+	}
+	inPackage := f.Name.Name == "kdfmeter"
+	declared := map[*ast.Ident]bool{}
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == "SetObserver" {
+			declared[fd.Name] = true
+		}
+	}
+	var hits []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			if id, ok := x.X.(*ast.Ident); ok && local != "" && id.Name == local && x.Sel.Name == "SetObserver" {
+				hits = append(hits, fset.Position(x.Pos()).String())
+			}
+		case *ast.Ident:
+			if (dot || inPackage) && x.Name == "SetObserver" && !declared[x] {
+				hits = append(hits, fset.Position(x.Pos()).String())
+			}
+		}
+		return true
+	})
+	return hits, nil
+}
+
+// productionGoFiles returns the repo-relative slash paths of every non-_test.go Go
+// file under root, sorted. It skips .git, vendor, node_modules, .scratch and the
+// separate operator/ module (its own go.mod; guard-inputs row `!operator/**`).
+func productionGoFiles(t *testing.T, root string) []string {
+	t.Helper()
+	var files []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return rerr
+		}
+		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".scratch" {
+			switch d.Name() {
+			case ".git", "vendor", "node_modules", ".scratch":
+				return filepath.SkipDir
+			}
+			if rel == "operator" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		// internal/fuzzutil/resguard is a test-only helper package (NOT a _test.go
-		// file, but its test-only status is itself machine-enforced by
-		// TestResguardImportedOnlyFromTests — nothing outside *_test.go may import
-		// it). Its KDFMeter.Install legitimately calls kdfmeter.SetObserver to wire
-		// the counter. Excluded here BY PACKAGE PATH, not by call shape, so the
-		// exclusion is a checkable constant and stays sound if the installer moves
-		// between files within that package.
-		if strings.Contains(filepath.ToSlash(path), "internal/fuzzutil/resguard/") {
-			return nil
-		}
-		b, rerr := os.ReadFile(path)
-		if rerr != nil {
-			return rerr
-		}
-		if strings.Contains(string(b), "kdfmeter.SetObserver") {
-			rel, _ := filepath.Rel(root, path)
-			offenders = append(offenders, rel)
+		if strings.HasSuffix(rel, ".go") && !strings.HasSuffix(rel, "_test.go") {
+			files = append(files, rel)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walk: %v", err)
 	}
-	if len(offenders) > 0 {
-		t.Fatalf("kdfmeter.SetObserver is test-only but is called from production file(s): %s", strings.Join(offenders, ", "))
-	}
+	sort.Strings(files)
+	return files
 }
 
 // repoRoot walks up from the package dir to the module root (the dir with go.mod).
