@@ -197,6 +197,22 @@ func TestCoreGateParity_SecretsAndEnvironments(t *testing.T) {
 					return err
 				}
 			}},
+			// ACL management needs secrets.manage on the node (a project_viewer holds
+			// secrets.read only); the global admin is the admitted principal.
+			{op: "secret.acl.grant", deniedBy: w.viewerA, allowedBy: w.admin, run: func(a string) func(uint) error {
+				s := w.secret("acl-grant-"+a, w.envA1, w.admin)
+				return func(actor uint) error {
+					return w.c.GrantSecretACL(ctx, actor, s.ID, w.devA, []string{"secrets.read"})
+				}
+			}},
+			{op: "secret.acl.revoke", deniedBy: w.viewerA, allowedBy: w.admin, run: func(a string) func(uint) error {
+				s := w.secret("acl-revoke-"+a, w.envA1, w.admin)
+				require.NoError(t, w.c.GrantSecretACL(ctx, w.admin, s.ID, w.devA, []string{"secrets.read"}))
+				acls, err := w.c.ListSecretACLs(ctx, s.ID)
+				require.NoError(t, err)
+				require.Len(t, acls, 1)
+				return func(actor uint) error { return w.c.RevokeSecretACL(ctx, actor, s.ID, acls[0].ID) }
+			}},
 		}
 	})
 }

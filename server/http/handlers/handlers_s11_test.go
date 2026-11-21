@@ -635,7 +635,8 @@ func TestConsumeSetup_HappyPath_S11(t *testing.T) {
 func TestAddGroupMember_NotFound_S11(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS11(t)
-	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
+	ensureActiveActorUser(t, cs.Storage(), 1)                      // withUserCtx's user acts through core (#4159)
+	grantGlobalPermissions(t, cs, 1, "users.read", "roles.assign") // the route gate, decided in core too (#4161)
 	h, err := NewGroupHandler(cs)
 	require.NoError(t, err)
 	// Group 99999 doesn't exist, so AddUserToGroup returns "not found" → 404.
@@ -1702,7 +1703,8 @@ func TestGetUserByUsername_HappyPath_S11(t *testing.T) {
 func TestRestoreProject_HappyPath_S11(t *testing.T) {
 	t.Parallel()
 	cs := freshCoreS11(t)
-	ensureActiveActorUser(t, cs.Storage(), 1) // withUserCtx's user acts through core (#4159)
+	ensureActiveActorUser(t, cs.Storage(), 1)        // withUserCtx's user acts through core (#4159)
+	grantGlobalPermissions(t, cs, 1, "roles.assign") // the route gate (roles.assign at the project), decided in core too (#4161)
 	h := NewCatalogHandler(cs)
 	ctx := context.Background()
 

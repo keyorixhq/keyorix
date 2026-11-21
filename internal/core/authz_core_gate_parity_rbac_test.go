@@ -50,11 +50,9 @@ func TestCoreGateParity_RolesUsersGroups(t *testing.T) {
 				g := w.group("parity-gmember-" + a)
 				return func(actor uint) error { return w.c.AddUserToGroup(ctx, actor, false, w.viewerA, g.ID, w.projA) }
 			}},
-			{op: "user.roles.set", deniedBy: w.padminA, allowedBy: w.admin, run: func(a string) func(uint) error {
-				return func(actor uint) error {
-					return w.c.SetUserRoles(ctx, actor, w.viewerA, []uint{w.viewerRoleID}, Scope{ProjectID: w.projA}, false)
-				}
-			}},
+			// user.roles.set (SetUserRoles) is NOT gated here: core keeps its finer
+			// per-scope granter ceiling (replaceUserRoleSet) and the differential
+			// classifies the op coreGateExcluded; see rbac_management.go.
 			{op: "user.create", deniedBy: w.padminA, allowedBy: w.admin, run: func(a string) func(uint) error {
 				return func(actor uint) error {
 					_, err := w.c.CreateUserAudited(ctx, w.newUser("plain-"+a), actor, false)

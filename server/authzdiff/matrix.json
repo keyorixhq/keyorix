@@ -4063,6 +4063,9 @@
       "secret_reading": false,
       "core_entries": [
         "GrantSecretACL"
+      ],
+      "guard_reach": [
+        "Authorize"
       ]
     },
     {
@@ -4077,6 +4080,9 @@
       "secret_reading": false,
       "core_entries": [
         "RevokeSecretACL"
+      ],
+      "guard_reach": [
+        "Authorize"
       ]
     },
     {
@@ -7977,7 +7983,7 @@
       "guards": [
         "Authorize"
       ],
-      "core_refusal": "typed"
+      "core_refusal": "none"
     },
     {
       "core": "BulkRenameSecrets",
@@ -9271,7 +9277,9 @@
       "secret_reading": false,
       "reached_by_all_ops": 2,
       "infra": false,
-      "guards": null,
+      "guards": [
+        "Authorize"
+      ],
       "core_refusal": "typed"
     },
     {
@@ -10818,8 +10826,10 @@
       "secret_reading": false,
       "reached_by_all_ops": 2,
       "infra": false,
-      "guards": null,
-      "core_refusal": "none"
+      "guards": [
+        "Authorize"
+      ],
+      "core_refusal": "typed"
     },
     {
       "core": "RevokeShare",

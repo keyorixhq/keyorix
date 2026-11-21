@@ -37,6 +37,12 @@ func newACLCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	for _, uid := range []uint{1, 5, 7, 42, 55, 100} {
 		require.NoError(t, db.Create(&models.UserRole{UserID: uid, RoleID: 999, ProjectID: 1}).Error)
 	}
+	// #4161: Grant/RevokeSecretACL decide the route gate (secrets.manage on the
+	// node) in core; the two granting actors these tests use hold it at the
+	// project through an ordinary role.
+	for _, actor := range []uint{1, 99} {
+		grantGateHolder(t, db, actor, Scope{ProjectID: 1}, permSecretsManage)
+	}
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
 	return c, db

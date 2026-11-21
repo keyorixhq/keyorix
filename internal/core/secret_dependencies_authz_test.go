@@ -49,9 +49,10 @@ func newDepAuthzCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	// a project member (mirrors secret_acl_test.go's newACLCore). RoleID 999 is a
 	// placeholder — membership is checked on user_id+project_id, not the role itself.
 	require.NoError(t, db.Create(&models.UserRole{UserID: authzTestActor, RoleID: 999, ProjectID: 1}).Error)
-	// The granting actor (0) needs no setup: writeAuditEvent tolerates actor 0, and
-	// GrantSecretACL below is called directly by the test as a fixture step, not through
-	// an authorization path of its own.
+	// The granting actor (1) is a fixture step, not what these tests are about; since
+	// #4161 GrantSecretACL decides the route gate (secrets.manage on the node) in core,
+	// so it holds that at the project through an ordinary role.
+	grantGateHolder(t, db, 1, Scope{ProjectID: 1}, permSecretsManage)
 	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
 	return c, db

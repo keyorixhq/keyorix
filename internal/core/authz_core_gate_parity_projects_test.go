@@ -40,21 +40,13 @@ func TestCoreGateParity_ProjectsSharesInvitationsBulk(t *testing.T) {
 				require.NoError(t, err)
 				return func(actor uint) error { return w.c.RevokeShare(ctx, share.ID, actor) }
 			}},
-			{op: "accessrequest.bulk.approve", deniedBy: w.padminA, allowedBy: w.admin, run: func(a string) func(uint) error {
-				// Unknown request ids: before the gate every principal got a result
-				// listing them as not found; a principal without GLOBAL roles.assign is
-				// now refused before any item is looked at.
-				return func(actor uint) error {
-					_, err := w.c.BulkApproveAccessRequests(ctx, []uint{999999}, actor, 0)
-					return err
-				}
-			}},
-			{op: "accessrequest.bulk.reject", deniedBy: w.padminA, allowedBy: w.admin, run: func(a string) func(uint) error {
-				return func(actor uint) error {
-					_, err := w.c.BulkRejectAccessRequests(ctx, []uint{999999}, actor, 0, "parity")
-					return err
-				}
-			}},
 		}
 	})
 }
+
+// The bulk access-request decisions (accessrequest.bulk.approve / .reject) are NOT
+// gated here: core applies the finer per-item rule (roles.assign at each request's
+// project, the single-request ceiling) that also lets a machine approver act (#2495),
+// while the router's gate is roles.assign at the GLOBAL scope. The differential
+// classifies those two ops coreGateExcluded instead (server/authzdiff); see
+// internal/core/bulk_access_requests.go.

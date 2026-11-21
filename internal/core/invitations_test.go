@@ -407,6 +407,7 @@ func TestRequestProjectAccess_RejectsUnknownProject(t *testing.T) {
 	c := newInviteCore(store)
 	ctx := context.Background()
 	store.On("GetProject", ctx, uint(404)).Return(nil, fmt.Errorf("project not found: %w", storage.ErrProjectNotFound))
+	stubActiveActors(store) // the requester is active (#4159/#4161)
 
 	_, err := c.RequestProjectAccess(ctx, 404, 2, "", "please")
 	require.Error(t, err)
@@ -653,7 +654,8 @@ func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	// roles.assign baseline before the per-permission loop this test's
 	// throttling behavior actually exercises.
 	stubAuthorizedPrincipal(store, 9, Scope{}, "roles.assign")
-	stubActiveActors(store) // the inviting admin is active (#4159)
+	stubAuthorizedPrincipal(store, 9, Scope{}, permUsersWrite) // #4161: the route gate, decided in core too
+	stubActiveActors(store)                                    // the inviting admin is active (#4159)
 
 	inv1, prov1, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9, 0)
 	require.NoError(t, err)

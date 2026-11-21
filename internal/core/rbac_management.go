@@ -474,12 +474,13 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
 		return err
 	}
-	// #4161: the route gate (users.read for the /users group and roles.assign,
-	// both at the GLOBAL scope, PUT /users/{id}/roles) is decided here as well; the
-	// per-role granter ceiling at scope inside replaceUserRoleSet stays.
-	if err := c.requireScopedGates(ctx, actorID, scopedGate{permUsersRead, Scope{}}, scopedGate{permRolesAssign, Scope{}}); err != nil {
-		return err
-	}
+	// The route's GLOBAL gate (users.read for the /users group and roles.assign,
+	// PUT /users/{id}/roles) is deliberately NOT decided here (#4161): core's own
+	// rule is the finer per-scope granter ceiling inside replaceUserRoleSet
+	// (roles.assign and every granted role's permissions AT the target scope, the
+	// self-replacement rules, the two-commit retry semantics its tests pin), and the
+	// router's global gate is a transport policy on top of it. The differential
+	// classifies user.roles.set coreGateExcluded (server/authzdiff).
 	return c.replaceUserRoleSet(ctx, roleSetReplace{
 		actorID: actorID, userID: userID, scope: scope, actorIsMachine: actorIsMachine, want: roleIDs,
 	})

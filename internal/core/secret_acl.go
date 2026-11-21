@@ -80,12 +80,21 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 			return invalidACLRequest(fmt.Errorf("%s: invalid ACL permission %q — must be one of %v", i18n.T("ErrorValidation", nil), p, validACLPermissions))
 		}
 	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 
 	// Verify the target node exists (this is defence-in-depth; the HTTP layer also
 	// resolves it). Unlike requireSecret, this accepts a folder node too — see
 	// requireSecretOrFolderNode.
 	secret, err := c.requireSecretOrFolderNode(ctx, secretID)
 	if err != nil {
+		return err
+	}
+	// #4161: the route gate (secrets.manage on the node: RequireScopedSecretPermission
+	// at REST, AuthorizeSecretPrincipalForSecretAction at gRPC) is decided here as
+	// well, so core refuses what the transports refuse.
+	if err := c.requireSecretActionGate(ctx, actorID, secret, permSecretsManage, ""); err != nil {
 		return err
 	}
 
@@ -127,6 +136,19 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 func (c *KeyorixCore) RevokeSecretACL(ctx context.Context, actorID, secretID, aclID uint) error {
 	if aclID == 0 {
 		return invalidACLRequest(fmt.Errorf("%s: ACL ID is required", i18n.T("ErrorValidation", nil)))
+	}
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
+	// #4161: the route gate (secrets.manage on the node, see GrantSecretACL) is
+	// decided here as well; a machine actor is authorized through its own roles, as
+	// the transports do for this op.
+	node, err := c.requireSecretOrFolderNode(ctx, secretID)
+	if err != nil {
+		return err
+	}
+	if err := c.requireSecretActionGate(ctx, actorID, node, permSecretsManage, ""); err != nil {
+		return err
 	}
 
 	// Look up all ACLs for this secret to verify the aclID belongs here.

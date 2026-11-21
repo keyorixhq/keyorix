@@ -870,6 +870,12 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 	if err := refuseMachineActor(ctx, userID); err != nil { // #4162
 		return nil, err
 	}
+	// #4159/#4161: the route has no permission gate (any authenticated user may ask
+	// for access), so the only decision core has to share with the transports is the
+	// account state: a suspended requester is refused at authentication there.
+	if err := c.requireActorActive(ctx, userID); err != nil {
+		return nil, err
+	}
 	if projectID == 0 || userID == 0 {
 		return nil, fmt.Errorf("project and user IDs are required")
 	}

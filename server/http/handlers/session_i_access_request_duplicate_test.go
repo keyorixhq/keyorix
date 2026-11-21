@@ -33,7 +33,9 @@ func newAccessRequestDuplicateTestHandler(t *testing.T) *CatalogHandler {
 		&models.AuditEvent{}, &models.Notification{}, &models.Role{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "e2e-smoke-project"}).Error)
-	return NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+	ensureActiveActorUser(t, h.coreService.Storage(), 1) // the requester acts through core (#4159/#4161)
+	return h
 }
 
 func createAccessRequestReq(projectID string) *http.Request {

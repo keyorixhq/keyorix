@@ -48,7 +48,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `BootstrapSystem` | Y |  | none |  | POST /system/init | — | no gRPC |
 | `BulkApproveAccessRequests` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize | POST /api/v1/access-requests/bulk-approve | — | no gRPC |
 | `BulkDeleteSecrets` | Y |  | typed+untyped | Authorize | POST /api/v1/projects/{id}/secrets/bulk-delete | — | no gRPC |
-| `BulkRejectAccessRequests` | Y |  | typed | Authorize | POST /api/v1/access-requests/bulk-reject | — | no gRPC |
+| `BulkRejectAccessRequests` | Y |  | none | Authorize | POST /api/v1/access-requests/bulk-reject | — | no gRPC |
 | `BulkRenameSecrets` | Y |  | typed | Authorize | POST /api/v1/projects/{id}/secrets/bulk-rename | — | no gRPC |
 | `BulkRevokeExpiredOwnPATs` | Y |  | none |  | DELETE /api/v1/auth/tokens/expired | — | no gRPC |
 | `BulkRotateSecrets` | Y | Y | typed+untyped | Authorize | POST /api/v1/projects/{id}/secrets/bulk-rotate | — | no gRPC |
@@ -138,7 +138,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `GetSecretWithPermissionCheck` | Y |  | typed+untyped | Authorize | POST /api/v1/secret-access-requests | — | no gRPC |
 | `GetUserIdentity` | Y |  | none |  | PUT /api/v1/auth/profile | — | no gRPC |
 | `GetUserRolesByID` | Y |  | none |  | PUT /api/v1/users/{id}/roles | — | no gRPC |
-| `GrantSecretACL` | Y |  | typed |  | POST /api/v1/secrets/{id}/acl | keyorix.v1.SecretService.GrantSecretACL |  |
+| `GrantSecretACL` | Y |  | typed | Authorize | POST /api/v1/secrets/{id}/acl | keyorix.v1.SecretService.GrantSecretACL |  |
 | `InspectCertificate` |  | Y | typed+untyped | Authorize | GET /api/v1/secrets/{id}/certificate | — | no gRPC |
 | `InviteGlobalWithLink` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize | POST /api/v1/invitations | — | no gRPC |
 | `InviteMember` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize | POST /api/v1/projects/{id}/memberships | — | no gRPC |
@@ -239,7 +239,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `RevokeOwnPAT` | Y |  | none |  | DELETE /api/v1/auth/tokens/{id} | — | no gRPC |
 | `RevokeOwnSession` | Y |  | none |  | DELETE /api/v1/auth/sessions/{id} | — | no gRPC |
 | `RevokeRiskException` | Y |  | typed |  | DELETE /api/v1/risk-exceptions/{id} | — | no gRPC |
-| `RevokeSecretACL` | Y |  | none |  | DELETE /api/v1/secrets/{id}/acl/{aclId} | keyorix.v1.SecretService.RevokeSecretACL |  |
+| `RevokeSecretACL` | Y |  | typed | Authorize | DELETE /api/v1/secrets/{id}/acl/{aclId} | keyorix.v1.SecretService.RevokeSecretACL |  |
 | `RevokeShare` | Y |  | typed | Authorize | DELETE /api/v1/shares/{id} | keyorix.v1.ShareService.RevokeShare |  |
 | `RevokeUserSessions` | Y |  | none | Authorize | POST /api/v1/users/{id}/revoke-sessions | — | no gRPC |
 | `RollbackSecret` | Y | Y | typed+untyped | Authorize | POST /api/v1/secrets/{id}/rollback | — | no gRPC |

@@ -353,13 +353,6 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 	if err != nil {
 		return err
 	}
-	// #4161: the route gate (secrets.write at the secret's scope, role-based, no
-	// owner pass) is decided here as well, in front of the owner-or-manager rule
-	// below: a secrets.manage holder or an owner without secrets.write was refused
-	// by every transport and is now refused by core too.
-	if err := c.requireScopedGate(ctx, revokedBy, permSecretsWrite, Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}); err != nil {
-		return err
-	}
 	// Owner authority also requires live project membership — see ShareSecret.
 	// A holder of secrets.manage at the secret's scope may also revoke a share on
 	// a secret they do not own (the permission that already governs per-secret ACL
@@ -379,6 +372,14 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 			return err
 		}
 		byManager = true
+	}
+	// #4161: the route gate (secrets.write at the secret's scope, role-based, no
+	// owner pass) is decided here as well, after the owner-or-manager rule so a
+	// non-owner non-manager keeps its ErrShareNotOwner refusal: an owner, or a
+	// secrets.manage holder, without secrets.write was refused by every transport
+	// and is now refused by core too.
+	if err := c.requireScopedGate(ctx, revokedBy, permSecretsWrite, Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}); err != nil {
+		return err
 	}
 
 	// Wrapped in a transaction (not a bare c.storage.DeleteShareRecord call) so a
