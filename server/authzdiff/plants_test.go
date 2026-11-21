@@ -116,8 +116,8 @@ var plants = append([]plant{
 		// "core allows, every present transport denies, the model denies". Until
 		// #4161 that shape was the known-04 waiver and this plant could only
 		// prove the harness RECORDED it (240 known-04 cases planted, 0 clean, at
-		// introduction). known-04 is now narrowed to the four owner-pass ops
-		// (partition_test.go), so the same core-only over-allow is "unexplained"
+		// introduction). known-04 is now narrowed to the one owner-pass op still
+		// open, bulk.suspend (partition_test.go), so the same core-only over-allow is "unexplained"
 		// and this plant proves a strict sweep FAILS on a dropped core gate while
 		// both transports still gate the op — the defence-in-depth regression the
 		// partition used to be blind to.

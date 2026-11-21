@@ -56,10 +56,10 @@ import (
 // condition was fixed is removed instead of silently absorbing a regression
 // of that fix.
 //
-// What this partition does NOT detect: on the four known-04 ops, for the
-// viewer-owner principal only, "core allows, every present transport denies,
-// the model denies" is still absorbed, so a dropped core check on exactly that
-// shape is invisible until the owner pass is closed there and the waiver goes.
+// What this partition does NOT detect: on bulk.suspend, for the viewer-owner
+// principal only, "core allows, every present transport denies, the model
+// denies" is still absorbed, so a dropped core check on exactly that shape is
+// invisible until the owner pass is closed there and the waiver goes.
 // Everywhere else a core-only over-allow is "unexplained" and fails a strict
 // sweep (the reassign-owner plant proves it, plants_test.go).
 //
@@ -77,14 +77,13 @@ func explain(r *caseResult) string {
 
 	switch {
 	// known-04, narrowed by #4161 to what is left of it: the owner pass alone
-	// still authorizes these four writes in core (secret.tags, secret.description
-	// and secret.move are #4508, fixed on PR #4536; bulk.suspend is item 2 of PR
-	// #4557), so the viewer who OWNS the fixture secret (secretArgs arg 1, or the
-	// viewer-owned secret in the bulk suspend's project) passes core and is
-	// refused by the route gate. Remove the case and the waiver row when the last
-	// of the four is closed (a dead waiver fails the full strict sweep).
+	// still authorizes one write in core, bulk.suspend (item 2 of PR #4557;
+	// secret.tags, secret.description and secret.move were #4508, closed by
+	// #4536), so the viewer who OWNS a secret in the bulk suspend's project passes
+	// core and is refused by the route gate. Remove the case and the waiver row
+	// when it is closed (a dead waiver fails the full strict sweep).
 	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies &&
-		pk == pkViewer && slices.Contains([]string{"secret.tags", "secret.description", "secret.move", "bulk.suspend"}, r.Op):
+		pk == pkViewer && r.Op == "bulk.suspend":
 		return "known-04"
 
 	}

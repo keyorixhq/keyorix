@@ -10,5 +10,5 @@
   alike, with a typed refusal; an access request from a suspended account is refused in
   core as it is at authentication. No client-visible change: every request a client could
   make was already refused at the transport. The differential's known-04 waiver is narrowed
-  to the four owner-pass cases still open, so a dropped core check anywhere else now fails
-  the strict sweep.
+  to the one owner-pass case still open (bulk suspend), so a dropped core check anywhere else
+  now fails the strict sweep.

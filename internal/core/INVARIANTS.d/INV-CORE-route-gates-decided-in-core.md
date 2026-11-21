@@ -26,11 +26,11 @@
   principal with a real grant short of the gate is refused with `ErrPermissionDenied`, an
   admitted one still succeeds; red before the gates),
   `TestCoreGateParity_InternalPseudoActorIsExempt`, and the strict differential sweep
-  (`server/authzdiff`), whose known-04 waiver is narrowed to the four owner-pass ops still
-  open (secret.tags, secret.description, secret.move: #4508; bulk.suspend: PR #4557 item
-  2), so a core-only over-allow anywhere else is `unexplained` and fails the sweep (the
-  reassign-owner plant proves it). **Not covered**: the four narrowed ops until that waiver
-  is removed; three ops where core deliberately keeps a FINER rule than the router's
+  (`server/authzdiff`), whose known-04 waiver is narrowed to the one owner-pass op still
+  open (bulk.suspend: PR #4557 item 2; secret.tags, secret.description and secret.move
+  were #4508, closed by #4536), so a core-only over-allow anywhere else is `unexplained`
+  and fails the sweep (the reassign-owner plant proves it). **Not covered**: bulk.suspend
+  for the viewer-owner principal until that waiver is removed; three ops where core deliberately keeps a FINER rule than the router's
   global gate and does not re-derive the gate — `BulkApproveAccessRequests` /
   `BulkRejectAccessRequests` (roles.assign at each request's project, which also admits a
   machine approver, #2495) and `SetUserRoles` (the per-scope granter ceiling and
