@@ -47,7 +47,9 @@ func (ls *LocalStorage) WithTransaction(ctx context.Context, fn func(storage.Sto
 			// its zero value keeps that transaction durable.
 			// TestWithTransaction_CloneNeverInheritsAuditSkipDurableSync is the
 			// guard; a future refactor to a `clone := *ls` whole-struct copy
-			// would break it and must re-read this.
+			// would break it and must re-read this. sqliteReadAuditDB (ADR-112
+			// Amendment 7) is not propagated either: a clone's audit rows commit
+			// with the caller's FULL transaction, never on the NORMAL handle.
 			secretMetaCache: ls.secretMetaCache,
 			rolePermCache:   ls.rolePermCache,
 			softDeleteDays:  ls.softDeleteDays,

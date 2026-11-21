@@ -66,7 +66,10 @@ status only: `200` (`healthy`) when the backend answers 2xx, `503` (`unavailable
 otherwise, so `web` (and a load balancer probing that port) turns unhealthy when
 the backend is down. The backend's own response body is not passed through, so
 backend health detail does not leave through the web container. `GET /nginx-health`
-is a static `200` for the web container alone.
+is a static `200` for the web container alone. A load balancer must probe `/health`
+(or `/readyz`, which answers the same way from the backend's readiness check:
+database reachable) on the public port, never `/nginx-health`, which stays `200` while
+the backend is down.
 
 **Using the CLI against the stack.** The backend's port is not published; the
 CLI talks to it through the web container's proxy:

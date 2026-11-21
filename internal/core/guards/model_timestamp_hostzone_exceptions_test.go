@@ -25,10 +25,4 @@ func init() {
 		"the default is returned by GetAnomalyConfig and never saved by the store (TestDefaultAnomalyConfigIsNeverPersisted); a save goes through core UpdateAnomalyConfig, which restamps")
 	registerModelTimestampException("server/admin/recovery_key.go:runRotateRecoveryKey:CreatedAt",
 		"SetRecoveryKeyRecord stores CreatedAt.UTC() and utcPtr(RotatedAt) (local_recovery_key.go)")
-
-	// Tracked: a real defect of the same class, outside the files HOSTZONE-TIME-NOV-1 may edit, proven
-	// on SQLite (secret_versions.created_at stored "... +0900 JST m=+..." after CreateSecret on a
-	// TZ=Asia/Tokyo host). Remove the row together with the .UTC() fix.
-	registerModelTimestampException("internal/core/secrets_versions.go:storeSecretVersion:CreatedAt",
-		"tracked, real: HOSTZONE-TIME-NOV-1 LEFTOVERS (secret_versions.created_at)")
 }

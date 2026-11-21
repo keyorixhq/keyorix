@@ -1,0 +1,1 @@
+server/pgfault	none	-	test-only PostgreSQL connection-loss fault proxy and durability oracles; not part of any shipped build	test-helper

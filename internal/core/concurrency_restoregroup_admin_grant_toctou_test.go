@@ -121,10 +121,19 @@ func TestConcurrency_RestoreGroup_AdminGrantRace_TOCTOU_Deterministic(t *testing
 		&models.Project{}, &models.Environment{}, &models.AuditEvent{}, &models.SoDPolicy{},
 	))
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "roles.assign"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "users.read"}).Error)
 	// adminRole has the structural bypass flag -- roleSetContainsAdmin's one
 	// real signal (ADR-084), independent of its name or bundled permissions.
 	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "sneaky_admin", BypassesPermissionChecks: true, AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "nonadmin", UsernameFolded: "nonadmin", AccountState: core.AccountActive}).Error)
+	// #4161: core decides the route gate itself (users.read for the /groups group,
+	// roles.assign for the restore). The non-admin actor holds exactly those two,
+	// nothing admin-tier, so it reaches the ceiling check and the paused write; a
+	// roleless actor would be refused at the gate and never block the test's hook.
+	require.NoError(t, db.Create(&models.Role{ID: 11, Name: "restorer", NameFolded: "restorer", AssignableScope: models.RoleAssignableAny}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 11, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 11, PermissionID: 2}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 11}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "g1", NameFolded: "g1", DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true}}).Error)
 
 	realStorage := store.NewLocalStorage(db)

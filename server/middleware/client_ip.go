@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/core/rules"
 )
 
 // The forwarding headers a trusted proxy may set, in order of preference, are
@@ -134,9 +136,16 @@ func clientIPFromRequest(r *http.Request, trusted []*net.IPNet) string {
 	// trusted value as the LAST header line, with the client's own value first. Walk the
 	// occurrences from the last back to the first and take the first one that parses as a
 	// valid IP, so the proxy-appended hop wins over anything the client sent.
+	//
+	// If that value is itself a trusted proxy, nothing client-attributable is left (#4520):
+	// a trusted proxy's own address is never the client, and the earlier occurrences are
+	// not a chain but client-suppliable values, so we do not walk past it either.
 	xriValues := r.Header.Values("X-Real-IP")
 	for _, xriValue := range slices.Backward(xriValues) {
 		if xri := strings.TrimSpace(xriValue); xri != "" && net.ParseIP(xri) != nil {
+			if ipInAny(xri, trusted) {
+				return ""
+			}
 			return xri
 		}
 	}
@@ -151,16 +160,27 @@ func parseCIDRs(entries []string) []*net.IPNet {
 			continue
 		}
 		if !strings.Contains(e, "/") {
-			// A bare IP — treat as a /32 (v4) or /128 (v6).
+			// A bare IP — treat as a /32 (v4) or /128 (v6). The CIDR is built from the
+			// parsed address, not the input text: an IPv4-mapped entry written in IPv6
+			// form ("::ffff:1.2.3.4") has To4() != nil, and "::ffff:1.2.3.4/32" would
+			// parse as the IPv6 network ::/32 (#4520).
 			if ip := net.ParseIP(e); ip != nil {
-				if ip.To4() != nil {
-					e += "/32"
+				if ip4 := ip.To4(); ip4 != nil {
+					e = ip4.String() + "/32"
 				} else {
-					e += "/128"
+					e = ip.String() + "/128"
 				}
 			}
 		}
-		if _, n, err := net.ParseCIDR(e); err == nil {
+		// An explicit IPv4-mapped prefix has the same trap: "::ffff:1.2.3.4/32" and
+		// "::ffff:10.0.0.0/8" parse as ::/32 and ::/8, which trust ::1 and not the
+		// intended proxy (#4520). Mapped /N with N <= 32 becomes the IPv4 network;
+		// 33..95 has no IPv4 meaning and is dropped (fail closed: untrusted).
+		canon, err := rules.NormalizeIPv4MappedCIDR(e)
+		if err != nil {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(canon); err == nil {
 			nets = append(nets, n)
 		}
 	}

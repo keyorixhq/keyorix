@@ -212,6 +212,12 @@ func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) (*mode
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return nil, err
 	}
+	// #4161: the route gate (users.read for the /groups group, roles.assign for a
+	// restore that reinstates every role grant the group carried, both GLOBAL) is
+	// decided here as well; the admin-reinstatement ceiling below stays.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permUsersRead, Scope{}}, scopedGate{permRolesAssign, Scope{}}); err != nil {
+		return nil, err
+	}
 	// #2455: GetGroupRoles, the ceiling check, and the restore write all run
 	// under sodGrantLockKey("group", id) -- the same key AssignRoleToGroup/
 	// AssignGroupRoleWithExpiry (rbac_management.go, jit_access.go) take
@@ -385,6 +391,12 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsM
 		return invalidGroupRequest(fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil)))
 	}
 	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
+	// #4161: the route gate (users.read for the /groups group, roles.assign for a
+	// membership that confers every role the group holds, both GLOBAL) is decided
+	// here as well; the per-role ceiling in validateGroupJoinRoles stays.
+	if err := c.requireScopedGates(ctx, actorID, scopedGate{permUsersRead, Scope{}}, scopedGate{permRolesAssign, Scope{}}); err != nil {
 		return err
 	}
 	// #PM-006: a group membership confers every role the group holds at the

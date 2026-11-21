@@ -627,7 +627,7 @@ func PrintValidationResult(result *ValidationResult) {
 	printStatus("Encryption", result.EncryptionOK)
 	printStatus("Database", result.DatabaseOK)
 	if result.EffectiveAuditDurability.Level != "" {
-		fmt.Printf("%-13s: %s (%s)\n", "Audit durability", result.EffectiveAuditDurability.Level, result.EffectiveAuditDurability.Level.Meaning())
+		fmt.Printf("%-13s: %s (%s)\n", "Audit durability", result.EffectiveAuditDurability.Level, result.EffectiveAuditDurability.Meaning())
 	}
 
 	if len(result.Warnings) > 0 {

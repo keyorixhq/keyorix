@@ -24,6 +24,8 @@ func MachineTokenExpiresAt(expiresInDays int64, now time.Time) (*time.Time, erro
 	if expiresInDays == 0 {
 		return nil, nil
 	}
-	t := now.AddDate(0, 0, int(expiresInDays))
+	// UTC: the callers pass time.Now(), and a host-zone value would be stored and returned in the
+	// JSON response with the host offset.
+	t := now.UTC().AddDate(0, 0, int(expiresInDays))
 	return &t, nil
 }

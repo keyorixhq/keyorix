@@ -199,7 +199,10 @@ Configuration is invalid: server.http.allowed_origins must not contain "*" — l
 **Match:** `a wildcard origin defeats the CORS allowlist`
 
 **Cause / fix.** List each origin as `scheme://host[:port]`. Entries that are not origins, or
-use a scheme other than http/https, are refused with a similar message. **In place:** yes.
+use a scheme other than http/https, are refused with a similar message, and so is a `*` inside
+an entry (`https://*`, `https://*.example.com`), which the CORS layer would treat as a pattern,
+or in `server.http.domain` (the default origin, `https://<domain>`, when `allowed_origins` is empty).
+**In place:** yes.
 
 ### Other value checks — from code
 
@@ -1224,19 +1227,6 @@ Configuration is invalid: storage.database.pooler "pgbouncer-session" applies on
 **Match:** `applies only to storage.type postgres; remove it`
 
 **Fix.** Remove `pooler` (and `native_read_pool_max`, which has the same rule). **In place:** yes.
-
-### `audit_durability: standard` on SQLite
-
-Real output:
-
-```
-Configuration is invalid: storage.database.audit_durability: standard is only supported with PostgreSQL; SQLite runs strict only -- remove the setting or set it to strict
-```
-
-**Match:** `standard is only supported with PostgreSQL`
-
-**Fix.** Remove the setting or use `strict`. **In place:** yes.
-[UPGRADING.md §6c](../UPGRADING.md#6c-postgresql-audit-durability-now-defaults-to-standard).
 
 ### Undeclared transaction-mode pooler — from code
 

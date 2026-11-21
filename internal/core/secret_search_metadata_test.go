@@ -30,6 +30,7 @@ func TestSecretSearch_NameDescriptionTags(t *testing.T) {
 	p, _ := c.storage.CreateProject(ctx, &models.Project{Name: "p1"})
 	e, _ := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
+	seedOwnerWriteRoleForTest(t, db, 1) // #4508: the owner must hold secrets.write
 
 	mk := func(name, desc string, tags ...string) {
 		s, err := c.CreateSecret(ctx, &CreateSecretRequest{

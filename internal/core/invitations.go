@@ -508,6 +508,11 @@ func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRol
 	if err := c.requireActorActive(ctx, invitedBy); err != nil { // #4159
 		return nil, nil, err
 	}
+	// #4161: the route gate (users.write at the GLOBAL scope, POST /invitations) is
+	// decided here as well; the escalation-by-proxy ceiling in buildGlobalInvite stays.
+	if err := c.requireScopedGate(ctx, invitedBy, permUsersWrite, Scope{}); err != nil {
+		return nil, nil, err
+	}
 	invCtx, inv, sysRole, clean, err := c.buildGlobalInvite(ctx, email, systemRole, assignments, invitedBy, invitedByMachineID)
 	if err != nil {
 		return nil, nil, err
@@ -530,6 +535,11 @@ func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRol
 // single project role. Everything was validated at invite time, so a failure here
 // is a storage error (leaving the invitation pending/resendable), not bad input.
 func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) error { // NOSONAR -- cognitive complexity 22, suppress go:S3776
+	// Re-checked here as well as before the account is created: an inviter
+	// suspended in between must not have its authority used for the grants (#4507).
+	if err := c.requireInviterActive(ctx, inv); err != nil {
+		return err
+	}
 	// A genuine machine inviter (not a /system proxy relay) -- tag ctx so the
 	// requireGranterHoldsRolePermissions calls reached via AssignUserRole/
 	// inviteMemberWithMode below check ITS real permissions instead of
@@ -570,6 +580,16 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 	// Project-scoped invite: single project membership.
 	_, err := c.inviteMemberWithMode(ctx, inv.ProjectID, userID, inv.Role, inv.InvitedBy, inv.InvitedByMachineIdentityID, inv.ValidationModeAtInvite, false)
 	return err
+}
+
+// requireInviterActive refuses accepting an invitation whose human inviter is no
+// longer active (#4507). The grants are made from the inviter's authority, and the
+// invitee consumes an unauthenticated setup link, so no transport check covers the
+// inviter: the account-state check on InviteMember/AssignUserRole is not reached by
+// inviteMemberWithMode, which accept-time grants call directly. A machine inviter
+// is skipped, as in requireActorActive.
+func (c *KeyorixCore) requireInviterActive(ctx context.Context, inv *models.ProjectInvitation) error {
+	return c.requireActorActive(ctx, humanActorID(inv.InvitedBy, inv.InvitedByMachineIdentityID != 0))
 }
 
 // invitationGrantScopes lists the (role name, scope) grants applyInvitationGrants
@@ -863,6 +883,12 @@ func (c *KeyorixCore) StaleInvitations(ctx context.Context, projectID uint, olde
 // RequestProjectAccess creates a pending access request for a user to a project.
 func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userID uint, suggestedRole, reason string) (*models.AccessRequest, error) {
 	if err := refuseMachineActor(ctx, userID); err != nil { // #4162
+		return nil, err
+	}
+	// #4159/#4161: the route has no permission gate (any authenticated user may ask
+	// for access), so the only decision core has to share with the transports is the
+	// account state: a suspended requester is refused at authentication there.
+	if err := c.requireActorActive(ctx, userID); err != nil {
 		return nil, err
 	}
 	if projectID == 0 || userID == 0 {

@@ -7,10 +7,11 @@ import "testing"
 // (skipped under -short), so the binding falling out of calibration, or
 // disagreeing with the model in a shape no known waiver absorbs, is caught in
 // CI. reassign-owner, the earlier V5 area, is left out to keep the check fast;
-// it runs in the opt-in full sweep and TestAuthzDiffSmoke. Neither of those, nor
-// this test, FAILS when only reassign-owner's own core gate is removed: REST
-// still gates that route, so the core-only over-allow lands in the known-04
-// waiver (partition_test.go). Its plant asserts exactly that recording.
+// it runs in the opt-in full sweep and TestAuthzDiffSmoke. Since #4161 those
+// FAIL when only reassign-owner's own core gate is removed: REST still gates
+// that route, but a core-only over-allow is no longer absorbed by the (now
+// narrowed) known-04 waiver (partition_test.go), so it is "unexplained". Its
+// plant asserts exactly that.
 //
 // Coverage: every NAMED principal (admin, viewer, project-admin, no-role,
 // actor-0, expired, suspended, restricted-PAT) plus a small CURATED set of

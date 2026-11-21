@@ -26,7 +26,8 @@ func newMaxReadsCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	sqlDB.SetMaxOpenConns(1) // sqlite: serialize connections (statements stay atomic)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessSchedule{}, &models.User{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
-	ensureActiveActor(t, c.storage, 1) // the acting user is active (#4159)
+	ensureActiveActor(t, c.storage, 1)                   // the acting user is active (#4159)
+	grantGateHolder(t, db, 1, Scope{}, permSecretsWrite) // #4161: RollbackSecret decides the route gate in core
 	return c, db
 }
 

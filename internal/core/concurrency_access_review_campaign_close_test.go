@@ -49,10 +49,11 @@ func TestConcurrency_DecideAccessReviewItem_RejectsWhenRacingClose(t *testing.T)
 	item := &models.AccessReviewItem{CampaignID: campaign.ID, PrincipalType: "role", PrincipalID: 999, RoleID: 1, Source: "role", Decision: core.ReviewItemPending}
 	require.NoError(t, db.Create(item).Error)
 
+	const reviewers = 16
+	seedActiveActors(t, db, reviewerIDs(100, reviewers)...) // the reviewers must be active accounts (#4159)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
-	const reviewers = 16
 	var decideSucceeded atomic.Int64
 	var decideRejectedDecided atomic.Int64
 	var decideRejectedClosed atomic.Int64

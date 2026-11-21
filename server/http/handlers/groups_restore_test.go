@@ -23,7 +23,8 @@ func TestRestoreGroupHandler(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.AuditEvent{}, &models.Role{}, &models.User{}))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
-	ensureActiveActorUser(t, c.Storage(), 1) // withUserCtx's user acts through core (#4159)
+	ensureActiveActorUser(t, c.Storage(), 1)                      // withUserCtx's user acts through core (#4159)
+	grantGlobalPermissions(t, c, 1, "users.read", "roles.assign") // the route gate, decided in core too (#4161)
 	h, err := NewGroupHandler(c)
 	require.NoError(t, err)
 

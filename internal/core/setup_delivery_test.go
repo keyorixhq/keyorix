@@ -192,6 +192,9 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 	ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 
 	ms.On("GetUser", ctx, uint(7)).Return(&models.User{ID: 7, IsActive: true, AccountState: AccountActive}, nil).Maybe() // the creating admin is active (#4159)
+	// #4161: CreateUserAudited decides the route gate (users.read + users.write, global) in core.
+	stubAuthorizedPrincipal(ms, 7, Scope{}, permUsersRead)
+	stubAuthorizedPrincipal(ms, 7, Scope{}, permUsersWrite)
 	user, prov, err := c.CreateUserWithSetupLink(ctx, &CreateUserRequest{
 		Username: "dana", Email: "dana@acme.io", DisplayName: "Dana",
 	}, 7, false)
@@ -238,6 +241,9 @@ func TestCreateUserWithSetupLink_ThrottlesCreateDeleteRecreateLoop(t *testing.T)
 	ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil).Once()
 
 	ms.On("GetUser", ctx, uint(7)).Return(&models.User{ID: 7, IsActive: true, AccountState: AccountActive}, nil).Maybe() // the creating admin is active (#4159)
+	// #4161: CreateUserAudited decides the route gate (users.read + users.write, global) in core.
+	stubAuthorizedPrincipal(ms, 7, Scope{}, permUsersRead)
+	stubAuthorizedPrincipal(ms, 7, Scope{}, permUsersWrite)
 	_, prov1, err := c.CreateUserWithSetupLink(ctx, req, 7, false)
 	require.NoError(t, err)
 	require.NotNil(t, prov1)
@@ -286,6 +292,9 @@ func TestCreateUserWithOneTimePassword(t *testing.T) {
 	ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, notFound())
 
 	ms.On("GetUser", ctx, uint(7)).Return(&models.User{ID: 7, IsActive: true, AccountState: AccountActive}, nil).Maybe() // the creating admin is active (#4159)
+	// #4161: CreateUserAudited decides the route gate (users.read + users.write, global) in core.
+	stubAuthorizedPrincipal(ms, 7, Scope{}, permUsersRead)
+	stubAuthorizedPrincipal(ms, 7, Scope{}, permUsersWrite)
 	user, otp, err := c.CreateUserWithOneTimePassword(ctx, &CreateUserRequest{
 		Username: "dana", Email: "dana@acme.io", DisplayName: "Dana",
 	}, 7, false)

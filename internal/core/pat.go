@@ -284,8 +284,22 @@ func (c *KeyorixCore) TouchPATLastUsed(_ context.Context, patID uint) {
 // cache entry was written, for up to validTokenTTL. The caller must now treat
 // these two sentinels as "deny the request", not as a transient lookup
 // failure to degrade past (see serveAuthCacheHit).
+//
+// It also re-checks the OWNING ACCOUNT, as ValidatePATToken's slow path does
+// (IsActive and AccountLoginBlocked), and returns ErrPATOwnerNotActive when
+// the account is gone or no longer usable. Without this a cache hit judged
+// only the token row: suspending, deactivating or deprovisioning a user
+// stopped their PATs on the cache-hit path only if the credential sweep that
+// marks every PAT revoked succeeded, and a failed sweep (which skips the
+// cache eviction too) left the token authenticating for up to validTokenTTL
+// on every replica holding it. The machine-token re-check has had the same
+// owner gate since #2518 (ErrMachineIdentityNotActive). The owner is read in
+// the same statement as the token (GetPersonalAccessTokenWithOwnerByHash), so
+// a cache hit is still one storage read. A failed read is returned as-is, so
+// the caller refuses the request as indeterminate (CACHE-FAILCLOSED-1) rather
+// than serving the cached principal.
 func (c *KeyorixCore) CurrentPATRestriction(ctx context.Context, raw string) (*PATRestriction, error) {
-	pat, err := c.storage.GetPersonalAccessTokenByHash(ctx, sha256Hex(raw))
+	pat, owner, err := c.storage.GetPersonalAccessTokenWithOwnerByHash(ctx, sha256Hex(raw))
 	if err != nil {
 		if credentialRowGone(err) {
 			// CRED-CACHE-REVOKE-1: a deleted PAT row (the retention purge, or
@@ -299,6 +313,12 @@ func (c *KeyorixCore) CurrentPATRestriction(ctx context.Context, raw string) (*P
 	}
 	if IsPATExpired(pat, c.authEffectiveNow()) {
 		return nil, ErrPATExpired
+	}
+	if !owner.Found {
+		return nil, fmt.Errorf("%w: owner not found", ErrPATOwnerNotActive)
+	}
+	if !accountUsableFromRow(pat.UserID, owner.IsActive, owner.AccountState) {
+		return nil, fmt.Errorf("%w: account_state %q", ErrPATOwnerNotActive, owner.AccountState)
 	}
 	return patRestrictionFrom(pat), nil
 }
