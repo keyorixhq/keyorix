@@ -6371,6 +6371,187 @@ export interface components {
             project_id?: number;
             order?: components["schemas"]["RotationOrderStep"][];
         };
+        /** @description The deployment-wide controls-posture snapshot (GET /compliance/posture): one object per control area. degraded is true when a sub-rollup could not be queried, so the zero values it carries are UNKNOWN rather than verified clean; degraded_reasons names each failed rollup. Mirrors core.CompliancePosture; TestCompliancePostureSchemaMatchesHandlerBody fails when the two drift. */
+        CompliancePosture: {
+            /** Format: date-time */
+            generated_at: string;
+            audit_integrity: components["schemas"]["AuditIntegrityPosture"];
+            access_governance: components["schemas"]["AccessGovernancePosture"];
+            rotation: components["schemas"]["RotationPosture"];
+            identity: components["schemas"]["IdentityPosture"];
+            emergency_access: components["schemas"]["EmergencyAccessPosture"];
+            access_requests: components["schemas"]["AccessRequestPosture"];
+            classification: components["schemas"]["ClassificationPosture"];
+            anomalies: components["schemas"]["AnomaliesPosture"];
+            legal_hold: components["schemas"]["LegalHoldPosture"];
+            retention: components["schemas"]["RetentionPosture"];
+            risk: components["schemas"]["RiskPosture"];
+            certificates: components["schemas"]["CertificatePosture"];
+            supply_chain: components["schemas"]["SupplyChainPosture"];
+            /** @description One or more sub-rollups could not be queried; treat the snapshot as incomplete, not passing. */
+            degraded: boolean;
+            /** @description Each failed sub-rollup with its underlying error. Absent when degraded is false. */
+            degraded_reasons?: string[];
+            trend?: components["schemas"]["ComplianceTrend"];
+        };
+        /** @description The tamper-evident audit trail (ADR-029). chained_events is the count verified at the last check, through head_id, not a live count: when stale is true the check is older than a minute and latest_event_id / events_since_check say how many events lie past it (#4186). Neither of those is a verification result. */
+        AuditIntegrityPosture: {
+            /** @description True only when verification_status is valid. */
+            chain_verified: boolean;
+            /** Format: int64 */
+            chained_events: number;
+            checkpointed: boolean;
+            /** @description Why the chain is not fully verified, when it is not. */
+            reason?: string;
+            /** @enum {string} */
+            verification_status?: "valid" | "broken" | "not_proven" | "sealed";
+            /** Format: date-time */
+            last_full_verification_at?: string;
+            /**
+             * Format: date-time
+             * @description When the chain tail was last checked.
+             */
+            last_checked_at?: string;
+            /** @description Id of the chain head as of the last check. */
+            head_id?: number;
+            /** @description The last check is older than the freshness window, or its refresh failed and the previous value is shown. */
+            stale?: boolean;
+            /** @description Newest audit event id now; set only when stale. */
+            latest_event_id?: number;
+            /**
+             * Format: int64
+             * @description Events past head_id written since the check and not yet verified; set only when stale.
+             */
+            events_since_check?: number;
+        };
+        /** @description Access recertification and dormant standing access. */
+        AccessGovernancePosture: {
+            projects: number;
+            projects_with_open_campaign: number;
+            projects_never_reviewed: number;
+            open_campaigns: number;
+            /** @description Undecided items across open campaigns. */
+            pending_items: number;
+            /** @description Overdue for recertification (A.5.18 cadence). */
+            projects_overdue: number;
+            /** @description Grants with no or old activity at the capability they confer. */
+            dormant_role_grants: number;
+            /** @description Principals holding a forbidden permission pair (A.5.3). */
+            sod_violations: number;
+        };
+        /** @description Secret-rotation hygiene (ISO A.5.15 / NIS2). */
+        RotationPosture: {
+            /** @description All static secrets in scope. */
+            total_secrets: number;
+            /** @description Those with a rotation schedule. */
+            covered_secrets: number;
+            overdue: number;
+            due_soon: number;
+        };
+        /** @description Second-factor (MFA / passkey) coverage. */
+        IdentityPosture: {
+            active_users: number;
+            users_with_second_factor: number;
+            second_factor_percent: number;
+        };
+        /** @description Break-glass usage (NIS2/DORA). degraded_activations counts activations committed while the audit log refused their rows whose owed audit rows are not yet in the hash chain: their audit record is incomplete and their review is owed. Non-zero also sets the snapshot's degraded flag. */
+        EmergencyAccessPosture: {
+            active_activations: number;
+            total_activations: number;
+            /** @description Activations with no recorded review that are older than review_window_hours (ADR-112). */
+            unreviewed_activations: number;
+            /** @description 0 when there are none. */
+            oldest_unreviewed_age_hours: number;
+            review_window_hours: number;
+            /** @description At most one active global admin-tier holder, so no one but the activator could review. */
+            independent_review_impossible: boolean;
+            degraded_activations: number;
+        };
+        /** @description The dual-control access-request workflow (ADR-024, A.5.3), counted by state. */
+        AccessRequestPosture: {
+            total_requests: number;
+            pending: number;
+            approved: number;
+            rejected: number;
+            withdrawn: number;
+            expired: number;
+            /** @description The configured N-of-M dual-control threshold. */
+            required_approvals: number;
+        };
+        /** @description A per-level tally of classifiable entities. */
+        ClassificationCounts: {
+            total: number;
+            public: number;
+            internal: number;
+            confidential: number;
+            restricted: number;
+            unclassified: number;
+        };
+        /** @description Data-classification coverage (A.5.12). The flat counts are static secrets. */
+        ClassificationPosture: {
+            total_secrets: number;
+            public: number;
+            internal: number;
+            confidential: number;
+            restricted: number;
+            unclassified: number;
+            dynamic_configs: components["schemas"]["ClassificationCounts"];
+            machine_identities: components["schemas"]["ClassificationCounts"];
+            machine_credentials: components["schemas"]["ClassificationCounts"];
+        };
+        /** @description Detected access anomalies (NIS2 detection). */
+        AnomaliesPosture: {
+            unacknowledged: number;
+            high_severity_open: number;
+        };
+        /** @description Whether a litigation or investigation hold is in effect (A.5.34). */
+        LegalHoldPosture: {
+            active: boolean;
+            /** Format: date-time */
+            placed_at?: string;
+            reason?: string;
+        };
+        /** @description Configured retention windows in days; 0 keeps that record type forever (A.5.33). */
+        RetentionPosture: {
+            enabled: boolean;
+            anomaly_alerts_days: number;
+            closed_access_reviews_days: number;
+            break_glass_days: number;
+            resolved_access_requests_days: number;
+        };
+        /** @description The risk register (A.5.8). */
+        RiskPosture: {
+            active_exceptions: number;
+            expiring_soon: number;
+            /** @description Past their expiry but still not revoked. */
+            expired: number;
+        };
+        /** @description Certificate hygiene from the cached expiry (ADR-056). */
+        CertificatePosture: {
+            total_certificates: number;
+            expired: number;
+            /** @description Within 30 days. */
+            expiring_soon: number;
+            /** @description Certificate secrets whose certificate has not been parsed yet. */
+            not_evaluated: number;
+        };
+        /** @description Software-supply-chain integrity (ADR-062/064/065). */
+        SupplyChainPosture: {
+            update_signing_trusted: boolean;
+            trusted_update_keys: number;
+            /** @description Offline-license state, e.g. active, expiring_soon, none. */
+            license_state: string;
+            license_valid: boolean;
+        };
+        /** @description Week-over-week direction against the latest snapshot at least 20 hours old. Absent on the first call. */
+        ComplianceTrend: {
+            /** Format: date-time */
+            previous_date?: string;
+            passed_delta?: number;
+            failed_delta?: number;
+            /** @enum {string} */
+            direction: "improving" | "regressing" | "stable" | "no_data";
+        };
     };
     responses: {
         /** @description Error response, matching server/http/handlers/helpers.go's sendError verbatim. `code` and `message` are top-level, and `error` is a short string label (e.g. "NotFound"), NOT a nested object -- confirmed 2026-09-24 against a live server (docs/cli-split-inventory.md PR 2's live-verification step) after this schema's previous shape (a nested `error: {code, message, type}` object with no `code`/ `message` at the top level) was found to have never matched any real response this server has ever sent -- it broke the first oapi-codegen-generated client to actually parse an error path (the thin CLI), which fails loudly on a schema mismatch rather than silently misreading a field, unlike a raw-JSON caller. */
@@ -10297,6 +10478,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     getSecretByName: {
@@ -10327,6 +10509,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     getSecretValueByRef: {
@@ -11404,6 +11587,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     getSecretAuditTrail: {
@@ -13960,7 +14144,9 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     removeUserRole: {
@@ -14820,12 +15006,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data}. data: {generated_at, audit_integrity, access_governance, rotation, identity, emergency_access} — see the description for each group's fields. */
+            /** @description Envelope {data}. data is the CompliancePosture snapshot: one object per control area (audit_integrity, access_governance, rotation, identity, emergency_access, access_requests, classification, anomalies, legal_hold, retention, risk, certificates, supply_chain), plus degraded / degraded_reasons and, once a prior snapshot exists, trend. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        data?: components["schemas"]["CompliancePosture"];
+                    };
+                };
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
