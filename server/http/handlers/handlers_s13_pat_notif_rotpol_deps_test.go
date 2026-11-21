@@ -403,7 +403,7 @@ func TestAddSecretDependency_BadJSON_S13(t *testing.T) {
 // Uses distinct id / depends_on_id to avoid the "cannot depend on itself" → 400 branch.
 func TestAddSecretDependency_NotFound_S13(t *testing.T) {
 	t.Parallel()
-	h := newSecretHandlerS4(t)
+	h := newSecretHandlerWithActiveActorS13(t)
 	// id=9998, depends_on_id=9999 — distinct so self-reference guard doesn't fire.
 	// requireSecret(9998) returns "not found" → dependencyErrorStatus → 404.
 	body, _ := json.Marshal(map[string]any{"depends_on_id": 9999})
@@ -445,7 +445,7 @@ func TestRemoveSecretDependency_BadDepID_S13(t *testing.T) {
 // TestRemoveSecretDependency_NotFound_S13 — valid ids but dep does not exist → 404.
 func TestRemoveSecretDependency_NotFound_S13(t *testing.T) {
 	t.Parallel()
-	h := newSecretHandlerS4(t)
+	h := newSecretHandlerWithActiveActorS13(t)
 	req := withUserCtx(withChiParams(
 		httptest.NewRequest(http.MethodDelete, "/", nil),
 		map[string]string{"id": "1", "depId": "9999"},
@@ -453,6 +453,20 @@ func TestRemoveSecretDependency_NotFound_S13(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.RemoveSecretDependency(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// newSecretHandlerWithActiveActorS13 is a SecretHandler over a fresh core in which the
+// user withUserCtx acts as (ID 1) exists and is active. The two not-found tests above
+// used the shared S4 core, which has no user 1 of its own: run alone they answered 403,
+// because the #4159 actor check (requireActorActive) refuses an unknown actor before
+// the handler ever reaches its not-found branch; in a full package run some earlier
+// test happened to have created user 1. The fixture, not the handler, was the premise
+// those tests did not establish.
+func newSecretHandlerWithActiveActorS13(t *testing.T) *SecretHandler {
+	t.Helper()
+	h, err := NewSecretHandler(freshCoreS12WithCredentialOwners(t, 1))
+	require.NoError(t, err)
+	return h
 }
 
 // TestGetSecretImpact_BadID_S13 — non-numeric id → 400.
