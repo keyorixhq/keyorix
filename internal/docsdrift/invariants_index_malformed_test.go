@@ -3,8 +3,11 @@ package docsdrift
 // invariants_index_malformed_test.go — calibration for the one thing
 // checkInvariantsIndex used to skip without a word: a table row its patterns
 // do not match (a missing cell, a link without a path, a non-numeric count).
-// Such a row was left out of the sums, so the Total could be "right" for the
-// rows that matched and the index still wrong.
+// Such a row was left out of the sums, so the sums could be "right" for the
+// rows that matched and the index still wrong. The table is generated now, so
+// such a row can only come from a hand edit of the block; the generator's
+// --check would call that stale too, and this keeps the readable, named
+// diagnostic for it.
 
 import (
 	"strings"
@@ -25,8 +28,9 @@ func TestInvariantsIndexCheck_MalformedRowIsReported(t *testing.T) {
 	doc := readDoc(g, "docs/INVARIANTS.md")
 	base := checkInvariantsIndex(doc)
 
-	// The planted row goes after the last table line (there is no Total row).
-	const marker = "\n\n## Highest-priority UNGUARDED gaps"
+	// The planted row goes after the last table row, still inside the block
+	// (there is no Total row).
+	const marker = "\n" + invIndexEndMark
 	plants := []struct{ name, row string }{
 		{"non-numeric count", "| `planted/pkg` | [p/INVARIANTS.md](../p/INVARIANTS.md) | 3 | two | 1 |"},
 		{"missing cell", "| `planted/pkg` | [p/INVARIANTS.md](../p/INVARIANTS.md) | 3 | 3 |"},
