@@ -282,11 +282,11 @@ func (f *KeyorixFetcher) FetchWithExpiry(ctx context.Context, ref string) ([]byt
 	if err != nil {
 		return nil, nil, err
 	}
-	id, err := f.resolveID(ctx, env, name)
+	id, envID, err := f.resolveID(ctx, env, name)
 	if err != nil {
 		return nil, nil, err
 	}
-	return f.fetchValue(ctx, id)
+	return f.fetchValue(ctx, id, envID)
 }
 
 // parseRef splits "<environment>/<name>" into its parts. The name may itself contain
@@ -311,15 +311,21 @@ func parseRef(ref string) (env, name string, err error) {
 // still found rather than wrongly reported gone (#Bug2). The name match is exact —
 // not case-insensitive — so a differently-cased duplicate created by another
 // principal in the same environment can never shadow the intended secret (#Bug3).
-func (f *KeyorixFetcher) resolveID(ctx context.Context, env, name string) (uint, error) {
-	envID, err := f.resolveEnvironmentID(ctx, env)
+//
+// The scoping above is requested, not trusted: the entry that matches name must itself
+// say it belongs to this fetcher's project and to envID, or the lookup fails closed.
+// Without that check a server-side filter bug, or a hostile server, would have the
+// agent materialise another environment's secret under this one's name. It returns the
+// secret id and the environment id it was found under, which fetchValue checks again.
+func (f *KeyorixFetcher) resolveID(ctx context.Context, env, name string) (id, envID uint, err error) {
+	envID, err = f.resolveEnvironmentID(ctx, env)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if envID == 0 {
 		// Never scope a list to environment 0: the server would not treat it as
 		// "this environment".
-		return 0, fmt.Errorf("environment %q: server returned an invalid id", env)
+		return 0, 0, fmt.Errorf("environment %q: server returned an invalid id", env)
 	}
 
 	for page := 1; ; page++ {
@@ -331,27 +337,35 @@ func (f *KeyorixFetcher) resolveID(ctx context.Context, env, name string) (uint,
 
 		var body struct {
 			Secrets []struct {
-				ID   uint   `json:"ID"`
-				Name string `json:"Name"`
+				ID            uint   `json:"ID"`
+				Name          string `json:"Name"`
+				ProjectID     uint   `json:"project_id"`
+				EnvironmentID uint   `json:"environment_id"`
 			} `json:"secrets"`
 			TotalPages int `json:"total_pages"`
 		}
 		if err := f.getJSON(ctx, "/api/v1/secrets?"+q.Encode(), &body); err != nil {
-			return 0, fmt.Errorf("list secrets in project %d environment %q (page %d): %w", f.projectID, env, page, err)
+			return 0, 0, fmt.Errorf("list secrets in project %d environment %q (page %d): %w", f.projectID, env, page, err)
 		}
 		for _, s := range body.Secrets {
 			if s.Name == name {
 				if s.ID == 0 {
-					return 0, fmt.Errorf("secret %q in environment %q: server returned an invalid id", name, env)
+					return 0, 0, fmt.Errorf("secret %q in environment %q: server returned an invalid id", name, env)
 				}
-				return s.ID, nil
+				// Not ErrUpstreamGone: a scope the server contradicts is a broken answer,
+				// not proof the secret was removed, so the synced copy must not be wiped.
+				if s.ProjectID != f.projectID || s.EnvironmentID != envID {
+					return 0, 0, fmt.Errorf("secret %q in environment %q: server listed it under project %d environment %d, expected project %d environment %d",
+						name, env, s.ProjectID, s.EnvironmentID, f.projectID, envID)
+				}
+				return s.ID, envID, nil
 			}
 		}
 		if page >= body.TotalPages {
 			break
 		}
 	}
-	return 0, fmt.Errorf("secret %q not found in environment %q: %w", name, env, ErrUpstreamGone)
+	return 0, 0, fmt.Errorf("secret %q not found in environment %q: %w", name, env, ErrUpstreamGone)
 }
 
 // resolveEnvironmentID resolves an environment NAME to its numeric id within this
@@ -407,16 +421,26 @@ func (f *KeyorixFetcher) loadEnvironmentsLocked(ctx context.Context) error {
 }
 
 // fetchValue returns the decrypted value of the secret with the given id and the
-// secret's expiration (nil when it has none).
-func (f *KeyorixFetcher) fetchValue(ctx context.Context, id uint) ([]byte, *time.Time, error) {
+// secret's expiration (nil when it has none). The response must describe the secret
+// that was asked for, in this fetcher's project and in envID: a value that arrives
+// attached to a different id, project or environment is discarded, so the engine
+// never writes one secret's value under another's name.
+func (f *KeyorixFetcher) fetchValue(ctx context.Context, id, envID uint) ([]byte, *time.Time, error) {
 	var body struct {
 		Value  string `json:"value"`
 		Secret struct {
-			Expiration *time.Time `json:"expiration"`
+			ID            uint       `json:"id"`
+			ProjectID     uint       `json:"project_id"`
+			EnvironmentID uint       `json:"environment_id"`
+			Expiration    *time.Time `json:"expiration"`
 		} `json:"secret"`
 	}
 	if err := f.getJSON(ctx, fmt.Sprintf("/api/v1/secrets/%d?include_value=true", id), &body); err != nil {
 		return nil, nil, fmt.Errorf("read secret %d value: %w", id, err)
+	}
+	if s := body.Secret; s.ID != id || s.ProjectID != f.projectID || s.EnvironmentID != envID {
+		return nil, nil, fmt.Errorf("read secret %d value: server answered for secret %d in project %d environment %d, expected project %d environment %d",
+			id, s.ID, s.ProjectID, s.EnvironmentID, f.projectID, envID)
 	}
 	if body.Value == "" {
 		// A missing or empty value is not a secret to sync; delivering it would

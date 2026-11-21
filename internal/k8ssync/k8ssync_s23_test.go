@@ -501,7 +501,7 @@ func TestKeyorixFetcher_S23_FetchValue404(t *testing.T) {
 		}
 		if r.URL.Path == "/api/v1/secrets" {
 			// List returns a known secret so resolveID succeeds.
-			_, _ = w.Write([]byte(`{"data":{"total_pages":1,"secrets":[{"ID":42,"Name":"my-secret"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"total_pages":1,"secrets":[{"ID":42,"Name":"my-secret","project_id":1,"environment_id":5}]}}`))
 			return
 		}
 		// Value endpoint returns 404 (deleted between list and fetch).

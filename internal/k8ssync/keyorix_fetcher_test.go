@@ -145,11 +145,14 @@ type stubSecret struct {
 // each secret's value).
 func keyorixStub(t *testing.T, wantToken string, projectID uint, environments map[string]uint, secretsByEnv map[uint][]stubSecret) *httptest.Server {
 	t.Helper()
-	// id -> value, derived so /secrets/{id}?include_value=true can answer directly.
+	// id -> value and id -> environment id, derived so /secrets/{id}?include_value=true
+	// can answer directly, scoped like the real server's response.
 	valueByID := make(map[uint]string)
-	for _, secrets := range secretsByEnv {
+	envByID := make(map[uint]uint)
+	for envID, secrets := range secretsByEnv {
 		for _, s := range secrets {
 			valueByID[s.ID] = fmt.Sprintf("value-of-%d", s.ID)
+			envByID[s.ID] = envID
 		}
 	}
 	projPrefix := fmt.Sprintf("/api/v1/projects/%d/environments", projectID)
@@ -219,7 +222,7 @@ func keyorixStub(t *testing.T, wantToken string, projectID uint, environments ma
 				if i > 0 {
 					buf += ","
 				}
-				buf += fmt.Sprintf(`{"ID":%d,"Name":%q}`, s.ID, s.Name)
+				buf += fmt.Sprintf(`{"ID":%d,"Name":%q,"project_id":%d,"environment_id":%d}`, s.ID, s.Name, projectID, envID)
 			}
 			buf += `]}}`
 			_, _ = w.Write([]byte(buf))
@@ -232,7 +235,7 @@ func keyorixStub(t *testing.T, wantToken string, projectID uint, environments ma
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"data":{"value":%q}}`, val)
+			_, _ = fmt.Fprintf(w, `{"data":{"value":%q,"secret":{"id":%d,"project_id":%d,"environment_id":%d}}}`, val, id, projectID, envByID[id])
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -435,9 +438,12 @@ func TestKeyorixFetcher_CachesEnvironmentList(t *testing.T) {
 			envCalls++
 			_, _ = w.Write([]byte(`{"data":{"environments":[{"ID":5,"Name":"production"}]}}`))
 		case r.URL.Path == "/api/v1/secrets":
-			_, _ = w.Write([]byte(`{"data":{"total_pages":1,"secrets":[{"ID":7,"Name":"db-password"},{"ID":9,"Name":"api-key"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"total_pages":1,"secrets":[` +
+				`{"ID":7,"Name":"db-password","project_id":1,"environment_id":5},` +
+				`{"ID":9,"Name":"api-key","project_id":1,"environment_id":5}]}}`))
 		case r.URL.Query().Get("include_value") == "true":
-			_, _ = w.Write([]byte(`{"data":{"value":"x"}}`))
+			_, _ = fmt.Fprintf(w, `{"data":{"value":"x","secret":{"id":%s,"project_id":1,"environment_id":5}}}`,
+				strings.TrimPrefix(r.URL.Path, "/api/v1/secrets/"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
