@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -147,6 +148,12 @@ func (s *suspendInviterOnceAccountExists) GetUser(ctx context.Context, id uint) 
 		s.suspended = s.suspend()
 	}
 	return s.FaultyStorage.GetUser(ctx, id)
+}
+
+// GetSessionAuthLiveness forwards the combined session read over this wrapper, so
+// the GetUser override is not bypassed on that path (PERF-FIX-7 guard).
+func (s *suspendInviterOnceAccountExists) GetSessionAuthLiveness(ctx context.Context, userID, sessionID uint) (*storage.SessionAuthLiveness, error) {
+	return storage.ComposeSessionAuthLiveness(ctx, s, userID, sessionID), nil
 }
 
 // TestCompleteInvitationAccept_InviterReadFaultIsPostVerdict: a storage fault
