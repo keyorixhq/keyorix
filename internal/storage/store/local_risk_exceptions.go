@@ -68,6 +68,7 @@ func (ls *LocalStorage) RevokeRiskExceptionIfNotRevoked(ctx context.Context, e *
 	// overwrite would silently revert that just-committed approval even
 	// though the revoke itself is legitimate. Whitelist only the columns
 	// this transition actually owns.
+	// safe-cas-writer-ok: RiskException: sets revoked=true, which makes ApproveRiskExceptionIfPending's revoked=false CAS miss, and writes no column that approval owns (TestFullRowWriters_NarrowWriteSurvivesStaleTransition_ApproveRiskExceptionIfPending).
 	res := ls.db.WithContext(ctx).Model(&models.RiskException{}).
 		Where("id = ? AND revoked = ?", e.ID, false).
 		Select("Revoked", "RevokedBy", "RevokedAt").

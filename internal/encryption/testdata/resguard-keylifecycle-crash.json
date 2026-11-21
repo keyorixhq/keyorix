@@ -1,0 +1,14 @@
+{
+  "target": "keylifecycle_crash",
+  "platform": "linux",
+  "factor": 4,
+  "seeds": 6,
+  "meters": {
+    "disk_bytes": {
+      "floor": 32412,
+      "per_byte": 506.4375,
+      "abs_max": 129648,
+      "mode": "absolute"
+    }
+  }
+}
