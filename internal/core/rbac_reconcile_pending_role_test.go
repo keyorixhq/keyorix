@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
@@ -113,16 +114,25 @@ func TestReconcileRBAC_LegacyPendingEntryGrantsNothing(t *testing.T) {
 // while it is paused. Without serialisation the second clears the debt, the
 // first then resumes and saves its stale copy, and a later startup re-grants
 // a permission the operator removed in between.
+// rbac_reconcile_lock_postgres_test.go runs the same with two replicas.
 func TestReconcileRBAC_ConcurrentRunsSerialised(t *testing.T) {
 	t.Parallel()
 	c, db := newRBACReconcileCore(t)
 	seedOldCatalog(t, c, db)
-	ctx := context.Background()
+	requireReconcilesSerialised(t, c, c.storage, c.storage, db)
+}
 
+// requireReconcilesSerialised runs reconcile A over storeA, paused in its
+// first SetSystemMetadata (the debt record, after it read the pending row),
+// starts reconcile B over storeB, and requires that B does not finish before
+// A resumes, and that no stale debt survives. c reads the result.
+func requireReconcilesSerialised(t *testing.T, c *KeyorixCore, storeA, storeB storage.Storage, db *gorm.DB) {
+	t.Helper()
+	ctx := context.Background()
 	paused := make(chan struct{})
 	resume := make(chan struct{})
 	var once sync.Once
-	hooked := &KeyorixCore{storage: storagetest.Hooked(c.storage, &storagetest.StoreHooks{
+	replicaA := &KeyorixCore{storage: storagetest.Hooked(storeA, &storagetest.StoreHooks{
 		SetSystemMetadata: func(next storage.Storage, ctx context.Context, key, value string) error {
 			first := false
 			once.Do(func() { first = true })
@@ -133,19 +143,20 @@ func TestReconcileRBAC_ConcurrentRunsSerialised(t *testing.T) {
 			return next.SetSystemMetadata(ctx, key, value)
 		},
 	})}
+	replicaB := &KeyorixCore{storage: storeB}
 
 	errA := make(chan error, 1)
-	go func() { errA <- hooked.ReconcileRBACPermissions(ctx) }()
+	go func() { errA <- replicaA.ReconcileRBACPermissions(ctx) }()
 	<-paused
 	errB := make(chan error, 1)
-	go func() { errB <- hooked.ReconcileRBACPermissions(ctx) }()
+	go func() { errB <- replicaB.ReconcileRBACPermissions(ctx) }()
 
 	ranWhilePaused := false
 	select {
 	case err := <-errB:
 		require.NoError(t, err)
 		ranWhilePaused = true
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(750 * time.Millisecond):
 	}
 	close(resume)
 	require.NoError(t, <-errA)
