@@ -24,13 +24,13 @@
   over-allows — the shape the known-04 waiver used to absorb. #4161 moved the
   route gates into core on every op that relied on the transport alone
   (`internal/core/authz_core_gate.go`, `TestCoreGateParity_*`) and narrowed
-  known-04 to the one owner-pass op still open (bulk.suspend), so a core-only
+  known-04 to bulk.suspend (decided per secret in core, no project gate), so a core-only
   over-allow is now `unexplained` and a strict sweep fails on it.
   Guard: `TestPlantsAreDetected` (CI job `authzdiff-plants`, opt-in
   `AUTHZDIFF_PLANTS=1`); `TestV5StrictSweep` (default `go test`, skipped under
   `-short`) runs the deterministic strict sweep over the V5 bindings and fails on
   any uncalibrated or `unexplained` case; `TestInvalidArgsFailAdminControl` and the
   `uncalibrated` failure path of `TestAuthzDiffSweep`/`FuzzAuthzDiff`. Does NOT
-  fail on a core gate dropped on bulk.suspend for the viewer-owner principal
+  fail on a core gate dropped on bulk.suspend for the viewer principal
   (the one op still under known-04) until that waiver is removed; see
   `partition_test.go`.
