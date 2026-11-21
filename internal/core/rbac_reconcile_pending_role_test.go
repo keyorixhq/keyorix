@@ -124,8 +124,13 @@ func TestReconcileRBAC_ConcurrentRunsSerialised(t *testing.T) {
 
 // requireReconcilesSerialised runs reconcile A over storeA, paused in its
 // first SetSystemMetadata (the debt record, after it read the pending row),
-// starts reconcile B over storeB, and requires that B does not finish before
-// A resumes, and that no stale debt survives. c reads the result.
+// starts reconcile B over storeB, and requires that B does not ENTER the
+// reconcile while A is paused, and that no stale debt survives. c reads the
+// result. B signals entry from inside its WithNamedLock and from its first
+// SetSystemMetadata (its debt record, which a run without the lock reaches at
+// once), so the verdict does not depend on how long B's run takes once inside
+// (REVIEW-4560 L1: on a loaded Postgres B could take longer than the old
+// completion wait and pass unserialised).
 func requireReconcilesSerialised(t *testing.T, c *KeyorixCore, storeA, storeB storage.Storage, db *gorm.DB) {
 	t.Helper()
 	ctx := context.Background()
@@ -143,7 +148,21 @@ func requireReconcilesSerialised(t *testing.T, c *KeyorixCore, storeA, storeB st
 			return next.SetSystemMetadata(ctx, key, value)
 		},
 	})}
-	replicaB := &KeyorixCore{storage: storeB}
+	entered := make(chan struct{})
+	var enterOnce sync.Once
+	signalEntered := func() { enterOnce.Do(func() { close(entered) }) }
+	replicaB := &KeyorixCore{storage: storagetest.Hooked(storeB, &storagetest.StoreHooks{
+		WithNamedLock: func(next storage.Storage, ctx context.Context, lockKey string, fn func(ctx context.Context) error) error {
+			return next.WithNamedLock(ctx, lockKey, func(ctx context.Context) error {
+				signalEntered()
+				return fn(ctx)
+			})
+		},
+		SetSystemMetadata: func(next storage.Storage, ctx context.Context, key, value string) error {
+			signalEntered()
+			return next.SetSystemMetadata(ctx, key, value)
+		},
+	})}
 
 	errA := make(chan error, 1)
 	go func() { errA <- replicaA.ReconcileRBACPermissions(ctx) }()
@@ -153,16 +172,13 @@ func requireReconcilesSerialised(t *testing.T, c *KeyorixCore, storeA, storeB st
 
 	ranWhilePaused := false
 	select {
-	case err := <-errB:
-		require.NoError(t, err)
+	case <-entered:
 		ranWhilePaused = true
-	case <-time.After(750 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 	}
 	close(resume)
 	require.NoError(t, <-errA)
-	if !ranWhilePaused {
-		require.NoError(t, <-errB)
-	}
+	require.NoError(t, <-errB)
 
 	require.Equal(t, 2, connectReadHolders(t, c))
 	removeConnectReadFrom(t, c, "admin")
