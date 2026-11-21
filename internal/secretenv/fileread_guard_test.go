@@ -127,6 +127,9 @@ var nonSecretFileReads = map[string]string{
 	"internal/securefiles/securefiles.go:SyncDir":              "directory open for fsync, not a file read",
 	"server/admin/restore.go:buildStagedSQLiteRestore":         "our own staged database file (dbPath-derived name), opened only to fsync it",
 	"server/admin/restore.go:fsyncDir":                         "directory open for fsync, not a file read",
+
+	"internal/auditverify/sqlite_wal_copy.go:sqliteNeedsPrivateCopy": "reads the 20-byte header of the operator-named audit database (evidence, not a secret); only after regularFileExists, so a FIFO is never opened",
+	"internal/auditverify/sqlite_wal_copy.go:copyFileExclusive":      "copies the operator-named audit database and its -wal (evidence, not a secret); both were checked regular by copySQLiteToPrivateDir",
 }
 
 type readSite struct {

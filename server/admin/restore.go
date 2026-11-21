@@ -1187,7 +1187,10 @@ func readExistingDatabaseAuditEventCount(dbPath string) (int64, error) {
 // INDETERMINATE are both reported but do not, matching verify-audit's own
 // documented semantics.
 func verifyRestoredAudit(cfg *config.Config, dbPath string) error {
-	db, err := auditverify.OpenSQLiteReadOnly(dbPath)
+	// In place: the restored file is server-owned, so it is not copied to
+	// $TMPDIR (a full copy of the vault, and a restore that already committed
+	// must not fail on a small or missing $TMPDIR).
+	db, err := auditverify.OpenSQLiteReadOnlyInPlace(dbPath)
 	if err != nil {
 		return fmt.Errorf("open restored database for automatic verify-audit: %w", err)
 	}
