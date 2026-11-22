@@ -12,6 +12,8 @@ sequence_where_mapping_expected: reject | unmarshal config: yaml: construct erro
 null_value_keeps_zero: accept | {"environment":"","storage_type":"","native_read_pool_max":0,"require_mfa":true,"minimum_cli_version":""}
 anchor_and_alias_scalar: accept | {"environment":"production","storage_type":"","native_read_pool_max":0,"require_mfa":true,"minimum_cli_version":"production"}
 duplicate_known_key: reject | unmarshal config: yaml: construct errors: line 2: mapping key "environment" already defined at line 1
+unknown_key_is_rejected: reject | unmarshal config: yaml: construct errors: line 2: unknown key "environmnt" at the top level of the file (check its spelling and section in docs/CONFIGURATION.md)
+known_key_under_wrong_parent_is_rejected: reject | unmarshal config: yaml: construct errors: line 1: unknown key "encryption" at the top level of the file (check its spelling and section in docs/CONFIGURATION.md)
 unterminated_flow: reject | unmarshal config: yaml: line 2: did not find expected ',' or '}'
 tab_indentation: reject | unmarshal config: yaml: line 2: found character that cannot start any token
 top_level_scalar: reject | unmarshal config: yaml: construct errors: line 1: cannot construct !!str `just a ...` into config.Config

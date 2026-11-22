@@ -97,6 +97,8 @@ var typedDecodeCases = []baselineCase{
 	{"null_value_keeps_zero", "environment: ~\nstorage:\n  type: null\n"},
 	{"anchor_and_alias_scalar", "environment: &e production\nminimum_cli_version: *e\n"},
 	{"duplicate_known_key", "environment: a\nenvironment: b\n"},
+	{"unknown_key_is_rejected", "environment: a\nenvironmnt: typo\n"},
+	{"known_key_under_wrong_parent_is_rejected", "encryption:\n  enabled: true\n"},
 	{"unterminated_flow", "storage: {type: postgres\n"},
 	{"tab_indentation", "storage:\n\ttype: postgres\n"},
 	{"top_level_scalar", "just a string\n"},
