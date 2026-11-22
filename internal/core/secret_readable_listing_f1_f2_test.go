@@ -162,6 +162,13 @@ func seedOwnedAndSharedForReader(t *testing.T, db *gorm.DB) (owned, shared strin
 		CreatedBy: "other", OwnerID: 2,
 	}).Error)
 
+	// A received share is listed only while its recipient is a live member of the
+	// secret's project (REVIEW-4628 M1), which ShareSecret requires too: make user 1 a
+	// member through a role with no permissions, so the global grant stays the only
+	// source of read access.
+	member := models.Role{Name: "share-list-member"}
+	require.NoError(t, db.Where(models.Role{Name: member.Name}).FirstOrCreate(&member).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: member.ID, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.ShareRecord{
 		SecretID: sharedSecret.ID, RecipientID: 1, OwnerID: 2, Permission: "read",
 	}).Error)

@@ -145,6 +145,11 @@ func TestListSecretsInScopeWithSharingInfo_UnscopedIncludesSharedSecrets(t *test
 	ctx := context.Background()
 
 	s := mkACLListSecret(t, db, "shared-secret") // owned by user 1
+	// A share is listed only while its recipient is a live member of the secret's
+	// project (REVIEW-4628 M1): a role with no permissions makes user 2 one.
+	member := models.Role{Name: "acl-list-member"}
+	require.NoError(t, db.Where(models.Role{Name: member.Name}).FirstOrCreate(&member).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: member.ID, ProjectID: s.ProjectID}).Error)
 	require.NoError(t, db.Create(&models.ShareRecord{
 		SecretID: s.ID, OwnerID: 1, RecipientID: 2, Permission: "read",
 	}).Error)

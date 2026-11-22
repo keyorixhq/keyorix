@@ -91,8 +91,17 @@ func mkACLListChildSecret(t *testing.T, db *gorm.DB, name string, parentID uint)
 }
 
 // grantACL inserts a SecretACL row granting userID access to nodeID with the given perm.
+// The grantee is first made a member of the node's project (a user_roles row for a
+// role with no permissions), as GrantSecretACL requires and the listing re-checks
+// (#4623): an ACL row for a non-member is a stale grant the listing must not show.
 func grantACL(t *testing.T, db *gorm.DB, nodeID, userID uint, perm string) {
 	t.Helper()
+	var node models.SecretNode
+	require.NoError(t, db.First(&node, nodeID).Error)
+	member := models.Role{Name: "acl-list-member"}
+	require.NoError(t, db.Where(models.Role{Name: member.Name}).FirstOrCreate(&member).Error)
+	require.NoError(t, db.Where(models.UserRole{UserID: userID, RoleID: member.ID, ProjectID: node.ProjectID}).
+		FirstOrCreate(&models.UserRole{UserID: userID, RoleID: member.ID, ProjectID: node.ProjectID}).Error)
 	permsJSON := `["` + perm + `"]`
 	require.NoError(t, db.Create(&models.SecretACL{
 		SecretID:    nodeID,

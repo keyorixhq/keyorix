@@ -86,6 +86,17 @@ func seedReadRole(t *testing.T, db *gorm.DB, roleName string) uint {
 	return role.ID
 }
 
+// seedACLOnlyMember makes userID a member of projectID through a role with no
+// permissions: an "ACL-only" reader holds no secrets.read role but is still a project
+// member, as GrantSecretACL requires and the listing re-checks (#4623). An ACL row for
+// a non-member is a stale grant that neither GET nor the listing honours.
+func seedACLOnlyMember(t *testing.T, db *gorm.DB, userID, projectID uint, roleName string) {
+	t.Helper()
+	role := &models.Role{Name: roleName}
+	require.NoError(t, db.Create(role).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: userID, RoleID: role.ID, ProjectID: projectID}).Error)
+}
+
 // withUserCtxID2 builds a request UserContext for the given userID/username —
 // helper so each test can inject non-admin principals.
 func withUserCtxID2(r *http.Request, userID uint, username string) *http.Request {
@@ -251,7 +262,7 @@ func TestListSecrets_ScopedUser_NoAccessProject_ReturnsEmpty(t *testing.T) {
 	assert.Equal(t, int64(0), resp.Total, "expected empty list for project with no access")
 }
 
-// TestListSecrets_ACLOnly_ScopedRequest verifies that a user with no project
+// TestListSecrets_ACLOnly_ScopedRequest verifies that a member with no secrets.read
 // role but a per-secret ACL grant in a project gets their granted secrets
 // when filtering by that project_id (not a 403 or empty list).
 func TestListSecrets_ACLOnly_ScopedRequest(t *testing.T) {
@@ -275,7 +286,8 @@ func TestListSecrets_ACLOnly_ScopedRequest(t *testing.T) {
 	require.NoError(t, db.Create(secret2).Error)
 
 	require.NoError(t, db.Create(&models.User{ID: 8, Username: "acl-only-user", AccountState: "active"}).Error)
-	// No UserRole — ACL grant only.
+	// No secrets.read role: membership only, plus the ACL grant.
+	seedACLOnlyMember(t, db, 8, proj.ID, "acl_only_member_scoped")
 	require.NoError(t, db.Create(&models.SecretACL{
 		SecretID:    secret1.ID,
 		UserID:      8,
@@ -294,7 +306,7 @@ func TestListSecrets_ACLOnly_ScopedRequest(t *testing.T) {
 	assert.Equal(t, "acl-secret-1", resp.Secrets[0].Name)
 }
 
-// TestListSecrets_ACLOnly_UnfilteredRequest verifies that a user with no
+// TestListSecrets_ACLOnly_UnfilteredRequest verifies that a member with no secrets.read
 // project role but per-secret ACL grants gets those secrets on an unfiltered
 // GET /secrets (not an empty list).
 func TestListSecrets_ACLOnly_UnfilteredRequest(t *testing.T) {
@@ -312,6 +324,7 @@ func TestListSecrets_ACLOnly_UnfilteredRequest(t *testing.T) {
 	require.NoError(t, db.Create(secret).Error)
 
 	require.NoError(t, db.Create(&models.User{ID: 9, Username: "acl-only-user-2", AccountState: "active"}).Error)
+	seedACLOnlyMember(t, db, 9, proj.ID, "acl_only_member_unfiltered")
 	require.NoError(t, db.Create(&models.SecretACL{
 		SecretID:    secret.ID,
 		UserID:      9,
