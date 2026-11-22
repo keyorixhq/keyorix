@@ -100,7 +100,11 @@ func TestSecretGetAndVersions_ReportTotalReads(t *testing.T) {
 	// reads above: listing versions is secret.versions_listed (#2970), not a read, and
 	// nothing else has touched the access log yet (the async by-name audit write
 	// below has not been triggered), so the count is deterministic.
+	// total_reads is opt-in here too (#3444): the default listing omits it.
 	st, body = do(http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d/versions", id), "")
+	require.Equal(t, http.StatusOK, st, string(body))
+	assert.NotContains(t, string(body), "total_reads", "versions must not count total_reads unless asked (#3444)")
+	st, body = do(http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d/versions?include=total_reads", id), "")
 	require.Equal(t, http.StatusOK, st, string(body))
 	var vout struct {
 		Data struct {
