@@ -49,8 +49,33 @@ layer) and nothing else.
 | Layer | allowed | denied | other |
 |---|---|---|---|
 | core called directly | `err == nil` | `errors.Is(err, core.ErrPermissionDenied)` (covers every `newPermissionSentinel` var and `markPermissionDenied`/`permissionDeniedf`); **or** one of the untyped refusals `errors_permission.go` lists as not matching it: `ErrBreakGlassListForbidden`, `ErrAccessOutsideSchedule`, `ErrConnectRefNotPermitted`, `errAdminAuthorityRequired` (unexported, matched via an exported test hook or by identity in an in-package test helper, decided in Phase 2), SCIM `ErrorNotAuthorized` | anything else (validation, conflict, storage). See "Untyped refusals" below. |
-| REST | `2xx` | `401`, `403`; `404` on an existing target (ADR-096 Convention B sites, plus Convention A's real 404 that only a globally-permitted caller can get, which the positive control rules out for a denied principal); `502` whose body is the `ErrConnectUnknownConnector` text on a **known** connector (ADR-096 "Connect" convention) | every other status: `400`, `409`, `422`, `429`, `5xx`, `502` with any other body |
+| REST | `2xx` | `401`, `403`; `404` on an existing target (ADR-096 Convention B sites, plus Convention A's real 404 that only a globally-permitted caller can get, which the positive control rules out for a denied principal); `502` whose body is the `ErrConnectUnknownConnector` text on a **known** connector (ADR-096 "Connect" convention) | every other status (a `400` carrying a precondition message is `precondition-failed`, below): `400`, `409`, `422`, `429`, `5xx`, `502` with any other body |
 | gRPC | `OK` | `Unauthenticated`, `PermissionDenied`; `NotFound` on an existing target (ADR-096 Convention B: gRPC `GetSecret`/dynamic-secret RPCs); `FailedPrecondition` carrying the `ErrConnectUnknownConnector` text on a known connector | every other code: `InvalidArgument`, `AlreadyExists`, `FailedPrecondition` (other text), `ResourceExhausted`, `Internal`, `Unavailable`, `Unimplemented` |
+
+## `precondition-failed` (REST leg and model, account-state ops only)
+
+A fourth outcome, `precondition-failed`, separates "you may not do this" from
+"you may, but your account is not in the state this needs". It exists for the
+three self-service MFA ops with no RBAC gate at the router: `mfa.activate`
+(needs a pending enrolment), `mfa.disable` and `mfa.recovery-codes.regenerate`
+(need MFA enabled). The handlers answer `400` (the request is well formed, the
+precondition is not met) and that status is kept.
+
+- **REST:** a `400` whose body carries one of the messages the op lists in
+  `opSpec.preconditionMsgs` ("no pending MFA enrolment", "MFA is not enabled",
+  "user not found" for a machine token, "invalid code or password" for activate
+  on an account whose MFA is already on) is `precondition-failed`. Any other
+  `400`, and every `400` of an op that lists none, is still `other`. A restricted
+  PAT is refused with `403` before any of this and stays `denied`.
+- **Model:** an op whose requirement is `accountState` says `precondition-failed`
+  for a caller that passes every other check (authenticated, not suspended) but
+  lacks the account state; otherwise `denied`/`allowed` as before.
+- **Closed vocabulary:** a leg answering `precondition-failed` against a model
+  saying anything else, or a model saying it against a leg answering `allowed`,
+  `denied` (a 403) or `other`, is an `O2:`/`mapping-gap:` class no waiver
+  absorbs, so a handler that starts answering 200 or 403 for an unmet
+  precondition fails a strict sweep. Before this, the shape was waiver known-12
+  (#4525); it is gone.
 
 `401` vs `403` and `Unauthenticated` vs `PermissionDenied` are both `denied`.
 The fixed principal set includes "no token / no session" and expired
