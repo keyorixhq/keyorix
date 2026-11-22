@@ -181,6 +181,30 @@ throwaway CA and a certificate carrying the release workflow's identity: it prin
 `Verified OK`, failed on a modified `checksums.txt`, and failed on the
 `docker-publish.yml` identity.
 
+### Release-candidate sign-off (hard step)
+
+- [ ] **The RC is not signed off until `scripts/release/rc-gate.sh <tag>` has run with
+      cosign >= 3, ghcr.io reachable and four empty Postgres databases, its TSV is pasted
+      into the release PR, and `rc-gate.sh --check-result` passes.** `<tag>` is the
+      candidate, for example `v0.97.0-rc.1`; the optional second argument is the previous
+      tag. The four databases are one empty database each, written as
+      `postgres://user:password@host:port/db` URLs into `dsn1.txt` .. `dsn4.txt` in a
+      directory named by `RC_GATE_PG_DSN_DIR` (the drills never create or drop a database;
+      without the directory the PostgreSQL legs are `SKIP`, and `--check-result` refuses a
+      `SKIP`). Never commit those files.
+
+  ```sh
+  RC_GATE_PG_DSN_DIR=/path/to/dsn-dir scripts/release/rc-gate.sh --dir OUT vX.Y.Z-rc.N PREV
+  scripts/release/rc-gate.sh --check-result OUT/rc-gate-result.tsv vX.Y.Z-rc.N
+  ```
+
+  The first command writes `OUT/rc-gate-result.tsv` (one line per leg: `upgrade.sqlite`,
+  `upgrade.postgres`, `backup-restore.sqlite`, `backup-restore.postgres`, plus the
+  `download`, `verify-release` and `previous.checksum` steps); paste that file into the release PR. The
+  second exits 0 only when the TSV names every leg with no `FAIL` and no `SKIP`;
+  `--allow-skip` tolerates a `SKIP` and is not enough for sign-off. A TSV carrying
+  `# cli-override` (`--cli-bin`) is refused too.
+
 ## 5. What a local rehearsal cannot show (pending e2e VM or the real tag)
 
 - Container images (`keyorix-server`, `-airgap`, `keyorix-web`, `keyorix-operator`,
