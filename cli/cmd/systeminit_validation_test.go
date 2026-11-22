@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -138,5 +139,48 @@ func TestRunSystemInit_OtherForbiddenKeepsStandardHint(t *testing.T) {
 	got := runInitAgainst(t, http.StatusForbidden, `{"error":"Forbidden","message":"not allowed"}`)
 	if !containsAll(got, "not allowed", "403", "ask a project admin") {
 		t.Fatalf("standard 403 hint changed: %q", got)
+	}
+}
+
+// An --admin-email the generated client refuses to encode never reaches the server. The
+// operator is told it is the flag (not a connection failure: "contact <server>: json:
+// error calling MarshalJSON"), is not asked for a password first, and is not sent to
+// "request access".
+func TestRunSystemInit_UnencodableAdminEmailNamesTheFlagAndSendsNothing(t *testing.T) {
+	resetSystemInitFlags()
+	defer resetSystemInitFlags()
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	const supplied = "not-an-email"
+	systemInitServer = srv.URL
+	systemInitAdminEmail = supplied
+	// No KEYORIX_ADMIN_PASSWORD: reaching the password step would prompt and fail
+	// with a different error, so the flag error must come first.
+	t.Setenv("KEYORIX_ADMIN_PASSWORD", "")
+	t.Setenv("KEYORIX_BOOTSTRAP_TOKEN", "bootstrap-tok")
+
+	err := runSystemInit(systemInitCmd, nil)
+	if err == nil {
+		t.Fatal("expected an error for an invalid --admin-email")
+	}
+	got := err.Error()
+	if !containsAll(got, "--admin-email", "valid") {
+		t.Fatalf("error does not name --admin-email: %q", got)
+	}
+	for _, bad := range []string{"contact ", "MarshalJSON", "request access", "ask a project admin", "password", supplied} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("error carries %q: %q", bad, got)
+		}
+	}
+	if hits != 0 {
+		t.Fatalf("the server was contacted %d time(s); an invalid flag must not send anything", hits)
+	}
+	if ee, ok := errors.AsType[*exitError](err); !ok || ee.code != exitUsage {
+		t.Fatalf("error is not a usage-coded exit error (want code %d): %#v", exitUsage, err)
 	}
 }
