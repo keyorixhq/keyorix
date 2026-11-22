@@ -24,15 +24,16 @@ DEMO_CODE=""
 
 # demo_json '<python expr over d>' '<json>' — prints the value, '' on any error.
 demo_json() {
-  python3 -c "
-import sys, json
+  # The document (it can carry a session token) travels in the environment, not in python's argv.
+  DEMO_JSON_DOC="$2" python3 -c "
+import os, json
 try:
-    d = json.loads(sys.argv[1])
+    d = json.loads(os.environ['DEMO_JSON_DOC'])
     v = $1
     print(v if v is not None else '')
 except Exception:
     print('')
-" "$2"
+"
 }
 
 # demo_api METHOD BASE_URL PATH [TOKEN] [JSON_BODY]
@@ -237,11 +238,11 @@ demo_uptime_seconds() {
 demo_open_anomalies() {
   demo_api GET "$1" "/api/v1/audit/anomalies?unacknowledged=true" "$2"
   [ "$DEMO_HTTP_CODE" = "200" ] || { echo "ERROR $DEMO_HTTP_CODE"; return 0; }
-  python3 -c "
-import sys, json
-for a in json.loads(sys.argv[1])['data'].get('alerts') or []:
+  DEMO_JSON_DOC="$DEMO_BODY" python3 -c "
+import os, json
+for a in json.loads(os.environ['DEMO_JSON_DOC'])['data'].get('alerts') or []:
     print(a['ID'], a['AlertType'], a['Severity'], a.get('AccessedBy') or '-', a.get('SecretName') or '-')
-" "$DEMO_BODY"
+"
 }
 
 # demo_settle_anomalies BASE_URL ADMIN_TOKEN [CONTAINER]   (#3152)
