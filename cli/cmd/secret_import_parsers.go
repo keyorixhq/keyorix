@@ -204,12 +204,18 @@ func parseVault(path string) ([]secretEntry, error) {
 		if segment == "" {
 			continue
 		}
+		if v == nil {
+			return nil, fmt.Errorf("secret path %q has no value (null); rejecting import, nothing was imported", cliout.SanitizeForTerminal(pathKey))
+		}
 		fields, ok := v.(map[string]any)
 		if !ok {
 			continue
 		}
 		if len(fields) == 1 {
 			if fval, isFormat1 := fields["value"]; isFormat1 {
+				if err := checkVaultScalar(pathKey, "value", fval); err != nil {
+					return nil, err
+				}
 				val := fmt.Sprintf("%v", fval)
 				if val != "" {
 					entry := secretEntry{Name: segment, Value: val}
@@ -222,6 +228,9 @@ func parseVault(path string) ([]secretEntry, error) {
 			}
 		}
 		for key, fval := range fields {
+			if err := checkVaultScalar(pathKey, key, fval); err != nil {
+				return nil, err
+			}
 			val := fmt.Sprintf("%v", fval)
 			if key == "" || val == "" {
 				continue
@@ -234,6 +243,27 @@ func parseVault(path string) ([]secretEntry, error) {
 		}
 	}
 	return entries, nil
+}
+
+// checkVaultScalar rejects a vault-format field whose decoded value is YAML null or a
+// mapping/sequence. Formatting those with %v would store the text "<nil>" or Go map/slice
+// text as the secret's value. The error names the path and field, never the value.
+// parseVault returns the error before any entry reaches the caller, so a rejected file
+// imports nothing (all-or-nothing, like validateImportedEntry).
+func checkVaultScalar(pathKey, field string, v any) error {
+	var kind string
+	switch v.(type) {
+	case nil:
+		kind = "null"
+	case map[string]any, map[any]any:
+		kind = "a mapping"
+	case []any:
+		kind = "a sequence"
+	default:
+		return nil
+	}
+	return fmt.Errorf("secret path %q field %q is %s, not a scalar value; rejecting import, nothing was imported (quote the value if it is meant as literal text)",
+		cliout.SanitizeForTerminal(pathKey), cliout.SanitizeForTerminal(field), kind)
 }
 
 // parseJSON reads a flat key-value JSON object: {"DB_PASSWORD": "supersecret123"}.
