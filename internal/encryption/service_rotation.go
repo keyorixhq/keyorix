@@ -359,8 +359,11 @@ func (s *Service) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase st
 		return fmt.Errorf("refusing to rotate KEK: %w", WithLockContentionHint(err, "stop the running server before rotating"))
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Not under s.mu (#4625): the rotation changes no Service field (the DEK,
+	// hence s.encryptionService, is unchanged) and the key manager serialises
+	// it against Initialize, Wipe and other rotations itself (rotateMu + DEK
+	// flock, keymanager_state.go), so EncryptSecret/DecryptSecret and the key
+	// getters keep running on the old keys until the new ones are durable.
 	return s.keyManager.RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase, prepare)
 }
 
@@ -394,8 +397,8 @@ func (s *Service) RewrapDEKWithProviderPrepare(newProvider crypto.KeyProvider, p
 		return fmt.Errorf("refusing to re-wrap DEK: %w", WithLockContentionHint(err, "stop the running server before migrating the KEK provider"))
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Not under s.mu (#4625), for the reason RotateKEKPassphraseWithPrepare
+	// gives: the re-wrap changes no Service field and serialises itself.
 	return s.keyManager.RewrapDEKWithPrepare(newProvider, prepare)
 }
 
