@@ -118,7 +118,12 @@ func TestListReadableSecrets_ACLOnlyReaderStillSeesOnlyTheirGrant(t *testing.T) 
 	t.Parallel()
 	c, db := globalReaderFixture(t)
 	ctx := context.Background()
-	// No role grant anywhere; one per-secret ACL grant on a single secret.
+	// No secrets.read role anywhere; one per-secret ACL grant on a single secret. The
+	// reader is a member of the secret's project through a role with no permissions,
+	// as GrantSecretACL requires: the listing honours an ACL only for a live member
+	// (#4623), so a non-member's row would be a stale grant, not an ACL-only reader.
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "global-reader-fixture-member"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 2, ProjectID: 1}).Error)
 	var one models.SecretNode
 	require.NoError(t, db.Where("name = ?", "alpha-00").First(&one).Error)
 	require.NoError(t, db.Create(&models.SecretACL{
