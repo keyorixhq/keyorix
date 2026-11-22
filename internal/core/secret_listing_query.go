@@ -851,8 +851,27 @@ func (c *KeyorixCore) getACLGrantedSecretsWithSharingInfo(ctx context.Context, u
 	if nerr != nil {
 		return nil, nerr
 	}
+	// #4623: a grant is listed only while userID is a live member of the granted
+	// node's project, the rule aclGrantsPermission (#G13) and batchACLStage apply
+	// when they authorize. Only RemoveProjectMember deletes a user's ACL rows;
+	// RemoveUserRole or a group removal can end the membership and leave them. A
+	// failed membership read fails the listing rather than list a grant unchecked.
+	projectIDs := make([]uint, 0, len(acls))
 	for _, acl := range acls {
-		c.applyACLGrant(ctx, acl, nodes[acl.SecretID], filter, seen, &result)
+		if node := nodes[acl.SecretID]; node != nil {
+			projectIDs = append(projectIDs, node.ProjectID)
+		}
+	}
+	members := &batchMembership{known: map[uint]bool{}}
+	if err := members.ensure(ctx, c, userID, projectIDs); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, acl := range acls {
+		node := nodes[acl.SecretID]
+		if node == nil || !members.known[node.ProjectID] {
+			continue
+		}
+		c.applyACLGrant(ctx, acl, node, filter, seen, &result)
 	}
 
 	return result, nil

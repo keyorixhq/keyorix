@@ -55,8 +55,11 @@ func TestListSecretsWithSharingInfo_ACLBatchLookupSuccessListsTheGrant(t *testin
 	t.Parallel()
 	c, ms, ctx := aclListWorld(t)
 	ms.On("GetSecretsByIDs", ctx, []uint{5}).Return([]*models.SecretNode{
-		{ID: 5, Name: "granted", OwnerID: 9, IsSecret: true, CreatedAt: time.Now()},
+		{ID: 5, Name: "granted", OwnerID: 9, ProjectID: 3, IsSecret: true, CreatedAt: time.Now()},
 	}, nil)
+	// The grantee is a live member of the secret's project (#4623: the listing
+	// re-checks it, as authorization does).
+	ms.On("ProjectMembershipsAmong", ctx, uint(1), []uint{3}).Return(map[uint]bool{3: true}, nil)
 
 	res, err := c.ListSecretsWithSharingInfo(ctx, 1, &models.SecretListFilter{Page: 1, PageSize: 10})
 	require.NoError(t, err)
