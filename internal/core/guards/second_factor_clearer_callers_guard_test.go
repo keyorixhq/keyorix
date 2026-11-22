@@ -85,7 +85,7 @@ var (
 // allowedSecondFactorClearerSites: "repo-relative file:enclosing function|callee"
 // ("Type.Method" for methods) -> why this site may clear a factor.
 var allowedSecondFactorClearerSites = map[string]string{
-	"internal/core/mfa.go:KeyorixCore.DisableMFA|DeleteMFAForUser":                                   "self-service disable: needs the user's current TOTP code or password",
+	"internal/core/mfa.go:KeyorixCore.DisableMFA|DeleteMFAForUser":                                   "self-service disable: needs the user's current TOTP code, an unused recovery code or the password (+ reauth grant)",
 	"internal/core/webauthn.go:KeyorixCore.DeleteWebAuthnCredential|DeleteWebAuthnCredential":        "self-service passkey delete: needs the user's code or password",
 	"server/http/handlers/webauthn.go:AuthHandler.DeleteWebAuthnCredential|DeleteWebAuthnCredential": "HTTP route of the self-service passkey delete; it passes the user's proof to the core method above",
 	"server/http/router.go:NewRouter|DeleteWebAuthnCredential":                                       "route registration of the handler above (a method value, not a call); blocked while impersonating",

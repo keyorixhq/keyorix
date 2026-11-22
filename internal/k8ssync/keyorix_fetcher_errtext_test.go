@@ -15,9 +15,9 @@ import (
 func TestKeyorixFetcher_ServerFieldsNeverReachErrorText(t *testing.T) {
 	const canary = "CANARY4062"
 	cases := map[string]string{
-		"expiration not a time": `{"data":{"value":"v","secret":{"expiration":"` + canary + `"}}}`,
-		"value wrong type":      `{"data":{"value":{"` + canary + `":1}}}`,
-		"expiration wrong type": `{"data":{"value":"v","secret":{"expiration":{"` + canary + `":1}}}}`,
+		"expiration not a time": `{"data":{"value":"v","secret":{"id":7,"project_id":1,"environment_id":3,"expiration":"` + canary + `"}}}`,
+		"value wrong type":      `{"data":{"value":{"` + canary + `":1},"secret":{"id":7,"project_id":1,"environment_id":3}}}`,
+		"expiration wrong type": `{"data":{"value":"v","secret":{"id":7,"project_id":1,"environment_id":3,"expiration":{"` + canary + `":1}}}}`,
 		"not json":              canary + canary,
 		"data not an object":    `{"data":"` + canary + `"}`,
 	}
@@ -30,7 +30,7 @@ func TestKeyorixFetcher_ServerFieldsNeverReachErrorText(t *testing.T) {
 					case strings.HasSuffix(r.URL.Path, "/environments"):
 						_, _ = w.Write([]byte(`{"data":{"environments":[{"ID":3,"Name":"prod"}]}}`))
 					case r.URL.Path == "/api/v1/secrets":
-						_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":7,"Name":"db"}],"total_pages":1}}`))
+						_, _ = w.Write([]byte(`{"data":{"secrets":[{"ID":7,"Name":"db","project_id":1,"environment_id":3}],"total_pages":1}}`))
 					default:
 						_, _ = w.Write([]byte(valueBody))
 					}

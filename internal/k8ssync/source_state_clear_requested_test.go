@@ -218,13 +218,14 @@ func newPerRefWorld(t *testing.T) *perRefWorld {
 		case r.URL.Path == "/api/v1/projects/1/environments":
 			_, _ = io.WriteString(rw, `{"data":{"environments":[{"ID":3,"Name":"prod"}]}}`)
 		case r.URL.Path == "/api/v1/secrets":
-			_, _ = io.WriteString(rw, `{"data":{"secrets":[{"ID":7,"Name":"db"},{"ID":8,"Name":"api"}],"total_pages":1}}`)
+			_, _ = io.WriteString(rw, `{"data":{"secrets":[{"ID":7,"Name":"db","project_id":1,"environment_id":3},{"ID":8,"Name":"api","project_id":1,"environment_id":3}],"total_pages":1}}`)
 		case byID:
 			w.mu.Lock()
 			susp, clr := w.suspended[name], w.clearReq[name]
 			w.mu.Unlock()
 			if !susp {
-				_, _ = fmt.Fprintf(rw, `{"data":{"value":"value-of-%s","secret":{}}}`, name)
+				_, _ = fmt.Fprintf(rw, `{"data":{"value":"value-of-%s","secret":{"id":%s,"project_id":1,"environment_id":3}}}`,
+					name, strings.TrimPrefix(r.URL.Path, "/api/v1/secrets/"))
 				return
 			}
 			details := ""

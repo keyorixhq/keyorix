@@ -335,7 +335,7 @@ func TestSessionCacheChokepoint_CoversEveryVulnerableCallSite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("generate totp: %v", err)
 		}
-		if err := w.cShadow.DisableMFA(ctx, victim.ID, freshCode, ""); err != nil {
+		if err := w.cShadow.DisableMFA(ctx, victim.ID, freshCode, "", ""); err != nil {
 			t.Fatalf("DisableMFA: %v", err)
 		}
 		w.assertDenied(t, sess.SessionToken)

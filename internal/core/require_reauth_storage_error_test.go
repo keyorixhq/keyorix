@@ -45,7 +45,7 @@ func TestRequireReauth_GetMFASecretErrorDoesNotFeedLockout(t *testing.T) {
 	// GetMFASecret errors every time -- more than MaxAttempts (3), so if this
 	// were (wrongly) counted toward the lockout, the account would now be locked.
 	for i := range 5 {
-		derr := c.DisableMFA(ctx, 1, good, "")
+		derr := c.DisableMFA(ctx, 1, good, "", "")
 		require.Error(t, derr, "attempt %d: a storage error must still refuse the reauth", i)
 		assert.NotContains(t, derr.Error(), "invalid code or password",
 			"attempt %d: a storage error must not be reported as a wrong credential", i)
@@ -66,7 +66,7 @@ func TestRequireReauth_GetMFASecretErrorDoesNotFeedLockout(t *testing.T) {
 	// Fault clears: the SAME correct code (never consumed -- MarkTOTPStepUsed
 	// was never reached while GetMFASecret kept failing) now succeeds.
 	c.storage = realStorage
-	require.NoError(t, c.DisableMFA(ctx, 1, good, ""))
+	require.NoError(t, c.DisableMFA(ctx, 1, good, "", ""))
 	var afterSuccess models.User
 	require.NoError(t, db.First(&afterSuccess, 1).Error)
 	assert.False(t, afterSuccess.MFAEnabled, "the never-actually-wrong code must still disable MFA once the fault clears")
@@ -111,7 +111,7 @@ func TestRequireReauth_MarkTOTPStepUsedErrorAfterMatch_StillCountsTowardLockout(
 	c.storage = markTOTPStepErrStub(realStorage, faultErr)
 
 	for i := range 3 {
-		derr := c.DisableMFA(ctx, 1, good, "")
+		derr := c.DisableMFA(ctx, 1, good, "", "")
 		require.Error(t, derr, "attempt %d: a post-match storage error must still refuse the reauth", i)
 	}
 

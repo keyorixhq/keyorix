@@ -6,8 +6,12 @@ package encryption
 // run on every platform in the default lane.
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/pbkdf2"
 )
 
 func TestMemResidueVerdict(t *testing.T) {
@@ -56,6 +60,11 @@ func TestMemResidueVerdict(t *testing.T) {
 			name:     "blind scanner",
 			rep:      memResidueReport{Claims: claims, LiveHits: []memHit{{Name: "dek", Addr: 0x2000}}},
 			wantFail: "scanner is blind",
+		},
+		{
+			name:     "kek needle never found live",
+			rep:      memResidueReport{Claims: claims, LiveHits: live[:2]},
+			wantFail: "no live kek copy",
 		},
 		{
 			name:     "no claims reported",
@@ -110,5 +119,75 @@ func TestMemResidueRedVerdict(t *testing.T) {
 	}
 	if got := memResidueRedVerdict(memResidueReport{LiveHits: live}); len(got) == 0 {
 		t.Fatal("a red control with no claims must fail")
+	}
+}
+
+func TestMemResidueSiteVerdict(t *testing.T) {
+	const fn = "example.com/pkg.(*Provider).KEK"
+	claims := []memResidueSiteClaim{{Scenarios: []string{"s"}, Func: fn, What: "the read buffer", Claim: "INV-X"}}
+	under := []string{"io.ReadAll", fn, "example.com/pkg.caller"}
+	other := []string{"crypto/aes.NewCipher"}
+
+	cases := []struct {
+		name     string
+		rep      memAttributionReport
+		wantFail string // "" = no failure
+	}{
+		{name: "wiped: only a live hit under the site", rep: memAttributionReport{Scenario: "s", SitesSeen: map[string]bool{fn: true},
+			Hits: []memAttributedHit{{memHit: memHit{Name: "kek-hex", Addr: 0x10}, Phase: "live", Stack: under}, {memHit: memHit{Name: "kek", Addr: 0x20}, Phase: "after", Stack: other}}}},
+		{name: "copy under the site survives", rep: memAttributionReport{Scenario: "s", SitesSeen: map[string]bool{fn: true},
+			Hits: []memAttributedHit{{memHit: memHit{Name: "kek-hex", Addr: 0x10}, Phase: "after", Stack: under}}}, wantFail: "CLAIMED COPY NOT WIPED: kek-hex"},
+		{name: "site never allocated", rep: memAttributionReport{Scenario: "s", SitesSeen: map[string]bool{}}, wantFail: "vacuous"},
+		{name: "other scenario is not claimed", rep: memAttributionReport{Scenario: "t",
+			Hits: []memAttributedHit{{memHit: memHit{Name: "kek-hex", Addr: 0x10}, Phase: "after", Stack: under}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Join(memResidueSiteVerdict(tc.rep, claims), "\n")
+			if tc.wantFail == "" && got != "" {
+				t.Fatalf("unexpected failure:\n%s", got)
+			}
+			if tc.wantFail != "" && !strings.Contains(got, tc.wantFail) {
+				t.Fatalf("want a failure containing %q, got:\n%s", tc.wantFail, got)
+			}
+		})
+	}
+}
+
+// TestMemResidueTablesConsistent: every scenario has a ratchet, and every site
+// claim names a scenario that exists, so neither table can drift silently.
+func TestMemResidueTablesConsistent(t *testing.T) {
+	names := map[string]bool{}
+	for _, sc := range memResidueScenarios {
+		if names[sc.name] {
+			t.Errorf("scenario %q listed twice", sc.name)
+		}
+		names[sc.name] = true
+		if _, ok := memResidueRatchet[sc.name]; !ok {
+			t.Errorf("scenario %q has no memResidueRatchet entry", sc.name)
+		}
+	}
+	for name := range memResidueRatchet {
+		if !names[name] {
+			t.Errorf("memResidueRatchet has an entry for unknown scenario %q", name)
+		}
+	}
+	for _, c := range memResidueSiteClaims {
+		for _, s := range c.Scenarios {
+			if !names[s] {
+				t.Errorf("site claim %s names unknown scenario %q", c.Claim, s)
+			}
+		}
+	}
+}
+
+// TestMemPBKDF2SHA256 pins the harness's KDF to the provider's: a mismatch
+// would make the passphrase scenario's KEK needles match nothing.
+func TestMemPBKDF2SHA256(t *testing.T) {
+	pass, salt := []byte("correct horse battery staple, at length"), bytes.Repeat([]byte{7}, 32)
+	for _, iter := range []int{1, 2, 1000} {
+		if got, want := memPBKDF2SHA256(pass, salt, iter), pbkdf2.Key(pass, salt, iter, 32, sha256.New); !bytes.Equal(got, want) {
+			t.Fatalf("iterations %d: harness PBKDF2 differs from x/crypto/pbkdf2", iter)
+		}
 	}
 }

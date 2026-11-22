@@ -206,10 +206,18 @@ func defaultEnvironmentForProject(ctx context.Context, client *apiclient.ClientW
 	if lerr != nil || len(envs) == 0 {
 		return 0, false, nil
 	}
-	for _, e := range envs {
-		if strings.EqualFold(e.Name, "development") {
-			return int(e.ID), true, nil // #nosec G115 -- DB auto-increment ID
-		}
+	names := make([]*string, len(envs))
+	for i := range envs {
+		names[i] = &envs[i].Name
+	}
+	// Exact "development" first, then a unique case-insensitive match; "Development" and
+	// "development" side by side is an error, not whichever the server listed first.
+	i, merr := matchEnvironmentIndex(names, "development")
+	if merr != nil {
+		return 0, false, usageErrorf("%v, so --environment is required\n%s", merr, validEnvironmentsHint(ctx, client, projectID))
+	}
+	if i >= 0 {
+		return int(envs[i].ID), true, nil // #nosec G115 -- DB auto-increment ID
 	}
 	return 0, false, usageErrorf("project %d has no \"development\" environment, so --environment is required\n%s", projectID, validEnvironmentsHint(ctx, client, projectID))
 }
