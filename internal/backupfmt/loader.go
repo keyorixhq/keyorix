@@ -83,9 +83,10 @@ func checkSchemaDelta(modelName string, currentColumns []string, archived TableE
 // TestAdminBackupRestore_RoundTrip's real, full-registry restore -- every
 // OTHER system_metadata key is genuinely historical/portable data (e.g. the
 // audit high-water mark, already handled by Manifest.Checkpoint separately)
-// and loads normally; recordSchemaEpoch is the ONLY migrateDatabase call
-// site that seeds this table (confirmed by inspection), so this single,
-// named exclusion is complete, not a guess.
+// and loads normally; recordSchemaEpoch was then the ONLY migrateDatabase call
+// site that seeded this table (confirmed by inspection), so this single,
+// named exclusion was complete, not a guess. #2541 added one more writer, see
+// the end of this comment.
 //
 // ADR-101 added a second key recordSchemaEpoch upserts in the SAME statement,
 // schemaMinCompatibleEpochMetadataKey below: the compatibility floor of the
@@ -94,7 +95,19 @@ func checkSchemaDelta(modelName string, currentColumns []string, archived TableE
 // portable data -- and loading the archive's copy would also hit the same
 // UNIQUE constraint. These two keys are the complete set recordSchemaEpoch
 // writes.
+//
+// #2541 added a second migrateDatabase writer of this table,
+// recordLegacyServiceAccountsState, which upserts
+// legacyServiceAccountsEmptyMarkerKey below right before recordSchemaEpoch.
+// It is skipped for the same reason: it records the target's own state as of
+// its migration, and every boot recomputes it, so the archive's copy is not
+// portable data and would hit the same UNIQUE constraint.
 const schemaEpochMetadataKey = "schema_epoch"
+
+// legacyServiceAccountsEmptyMarkerKey mirrors internal/storage's unexported
+// constant of the same name (#2541) -- byte-for-byte, same reason as
+// schemaEpochMetadataKey above.
+const legacyServiceAccountsEmptyMarkerKey = "service_accounts_purge_v1"
 
 // schemaMinCompatibleEpochMetadataKey mirrors internal/storage's unexported
 // constant of the same name (ADR-101) -- byte-for-byte, same reason as
@@ -154,7 +167,8 @@ const systemMetadataTableName = "system_metadata"
 // what was verified," not silently weakened by this one exclusion.
 // isSystemMetadataSchemaEpochRow reports whether rowPtr (a freshly-decoded
 // row for table tableName) is one of system_metadata's own schema_epoch /
-// schema_min_compatible_epoch rows (the two recordSchemaEpoch writes) --
+// schema_min_compatible_epoch rows (the two recordSchemaEpoch writes) or the
+// service_accounts_purge_v1 marker (recordLegacyServiceAccountsState) --
 // via reflection on a "Key" field, not a models.SystemMetadata type
 // assertion, so this package doesn't need to import internal/storage/models
 // for one narrow check.
@@ -167,7 +181,7 @@ func isSystemMetadataSchemaEpochRow(tableName string, rowPtr reflect.Value) bool
 		return false
 	}
 	k := keyField.String()
-	return k == schemaEpochMetadataKey || k == schemaMinCompatibleEpochMetadataKey
+	return k == schemaEpochMetadataKey || k == schemaMinCompatibleEpochMetadataKey || k == legacyServiceAccountsEmptyMarkerKey
 }
 
 func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string, notify func(rows int64, start, finished bool)) (int64, error) {
