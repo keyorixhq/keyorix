@@ -14,4 +14,6 @@ anchor_reused_in_mappings: accept | {"keyorix_url":"https://keyorix.example.test
 merge_key_in_mapping: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":1,"first_mapping_key":"k"}
 empty_file: reject | keyorix_url is required
 unterminated_flow: reject | parse config <dir>/agent.yaml: yaml: line 2: did not find expected ',' or ']'
-unknown_key_is_ignored: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":1,"first_mapping_key":"password"}
+unknown_key_is_rejected: reject | parse config <dir>/agent.yaml: yaml: construct errors: line 3: field unknown_setting not found in type k8ssync.Config
+typo_prune_on_revoke_is_rejected: reject | parse config <dir>/agent.yaml: yaml: construct errors: line 3: field prune_on_revok not found in type k8ssync.Config
+unknown_key_in_mapping_entry_is_rejected: reject | parse config <dir>/agent.yaml: yaml: construct errors: line 5: field namespce not found in type k8ssync.SecretMapping

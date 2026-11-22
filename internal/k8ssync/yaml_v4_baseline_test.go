@@ -89,7 +89,25 @@ var v4bTypedCases = []v4bCase{
 	{"merge_key_in_mapping", v4bValidHead + "mappings:\n  - <<: {ref: production/a, namespace: apps}\n    name: a\n    key: k\n"},
 	{"empty_file", ""},
 	{"unterminated_flow", "keyorix_url: [https://keyorix.example.test\n"},
-	{"unknown_key_is_ignored", v4bValidHead + "unknown_setting: 1\n" + v4bValidMapping},
+	// Unknown keys are rejected (YAML-IMPORT-STRICT-NOV-1): this case used to be
+	// "unknown_key_is_ignored" and pinned the silent-default behaviour.
+	{"unknown_key_is_rejected", v4bValidHead + "unknown_setting: 1\n" + v4bValidMapping},
+	{"typo_prune_on_revoke_is_rejected", v4bValidHead + "prune_on_revok: false\n" + v4bValidMapping},
+	{"unknown_key_in_mapping_entry_is_rejected", v4bValidHead + "mappings:\n  - ref: production/a\n    namespce: apps\n    name: a\n    key: k\n"},
+}
+
+// TestLoadConfig_UnknownKeyErrorNamesKeyAndLineNotValue pins the shape of the rejection:
+// the key and its line are named, the value is never echoed.
+func TestLoadConfig_UnknownKeyErrorNamesKeyAndLineNotValue(t *testing.T) {
+	const sentinel = "MARKER-NOT-A-SECRET"
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	in := v4bValidHead + "prune_on_revok: " + sentinel + "\n" + v4bValidMapping
+	require.NoError(t, os.WriteFile(path, []byte(in), 0o600))
+	_, err := LoadConfig(path)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "prune_on_revok")
+	require.Contains(t, err.Error(), "line 3")
+	require.NotContains(t, err.Error(), sentinel)
 }
 
 func TestYAMLV4Baseline_TypedDecode(t *testing.T) {

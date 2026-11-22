@@ -40,6 +40,10 @@ mappings:
     key: API_KEY
 ```
 
+The agent rejects a config that contains a key it does not know (at the top level or
+inside a mapping), naming the key and its line, so a typo such as `prune_on_revok:`
+stops the agent at start instead of running with the default.
+
 The Keyorix auth token is **not** in this file. Prefer `KEYORIX_TOKEN_FILE`
 (a path to a mounted Secret volume — this repo's own Helm chart mounts it this way
 by default) over `KEYORIX_TOKEN` (a plain env var, still supported for backward
