@@ -1,0 +1,2 @@
+### Fixed
+- **Service encrypt/decrypt no longer wait for a KEK rotation or DEK re-wrap.** `encryption.Service` held its own lock for writing across `rotate-kek` and `migrate-provider`, so encryption through the same Service waited for the rotation's fsyncs even though the key manager stopped blocking readers in #4376. The Service no longer takes that lock around the rotation, which changes no Service state and is serialised by the key manager (#4625).
