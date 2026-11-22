@@ -37,6 +37,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -51,12 +52,14 @@ const (
 )
 
 // edgeInstall is one operator-style install (init, encryption init, optional
-// migrate) in its own temp dir, with a free port and MFA off.
+// migrate) in its own temp dir, with MFA off. The config asks for port 0, so
+// every start binds a port the kernel gives that process alone; waitHealthy
+// reads it from the process's own "listening on" log line into port (#4356).
 type edgeInstall struct {
 	t    *testing.T
 	bin  string
 	dir  string
-	port string
+	port string // the port of the last start that became healthy
 	env  []string
 	log  string
 }
@@ -64,7 +67,13 @@ type edgeInstall struct {
 func newEdgeInstall(t *testing.T, bin string, migrate bool) *edgeInstall {
 	t.Helper()
 	dir := t.TempDir()
-	e := &edgeInstall{t: t, bin: bin, dir: dir, port: freeTCPPort(t), log: filepath.Join(dir, "edge-server.log")}
+	// Not freeTCPPort: a port picked once and closed is free for anyone between
+	// the up to eight starts of one test. When another process of the CI job
+	// took it, waitHealthy accepted that process's /health, and the test then
+	// bootstrapped and logged in to a foreign, already initialised server
+	// ("already_initialized", login 401) while its own server had not logged
+	// a line yet (#4356).
+	e := &edgeInstall{t: t, bin: bin, dir: dir, port: "0", log: filepath.Join(dir, "edge-server.log")}
 	e.env = append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD=edge-unattended-test-passphrase")
 	steps := [][]string{
 		{"init", "--dev", "--config", "./keyorix.yaml"},
@@ -95,8 +104,9 @@ func newEdgeInstall(t *testing.T, bin string, migrate bool) *edgeInstall {
 }
 
 type edgeProc struct {
-	cmd    *exec.Cmd
-	exited chan struct{}
+	cmd     *exec.Cmd
+	exited  chan struct{}
+	logFrom int64 // size of the shared log when this process started
 }
 
 // start runs the server the way a service manager would: config path and
@@ -105,6 +115,10 @@ type edgeProc struct {
 func (e *edgeInstall) start(wrap string, extraEnv ...string) *edgeProc {
 	e.t.Helper()
 	logf, err := os.OpenFile(e.log, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // test path
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	st, err := logf.Stat()
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -120,7 +134,7 @@ func (e *edgeInstall) start(wrap string, extraEnv ...string) *edgeProc {
 	if err := cmd.Start(); err != nil {
 		e.t.Fatal(err)
 	}
-	p := &edgeProc{cmd: cmd, exited: make(chan struct{})}
+	p := &edgeProc{cmd: cmd, exited: make(chan struct{}), logFrom: st.Size()}
 	go func() { _ = cmd.Wait(); _ = logf.Close(); close(p.exited) }()
 	return p
 }
@@ -154,15 +168,42 @@ func (e *edgeInstall) logTail() string {
 	return string(b)
 }
 
+// edgeListenLine is the line startHTTPServer logs once its listener is bound.
+var edgeListenLine = regexp.MustCompile(`HTTP server listening on http://127\.0\.0\.1:(\d+)`)
+
+// ownPort is the port p logged as bound, or "" before it has. Only the log
+// written since p started counts: earlier starts logged their own ports.
+func (e *edgeInstall) ownPort(p *edgeProc) string {
+	b, err := os.ReadFile(e.log) //nolint:gosec // test path
+	if err != nil || int64(len(b)) < p.logFrom {
+		return ""
+	}
+	if m := edgeListenLine.FindSubmatch(b[p.logFrom:]); m != nil {
+		return string(m[1])
+	}
+	return ""
+}
+
+// waitHealthy waits for p's own listener, then for /health on it, and points
+// e.port (and so e.api) at it. A port p never bound is never probed, so a
+// 200 can only come from p.
 func (e *edgeInstall) waitHealthy(p *edgeProc) {
 	e.t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(45 * time.Second)
+	port := ""
 	for time.Now().Before(deadline) {
 		if !p.alive() {
 			e.t.Fatalf("server exited instead of becoming healthy (a manual step was needed). Log tail:\n%s", e.logTail())
 		}
-		if resp, err := client.Get("http://127.0.0.1:" + e.port + "/health"); err == nil {
+		if port == "" {
+			if port = e.ownPort(p); port == "" {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			e.port = port
+		}
+		if resp, err := client.Get("http://127.0.0.1:" + port + "/health"); err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return
