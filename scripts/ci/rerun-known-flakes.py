@@ -29,9 +29,11 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 MODULE_PREFIX = "github.com/keyorixhq/keyorix/"
 MAX_RERUN = 5
+BUDGET_WARN_FRACTION = 0.8
 ENABLE_ENV = "KNOWN_FLAKE_RERUN"
 
 # go test flags whose value is the next argv word (when not written -flag=value).
@@ -155,6 +157,40 @@ def stream(cmd, env=None):
     return proc.wait(), lines
 
 
+def go_duration_seconds(text):
+    """Seconds in a go duration such as 1800s, 55m or 1h30m; None if unparsable."""
+    parts = re.findall(r"(\d+(?:\.\d+)?)(ms|h|m|s)", text)
+    if not parts or "".join(n + u for n, u in parts) != text:
+        return None
+    scale = {"ms": 0.001, "s": 1, "m": 60, "h": 3600}
+    return sum(float(n) * scale[u] for n, u in parts)
+
+
+def timeout_seconds(cmd):
+    """The go test -timeout of cmd in seconds, or None when it is absent."""
+    for i, w in enumerate(cmd):
+        if w.lstrip("-").split("=", 1)[0] != "timeout" or not w.startswith("-"):
+            continue
+        value = w.split("=", 1)[1] if "=" in w else (cmd[i + 1] if i + 1 < len(cmd) else "")
+        return go_duration_seconds(value)
+    return None
+
+
+def budget_warning(label, cmd, elapsed):
+    """Print a ::warning:: when the go test run used more than BUDGET_WARN_FRACTION
+    of its -timeout. A leg that finishes at 90 % of its timeout is green today and
+    a lost merge-queue round on the next slow runner (MQ-ADMIN2-1: admin-2 took
+    1400 to 1790 s of 1800 s). Warning only: it never changes the exit code."""
+    limit = timeout_seconds(cmd)
+    if not limit or elapsed <= BUDGET_WARN_FRACTION * limit:
+        return
+    pct = 100 * elapsed / limit
+    print(f"::warning title=LEG-TIMEOUT-BUDGET::leg {label} go test took {elapsed:.0f} s, "
+          f"{pct:.0f} % of its {limit:.0f} s timeout (warns above {100 * BUDGET_WARN_FRACTION:.0f} %); "
+          f"re-balance or split the leg before a slow runner turns it into a timeout")
+    print(f"LEG-TIMEOUT-BUDGET leg={label} elapsed={elapsed:.0f}s timeout={limit:.0f}s used={pct:.0f}%")
+
+
 def report(label, results):
     """FLAKE-RERUN lines the harness greps, a GitHub annotation, the job summary."""
     passed = sum(1 for r in results if r[2])
@@ -192,7 +228,9 @@ def main(argv):
     if len(cmd) < 2 or cmd[0] != "go" or cmd[1] != "test":
         raise SystemExit("usage: rerun-known-flakes.py [--allowlist F] [--label L] -- go test <flags> <pkgs>")
 
+    started = time.monotonic()
     rc, lines = stream(cmd)
+    budget_warning(label, cmd, time.monotonic() - started)
     if rc == 0 or os.environ.get(ENABLE_ENV) != "1":
         if os.environ.get(ENABLE_ENV) == "1":
             report(label, [])

@@ -325,3 +325,53 @@ func TestKnownFlakesAllowlist(t *testing.T) {
 		}
 	}
 }
+
+// TestRerunKnownFlakes_BudgetWarning drives budget_warning directly (MQ-ADMIN2-1):
+// a go test run above 80 % of its -timeout prints a ::warning:: line, one at or
+// below 80 %, or a command without -timeout, prints nothing, and the exit code
+// is never touched (the function returns nothing).
+func TestRerunKnownFlakes_BudgetWarning(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	script, err := filepath.Abs("rerun-known-flakes.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const driver = `
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("rkf", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+cmd = sys.argv[2].split()
+m.budget_warning("admin-2", cmd, float(sys.argv[3]))
+`
+	cases := []struct {
+		name    string
+		cmd     string
+		elapsed string
+		want    string // "" = silent
+	}{
+		{"slow leg warns", "go test -race -timeout 1800s ./x", "1790", "::warning title=LEG-TIMEOUT-BUDGET::leg admin-2 go test took 1790 s, 99 % of its 1800 s timeout"},
+		{"just above the threshold warns", "go test -timeout=1800s ./x", "1441", "LEG-TIMEOUT-BUDGET leg=admin-2 elapsed=1441s timeout=1800s used=80%"},
+		{"exactly 80 percent is quiet", "go test -timeout 1800s ./x", "1440", ""},
+		{"a green fast leg is quiet", "go test -timeout 1800s ./x", "1250", ""},
+		{"minutes form is understood", "go test -timeout 55m ./x", "2700", "of its 3300 s timeout"},
+		{"no -timeout is quiet", "go test ./x", "99999", ""},
+		{"unparsable -timeout is quiet", "go test -timeout soon ./x", "99999", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := exec.Command("python3", "-I", "-c", driver, script, tc.cmd, tc.elapsed).CombinedOutput() //nolint:gosec // this repo's own script
+			if err != nil {
+				t.Fatalf("driver: %v\n%s", err, out)
+			}
+			if tc.want == "" {
+				if len(out) != 0 {
+					t.Fatalf("want no output, got:\n%s", out)
+				}
+				return
+			}
+			mustContain(t, string(out), tc.want)
+		})
+	}
+}
