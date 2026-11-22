@@ -176,8 +176,10 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 		secret, err = c.GetSecretWithPermissionCheck(ctx, id, actorID)
 	}
 	if IsStorageReadUnavailable(err) {
-		// A fault in the machine's role read (bulkDeleteMachineSecret) is the same
-		// "retry" answer as the secret-read fault above, not a "not found".
+		// A storage fault on any lookup in the switch above (the machine's role read
+		// in bulkDeleteMachineSecret, GetSecret, or the user's permission-checked
+		// read) is the same "retry" answer as the secret-read fault above, not a
+		// "not found".
 		result.addFailure(BulkOpError{SecretID: id, Error: StorageReadUnavailableMessage, Code: BulkErrCodeStorageUnavailable, Retryable: true})
 		return
 	}
