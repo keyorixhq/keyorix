@@ -2718,6 +2718,12 @@ type SetSecretTagsJSONBody struct {
 	Tags []string `json:"tags"`
 }
 
+// GetSecretVersionsParams defines parameters for GetSecretVersions.
+type GetSecretVersionsParams struct {
+	// Include Comma-separated (or repeated) optional fields. `total_reads` adds the secret's lifetime read count as `data.total_reads`; it is computed only when requested (an O(reads) count), so it is absent by default.
+	Include *string `form:"include,omitempty" json:"include,omitempty"`
+}
+
 // AddSecretVersionCommentJSONBody defines parameters for AddSecretVersionComment.
 type AddSecretVersionCommentJSONBody struct {
 	Comment string `json:"comment"`

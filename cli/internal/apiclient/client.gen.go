@@ -880,7 +880,7 @@ type ClientInterface interface {
 	SetSecretTags(ctx context.Context, id int, body SetSecretTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSecretVersions request
-	GetSecretVersions(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetSecretVersions(ctx context.Context, id int, params *GetSecretVersionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DiffSecretVersions request
 	DiffSecretVersions(ctx context.Context, id int, from int, to int, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -4466,8 +4466,8 @@ func (c *Client) SetSecretTags(ctx context.Context, id int, body SetSecretTagsJS
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetSecretVersions(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSecretVersionsRequest(c.Server, id)
+func (c *Client) GetSecretVersions(ctx context.Context, id int, params *GetSecretVersionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSecretVersionsRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -14497,7 +14497,7 @@ func NewSetSecretTagsRequestWithBody(server string, id int, contentType string, 
 }
 
 // NewGetSecretVersionsRequest generates requests for GetSecretVersions
-func NewGetSecretVersionsRequest(server string, id int) (*http.Request, error) {
+func NewGetSecretVersionsRequest(server string, id int, params *GetSecretVersionsParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -14520,6 +14520,28 @@ func NewGetSecretVersionsRequest(server string, id int) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Include != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "include", runtime.ParamLocationQuery, *params.Include); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -16778,7 +16800,7 @@ type ClientWithResponsesInterface interface {
 	SetSecretTagsWithResponse(ctx context.Context, id int, body SetSecretTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSecretTagsResponse, error)
 
 	// GetSecretVersionsWithResponse request
-	GetSecretVersionsWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*GetSecretVersionsResponse, error)
+	GetSecretVersionsWithResponse(ctx context.Context, id int, params *GetSecretVersionsParams, reqEditors ...RequestEditorFn) (*GetSecretVersionsResponse, error)
 
 	// DiffSecretVersionsWithResponse request
 	DiffSecretVersionsWithResponse(ctx context.Context, id int, from int, to int, reqEditors ...RequestEditorFn) (*DiffSecretVersionsResponse, error)
@@ -26135,8 +26157,8 @@ func (c *ClientWithResponses) SetSecretTagsWithResponse(ctx context.Context, id 
 }
 
 // GetSecretVersionsWithResponse request returning *GetSecretVersionsResponse
-func (c *ClientWithResponses) GetSecretVersionsWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*GetSecretVersionsResponse, error) {
-	rsp, err := c.GetSecretVersions(ctx, id, reqEditors...)
+func (c *ClientWithResponses) GetSecretVersionsWithResponse(ctx context.Context, id int, params *GetSecretVersionsParams, reqEditors ...RequestEditorFn) (*GetSecretVersionsResponse, error) {
+	rsp, err := c.GetSecretVersions(ctx, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
