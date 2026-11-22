@@ -4,7 +4,10 @@
 command, including the several-replicas procedure. This runbook is the operator's wrapper
 around it: pick the right rotation, the preflight, the checks afterwards, rollback, and the
 mistakes that cost data. Every command below was checked against the cobra definitions of
-`keyorix-server admin` and `keyorix` in this repository.
+`keyorix-server admin` and `keyorix` in this repository, and the sample output in this runbook and in
+[j6](j6-key-rotation.md) was captured on `deb388fb3`, 2026-11-22, native (SQLite and PostgreSQL,
+binaries built from that commit). Where a block says it is captured, version numbers, fingerprints,
+hashes, paths and times differ on your install.
 
 ## 1. Which rotation
 
@@ -30,6 +33,14 @@ does. That matters for the audit chain: section 5.
    stop the server first; on PostgreSQL it works beside a live server, but fails and leaves no
    archive if a rotation is in progress. `--output` must not exist. The passphrase comes from
    `KEYORIX_MASTER_PASSWORD`, `--passphrase-file`, `--passphrase-fd` or `--passphrase-stdin`.
+   Captured (the same on PostgreSQL apart from the row count):
+
+   ```
+   Backup written to /backups/keyorix-pre-rotation.tar.gz (80 table(s), 146 row(s) total, 2 key file(s))
+   Store this archive OFF this host. Restore with:
+     keyorix-server admin restore --input /backups/keyorix-pre-rotation.tar.gz
+   created backup archive /backups/keyorix-pre-rotation.tar.gz (80 table(s), 146 row(s), 2 key file(s))
+   ```
 2. **Check the current state.** Both are read-only and do not take the database lock, but
    they read the key directory, which a running server holds exclusively: beside a live server
    they print `another process holds the DEK lock exclusively (a live server, or an in-progress
@@ -46,7 +57,33 @@ does. That matters for the audit chain: section 5.
    directory or `dek_path`), a wrong passphrase (`❌ ... failed to unwrap DEK`), a missing
    passphrase source (`⚠️  KEYORIX_MASTER_PASSWORD is not set ...`) and the held lock all print
    their line and exit 1, so `status && rotate --confirm` stops at a failed check. A healthy
-   key set exits 0 (and so does `Enabled: false`).
+   key set exits 0 (and so does `Enabled: false`). Captured, healthy (exit 0):
+
+   ```
+   🔐 Encryption Status
+   ==================
+   Enabled: true
+   DEK Path: keys/dek.key
+   Salt Path: keys/kek.salt
+   Initialized: ✅
+   Key Version: v1
+   Key Provider: password
+     (passphrase-derived KEK; use `migrate-provider` to change)
+   ```
+
+   and with a server still running (exit 1; the same text follows as `Error: ...`):
+
+   ```
+   🔐 Encryption Status
+   ==================
+   Enabled: true
+   DEK Path: keys/dek.key
+   Salt Path: keys/kek.salt
+   ❌ another process holds the DEK lock exclusively (a live server, or an in-progress rotation/migrate-provider) at <key dir>/dek.lock: resource temporarily unavailable — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry
+   ```
+
+   `encryption validate` on a healthy set prints `🔍 Validating encryption setup...` and `✅ Encryption
+   setup is valid`.
 
 3. **Baseline the audit chain** so any change afterwards is yours to explain, and write a fresh
    external anchor (details in [audit-chain-break-runbook.md](audit-chain-break-runbook.md) §2, §7):
@@ -63,6 +100,20 @@ does. That matters for the audit chain: section 5.
    PostgreSQL `encryption rotate` and `encryption auth-encryption rotate` refuse `--force`
    (`--force cannot override it for a DEK rotation on PostgreSQL`): `dek.lock` only sees replicas on this host, and a replica on
    another host that is still running can commit a row under the old DEK after the sweep.
+   The refusal applies while the database's presence lock is held. Captured with a server running on
+   PostgreSQL (exit 1, nothing changed):
+
+   ```
+   $ keyorix-server admin encryption rotate --confirm
+   Error: a Keyorix server (or another admin command) appears to be using this database (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342) — admin commands must not run concurrently with either; stop it first, or pass --force if you are certain this is safe.
+   Run admin commands with the server stopped: stop the server (for example 'systemctl stop keyorix'), run this command again, then start the server.
+   $ keyorix-server admin encryption rotate --confirm --force
+   WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via postgres advisory lock 872342) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
+   Error: refusing to rotate the DEK: could not acquire this database's exclusive lock (...), and --force cannot override it for a DEK rotation on PostgreSQL: a replica on another host that is still running would commit rows under the old DEK after the sweep, and they become undecryptable once the old DEK is gone. Stop every server that uses this database (every replica, on every host), then retry without --force; ...
+   ```
+
+   With no server holding the lock, `--force` changes nothing: the same command runs the normal
+   rotation on PostgreSQL, so the flag only matters when something holds the lock.
    `rotate-kek` and `migrate-provider` open the database for this lock (#3513) even though
    only key files change, so they fail with `cannot connect to the database to check for a
    running server` while the database is unreachable: make sure it is up (and reachable with
@@ -384,14 +435,17 @@ killed with SIGKILL during the sweep, a lost new `dek.key` recovered by restorin
 the PostgreSQL-only rows (epoch, `--force` refusal, older admin binary) are covered by pg-gated
 tests, not by a drill.
 
-Capture check (RUNBOOK-CAPTURE-2, 2026-11-18, main `c60a499ff`, SQLite, native binaries): `admin
-backup`, `admin encryption status`, `admin encryption rotate --dry-run` (`✅ Dry run complete — no
-changes were made`), `admin encryption rotate-kek --confirm` (it printed the audit key transition
-lines and both key fingerprints) and, afterwards, `admin audit export-checkpoint-key` plus
-`admin verify-audit --checkpoint-key-file <new> --previous-checkpoint-key-file <old>` (`Verdict: VALID`,
-`Key transitions: 1 recorded, current epoch authenticated: true, old-key signatures checked: 1`) behaved as
-sections 2 to 5 describe. Not re-run: `migrate-provider`, the KMS, TPM and Shamir providers, containers
-and Kubernetes (pending e2e VM).
+Capture check (PILOT-RUNBOOK-CAPTURES-NOV-1, 2026-11-22, `deb388fb3`, native binaries, SQLite and PostgreSQL):
+`admin backup` (success, and the refusal with a leftover `keys/kek.salt.pending`: exit 4), `admin encryption
+status` and `validate`, `admin encryption rotate --dry-run` and `--confirm`, `admin encryption rotate-kek
+--confirm`, `admin audit export-checkpoint` and `export-checkpoint-key`, `admin verify-audit` before and after
+each rotation, the online `keyorix audit verify --full`, and the PostgreSQL `--force` refusal behaved as sections 2 to 6
+and [j6](j6-key-rotation.md) show. The two-key combination `--checkpoint-key-file <new> --previous-checkpoint-key-file
+<old>` (section 5) and the `--anchor <pre-rotation export>` rows were run by RUNBOOK-CAPTURE-2 on 2026-11-18
+(`c60a499ff`, SQLite); this pass re-ran only the row with the new key (`Verdict: VALID`, the anchor
+`present but UNAUTHENTICATED`, `old-key signatures checked: 0`) because the old key was not exported before
+the rotation. Not run: `migrate-provider`, the KMS, TPM and Shamir providers, containers and Kubernetes
+(pending e2e VM).
 
 Gaps in the product today:
 
