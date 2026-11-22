@@ -830,6 +830,9 @@ func redactBreakGlassForOwnView(a *models.BreakGlassActivation) *models.BreakGla
 // (best-effort — it may already have auto-expired) and marks the record revoked.
 // actorID is the admin performing the revoke.
 func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, actorMachineID, projectID, activationID uint) error {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return err
+	}
 	if projectID == 0 {
 		return refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required"), ErrBreakGlassInvalidRequest)
 	}
