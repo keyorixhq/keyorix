@@ -27,10 +27,10 @@ func baselineSeeds(f *testing.F) {
 	}
 }
 
-// The typed-decode target (typed decode rejects what `any` decode rejects) is NOT in this
-// file: go-yaml v4 violates that property (a struct decode never constructs the value of a
-// key that has no field, so a self-referencing anchor or a duplicate key inside such a value
-// is accepted). It is reported as NEEDS DECISION: third-party finding go-yaml.
+// The typed-decode target is FuzzYAMLV4TypedDecode (yaml_v4_typed_decode_fuzz_test.go). It
+// does not assert "typed decode rejects what `any` decode rejects": go-yaml does not hold
+// that (a struct decode never constructs the value of a key that has no field), see
+// docs/findings/2026-11-22-TRIAGE-go-yaml-typed-decode-skips-ignored-values.md.
 
 // FuzzYAMLV4MultiDocument: walking a stream with the v4 Loader never panics or loops, and
 // reads every document: when both the untyped and the typed walk reach EOF cleanly they
@@ -48,7 +48,7 @@ func FuzzYAMLV4MultiDocument(f *testing.F) {
 		typedDocs, typedErr := walkStream(data, func() any { return new(Config) })
 		// No typed-rejects-what-`any`-rejects check here: a struct decode does not construct
 		// the value of a key with no field, so it accepts some streams the `any` walk
-		// refuses (NEEDS DECISION: third-party finding go-yaml, see the PR report).
+		// refuses (go-yaml design; triaged in docs/findings/2026-11-22-TRIAGE-go-yaml-typed-decode-skips-ignored-values.md).
 		if untypedErr == nil && typedErr == nil && untypedDocs != typedDocs {
 			t.Fatalf("document count differs between walks: any=%d typed=%d\n  input=%q", untypedDocs, typedDocs, data)
 		}
