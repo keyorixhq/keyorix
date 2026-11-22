@@ -115,21 +115,22 @@ req() { # req METHOD PATH [BEARER_TOKEN] [JSON_BODY]
   RESP_BODY="$(cat "$SCRATCH/resp.json" 2>/dev/null || true)"
 }
 jget() { # jget '<python expr over d, e.g. d["data"]["token"]>' -- reads $RESP_BODY
-  python3 -c "
-import sys, json
+  # The body (it can carry a session token) travels in the environment, not in python's argv.
+  DEMO_JSON_DOC="$RESP_BODY" python3 -c "
+import os, json
 try:
-    d = json.loads(sys.argv[1])
+    d = json.loads(os.environ['DEMO_JSON_DOC'])
     v = $1
     print(v if v is not None else '')
 except Exception:
     print('')
-" "$RESP_BODY"
+"
 }
 urlenc() { python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$1"; }
-totp_code() { # totp_code BASE32_SECRET
-  python3 -c "
-import sys, time, hmac, hashlib, base64, struct
-secret = sys.argv[1]
+totp_code() { # totp_code BASE32_SECRET (the seed travels in the environment, not in python's argv)
+  DEMO_TOTP_SEED="$1" python3 -c "
+import os, time, hmac, hashlib, base64, struct
+secret = os.environ['DEMO_TOTP_SEED']
 secret += '=' * ((8 - len(secret) % 8) % 8)
 key = base64.b32decode(secret.upper())
 counter = int(time.time() // 30)
@@ -138,7 +139,7 @@ h = hmac.new(key, msg, hashlib.sha1).digest()
 o = h[19] & 0xf
 code = (struct.unpack('>I', h[o:o+4])[0] & 0x7fffffff) % 1000000
 print('%06d' % code)
-" "$1"
+"
 }
 get_secret_by_ref() { req GET "/api/v1/secrets/value?ref=$(urlenc "$2")" "$1"; }
 

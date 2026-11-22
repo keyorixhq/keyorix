@@ -27,7 +27,9 @@
 //     headers, curl through a variable, wget, -F, interpreter argv) are listed above
 //     findSecretArgvShape. A curl body held in a bare variable is recognised
 //     (SCRIPTS-SECRETS-3). A credential handed to jq as --arg/--argjson is recognised
-//     (SCRIPTS-ARGV-NOV-1, scanShellForJqArgs); the safe form is `P="$X" jq ... env.P`.
+//     (SCRIPTS-ARGV-NOV-1, scanShellForJqArgs); the safe form is `P="$X" jq ... env.P`. A
+//     credential or a JSON document handed to `python3 -c '...' "$X"` is recognised too
+//     (DEMO-COPY-LEFTOVERS-NOV-1, scanShellForPyArgv); the safe form is `V="$X" python3 -c ... os.environ`.
 //   - Only the flags in secretFlags. A new secret-carrying flag must be added.
 //
 // An intentional "don't do this" example opts out per line with the marker
@@ -164,6 +166,7 @@ func scanShellForSecrets(content string) []docsSecretHit {
 	var hits []docsSecretHit
 	hits = append(hits, scanShellForVarBodies(content)...)
 	hits = append(hits, scanShellForJqArgs(content)...)
+	hits = append(hits, scanShellForPyArgv(content)...)
 	hits = append(hits, scanShellForHeaderVars(content)...)
 	for i, line := range strings.Split(content, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
@@ -211,13 +214,18 @@ func scanShellForSecrets(content string) []docsSecretHit {
 // Also recognised (SCRIPTS-SECRETS-4, scanShellForHeaderVars, shell scripts only): a credential
 // header assigned to a variable in the same file and passed as `-H "$NAME"`.
 //
+// Also recognised (DEMO-COPY-LEFTOVERS-NOV-1, scanShellForPyArgv, shell scripts only): a variable
+// argument handed to a `python3 -c` program that parses JSON from argv, names a credential, or takes a
+// credential-named variable (see the comment above scanShellForPyArgv for the exact rule).
+//
 // NOT recognised, so a green run is not more than this: a header built by a function or from
 // several variables, or defined in another file; a body built by a function or command substitution
 // (`-d "$(...)"`) or mixed with literal text (`-d "x=$v"`); a curl invoked through a
 // variable or array (`"${CURL[@]}" -d "$b"`); wget --post-data; curl -F/--form; a header
 // split from its flag by a line continuation; a helm --set whose key is held in a
-// variable; an interpreter's argv (python3 -c / jq --arg). `NAME=value cmd` environment
-// prefixes are not argv and are deliberately allowed.
+// variable; an interpreter's argv other than `python3 -c` and `jq --arg` (perl -e, node -e,
+// ruby -e, `python3 script.py "$X"`). `NAME=value cmd` environment prefixes are not argv and are
+// deliberately allowed.
 var (
 	credHeaderFlagRE = regexp.MustCompile(`(?i)(?:^|[\s(])(?:-H|--header)(?:=|\s+)["']?(?:Authorization|Proxy-Authorization|Cookie|X-[A-Za-z0-9-]*(?:Token|Key|Secret|Auth|Password)[A-Za-z0-9-]*)\s*:`)
 	curlBodyFlagRE   = regexp.MustCompile(`(?:^|[\s(])(-d|--data|--data-raw|--data-binary|--data-urlencode|--data-ascii|--json)(?:=|\s+)(\S.*)$`)
@@ -377,6 +385,109 @@ func scanShellForJqArgs(content string) []docsSecretHit {
 		if m != "" {
 			hits = append(hits, docsSecretHit{l.first + 1, "credential in jq --arg on argv (use `P=\"$X\" jq ... env.P`): " + strings.TrimSpace(m), l.text})
 		}
+	}
+	return hits
+}
+
+// DEMO-COPY-LEFTOVERS-NOV-1 (#3453): a credential handed to `python -c '<program>' "$VAR"` lands in
+// python's argv, visible in ps for as long as the interpreter runs (a server response with a session
+// token parsed by `json.loads(sys.argv[1])`, a TOTP seed passed as sys.argv[1]). Recognised, in a shell
+// script, for a python/python3 `-c` program in single or double quotes (it may span lines) followed on
+// the same physical line by at least one variable argument (`"$X"`, `"${X}"`, `"$1"`, `"$@"`), when
+// ANY of these holds:
+//   - the program parses JSON from argv (`json.loads(sys.argv[N])`): a JSON document that came from a
+//     server or a file of ours carries tokens whatever its variable is called (RESP_BODY, $2);
+//   - the program text names a credential (password, token, secret, totp, otp, mfa, bearer, api key,
+//     credential, hmac key): `secret = sys.argv[1]`;
+//   - a trailing variable is named like a credential (ADMIN_PW, $TOKEN, MFA_CODE);
+//   - a double-quoted program interpolates a credential-named variable into its own text
+//     (`python3 -c "print('$TOKEN')"`).
+//
+// The safe forms are an environment prefix read in the program (`DEMO_JSON="$X" python3 -c '...
+// os.environ["DEMO_JSON"]'`), stdin (`printf '%s' "$X" | python3 -c '... sys.stdin.read()'`) or a 0600
+// file path as the argument (a variable named like a path, *_FILE / *_PATH / *_DIR / *_ROOT / *_HOME /
+// *_URL, is not counted as an argument). Not recognised: python through a variable or function, `python3 script.py
+// "$X"` (a script file, not -c), `python3 - "$X" <<EOF`, other interpreters (perl -e, node -e, ruby
+// -e), a variable on a continuation line after the closing quote, and a credential with a neutral name
+// handed to a program that neither parses JSON nor names a credential. A value that is not a credential
+// (a name, a duration) opts out with the usual marker on the invocation line or the line that closes
+// the program.
+var (
+	pyDashCRE      = regexp.MustCompile(`(?:^|[\s(|;&])python3?(?:\s+-[A-Za-z]+)*\s+-c\s*(["'])`)
+	pyJSONArgvRE   = regexp.MustCompile(`json\.loads?\(\s*sys\.argv\[`)
+	pyCredWordRE   = regexp.MustCompile(`(?i)pass(?:word|wd|phrase)?|token|secret|totp|otp\b|mfa|bearer|api[_-]?key|credential|hmac`)
+	pyVarArgRE     = regexp.MustCompile(`\$(?:[0-9@*]|\{[^}]+\}|[A-Za-z_][A-Za-z0-9_]*)`)
+	pyPathVarRE    = regexp.MustCompile(`(?i)(?:file|path|dir|root|home|scratch|url)$`)
+	pyCredVarRE    = regexp.MustCompile(`(?i)^\$\{?[A-Za-z0-9_]*(?:password|passwd|passphrase|pass|pw|tok|secret|totp|otp|mfa|bearer|cred|api_?key)`)
+	pyInterpolated = regexp.MustCompile(`(?i)\$\{?[A-Za-z0-9_]*(?:password|passwd|passphrase|pw|tok|secret|totp|mfa|bearer|cred|api_?key)`)
+)
+
+func scanShellForPyArgv(content string) []docsSecretHit {
+	var hits []docsSecretHit
+	for _, m := range pyDashCRE.FindAllStringSubmatchIndex(content, -1) {
+		quote := content[m[2]:m[3]]
+		progStart := m[3]
+		end := -1
+		for i := progStart; i < len(content); i++ {
+			if quote == `"` && content[i] == '\\' {
+				i++
+				continue
+			}
+			if content[i] == quote[0] {
+				end = i
+				break
+			}
+		}
+		if end < 0 {
+			continue
+		}
+		program := content[progStart:end]
+		trailEnd := strings.IndexByte(content[end:], '\n')
+		if trailEnd < 0 {
+			trailEnd = len(content) - end
+		}
+		trailing := content[end+1 : end+trailEnd]
+		pyPos := m[0] + strings.Index(content[m[0]:m[2]], "python")
+		firstLineStart := strings.LastIndexByte(content[:pyPos], '\n') + 1
+		firstLineEnd := pyPos + strings.IndexByte(content[pyPos:]+"\n", '\n')
+		firstLine := content[firstLineStart:firstLineEnd]
+		closeLineStart := strings.LastIndexByte(content[:end], '\n') + 1
+		closeLine := content[closeLineStart : end+trailEnd]
+		if strings.HasPrefix(strings.TrimSpace(firstLine), "#") ||
+			strings.Contains(firstLine, docsSecretsAllowMarker) || strings.Contains(closeLine, docsSecretsAllowMarker) {
+			continue
+		}
+		var args []string
+		for _, a := range pyVarArgRE.FindAllString(trailing, -1) {
+			// A path on argv is not the secret (the safe form IS a 0600 file path).
+			if !pyPathVarRE.MatchString(strings.Trim(a, "${}")) {
+				args = append(args, a)
+			}
+		}
+		if len(args) == 0 {
+			continue
+		}
+		why := ""
+		switch {
+		case pyJSONArgvRE.MatchString(program):
+			why = "a JSON document parsed from argv"
+		case pyCredWordRE.MatchString(program):
+			why = "a program that names a credential"
+		case quote == `"` && pyInterpolated.MatchString(program):
+			why = "a credential variable interpolated into the program text"
+		default:
+			for _, a := range args {
+				if pyCredVarRE.MatchString(a) {
+					why = "credential variable " + a
+					break
+				}
+			}
+		}
+		if why == "" {
+			continue
+		}
+		line := strings.Count(content[:pyPos], "\n") + 1
+		hits = append(hits, docsSecretHit{line, "python -c with a variable argument on argv (" + why + "; pass it through the environment or stdin: `V=\"$X\" python3 -c '... os.environ[\"V\"]'`): " + strings.Join(args, " "), strings.TrimSpace(firstLine)})
 	}
 	return hits
 }
@@ -581,6 +692,17 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"jq arg on cont":     "jq -n --arg u \"$U\" \\\n    --arg p \"$ADMIN_PASSWORD\" \\\n    '{username: $u, password: $p}'",
 		"jq arg after pipe":  `echo '{}' | jq --arg tok "$TOK" '. + {token: $tok}'`,
 		"jq argjson token":   `jq -n --argjson mfa_code "$CODE_JSON" '{mfa: $mfa_code}'`,
+		// DEMO-COPY-LEFTOVERS-NOV-1 shapes: a JSON document or a credential handed to python3 -c on argv.
+		"py json argv":       "python3 -c \"\nimport sys, json\nd = json.loads(sys.argv[1])\nprint(d['data']['token'])\n\" \"$RESP_BODY\"",
+		"py json argv sq":    "tok=$(python3 -c 'import sys,json; print(json.loads(sys.argv[1])[\"data\"][\"token\"])' \"$out\")",
+		"py json positional": "python3 -c \"\nimport sys, json\nd = json.loads(sys.argv[1])\n\" \"$2\"",
+		"py cred program":    "python3 -c \"\nimport sys, hmac\nsecret = sys.argv[1]\nprint(len(secret))\n\" \"$1\"",
+		"py cred var":        `python3 -c 'import sys; print(len(sys.argv[1]))' "$ADMIN_PASSWORD"`,
+		"py cred var braces": `python -c 'import sys; print(len(sys.argv[1]))' "${BOOTSTRAP_TOKEN}"`,
+		"py -I flag":         `python3 -I -c 'import sys; print(len(sys.argv[1]))' "$MFA_CODE"`,
+		"py in subst":        `body="$(python3 -c 'import json,sys; print(json.dumps({"k":sys.argv[1]}))' "$TOTP")"`,
+		"py interpolated":    `python3 -c "print('$ADMIN_TOKEN')" "$x"`,
+		"py later line":      "x=1\npython3 -c 'import sys,json; json.loads(sys.argv[1])' \"$body\"",
 	} {
 		if len(scanShellForSecrets(sh)) == 0 {
 			t.Errorf("shell guard missed (%s): %q", name, sh)
@@ -637,6 +759,17 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"jq arg comment":   `# the old form was jq -n --arg p "$ADMIN_PW" and leaked into ps`,
 		"non-jq --arg":     `getopt --arg p "$ADMIN_PW"`,
 		"jq passes lookup": `jq -r '.data.token' <<<"$out"`,
+		// DEMO-COPY-LEFTOVERS-NOV-1 safe forms.
+		"py env prefix":    "DEMO_JSON_DOC=\"$RESP_BODY\" python3 -c \"\nimport os, json\nd = json.loads(os.environ['DEMO_JSON_DOC'])\n\"",
+		"py env totp":      "DEMO_TOTP_SEED=\"$1\" python3 -c \"\nimport os\nsecret = os.environ['DEMO_TOTP_SEED']\n\"",
+		"py stdin":         `printf '%s' "$RESP_BODY" | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["token"])'`,
+		"py no variable":   `python3 -c 'print(1)'`,
+		"py literal arg":   `python3 -c 'import sys; print(sys.argv[1])' literal`,
+		"py neutral arg":   `python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$ref"`,
+		"py path arg":      `python3 -I -c 'import os,stat,sys; sys.exit(os.stat(sys.argv[1]).st_mode & stat.S_IRWXO != 0)' "$ADMIN_PASSWORD_FILE"`,
+		"py token in file": "token=\"$(python3 -c 'import sys,json\nprint(json.load(open(sys.argv[1] + \"/t\"))[\"token\"])' \"$smoke_dir\")\"",
+		"py marker":        `python3 -c 'import sys,json; json.loads(sys.argv[1])' "$msg" # docs-secrets:allow (alert text, no credential)`,
+		"py comment":       `# the old form was python3 -c 'json.loads(sys.argv[1])' "$RESP_BODY" and leaked into ps`,
 	} {
 		if hits := scanShellForSecrets(sh); len(hits) != 0 {
 			t.Errorf("shell guard false positive (%s): %q -> %+v", name, sh, hits)
