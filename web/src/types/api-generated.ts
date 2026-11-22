@@ -11707,7 +11707,10 @@ export interface operations {
     };
     getSecretVersions: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Comma-separated (or repeated) optional fields. `total_reads` adds the secret's lifetime read count as `data.total_reads`; it is computed only when requested (an O(reads) count), so it is absent by default. */
+                include?: string;
+            };
             header?: never;
             path: {
                 id: number;
@@ -11716,7 +11719,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope `{data, message}`. `data.versions` is the version history array; `data.total_reads` the secret's lifetime read count (access-log rows with action read). */
+            /** @description Envelope `{data, message}`. `data.versions` is the version history array; `data.total_reads` (only with `include=total_reads`) the secret's lifetime read count (access-log rows with action read). */
             200: {
                 headers: {
                     [name: string]: unknown;

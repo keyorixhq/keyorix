@@ -342,6 +342,9 @@ message ListSecretsResponse {
 
 message GetSecretVersionsRequest {
   uint32 id = 1;
+  // Opt in to GetSecretVersionsResponse.total_reads, which costs an O(reads)
+  // count; off by default (#3444, like GetSecretRequest.include_total_reads).
+  bool include_total_reads = 2;
 }
 
 message SetSecretAutoRotateRequest {
@@ -363,6 +366,7 @@ message GetSecretVersionsResponse {
   repeated SecretVersion versions = 1;
   // Lifetime count of reads of the secret's value (core.SecretTotalReads). Each
   // version's read_count counts only reads charged against max_reads. (#2971)
+  // Set only when the request sets include_total_reads (#3444).
   optional int64 total_reads = 2;
 }
 

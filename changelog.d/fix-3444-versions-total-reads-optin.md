@@ -1,0 +1,2 @@
+### Changed
+- **`total_reads` is now opt-in on the secret versions listing (#3444).** `GET /api/v1/secrets/{id}/versions` returns `data.total_reads` only with `?include=total_reads`, and gRPC `GetSecretVersions` only when `include_total_reads` is set, the same as `GET /secrets/{id}` (#3113). The count is O(reads) over the access log, and the versions page paid it on every call. `keyorix secret versions` asks for it, so its output is unchanged. API or SDK callers that read `total_reads` from the versions response must now request it; version rows (`ReadCount`) are unaffected.

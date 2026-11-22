@@ -54,7 +54,7 @@ func runSecretVersions(cmd *cobra.Command, args []string) error {
 	}
 	secret := secretGetResultToSecret(sresp.JSON200.Data)
 
-	vresp, err := client.GetSecretVersionsWithResponse(ctx, secretVersionsID)
+	vresp, err := client.GetSecretVersionsWithResponse(ctx, secretVersionsID, &apiclient.GetSecretVersionsParams{Include: &includeTotalReads})
 	if err != nil {
 		return fmt.Errorf("failed to get versions: %w", err)
 	}

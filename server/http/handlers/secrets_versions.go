@@ -84,11 +84,14 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 	resp := map[string]any{"versions": versions}
 	// total_reads: the secret's lifetime value-read count (core.SecretTotalReads),
 	// next to each version's ReadCount (max_reads accounting only, #2963).
-	// Display only: omitted if it cannot be read.
-	if n, terr := h.coreService.SecretTotalReads(r.Context(), uint(id)); terr == nil {
-		resp["total_reads"] = n
-	} else {
-		log.Printf("total_reads for secret %d unavailable: %v", id, terr)
+	// Opt-in with ?include=total_reads (#3444, like GET /secrets/{id}): the count
+	// is O(reads). Display only: omitted if it cannot be read.
+	if wantsTotalReads(r) {
+		if n, terr := h.coreService.SecretTotalReads(r.Context(), uint(id)); terr == nil {
+			resp["total_reads"] = n
+		} else {
+			log.Printf("total_reads for secret %d unavailable: %v", id, terr)
+		}
 	}
 	h.sendSuccess(w, resp, "")
 }
