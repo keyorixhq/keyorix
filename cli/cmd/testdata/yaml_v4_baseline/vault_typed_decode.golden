@@ -1,0 +1,17 @@
+format1_value_only: accept | 1 entr(ies) [db(len 11)]
+format2_fields: accept | 2 entr(ies) [db-password(len 11), db-username(len 3)]
+int_value_is_stringified: accept | 1 entr(ies) [db(len 5)]
+bool_value_is_stringified: accept | 1 entr(ies) [flags-enabled(len 4)]
+float_value_is_stringified: accept | 1 entr(ies) [ratio(len 3)]
+empty_string_value_is_skipped: accept | 0 entr(ies) []
+non_mapping_entry_is_skipped: accept | 0 entr(ies) []
+trailing_slash_path: accept | 1 entr(ies) [db(len 11)]
+anchor_and_alias: accept | 2 entr(ies) [base(len 11), copy(len 11)]
+merge_key: accept | 3 entr(ies) [base-user(len 3), derived-extra(len 1), derived-user(len 3)]
+duplicate_path_key: reject | invalid YAML: line 3: mapping key "a" already defined at line 1
+duplicate_field_key: reject | invalid YAML: line 3: mapping key "value" already defined at line 2
+two_documents_first_wins: accept | 1 entr(ies) [first(len 3)]
+empty_file: accept | 0 entr(ies) []
+top_level_sequence: reject | invalid YAML: yaml: construct errors: line 1: cannot construct !!seq into map[string]interface {}
+top_level_scalar: reject | invalid YAML: yaml: construct errors: line 1: cannot construct !!str `just a ...` into map[string]interface {}
+unterminated_flow: reject | invalid YAML: yaml: line 2: did not find expected ',' or '}'

@@ -1,0 +1,18 @@
+all_fields: accept | {"server_url":"https://keyorix.example.test","token_set":true,"active_project":"7","ca_file":"/etc/keyorix/ca.pem"}
+server_url_only: accept | {"server_url":"https://keyorix.example.test","token_set":false,"active_project":"","ca_file":""}
+active_project_unquoted_int: accept | {"server_url":"","token_set":false,"active_project":"7","ca_file":""}
+active_project_float: accept | {"server_url":"","token_set":false,"active_project":"7.5","ca_file":""}
+token_int_is_stringified: accept | {"server_url":"","token_set":true,"active_project":"","ca_file":""}
+token_mapping: reject | parse credentials file: yaml: construct errors: line 2: cannot construct !!map into string
+token_null: accept | {"server_url":"","token_set":false,"active_project":"","ca_file":""}
+server_url_sequence: reject | parse credentials file: yaml: construct errors: line 2: cannot construct !!seq into string
+duplicate_key: reject | parse credentials file: yaml: construct errors: line 2: mapping key "server_url" already defined at line 1
+anchor_and_alias: accept | {"server_url":"https://keyorix.example.test","token_set":false,"active_project":"","ca_file":"https://keyorix.example.test"}
+unknown_key_is_ignored: accept | {"server_url":"https://keyorix.example.test","token_set":false,"active_project":"","ca_file":""}
+two_documents_first_wins: accept | {"server_url":"https://first.example.test","token_set":false,"active_project":"","ca_file":""}
+empty_file: reject | parse credentials file: EOF
+comments_only: reject | parse credentials file: EOF
+document_marker_only: accept | {"server_url":"","token_set":false,"active_project":"","ca_file":""}
+top_level_scalar: reject | parse credentials file: yaml: construct errors: line 1: cannot construct !!str `just a ...` into credstore.Credentials
+top_level_sequence: reject | parse credentials file: yaml: construct errors: line 1: cannot construct !!seq into credstore.Credentials
+unterminated_flow: reject | parse credentials file: yaml: line 2: did not find expected ',' or ']'
