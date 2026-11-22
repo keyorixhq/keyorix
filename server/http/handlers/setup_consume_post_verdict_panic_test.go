@@ -173,7 +173,9 @@ func TestConsumeSetup_MFAChallengePanicAnsweredLikeItsError(t *testing.T) {
 
 // TestConsumeSetup_PreVerdictPanicIsNotAnOracle is the calibration for the
 // boundary: a panic in the token lookup itself happens for every token, valid
-// or not, so it is answered the same for both (the Recovery 500) and says
+// or not, so it is answered the same for both (lookupSetupToken recovers it into
+// ErrSetupNotEvaluated: 503, slot returned, see
+// TestConsumeSetup_TokenLookupFaultIs503AndSaysNothingAboutTheToken) and says
 // nothing about the token.
 func TestConsumeSetup_PreVerdictPanicIsNotAnOracle(t *testing.T) {
 	h, c, fs, _, adminID := newUndeliveredSetupFixture(t)
