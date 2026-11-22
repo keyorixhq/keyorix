@@ -112,7 +112,7 @@ func TestMFAVerifiers_PendingSecretIsNotASecondFactor(t *testing.T) {
 	require.Error(t, err, "login: a pending seed must not complete the second factor")
 	require.Nil(t, sess)
 	require.Error(t, c.VerifyMFAStepUp(ctx, 1, code), "step-up: a pending seed must not satisfy step-up")
-	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, code)
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, code, "")
 	require.Error(t, err, "re-auth: a pending seed must not re-authenticate")
 
 	require.NoError(t, db.Model(&models.MFASecret{}).Where("user_id = 1").Update("activated", true).Error)

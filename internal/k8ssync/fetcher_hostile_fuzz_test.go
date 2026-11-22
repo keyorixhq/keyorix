@@ -9,7 +9,9 @@ package k8ssync
 //
 // The value route serves a DIFFERENT value for any secret id other than the one
 // the pristine list names, so reading the wrong secret is visible. Strict
-// decoders follow the documented Keyorix REST envelope ({"data": ...}).
+// decoders follow the documented Keyorix REST envelope ({"data": ...}) and the
+// scope rule: the matching list entry and the value response must name project
+// 7 and the resolved environment, and the value response the id that was read.
 
 import (
 	"context"
@@ -47,17 +49,21 @@ func fetcherHostileRoutes(o *fetchObs) []hostile.Route {
 			o.mu.Lock()
 			o.listEnvID = append(o.listEnvID, r.URL.Query().Get("environment_id"))
 			o.mu.Unlock()
-			return js(`{"data":{"secrets":[{"ID":41,"Name":"other"},{"ID":42,"Name":"db-pass"}],"total_pages":1,"page":1}}`)
+			return js(`{"data":{"secrets":[` +
+				`{"ID":41,"Name":"other","project_id":7,"environment_id":3},` +
+				`{"ID":42,"Name":"db-pass","project_id":7,"environment_id":3}],"total_pages":1,"page":1}}`)
 		}},
 		{Name: "value", Method: "GET", Prefix: "/api/v1/secrets/", Valid: func(_ int, r *http.Request) hostile.Resp {
 			id := strings.TrimPrefix(r.URL.Path, "/api/v1/secrets/")
 			o.mu.Lock()
 			o.valueIDs = append(o.valueIDs, id)
 			o.mu.Unlock()
+			// The fetcher builds the path from a uint, so id is a decimal number.
+			scope := `"secret":{"id":` + id + `,"project_id":7,"environment_id":3,"expiration":null}`
 			if id == "42" {
-				return js(`{"data":{"value":"` + hostileFetchValue + `","secret":{"expiration":null}}}`)
+				return js(`{"data":{"value":"` + hostileFetchValue + `",` + scope + `}}`)
 			}
-			return js(`{"data":{"value":"OTHER-SECRETS-VALUE","secret":{"expiration":null}}}`)
+			return js(`{"data":{"value":"OTHER-SECRETS-VALUE",` + scope + `}}`)
 		}},
 	}
 }
@@ -84,26 +90,47 @@ func strictFetchEnv(b []byte, want string) (string, bool) {
 	return "", false
 }
 
-func strictFetchListID(b []byte, want string) (string, bool) {
+// hostileFetchProject is the project the harness's fetcher is built with; a
+// strictly valid list entry or value response names it as its project_id.
+const hostileFetchProject = "7"
+
+// strictUint is the decimal form of a JSON number that is a uint64, and false
+// for anything else (missing, null, a string, a fraction, out of range).
+func strictUint(raw json.RawMessage) (string, bool) {
+	if _, err := strconv.ParseUint(string(raw), 10, 64); err != nil {
+		return "", false
+	}
+	return string(raw), true
+}
+
+// strictFetchListID finds the first entry named want with a valid id (matched)
+// and reports it ok only when that entry is scoped to hostileFetchProject and
+// env. A first match in another scope is refused, not skipped: the fetcher
+// applies the same rule.
+func strictFetchListID(b []byte, want, env string) (id string, matched, ok bool) {
 	var d struct {
 		Data *struct {
 			Secrets []struct {
-				ID   json.Number `json:"ID"`
-				Name string      `json:"Name"`
+				ID            json.Number     `json:"ID"`
+				Name          string          `json:"Name"`
+				ProjectID     json.RawMessage `json:"project_id"`
+				EnvironmentID json.RawMessage `json:"environment_id"`
 			} `json:"secrets"`
 		} `json:"data"`
 	}
 	if json.Unmarshal(b, &d) != nil || d.Data == nil {
-		return "", false
+		return "", false, false
 	}
 	for _, s := range d.Data.Secrets {
 		if s.Name == want {
 			if _, err := strconv.ParseUint(s.ID.String(), 10, 64); err == nil {
-				return s.ID.String(), true
+				p, pok := strictUint(s.ProjectID)
+				e, eok := strictUint(s.EnvironmentID)
+				return s.ID.String(), true, pok && eok && p == hostileFetchProject && e == env
 			}
 		}
 	}
-	return "", false
+	return "", false, false
 }
 
 func strictFetchValue(b []byte) (string, bool) {
@@ -116,6 +143,28 @@ func strictFetchValue(b []byte) (string, bool) {
 		return "", false
 	}
 	return *d.Data.Value, true
+}
+
+// strictValueScoped reports whether a value response says it is secret id in
+// hostileFetchProject and env, the rule the fetcher applies before using it.
+func strictValueScoped(b []byte, id, env string) bool {
+	var d struct {
+		Data *struct {
+			Secret *struct {
+				ID            json.RawMessage `json:"id"`
+				ProjectID     json.RawMessage `json:"project_id"`
+				EnvironmentID json.RawMessage `json:"environment_id"`
+			} `json:"secret"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(b, &d) != nil || d.Data == nil || d.Data.Secret == nil {
+		return false
+	}
+	s := d.Data.Secret
+	i, iok := strictUint(s.ID)
+	p, pok := strictUint(s.ProjectID)
+	e, eok := strictUint(s.EnvironmentID)
+	return iok && pok && eok && i == id && p == hostileFetchProject && e == env
 }
 
 func FuzzKeyorixFetcherHostileServer(f *testing.F) {
@@ -196,39 +245,47 @@ func runFetcherHostile(p hostile.Program, known []hostile.Known) *hostile.Harnes
 		h.Violate("O6 LIVENESS: pristine fetch returned %q, %v (unmatched: %v)", val, err, h.Unmatched())
 	}
 	if err == nil {
-		envOKFn := func(b []byte) bool { _, ok := strictFetchEnv(b, "prod"); return ok }
-		listOKFn := func(b []byte) bool { _, ok := strictFetchListID(b, "db-pass"); return ok }
-		valOKFn := func(b []byte) bool { _, ok := strictFetchValue(b); return ok }
-		envBody, ek := h.Delivery("envs", envOKFn)
-		_, lk := h.Delivery("list", listOKFn)
-		valBody, vk := h.Delivery("value", valOKFn)
+		// The strict list and value decoders need the scope the earlier
+		// responses establish: the environment id from the delivered environment
+		// list, then the first id the delivered list pages assign to the name.
+		var wantEnv, wantID string
+		var envOK bool
+		deliver := func(okStatus []int) (envBody, valBody []byte, ek, lk, vk string) {
+			envBody, ek = h.Delivery("envs", func(b []byte) bool { _, ok := strictFetchEnv(b, "prod"); return ok }, okStatus...)
+			wantEnv, envOK = strictFetchEnv(envBody, "prod")
+			wantID = ""
+			for _, rec := range h.Served("list") {
+				// Not rec.Complete: a page whose whole content arrived before a
+				// trailing transport error (O5/transport-error-ignored, reported
+				// separately) was delivered; Seen holds only what the client could read.
+				// The first match decides, in or out of scope, as in the fetcher.
+				if id, matched, ok := strictFetchListID(rec.Seen, "db-pass", wantEnv); matched && slices.Contains(okStatus, rec.Status) {
+					if ok {
+						wantID = id
+					}
+					break
+				}
+			}
+			_, lk = h.Delivery("list", func(b []byte) bool { _, _, ok := strictFetchListID(b, "db-pass", wantEnv); return ok }, okStatus...)
+			valBody, vk = h.Delivery("value", func(b []byte) bool {
+				_, ok := strictFetchValue(b)
+				return ok && strictValueScoped(b, wantID, wantEnv)
+			}, okStatus...)
+			return envBody, valBody, ek, lk, vk
+		}
+		okStatus := []int{200}
+		envBody, valBody, ek, lk, vk := deliver(okStatus)
 		// The fetcher accepts any 2xx by design. A final 2xx other than 200 used
 		// to skip every value check below; it is now judged like a 200, and a
 		// success that passes them all is tagged /2xx-valid-body (a Known entry
 		// names exactly that).
 		other2xx := false
-		okStatus := []int{200}
 		if (ek == "status" || lk == "status" || vk == "status") && servedAll2xx(h) {
-			e2, ek2 := h.Delivery("envs", envOKFn, hostile.Status2xx...)
-			_, lk2 := h.Delivery("list", listOKFn, hostile.Status2xx...)
-			v2, vk2 := h.Delivery("value", valOKFn, hostile.Status2xx...)
-			envBody, ek, lk, valBody, vk, other2xx, okStatus = e2, ek2, lk2, v2, vk2, true, hostile.Status2xx
+			okStatus, other2xx = hostile.Status2xx, true
+			envBody, valBody, ek, lk, vk = deliver(okStatus)
 		}
-		wantEnv, envOK := strictFetchEnv(envBody, "prod")
 		want, valOK := strictFetchValue(valBody)
-
-		// The id the fetcher read must be the FIRST id the delivered list
-		// pages assign to the name.
-		wantID := ""
-		for _, rec := range h.Served("list") {
-			// Not rec.Complete: a page whose whole content arrived before a
-			// trailing transport error (O5/transport-error-ignored, reported
-			// separately) was delivered; Seen holds only what the client could read.
-			if id, ok := strictFetchListID(rec.Seen, "db-pass"); ok && slices.Contains(okStatus, rec.Status) {
-				wantID = id
-				break
-			}
-		}
+		valScoped := strictValueScoped(valBody, wantID, wantEnv)
 		obs.mu.Lock()
 		gotIDs := append([]string(nil), obs.valueIDs...)
 		listEnvs := append([]string(nil), obs.listEnvID...)
@@ -249,7 +306,11 @@ func runFetcherHostile(p hostile.Program, known []hostile.Known) *hostile.Harnes
 		case !envOK || (len(listEnvs) > 0 && listEnvs[0] != wantEnv):
 			h.Violate("O5/environment: list scoped to environment_id %v, strict environment id %q (valid=%v)", listEnvs, wantEnv, envOK)
 		case wantID == "" || len(gotIDs) == 0 || gotIDs[len(gotIDs)-1] != wantID:
-			h.Violate("O5/secret-id: value read from id %v, strict first match in delivered list %q", gotIDs, wantID)
+			// wantID is empty also when the first match is listed outside project 7
+			// or the strict environment.
+			h.Violate("O5/secret-id: value read from id %v, strict first in-scope match in delivered list %q", gotIDs, wantID)
+		case !valScoped:
+			h.Violate("O5/value-scope: fetch returned %q from a value response not scoped to secret %s, project %s, environment %s", val, wantID, hostileFetchProject, wantEnv)
 		default:
 			valueOK = true
 		}

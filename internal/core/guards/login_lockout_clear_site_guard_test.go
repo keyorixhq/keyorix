@@ -60,6 +60,8 @@ var allowedLockoutAccountingSites = []clearSite{
 		why: "AUTH-PW-BUDGET: after applyNewPassword committed, and only with no second factor enrolled (the password was then full authentication, as for a delivered password login). What follows is the best-effort session purge (recovers its own panic) and an audit write; nothing can refuse the change any more."},
 	{fn: "UpdateOwnProfile", callee: "clearLoginFailures",
 		why: "AUTH-PW-BUDGET: after UpdateUser committed the email change, and only when the bare password authorised it (no second factor). Nothing fallible follows."},
+	{fn: "reauthWithRecoveryCode", callee: "clearLoginFailures",
+		why: "#4224: after the transaction that consumed the recovery code AND applied the disable/regenerate committed; the lock was re-read under LockUserForUpdate in that transaction before the consume. What follows is an audit write and, in DisableMFA, the best-effort session purge; nothing can refuse the change any more. Every failure before the commit counts the attempt (recordFailedLogin)."},
 
 	// --- the no-clear TOCTOU re-check ---
 	{fn: "authenticatePasswordLogin", callee: "recheckLockAfterCredentialMatched",

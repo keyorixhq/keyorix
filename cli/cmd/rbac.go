@@ -73,12 +73,14 @@ func resolveRBACEnvironmentIDByName(ctx context.Context, client *apiclient.Clien
 	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Environments == nil {
 		return 0, httpStatusError("failed to list environments", resp.StatusCode(), resp.Body)
 	}
-	for _, e := range *resp.JSON200.Data.Environments {
-		if e.Name != nil && strings.EqualFold(*e.Name, name) {
-			return derefInt(e.Id), nil
-		}
+	id, err := matchEnvironmentID(*resp.JSON200.Data.Environments, name)
+	if err != nil {
+		return 0, err
 	}
-	return 0, fmt.Errorf("environment %q not found in project", name)
+	if id == 0 {
+		return 0, fmt.Errorf("environment %q not found in project", name)
+	}
+	return id, nil
 }
 
 // resolveUserIDByEmail finds a user's ID by email via GET /api/v1/users,

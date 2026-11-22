@@ -55,7 +55,7 @@ func TestRequireReauth_PasswordPlusGrant_OneActionSucceeds(t *testing.T) {
 		UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute),
 	}).Error)
 
-	codes, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	codes, err := c.RegenerateMFARecoveryCodes(ctx, 1, "", mfaTestPassword)
 	require.NoError(t, err, "password + a live, correctly-purposed step-up grant must satisfy re-auth for the FIRST sensitive action")
 	assert.NotEmpty(t, codes)
 }
@@ -82,7 +82,7 @@ func TestRequireReauth_GrantConsumedOnFirstAction_SecondDifferentActionRejected(
 	}).Error)
 
 	// First sensitive action: succeeds, consuming the grant.
-	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "", mfaTestPassword)
 	require.NoError(t, err, "the first sensitive action must succeed off the live grant")
 
 	// Second, DIFFERENT sensitive action, same (now-consumed) grant, same
@@ -114,10 +114,10 @@ func TestRequireReauth_GrantConsumedOnFirstAction_ThirdActionAlsoRejected(t *tes
 		UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute),
 	}).Error)
 
-	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "", mfaTestPassword)
 	require.NoError(t, err, "the first sensitive action must succeed off the live grant")
 
-	err = c.DisableMFA(ctx, 1, mfaTestPassword, "")
+	err = c.DisableMFA(ctx, 1, "", mfaTestPassword, "")
 	require.Error(t, err, "the same consumed grant must not satisfy a third, still-different action either")
 	assert.Contains(t, err.Error(), "invalid code or password")
 
@@ -140,7 +140,7 @@ func TestRequireReauth_FreshGrantAfterConsumption_SecondActionSucceeds(t *testin
 		UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute),
 	}).Error)
 
-	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "", mfaTestPassword)
 	require.NoError(t, err, "the first sensitive action must succeed off the live grant")
 
 	// A fresh re-auth ceremony (e.g. a second FinishWebAuthnReauth passkey
@@ -173,7 +173,7 @@ func TestRequireReauth_TOTPCode_AlreadyInherentlySingleUsePerCall(t *testing.T) 
 	require.NoError(t, err)
 
 	// First action: a fresh, valid TOTP code succeeds.
-	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, code)
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, code, "")
 	require.NoError(t, err, "a fresh, valid TOTP code must satisfy the first sensitive action")
 
 	// Second, different action, SAME TOTP code, well within its ~90s validity

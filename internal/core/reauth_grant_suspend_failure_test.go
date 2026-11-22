@@ -31,7 +31,7 @@ func TestRequireReauth_ActiveRecheckGetUserFault_AuditedAsMFAError(t *testing.T)
 		Err: errors.New("injected: GetUser"),
 	})
 	c.storage = fs
-	_, err := c.RegenerateMFARecoveryCodes(context.Background(), 1, mfaTestPassword)
+	_, err := c.RegenerateMFARecoveryCodes(context.Background(), 1, "", mfaTestPassword)
 	c.storage = base
 
 	require.True(t, fs.Fired(), "the use-time GetUser must have been reached")

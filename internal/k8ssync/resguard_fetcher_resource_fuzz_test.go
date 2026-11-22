@@ -92,10 +92,10 @@ func fetcherResourceServer(shape fetcherResourceShape) *httptest.Server {
 		}
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		tp := max(shape.totalPages, 1)
-		secrets := `[{"ID":41,"Name":"other"}]`
+		secrets := `[{"ID":41,"Name":"other","project_id":7,"environment_id":3}]`
 		// Target appears only on the final page, so a resolution must walk every page.
 		if shape.targetOnETP && page >= tp {
-			secrets = `[{"ID":41,"Name":"other"},{"ID":42,"Name":"db-pass"}]`
+			secrets = `[{"ID":41,"Name":"other","project_id":7,"environment_id":3},{"ID":42,"Name":"db-pass","project_id":7,"environment_id":3}]`
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w, `{"data":{"secrets":%s,"total_pages":%d,"page":%d}}`, secrets, tp, page)
@@ -103,7 +103,7 @@ func fetcherResourceServer(shape fetcherResourceShape) *httptest.Server {
 	mux.HandleFunc("/api/v1/secrets/42", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		b, _ := json.Marshal(shape.value)
-		_, _ = fmt.Fprintf(w, `{"data":{"value":%s,"secret":{"expiration":null}}}`, b)
+		_, _ = fmt.Fprintf(w, `{"data":{"value":%s,"secret":{"id":42,"project_id":7,"environment_id":3,"expiration":null}}}`, b)
 	})
 	return httptest.NewServer(mux)
 }

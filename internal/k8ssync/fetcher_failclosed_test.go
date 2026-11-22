@@ -39,10 +39,13 @@ func (s failClosedServer) handler(t *testing.T) http.HandlerFunc {
 	}
 }
 
+// The ok* bodies describe one consistent server: secret 9 ("db") lives in project 7
+// (the project fetchWith builds its fetcher with) and environment 3 ("production"),
+// and both the list entry and the value response say so.
 const (
 	okEnvs  = `{"data":{"environments":[{"ID":3,"Name":"production"}]}}`
-	okList  = `{"data":{"secrets":[{"ID":9,"Name":"db"}],"total_pages":1}}`
-	okValue = `{"data":{"value":"s3cr3t","secret":{}}}`
+	okList  = `{"data":{"secrets":[{"ID":9,"Name":"db","project_id":7,"environment_id":3}],"total_pages":1}}`
+	okValue = `{"data":{"value":"s3cr3t","secret":{"id":9,"project_id":7,"environment_id":3}}}`
 )
 
 func fetchWith(t *testing.T, s failClosedServer) ([]byte, error) {
@@ -62,9 +65,9 @@ func TestFetcher_HappyPathStillWorks(t *testing.T) {
 
 func TestFetcher_RejectsEmptyOrMissingValue(t *testing.T) {
 	for name, val := range map[string]string{
-		"empty":      `{"data":{"value":"","secret":{}}}`,
-		"missing":    `{"data":{"secret":{}}}`,
-		"null":       `{"data":{"value":null,"secret":{}}}`,
+		"empty":      `{"data":{"value":"","secret":{"id":9,"project_id":7,"environment_id":3}}}`,
+		"missing":    `{"data":{"secret":{"id":9,"project_id":7,"environment_id":3}}}`,
+		"null":       `{"data":{"value":null,"secret":{"id":9,"project_id":7,"environment_id":3}}}`,
 		"no payload": `{"data":{}}`,
 	} {
 		t.Run(name, func(t *testing.T) {

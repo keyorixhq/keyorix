@@ -352,7 +352,7 @@ func TestKeyorixFetcher_S22_EmptyDataEnvelope(t *testing.T) {
 		}
 		// Return a valid list so resolveID finds the secret (id=1).
 		if r.URL.Path == "/api/v1/secrets" {
-			_, _ = w.Write([]byte(`{"data":{"total_pages":1,"secrets":[{"ID":1,"Name":"secret"}]}}`))
+			_, _ = w.Write([]byte(`{"data":{"total_pages":1,"secrets":[{"ID":1,"Name":"secret","project_id":1,"environment_id":5}]}}`))
 			return
 		}
 		// Value endpoint returns a JSON object with no "data" key → env.Data == nil.
