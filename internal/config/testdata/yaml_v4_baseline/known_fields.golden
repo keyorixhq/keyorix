@@ -1,0 +1,30 @@
+all_keys_known:
+  strict: accept | 1 document(s)
+  plain:  accept | 1 document(s)
+unknown_top_level_key:
+  strict: reject | yaml: construct errors: line 2: field environmnt not found in type config.Config
+  plain:  accept | 1 document(s)
+unknown_nested_key:
+  strict: reject | yaml: construct errors: line 3: field databse not found in type config.StorageConfig
+  plain:  accept | 1 document(s)
+known_key_under_wrong_parent:
+  strict: reject | yaml: construct errors: line 1: field encryption not found in type config.Config
+  plain:  accept | 1 document(s)
+unknown_key_in_flow_mapping:
+  strict: reject | yaml: construct errors: line 1: field bogus not found in type config.StorageConfig
+  plain:  accept | 1 document(s)
+unknown_key_with_null_value:
+  strict: reject | yaml: construct errors: line 1: field bogus not found in type config.Config
+  plain:  accept | 1 document(s)
+unknown_key_with_nested_value:
+  strict: reject | yaml: construct errors: line 1: field bogus not found in type config.Config
+  plain:  accept | 1 document(s)
+unknown_key_in_second_document:
+  strict: reject | yaml: construct errors: line 3: field bogus not found in type config.Config
+  plain:  accept | 2 document(s)
+case_differs_from_tag:
+  strict: reject | yaml: construct errors: line 1: field Environment not found in type config.Config
+  plain:  accept | 1 document(s)
+several_unknown_keys:
+  strict: reject | yaml: construct errors: line 1: field one not found in type config.Config; line 2: field two not found in type config.Config
+  plain:  accept | 1 document(s)

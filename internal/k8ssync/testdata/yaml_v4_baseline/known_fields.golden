@@ -1,0 +1,18 @@
+all_keys_known:
+  strict: accept | 1 document(s)
+  plain:  accept | 1 document(s)
+unknown_top_level_key:
+  strict: reject | yaml: construct errors: line 3: field prune_on_revok not found in type k8ssync.Config
+  plain:  accept | 1 document(s)
+unknown_key_in_mapping_entry:
+  strict: reject | yaml: construct errors: line 3: field namespce not found in type k8ssync.SecretMapping
+  plain:  accept | 1 document(s)
+unknown_key_null_value:
+  strict: reject | yaml: construct errors: line 1: field bogus not found in type k8ssync.Config
+  plain:  accept | 1 document(s)
+unexported_field_name_is_unknown:
+  strict: reject | yaml: construct errors: line 1: field massPruneAckTime not found in type k8ssync.Config
+  plain:  accept | 1 document(s)
+unknown_key_in_second_document:
+  strict: reject | yaml: construct errors: line 3: field bogus not found in type k8ssync.Config
+  plain:  accept | 2 document(s)

@@ -1,0 +1,25 @@
+one_document:
+  doc 1: accept | keys [a]
+  documents decoded: 1
+two_documents:
+  doc 1: accept | keys [a]
+  doc 2: accept | keys [b]
+  documents decoded: 2
+second_document_not_a_mapping:
+  doc 1: accept | keys [a]
+  doc 2: reject | yaml: construct errors: line 4: cannot construct !!seq into map[string]interface {}
+  documents decoded: 1
+second_document_syntax_error:
+  doc 1: accept | keys [a]
+  doc 2: reject | go-yaml load error in parser (while parsing a flow mapping) at L4.C4-L5.C1: did not find expected ',' or '}'
+  documents decoded: 1
+empty_second_document:
+  doc 1: accept | keys [a]
+  doc 2: accept | keys []
+  documents decoded: 2
+anchor_does_not_cross_documents:
+  doc 1: accept | keys [a]
+  doc 2: reject | go-yaml load error in composer at L4.C4: unknown anchor 'x' referenced
+  documents decoded: 1
+empty_input:
+  documents decoded: 0

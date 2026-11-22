@@ -1,0 +1,17 @@
+minimal_valid: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":1,"first_mapping_key":"password"}
+all_scalar_kinds: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"30s","health_port":9090,"cleanup":true,"prune_on_revoke":"false","on_suspend":"clear","mappings":1,"first_mapping_key":"password"}
+tristate_prune_unset: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":1,"first_mapping_key":"password"}
+tristate_prune_explicit_true: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"true","on_suspend":"","mappings":1,"first_mapping_key":"password"}
+project_id_string_number: reject | parse config <dir>/agent.yaml: yaml: construct errors: line 2: cannot construct !!str `8` into uint
+project_id_negative: reject | parse config <dir>/agent.yaml: yaml: construct errors: line 2: cannot construct !!int `-1` into uint
+project_id_not_a_number: reject | parse config <dir>/agent.yaml: yaml: construct errors: line 2: cannot construct !!str `seven` into uint
+health_port_float: reject | parse config <dir>/agent.yaml: yaml: construct errors: line 3: cannot construct !!float `80.5` into int
+cleanup_yes_decodes_as_bool_true: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"","health_port":0,"cleanup":true,"prune_on_revoke":"unset","on_suspend":"","mappings":1,"first_mapping_key":"password"}
+mappings_not_a_sequence: reject | parse config <dir>/agent.yaml: yaml: construct errors: line 3: cannot construct !!str `nope` into []k8ssync.SecretMapping
+mapping_entry_not_a_mapping: reject | parse config <dir>/agent.yaml: yaml: construct errors: line 4: cannot construct !!str `just-a-...` into k8ssync.SecretMapping
+duplicate_key: reject | parse config <dir>/agent.yaml: line 3: mapping key "project_id" already defined at line 2
+anchor_reused_in_mappings: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":2,"first_mapping_key":"k"}
+merge_key_in_mapping: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":1,"first_mapping_key":"k"}
+empty_file: reject | keyorix_url is required
+unterminated_flow: reject | parse config <dir>/agent.yaml: yaml: line 2: did not find expected ',' or ']'
+unknown_key_is_ignored: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":1,"first_mapping_key":"password"}
