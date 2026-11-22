@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("storage: {type: postgres}\nsecurity: {require_mfa: true}\n")

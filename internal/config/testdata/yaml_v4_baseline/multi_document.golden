@@ -1,0 +1,42 @@
+one_document:
+  doc 1: accept | {"environment":"a","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  documents decoded: 1
+two_documents:
+  doc 1: accept | {"environment":"a","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  doc 2: accept | {"environment":"b","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  documents decoded: 2
+leading_marker:
+  doc 1: accept | {"environment":"a","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  doc 2: accept | {"environment":"","storage_type":"postgres","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  documents decoded: 2
+explicit_end_marker:
+  doc 1: accept | {"environment":"a","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  doc 2: accept | {"environment":"b","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  documents decoded: 2
+empty_second_document:
+  doc 1: accept | {"environment":"a","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  doc 2: accept | {"environment":"","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  documents decoded: 2
+comment_only_second_document:
+  doc 1: accept | {"environment":"a","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  doc 2: accept | {"environment":"","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  documents decoded: 2
+second_document_wrong_type:
+  doc 1: accept | {"environment":"a","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  doc 2: reject | yaml: construct errors: line 5: cannot construct !!str `many` into int
+  documents decoded: 1
+second_document_syntax_error:
+  doc 1: accept | {"environment":"a","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  doc 2: reject | go-yaml load error in parser (while parsing a flow mapping) at L3.C10-L4.C1: did not find expected ',' or '}'
+  documents decoded: 1
+anchor_does_not_cross_documents:
+  doc 1: accept | {"environment":"a","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  doc 2: reject | go-yaml load error in composer at L3.C22: unknown anchor 'e' referenced
+  documents decoded: 1
+three_documents_last_differs:
+  doc 1: accept | {"environment":"a","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  doc 2: accept | {"environment":"b","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+  doc 3: accept | {"environment":"","storage_type":"","native_read_pool_max":0,"require_mfa":true,"minimum_cli_version":""}
+  documents decoded: 3
+empty_input:
+  documents decoded: 0

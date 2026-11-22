@@ -1,0 +1,25 @@
+one_document:
+  doc 1: accept | {"keyorix_url":"https://keyorix.example.test","project_id":7,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":1,"first_mapping_key":"password"}
+  documents decoded: 1
+two_documents:
+  doc 1: accept | {"keyorix_url":"https://a.example.test","project_id":1,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":0,"first_mapping_key":""}
+  doc 2: accept | {"keyorix_url":"https://b.example.test","project_id":2,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":0,"first_mapping_key":""}
+  documents decoded: 2
+second_document_wrong_type:
+  doc 1: accept | {"keyorix_url":"","project_id":1,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":0,"first_mapping_key":""}
+  doc 2: reject | yaml: construct errors: line 3: cannot construct !!str `seven` into uint
+  documents decoded: 1
+second_document_syntax_error:
+  doc 1: accept | {"keyorix_url":"","project_id":1,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":0,"first_mapping_key":""}
+  doc 2: reject | go-yaml load error in parser (while parsing a flow node) at L4.C1: did not find expected node content
+  documents decoded: 1
+empty_second_document:
+  doc 1: accept | {"keyorix_url":"","project_id":1,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":0,"first_mapping_key":""}
+  doc 2: accept | {"keyorix_url":"","project_id":0,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":0,"first_mapping_key":""}
+  documents decoded: 2
+anchor_does_not_cross_documents:
+  doc 1: accept | {"keyorix_url":"https://a.example.test","project_id":0,"interval":"","health_port":0,"cleanup":false,"prune_on_revoke":"unset","on_suspend":"","mappings":0,"first_mapping_key":""}
+  doc 2: reject | go-yaml load error in composer at L3.C14: unknown anchor 'u' referenced
+  documents decoded: 1
+empty_input:
+  documents decoded: 0
