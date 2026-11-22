@@ -132,10 +132,12 @@ describe('ProjectActivityTab', () => {
         const table = within(screen.getByRole('table'));
 
         const mappedBadge = table.getByText('Created');
-        expect(mappedBadge).toHaveStyle({ backgroundColor: 'var(--success-subtle)', color: 'var(--success)' });
+        expect(mappedBadge.style.backgroundColor).toBe('var(--success-subtle)');
+        expect(mappedBadge.style.color).toBe('var(--success)');
 
         const unmappedBadge = table.getByText('Unmapped event');
-        expect(unmappedBadge).toHaveStyle({ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' });
+        expect(unmappedBadge.style.backgroundColor).toBe('var(--bg-muted)');
+        expect(unmappedBadge.style.color).toBe('var(--text-secondary)');
     });
 
     it('formats event timestamps as relative time, bucketed by how long ago they occurred', () => {

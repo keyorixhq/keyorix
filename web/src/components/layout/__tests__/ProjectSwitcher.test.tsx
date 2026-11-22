@@ -250,20 +250,20 @@ describe('ProjectSwitcher', () => {
 
         const row = screen.getByRole('button', { name: /Payments/ });
         fireEvent.mouseEnter(row);
-        expect(row).toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        expect(row.style.backgroundColor).toBe('var(--bg-subtle)');
         fireEvent.mouseLeave(row);
-        expect(row).toHaveStyle({ backgroundColor: '' });
+        expect(row.style.backgroundColor).toBe('');
 
         const allProjectsLink = screen.getByRole('link', { name: /All projects/i });
         fireEvent.mouseEnter(allProjectsLink);
-        expect(allProjectsLink).toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        expect(allProjectsLink.style.backgroundColor).toBe('var(--bg-subtle)');
         fireEvent.mouseLeave(allProjectsLink);
-        expect(allProjectsLink).toHaveStyle({ backgroundColor: '' });
+        expect(allProjectsLink.style.backgroundColor).toBe('');
 
         const newProjectButton = screen.getByRole('button', { name: /New project/i });
         fireEvent.mouseEnter(newProjectButton);
-        expect(newProjectButton).toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        expect(newProjectButton.style.backgroundColor).toBe('var(--bg-subtle)');
         fireEvent.mouseLeave(newProjectButton);
-        expect(newProjectButton).toHaveStyle({ backgroundColor: '' });
+        expect(newProjectButton.style.backgroundColor).toBe('');
     });
 });
