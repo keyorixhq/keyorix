@@ -288,12 +288,25 @@ grpc_pkg() {
   echo "github.com/keyorixhq/keyorix/server/grpc"
 }
 
+# authzdiff_pkg: server/authzdiff, split out of root-4 into two test-name shards
+# (2026-11-22, CI-ROUND-CUT-NOV-1). It was root-4's whole critical path: 1332 s of
+# root-4's 1793 s `go test` step on merge-queue run 44956219344, the next root-4
+# package (scripts/ci) 524 s, and it hit the 30 min per-binary timeout on run
+# 44952169246 (FAIL server/authzdiff 1806.200s). It was 323 s on 2026-11-15; the
+# growth is two tests, TestResguardAuthzRedGreen and TestResguardAuthzCalibrate
+# (87 s + 57 s of the package's 181 s in a local non-race `go test -v`), so two
+# shards put one of them on each side. Weights: server/authzdiff rows of
+# scripts/ci-test-weights.tsv.
+authzdiff_pkg() {
+  echo "github.com/keyorixhq/keyorix/server/authzdiff"
+}
+
 # root_4_pkgs: the dynamic catch-all -- every root_base() package not pinned
-# to root-1/2/3/core/storage-store/encryption/faultops/admin above, so a newly
+# to root-1/2/3/core/storage-store/encryption/faultops/admin/authzdiff above, so a newly
 # added package always lands somewhere (root-4) rather than silently running nowhere.
 root_4_pkgs() {
   local pinned
-  pinned=$(cat <(root_1_pkgs) <(root_2_pkgs) <(server_pkg) <(core_pkgs) <(storage_store_pkgs) <(encryption_pkgs) <(faultops_pkgs) <(admin_pkg) <(grpc_pkg) | sort -u)
+  pinned=$(cat <(root_1_pkgs) <(root_2_pkgs) <(server_pkg) <(core_pkgs) <(storage_store_pkgs) <(encryption_pkgs) <(faultops_pkgs) <(admin_pkg) <(grpc_pkg) <(authzdiff_pkg) | sort -u)
   comm -23 <(root_base | sort -u) <(echo "$pinned")
 }
 
@@ -366,6 +379,9 @@ http_pkg() {
 # CI-GRPC-SHARD-1 (2026-11-11): grpc new, 3 shards (server/grpc out of root-1, see
 # grpc_pkg): the packer puts ~437 s of tests on each (2 shards: 655 s; 4: 298-363 s
 # for a whole extra runner), against root-1's 23.1 min before.
+# CI-ROUND-CUT-NOV-1 (2026-11-22): authzdiff new, 2 shards (server/authzdiff out of
+# root-4, see authzdiff_pkg): root-4's `go test` step was 1585 s median and 2545 s at
+# the worst over 20 merge_group runs, 1332 s of it one package.
 # This table, ci.yml's matrix and assert_matrix_consistent move together.
 sharded_legs() {
   cat <<'EOF'
@@ -377,6 +393,7 @@ encryption|encryption_pkgs|2|-
 faultops|faultops_pkgs|5|-
 admin|admin_pkg|2|-
 grpc|grpc_pkg|3|-
+authzdiff|authzdiff_pkg|2|-
 storage-store|storage_store_pkgs|1|-
 EOF
 }
@@ -603,7 +620,7 @@ assert_pinned_leg_packages_valid() {
   local actual failed=0
   actual=$(go list ./... | sort -u)
 
-  local -a exclusive_lists=(root_1_pkgs root_2_pkgs server_pkg core_pkgs storage_store_pkgs encryption_pkgs faultops_pkgs admin_pkg)
+  local -a exclusive_lists=(root_1_pkgs root_2_pkgs server_pkg core_pkgs storage_store_pkgs encryption_pkgs faultops_pkgs admin_pkg authzdiff_pkg)
   local list_name pkg
   local pinned_pkg_names="" pinned_pkg_owners=""
 

@@ -416,6 +416,15 @@ server/admin	TestCollectRequireMFAPosture_ADR112Grace	3.6
 server/admin	TestPerformRecoverAdmin_UnrecognisedStateIsNamedAndQuoted	3.3
 server/admin	TestAdminRestore_Postgres_RefusesNonEmptyTarget	3.2
 server/admin	TestAdminBackup_Postgres_RealPresenceLockLost_NoArchive	3.2
+# server/authzdiff (CI-ROUND-CUT-NOV-1): seconds of one local non-race `go test -v` (181 s in all), not a CI -race run: no verbose CI run of this package exists yet (it was 323 s in the last one, 2026-11-15, before TestResguardAuthz* landed). Only the ratio between tests is used; replace these rows with the next gen-test-weights.py output.
+server/authzdiff	*	0.4
+server/authzdiff	TestResguardAuthzRedGreen	87.09
+server/authzdiff	TestResguardAuthzCalibrate	56.57
+server/authzdiff	TestRunLayer_InvalidTokenLimiterLeak_RecordedNA_Not_MappingGap	11.01
+server/authzdiff	TestMatrixIsCurrent	6.43
+server/authzdiff	TestSwarmPlantRedProof	2.61
+server/authzdiff	FuzzAuthzSeq	2.49
+server/authzdiff	TestSeqPlantsAreDetected	1.88
 server/faultops	*	0.4904
 server/faultops	TestWorldReuseSoundness	366.1
 server/faultops	TestOwedAuditOracle_SweepEveryScopedOp	330.4
