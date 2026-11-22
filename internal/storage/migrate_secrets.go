@@ -162,6 +162,12 @@ func createSecretDependencies(db *gorm.DB, secretDepExists bool) error {
 		if err := db.AutoMigrate(&models.SecretDependency{}); err != nil {
 			return fmt.Errorf("failed to migrate secret_dependencies table: %w", err)
 		}
+	} else if !db.Migrator().HasColumn(&models.SecretDependency{}, "CreatedByMachineIdentityID") {
+		// #1623, #4518: the machine-identity actor column a database first installed
+		// before v0.92 never got.
+		if err := db.Migrator().AddColumn(&models.SecretDependency{}, "CreatedByMachineIdentityID"); err != nil {
+			return fmt.Errorf("failed to add secret_dependencies.created_by_machine_identity_id column: %w", err)
+		}
 	}
 	return nil
 }

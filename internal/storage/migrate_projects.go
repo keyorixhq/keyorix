@@ -18,6 +18,12 @@ func createProjectMemberships(db *gorm.DB, membershipExists bool) error {
 		if err := db.AutoMigrate(&models.ProjectMembership{}); err != nil {
 			return fmt.Errorf("failed to migrate project_memberships table: %w", err)
 		}
+	} else if !db.Migrator().HasColumn(&models.ProjectMembership{}, "InvitedByMachineIdentityID") {
+		// #1573, #4518: the machine-identity actor column a database first installed
+		// before v0.92 never got.
+		if err := db.Migrator().AddColumn(&models.ProjectMembership{}, "InvitedByMachineIdentityID"); err != nil {
+			return fmt.Errorf("failed to add project_memberships.invited_by_machine_identity_id column: %w", err)
+		}
 	}
 	if tableExists(db, "project_memberships") {
 		if err := ensureProjectMembershipIndex(db); err != nil {

@@ -152,6 +152,12 @@ func createSSOLoginStates(db *gorm.DB, ssoLoginStateExists bool) error {
 		if err := db.AutoMigrate(&models.SSOLoginState{}); err != nil {
 			return fmt.Errorf("failed to migrate sso_login_states table: %w", err)
 		}
+	} else if !db.Migrator().HasColumn(&models.SSOLoginState{}, "CodeVerifier") {
+		// The PKCE code_verifier (RFC 7636, #4518): a database first installed before it
+		// existed never got the column, and an OIDC login would fail without it.
+		if err := db.Migrator().AddColumn(&models.SSOLoginState{}, "CodeVerifier"); err != nil {
+			return fmt.Errorf("failed to add sso_login_states.code_verifier column: %w", err)
+		}
 	}
 	return nil
 }
