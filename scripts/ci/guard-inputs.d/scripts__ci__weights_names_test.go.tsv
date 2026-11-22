@@ -1,0 +1,1 @@
+scripts/ci/weights_names_test.go	scripts/ci-test-weights.tsv,**/*_test.go	#4626: every row of the weights file must name a top-level test declared in a *_test.go of its package; reads the weights file and the test files of the listed packages
