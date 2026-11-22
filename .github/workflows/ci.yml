@@ -567,7 +567,7 @@ jobs:
           # a sharded package (sharded_legs in scripts/ci-test-legs.sh, more
           # than one shard) changes only with its test files, the leg table or
           # the weights file.
-          relevant shard_layout_relevant '^(internal/core|internal/encryption|server|server/http|server/http/handlers|server/faultops|server/admin|server/grpc)/[^/]*_test\.go$|^scripts/ci-test-legs\.sh$|^scripts/ci-test-weights\.tsv$|(^|/)go\.(mod|sum|work|work\.sum)$'
+          relevant shard_layout_relevant '^(internal/core|internal/encryption|server|server/http|server/http/handlers|server/faultops|server/admin|server/grpc|server/authzdiff)/[^/]*_test\.go$|^scripts/ci-test-legs\.sh$|^scripts/ci-test-weights\.tsv$|(^|/)go\.(mod|sum|work|work\.sum)$'
 
           if [ -z "$changed" ] || echo "$changed" | grep -vE '(\.md$|^docs/)' > /dev/null; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
@@ -975,15 +975,21 @@ jobs:
       # scripts/*.sh and Go code, never docs/ or *.md, so they skip on a
       # docs-only change. docs_only is computed on the whole queue stack, so a
       # stack that also changes a script or Go file runs them. The "Verify
-      # every ... claim" steps read the real ledgers under docs/ and stay on.
+      # every ... claim" steps read the real ledgers under docs/ and run
+      # whenever the self-test of the same ledger does not.
       #
       # FAST pull_request (CI-PATHGATE-1): `--self-test` first verifies the
       # REAL ledger exactly like the plain run, then adds the calibration
       # cases. So on a FAST PR each ledger is verified once: by the self-test
       # when closure_selftest_relevant (its scripts or fixture packages
       # changed), else by the plain "Verify" step. Each Verify step's `if:` is
-      # the negation of its self-test's, so one of the two always runs
-      # (pathgate_test.go checks it). FULL runs keep both steps as before.
+      # the exact negation of its self-test's, so EXACTLY ONE of the two runs on
+      # every event (pathgate_test.go checks it). CI-ROUND-CUT-NOV-1: FULL runs
+      # (merge_group) used to run both, and the plain Verify re-ran the ledger
+      # the self-test had just verified: ~157 s + ~37 s of an adr-numbers job
+      # that is ~15 min on merge_group. The self-test's exit code includes the
+      # real-ledger result (check-closures.sh: `fail` is checked after the
+      # calibration cases), so nothing that blocked before stops blocking.
       - name: Self-test the closure guard (must be able to go red)
         if: needs.changes.outputs.docs_only != 'true' && ((needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.closure_selftest_relevant == 'true')
         run: ./scripts/check-closures.sh --self-test
@@ -994,7 +1000,7 @@ jobs:
       # job's `core-1` leg below runs this SAME script again, WITH the DSN, and
       # is what actually proves those rows.
       - name: Verify every security closure claim names a passing test
-        if: (needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
+        if: needs.changes.outputs.docs_only == 'true' || ((needs.changes.outputs.full_profile != 'true' || needs.changes.outputs.slim_enforce == 'true') && needs.changes.outputs.closure_selftest_relevant != 'true')
         run: ./scripts/check-closures.sh
 
       - name: Self-test the ADR conformance guard (must be able to go red)
@@ -1002,7 +1008,7 @@ jobs:
         run: ./scripts/check-adr-conformance.sh --self-test
 
       - name: Verify every ADR conformance claim names a passing test
-        if: (needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.slim_enforce != 'true') || needs.changes.outputs.docs_only == 'true' || needs.changes.outputs.closure_selftest_relevant != 'true'
+        if: needs.changes.outputs.docs_only == 'true' || ((needs.changes.outputs.full_profile != 'true' || needs.changes.outputs.slim_enforce == 'true') && needs.changes.outputs.closure_selftest_relevant != 'true')
         run: ./scripts/check-adr-conformance.sh
 
       - name: Self-test the review-coverage guard (must be able to go red both ways)
@@ -1514,6 +1520,16 @@ jobs:
           - leg: admin-2
             timeout: 1800
             coverage-file: coverage_admin2.out
+          # server/authzdiff out of root-4's catch-all into two test-name shards
+          # (2026-11-22, CI-ROUND-CUT-NOV-1): 1332 s of root-4's 1793 s go test step
+          # on run 44956219344, and FAIL server/authzdiff 1806 s (30 min timeout) on
+          # run 44952169246. See authzdiff_pkg in scripts/ci-test-legs.sh.
+          - leg: authzdiff-1
+            timeout: 1800
+            coverage-file: coverage_authzdiff1.out
+          - leg: authzdiff-2
+            timeout: 1800
+            coverage-file: coverage_authzdiff2.out
           # server/grpc out of root-1 into three test-name shards (2026-11-11,
           # CI-GRPC-SHARD-1): 1315 s of root-1's 23.1 min on run 42817600261, root-1
           # the slowest leg of the round. Its dead-credential walk (748 s) is now
@@ -1817,8 +1833,8 @@ jobs:
               run_filter=$(leg_run_filter "$leg")
               pkgs=./server/http
               ;;
-            core-*|server-*|admin-*|grpc-*)
-              # $pkgs stays as pkgs_for_leg gave it (internal/core, ./server, server/admin, server/grpc).
+            core-*|server-*|admin-*|grpc-*|authzdiff-*)
+              # $pkgs stays as pkgs_for_leg gave it (internal/core, ./server, server/admin, server/grpc, server/authzdiff).
               run_filter=$(leg_run_filter "$leg")
               ;;
             encryption-*)
@@ -2340,7 +2356,7 @@ jobs:
           # floor). The coverage_storage_store*.out files below are included: they are THIS
           # leg's own new file, and omitting it would just be reproducing that
           # same gap in new code rather than inheriting an unrelated one.
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root4.out coverage_server1.out coverage_server2.out coverage_storage_store1.out coverage_encryption1.out coverage_encryption2.out coverage_faultops1.out coverage_faultops2.out coverage_faultops3.out coverage_faultops4.out coverage_faultops5.out coverage_admin1.out coverage_admin2.out coverage_grpc1.out coverage_grpc2.out coverage_grpc3.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root4.out coverage_server1.out coverage_server2.out coverage_storage_store1.out coverage_encryption1.out coverage_encryption2.out coverage_faultops1.out coverage_faultops2.out coverage_faultops3.out coverage_faultops4.out coverage_faultops5.out coverage_admin1.out coverage_admin2.out coverage_authzdiff1.out coverage_authzdiff2.out coverage_grpc1.out coverage_grpc2.out coverage_grpc3.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)

@@ -1,0 +1,2 @@
+### Internal
+- **CI: `server/authzdiff` runs in two test-name shards (authzdiff-1, authzdiff-2) instead of in root-4's catch-all.** The package was 1332 s of root-4's 1793 s step on a merge_group run and timed out at 30 min on another (FAIL server/authzdiff 1806 s, run 44952169246), after two tests (`TestResguardAuthzRedGreen`, `TestResguardAuthzCalibrate`) made it four times slower in six days. Every Test*/Fuzz* name runs in exactly one shard (`assert_all_shards_complete`); the weights are rows of `scripts/ci-test-weights.tsv`.

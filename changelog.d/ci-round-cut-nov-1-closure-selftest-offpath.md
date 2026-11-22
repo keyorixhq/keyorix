@@ -1,0 +1,2 @@
+### Internal
+- **CI: the closure and ADR-conformance ledgers are verified exactly once per run.** On merge_group (and every FULL run) `adr-numbers` ran `check-closures.sh --self-test` and then the plain `check-closures.sh` over the same real ledger (and the same pair for `check-adr-conformance.sh`), about 3 minutes of a ~15 minute job. Each plain "Verify" step now runs only where its self-test is skipped, the same rule FAST pull requests already used; `scripts/ci/guardinputs/pathgate_test.go` asserts "exactly once" on every event.
