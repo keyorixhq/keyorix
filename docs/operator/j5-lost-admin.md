@@ -1,11 +1,20 @@
 # Recovering a locked-out admin
 
 What to do when every admin account is locked out, password-lost, or MFA-lost, and you
-still have shell access to the host running the server. The output below is illustrative
-(user ids, the key, the one-time password and times differ on your install); it assumes the
-shipped config (`security.require_mfa: true`, the default) and a server that serves TLS
-with the certificate `admin init` generated, so the CLI needs `--ca-file certs/server.crt`
-(or `keyorix config set ca_file`).
+still have shell access to the host running the server. It assumes the shipped config
+(`security.require_mfa: true`, the default) and a server that serves TLS with the certificate
+`admin init` generated, so the CLI needs `--ca-file certs/server.crt` (or `keyorix config set
+ca_file`).
+
+Output captured on `deb388fb3`, 2026-11-22, native (SQLite, binaries built from that commit, server
+on 127.0.0.1). The recovery key, one-time passwords, TOTP secret, recovery codes and the host user
+name are replaced by placeholders, and user ids, times and the port differ on your install. The
+`admin` commands also print timestamped `storage: opening existing SQLite database ...` log lines on
+stderr; they are left out below. The CLI's interactive prompts (`Password:`, `Authenticator code
+...`) were **not** captured, because the capture environment had no terminal: the CLI was driven
+through `KEYORIX_PASSWORD`, `KEYORIX_MFA_CODE`, `KEYORIX_CURRENT_PASSWORD` and
+`KEYORIX_NEW_PASSWORD`, which print only the result lines shown. The SSO, container and Kubernetes
+variants are pending the e2e VM.
 
 A user who has only lost their authenticator code, and is not locked out of everything, may not
 need this page: see [lost-totp-runbook.md](lost-totp-runbook.md) for the decision tree.
@@ -39,12 +48,14 @@ Recovery key generated (generation 1).
   recovered later. Store it offline (password manager, sealed
   envelope) -- NOT in this terminal's scrollback or a log file.
 
-  3LPS9-HWETE-XULZS-SDNYS-XQ5K9-VDY89-3YVQ8-SU8AP-EP7JG-PJFWU-FH
+  XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XX
 =====================================================================
+
+On a local-KEK-file install (storage.encryption.key_provider.type: file or unset), this key does not protect your secrets from host root -- it protects your admin account from anyone who is not you.
 ```
 
-On a local-KEK-file install, this key does not protect your secrets from host root — it
-protects your admin account from anyone who is not you. Running this command again
+(`XXXXX-...` stands for the real key: eleven groups, the last one two characters long.) The
+final line is the command's own wording. Running this command again
 replaces the key; the old one stops working immediately.
 
 **SSO-managed administrators.** If every administrator is provisioned by an identity
@@ -66,7 +77,7 @@ command.
 ## 2. Recover the account
 
 ```bash
-printf '%s' '3LPS9-HWETE-XULZS-SDNYS-XQ5K9-VDY89-3YVQ8-SU8AP-EP7JG-PJFWU-FH' | \
+printf '%s' 'XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XX' | \
   keyorix-server admin recover-admin --user admin@example.com --recovery-key - --config ./keyorix.yaml
 ```
 
@@ -86,20 +97,16 @@ Reset: account state, password, MFA enrollment,
   0 WebAuthn credential(s), login-lockout state, 1 active session(s).
 
 One-time password (shown once — copy it now, it cannot be retrieved again):
-  Qx-Wz+p^+LgF!3sPw33a
-Expires: 2026-10-11T09:30:12Z (UTC). After that, login with it is refused like a wrong password; run recover-admin again for a new one.
+  <one-time password: 20 characters>
+Expires: 2026-11-23T01:20:48Z (UTC). After that, login with it is refused like a wrong password; run recover-admin again for a new one.
 Log in as "admin" with this password. That session lasts at most 15 minutes and can only set a new
 password (keyorix change-password) and enrol a second factor (keyorix mfa enroll + activate), in either
 order. When both are done it ends; log in again with the new password and a code.
 ```
 
-*Capture status (RUNBOOK-CAPTURE-2, 2026-11-18, main `c60a499ff`, SQLite).* Sections 0 and 2 were run
-natively and their output matches, line for line, the blocks above (the one-time password, key and
-times differ). That instance ran with `security.require_mfa: false`, so the last line of step 2 read
-`Log in as "admin" with this password; you will be required to set a new one immediately.` instead of
-the setup-session sentence shown above. The setup-session, MFA enrolment and `change-password`
-output in sections 3 to 5 (which need `require_mfa: true`, a TOTP app and TLS) was **not** re-captured
-and the SSO, container and Kubernetes variants are pending the e2e VM.
+The exit status is 0. The run took the server's presence lock, so with the server still running it
+stops with `Error: a Keyorix server (or another admin command) appears to be using this database
+... stop it first, or pass --force if you are certain this is safe.` (exit 1) and changes nothing.
 
 This reactivates the account if it was deactivated, sets a one-time password (printed
 above, shown exactly once — copy it now), clears MFA/WebAuthn enrollment and the old
@@ -119,10 +126,10 @@ happens to be running when you do this.
 
 ```bash
 KEYORIX_CONFIG_PATH=./keyorix.yaml keyorix-server     # the server has no --config flag
-keyorix login --server https://localhost:8080 --ca-file certs/server.crt --username admin   # paste the one-time password at the hidden prompt
+keyorix login --server https://127.0.0.1:8081 --ca-file certs/server.crt --username admin   # paste the one-time password at the hidden prompt
 ```
 
-Expected: `Logged in to https://localhost:8080 as admin.` This is a **setup session**: it
+Expected: `Logged in to https://127.0.0.1:8081 as admin.` This is a **setup session**: it
 lasts at most 15 minutes (refreshing does not extend it) and can do exactly two things —
 set a new password and enrol a second factor. Everything else is refused:
 
@@ -149,8 +156,19 @@ keyorix mfa enroll        # scan the otpauth:// URI or type the base32 secret in
 keyorix mfa activate      # prompts for a code from the app and the account password
 ```
 
-Expected: `MFA enabled. ...` followed by ten recovery codes — save them now, they are
-shown once. The session stays signed in because the password change is still owed.
+Expected, from `mfa activate`:
+
+```
+MFA enabled. This session stays signed in; other sessions were signed out, and your next "keyorix login" asks for a code.
+
+Save these recovery codes now -- they will not be shown again:
+
+  XXXXX-XXXXX
+  ... (ten codes in all)
+```
+
+Save them now, they are shown once. The session stays signed in because the password change is
+still owed.
 
 ```bash
 keyorix change-password   # prompts for the current (one-time) password and the new one
@@ -174,32 +192,51 @@ visible to other users): in a script set `KEYORIX_CURRENT_PASSWORD` and `KEYORIX
 ```
 $ keyorix secret list
 Error: failed to list secrets: Invalid or expired token (HTTP 401) Next step: run `keyorix login` to sign in again (the session may have expired or been revoked).
-$ keyorix login --server https://localhost:8080 --ca-file certs/server.crt --username admin
-Password:                                        # the new password, no echo
-Authenticator code (or an unused recovery code):
-Logged in to https://localhost:8080 as admin.
+$ keyorix login --server https://127.0.0.1:8081 --ca-file certs/server.crt --username admin
+Logged in to https://127.0.0.1:8081 as admin.
 $ keyorix secret list
 Secrets List
-...
+============
+Project: all, Environment: all
+Total: 0, Showing: 0 (offset: 0, limit: 50)
+
+No secrets found.
 ```
 
-(Without a terminal there is nothing to prompt on, and `keyorix login` stops with an error naming the flag to use for the code; prefer a terminal for a recovery.) The one-time password no
-longer works (`401`). The audit trail shows the whole recovery:
+(The `keyorix secret list` before the login exits 3. At a terminal, `keyorix login` prompts for `Password:` (the new
+password, no echo) and `Authenticator code (or an unused recovery code):`; those prompts were not
+captured. Without a terminal there is nothing to prompt on, and `keyorix login` stops with an error naming the flag to use for the code; prefer a terminal for a recovery.) The one-time password no
+longer works (`401`). A code that was just used (for example by `mfa activate` in the same 30-second
+window) is refused: `Error: second-factor verification failed: Invalid or expired code (HTTP 401)`,
+and the audit trail records each refusal as `mfa.failed`. Wait for the next code. The audit trail
+shows the whole recovery (`keyorix audit logs --limit 12`; the two `mfa.failed` rows are such refused
+codes, and `auth.login` rows appear once per login):
 
 ```
-$ keyorix audit logs --limit 8
-EVENT                        DESCRIPTION
-auth.login                   User admin logged in
-mfa.login_verified           user admin passed MFA
-auth.account_setup_completed user 1 finished account setup in a setup-only session (both setup steps are done); ...
-auth.password_changed        user 1 changed their own password
-mfa.activated                user admin activated MFA
-mfa.reauth_verified          user admin completed MFA re-authentication ...
-mfa.enrolled                 user admin began MFA enrolment
-auth.login                   User admin logged in
+ID     TIME (UTC)           ACTOR            KIND      EVENT                            DESCRIPTION
+40     2026-11-22 01:21:34  admin            user      auth.login                       User admin logged in
+39     2026-11-22 01:21:34  admin            user      mfa.login_verified               user admin passed MFA
+38     2026-11-22 01:21:19  admin            user      mfa.failed                       failed MFA login for user 1
+37     2026-11-22 01:21:16  admin            user      mfa.failed                       failed MFA login for user 1
+36     2026-11-22 01:21:12  admin            user      auth.account_setup_completed     user 1 finished account setup in a setup-only session (both setup steps are done); every session was revoked and the next login requires the second factor
+35     2026-11-22 01:21:12  admin            user      auth.password_changed            user 1 changed their own password
+34     2026-11-22 01:21:00  admin            user      mfa.activated                    user admin activated MFA
+33     2026-11-22 01:21:00  admin            user      mfa.reauth_verified              user admin completed MFA re-authentication (phase: activate_reauth)
+32     2026-11-22 01:21:00  admin            user      mfa.enrolled                     user admin began MFA enrolment
+31     2026-11-22 01:20:57  admin            user      auth.login                       User admin logged in
+30     2026-11-22 01:20:53  system           system    license.evaluated                License evaluated at startup: none — no license installed — running the community baseline
+29     2026-11-22 01:20:53  system           system    data_retention.policy_configured Data retention policy applied: anomaly_alerts=0d ...
 ```
 
-and, further back, the `admin.recover_admin` event with the host user who ran step 2.
+and, one page further back (`--cursor` from the "Next page" line), the `admin.recover_admin` event
+with the host user who ran step 2 (the host user name is replaced here):
+
+```
+28     2026-11-22 01:20:48  admin            admin_cli admin.recover_admin                      keyorix-server admin recover-admin, run by host user "<host user>" (uid 501), restored account "admin" (user id 1): reactivated, password reset required, MFA cleared, 0 WebAuthn credential(s) cleared, login-lockout cleared, 1 session(s) revoked (recovery key generation 1); one-time password expires 2026-11-23T01:20:48Z
+```
+
+(`keyorix audit logs` prints the audit rows newest first; the server's start writes the
+`license.evaluated` and `data_retention.policy_configured` rows between the recovery and the login.)
 
 **Not locked out yourself?** `recover-admin` is for the *last* way back into your own account.
 If it is a colleague whose one-time password expired or got lost and you can still log in, you
@@ -209,6 +246,20 @@ new one-time password once, ends the user's sessions and puts them through the s
 change-password / enrol-MFA setup session described here. It refuses your *own* account (that
 is what this runbook is for) and SSO-only users. See
 [CONFIGURATION.md](../CONFIGURATION.md#security) ("Reissuing a one-time password").
+
+```
+$ keyorix user reissue-one-time-password alice@example.com
+Reissuing one-time password for user 2 (alice@example.com)...
+One-time password for alice@example.com (relay securely — it is shown only once and must be changed on first login; the user's existing sessions have ended):
+  <one-time password: 20 characters>
+Expires: 2026-11-25T01:21:44Z (UTC). After that, login with it is refused like a wrong password; reissue another with `keyorix user reissue-one-time-password`.
+$ keyorix user reissue-one-time-password admin@example.com        # your own account
+Reissuing one-time password for user 1 (admin@example.com)...
+Error: reissue one-time password for user 1 (admin@example.com) failed: Cannot reissue your own one-time password; use `keyorix-server admin recover-admin` to recover your own account (HTTP 400)
+```
+
+(The refusal exits 1. The reissued password expires after 72 hours by default, not the 24 hours of
+`recover-admin`.)
 
 Do **not** set `security.require_mfa: false` to get through this: it is not needed, and it
 weakens every account on the install. The same setup session is what a one-time-password

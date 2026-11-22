@@ -2,8 +2,15 @@
 
 Two independent rotations exist: the **DEK** (data encryption key — what actually
 encrypts secret values) and the **KEK** (key-encryption key, derived from your master
-passphrase — what wraps the DEK at rest). The output shown below is illustrative
-(version numbers and fingerprints differ on your install).
+passphrase — what wraps the DEK at rest).
+
+Output captured on `deb388fb3`, 2026-11-22, native, on SQLite and on PostgreSQL (the PostgreSQL
+differences are called out where they exist). Version numbers, fingerprints, row counts, hashes,
+job ids and times differ on your install, and absolute paths and the database address are
+replaced by placeholders. Lines that start with a timestamp such as `storage: opening existing
+SQLite database at ...` are log lines on stderr and are mostly left out. The capture instance had
+one secret and one MFA-enrolled admin, hence the row counts. Not captured (pending the e2e VM):
+containers, Kubernetes, cloud KMS, TPM and Shamir providers.
 
 For the preflight, the checks afterwards, rollback and what not to do, see
 [key-rotation-runbook.md](key-rotation-runbook.md).
@@ -24,11 +31,10 @@ Expected:
 
 ```
 🔍 Dry run: previewing what a DEK rotation would re-encrypt — no changes will be made to the database or the DEK...
+2026/11/22 02:23:50 [sweep] secret_versions: 1 rows processed
 ✅ Dry run complete — no changes were made
-📋 secret_versions: 1, api_tokens: 0, api_clients: 0, password_resets: 0, mfa_secrets: 0, dynamic_secret_configs: 0, dynamic_secret_leases: 0, notification_channels: 0 (legacy AAD upgraded: 0)
+📋 secret_versions: 1, api_tokens: 0, api_clients: 0, password_resets: 0, mfa_secrets: 1, dynamic_secret_configs: 0, dynamic_secret_leases: 0, notification_channels: 0 (legacy AAD upgraded: 0)
 ```
-
-(A `[sweep] secret_versions: N rows processed` log line precedes the result.)
 
 Then actually rotate:
 
@@ -41,18 +47,20 @@ Expected:
 ```
 ⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.
 🔄 Rotating DEK with full re-encryption sweep...
-2026/11/14 14:25:08 [sweep] secret_versions: 3 rows processed
-2026/11/14 14:25:08 [sweep] pre-commit verification: all 3 re-encrypted values decrypt under the new DEK
-2026/11/14 14:25:08 ✅ Sweep committed: 3 secret_versions, 0 api_tokens, ... re-encrypted (0 legacy AAD upgraded)
-✅ DEK rotated and full re-encryption sweep complete. New version: v1794662708
+2026/11/22 02:23:52 [sweep] secret_versions: 1 rows processed
+2026/11/22 02:23:52 [sweep] pre-commit verification: all 2 re-encrypted values decrypt under the new DEK
+2026/11/22 02:23:53 ✅ Sweep committed: 1 secret_versions, 0 api_tokens, 0 api_clients, 0 password_resets, 1 mfa_secrets, 0 dynamic_secret_configs, 0 dynamic_secret_leases, 0 notification_channels re-encrypted (0 legacy AAD upgraded)
+✅ DEK rotated and full re-encryption sweep complete. New version: v1795310632
 ✅ DEK rotated successfully
-📋 New key version: v1794662708
-📋 secret_versions: 3, api_tokens: 0, api_clients: 0, ... (legacy AAD upgraded: 0)
+📋 New key version: v1795310632
+📋 secret_versions: 1, api_tokens: 0, api_clients: 0, password_resets: 0, mfa_secrets: 1, dynamic_secret_configs: 0, dynamic_secret_leases: 0, notification_channels: 0 (legacy AAD upgraded: 0)
 ran `keyorix-server admin encryption rotate` (full DEK re-encryption sweep)
 ```
 
-(On PostgreSQL a line `DEK rotation: encrypted writes are now refused on every replica; waiting 10s ...`
-comes first. The last summary line is the dry run's. Exit status 0.)
+(On PostgreSQL the line `DEK rotation: encrypted writes are now refused on every replica; waiting 10s for
+replicas to observe it` comes right after the `🔄 Rotating DEK ...` line and the sweep starts 10 seconds
+later; the rest is the same. The last summary line is the dry run's. Exit status 0. "all 2
+re-encrypted values" counts the secret version and the MFA secret.)
 
 A kill at any point during this is safe — the design guarantees exactly one of the old or
 new DEK stays consistently active and every row stays decryptable under it, never a
@@ -131,12 +139,12 @@ Expected:
 ```
 Rotating KEK — re-wrapping DEK under new passphrase...
 Verifying the audit chain under the current key and recording the key transition...
-audit key transition to key version "ack-..." completed: the verification state, high-water mark and retention anchor are signed under the new key
+2026/11/22 02:24:02 audit key transition to key version "ack-d88056ed063e107f96587594d61787cd" completed: the verification state, high-water mark and retention anchor are signed under the new key
 Audit verification state, high-water mark and retention anchor carried over to the new key (a fresh checkpoint is signed under it when the chain verified; a recorded break stays recorded).
 KEK rotation complete.
 
-  Evidence-signing key fingerprint:      esk-...
-  Audit-checkpoint key fingerprint:      ack-...
+  Evidence-signing key fingerprint:      esk-6b234bcedc082ff54192ca51a5aaf5ae
+  Audit-checkpoint key fingerprint:      ack-d88056ed063e107f96587594d61787cd
 
 Update the master passphrase in your deployment configuration to the new value before restarting the server.
 
@@ -144,7 +152,11 @@ Note: evidence packs signed before this rotation will report as 'superseded
 key version' (not tampered) under `compliance verify`. Audit checkpoints signed
 before it stay verifiable with the previous checkpoint key; export the new one
 with `admin audit export-checkpoint-key`.
+ran `keyorix-server admin encryption rotate-kek`
 ```
+
+(The command also prints a `storage: opening existing SQLite database ...` log line before and after
+this output. On PostgreSQL the output is the same apart from the fingerprints.)
 
 The variable to update is `KEYORIX_MASTER_PASSWORD` or the file `KEYORIX_MASTER_PASSWORD_FILE`
 points at (or your `key_provider`'s equivalent). The command's own output doesn't name it, so:
@@ -165,6 +177,103 @@ keyorix audit logs --limit 20
 
 The secret's value should be unchanged, and `audit logs` should show an
 `admin.encryption.rotate` (or `admin.encryption.rotate_kek`) event with the timestamp of your rotation.
+After a DEK rotation followed by a KEK rotation on SQLite, `keyorix audit logs --limit 8` read:
+
+```
+ID     TIME (UTC)           ACTOR            KIND      EVENT                               DESCRIPTION
+28     2026-11-22 01:24:38  admin            user      secret.read                         User admin read secret DEMO_SECRET
+27     2026-11-22 01:24:34  system           system    license.evaluated                   License evaluated at startup: none — no license installed — running the community baseline
+26     2026-11-22 01:24:34  system           system    data_retention.policy_configured    Data retention policy applied: anomaly_alerts=0d anomaly_alerts_unacked_ceiling=0d closed_access_reviews=0d break_glass=0d resolved_access_requests=0d
+25     2026-11-22 01:24:30  admin_cli        admin_cli admin.backup_created                created backup archive <archive path> (80 table(s), 153 row(s), 2 key file(s))
+24     2026-11-22 01:24:11  admin_cli        admin_cli admin.audit_checkpoint_key_exported exported the audit-checkpoint verification key (key version ack-d88056ed063e107f96587594d61787cd) to <key file path>
+23     2026-11-22 01:24:02  admin_cli        admin_cli admin.encryption.rotate_kek         ran `keyorix-server admin encryption rotate-kek`
+22     2026-11-22 01:24:02  system           system    system.audit_key_transition         audit key transition #1: checkpoint key version ack-dc89bca73b6ae9ab790676fb0cfeea3b replaced by ack-d88056ed063e107f96587594d61787cd; the verification state was carried over under both keys (record cac39e28b39b73ef12f2e5c12cf3302cce91cbd5bde311e90ef84c166ef920f6)
+21     2026-11-22 01:23:53  admin_cli        admin_cli admin.encryption.rotate             ran `keyorix-server admin encryption rotate` (full DEK re-encryption sweep)
+```
+
+### The audit chain before and after
+
+Run the offline verifier with the server stopped before the first rotation and after the last one
+(`keyorix-server admin verify-audit --config ./keyorix.yaml`; add `--checkpoint-key-file <new key>`
+after a `rotate-kek`, from `admin audit export-checkpoint-key`). Before, on a fresh install, then
+after the DEK rotation (SQLite; the PostgreSQL output is identical apart from the ids):
+
+```
+Offline audit-chain verification
+=================================
+Verdict: VALID
+  range:            id 1..18
+  chained events:   18
+  unchained legacy: 0
+
+Checkpoint:
+  present but UNAUTHENTICATED -- no --checkpoint-key-file was supplied, or it did not verify
+
+Retention gap:
+  none -- the chain reaches genesis
+
+Anchor source: none
+
+Owed break-glass audit records:
+  none -- every break-glass activation's audit rows are in the chain
+
+What this run does NOT prove:
+  - a host admin holding both this database and its checkpoint signing key can fabricate a fully self-consistent, validly-checkpointed history; this verification proves only that a DB-only actor (without that key) could not have tampered undetectably
+  - no checkpoint signing key was supplied: tail-truncation and genesis re-seed are not detected by a bare linkage re-walk alone (a shorter, self-consistent chain still verifies) — only the linkage of rows still present in the table was checked
+  - that each SETTLED degraded break-glass activation's owed rows are in the chain: the server marks it settled in the same transaction as the append of its last owed row, and this run does not re-derive that from audit_events
+
+Generated at 2026-11-22T01:23:44Z by auditverify/v1.
+```
+
+The DEK rotation appends events (`range: id 1..21` afterwards) and the verdict stays VALID. After the
+`rotate-kek`, with the new key (SQLite, `--checkpoint-key-file <new key>`; PostgreSQL reads the same):
+
+```
+Offline audit-chain verification
+=================================
+Verdict: VALID
+  range:            id 1..24
+  chained events:   24
+  unchained legacy: 0
+
+Checkpoint:
+  authenticated, key version "ack-d88056ed063e107f96587594d61787cd", certifies 21 chained events
+
+Key transitions: 1 recorded, current epoch authenticated: true, old-key signatures checked: 0
+
+Retention gap:
+  none -- the chain reaches genesis
+
+Anchor source: none
+
+Owed break-glass audit records:
+  none -- every break-glass activation's audit rows are in the chain
+
+What this run does NOT prove:
+  - a host admin holding both this database and its checkpoint signing key can fabricate a fully self-consistent, validly-checkpointed history; this verification proves only that a DB-only actor (without that key) could not have tampered undetectably
+  - that each SETTLED degraded break-glass activation's owed rows are in the chain: the server marks it settled in the same transaction as the append of its last owed row, and this run does not re-derive that from audit_events
+  - the old-key signature of 1 of 1 key transition record(s) was not checked: pass the earlier checkpoint key(s) with --previous-checkpoint-key-file to prove the pre-rotation state was not forged by a holder of the new key
+
+Generated at 2026-11-22T01:24:12Z by auditverify/v1.
+```
+
+Online, with the server restarted on the new passphrase, `keyorix audit verify --full` (SQLite; the
+PostgreSQL run printed the same lines with its own counts) reads:
+
+```
+Full audit verification running on the server (job <job id>)...
+Audit chain: VALID
+  chained events:   27
+  unchained events: 0
+  head id:          27
+  head hash:        <64 hex characters>
+  checkpoint:       checked against a signed in-DB checkpoint (on-box truncation detection)
+```
+
+and the same command on a fresh install, before any rotation, printed the same block with 18 chained
+events. Without `--full` the command answers at once and adds the two lines `this check: rows 11..18 after
+signed checkpoint #1 (complete: true)` and `full re-walk:     every row through id 18 re-hashed, completed
+<time>`.
 
 ## Back up around a rotation
 
@@ -190,7 +299,28 @@ directory, back up, and delete the moved copy once that backup and a server star
 succeeded. A `keys/dek.key.pending` is different: never delete it by hand (it can be the only
 copy of the new DEK); start the server so boot recovery settles it. Boot never removes
 either file itself. All of this was run on a throwaway SQLite install with a leftover
-`kek.salt.pending`; the DEK variant of the `diagnose` line is covered by a test only.
+`kek.salt.pending` (a copy of `kek.salt`, placed after a completed `rotate-kek`); the DEK variant of
+the `diagnose` line is covered by a test only. The refusal, as captured (stderr; exit status 4, no
+archive written):
+
+```
+$ keyorix-server admin backup --output ./post-rotation.tar.gz --config ./keyorix.yaml
+keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="keys/kek.salt.pending"
+Error: backup refused: a key rotation is running or was interrupted (found keys/kek.salt.pending). An archive taken now would include that staging file and `admin restore` would refuse it on any other host, so no archive was written and no key file was changed. If a rotation is running, wait for it to finish. Otherwise start the server once so boot recovery completes the rotation, then back up again. keys/kek.salt.pending is the KEK salt's staging file. After an interrupted rotate-kek the start may need it and the new passphrase, and if it is refused, follow the recovery it prints. A server start that succeeds and leaves keys/kek.salt.pending in place (its log says the file "can be deleted") has proved that the active key set opens without it: the rotation never changed the active keys, and every backup is refused until the file is gone. To remove it safely, check that no `admin encryption rotate-kek` is running, move it out of the key directory (mv keys/kek.salt.pending <a directory outside the key directory>), back up again, and delete the moved copy once that backup and a server start have succeeded. Never delete a DEK's .pending file by hand: it can be the only copy of the new DEK. `admin validate --posture` reports this state until it is resolved
+```
+
+`keyorix-server admin diagnose` printed the same text on a `[WARN] backups would be refused: staging
+file present (keys/kek.salt.pending). ...` line (the other checks stayed `[ OK ]`), and `admin
+validate --posture` printed `1 deviation(s) found` with `[backup/explicit] backups are refused:
+key-rotation staging file present (keys/kek.salt.pending). ...` and exited 1. After `mv
+keys/kek.salt.pending` to a directory outside `keys/`, the same `admin backup` succeeded:
+
+```
+Backup written to <archive path> (80 table(s), 153 row(s) total, 2 key file(s))
+Store this archive OFF this host. Restore with:
+  keyorix-server admin restore --input <archive path>
+created backup archive <archive path> (80 table(s), 153 row(s), 2 key file(s))
+```
 
 The running server reports it too, for a monitor to poll: while a staging file is in its key
 directory, `GET /api/v1/system/info` (for a caller with `system.write`) carries
