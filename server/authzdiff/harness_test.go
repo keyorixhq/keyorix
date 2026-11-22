@@ -112,7 +112,7 @@ var humanOnlyOps = map[string]bool{
 
 // ---------- legs ----------
 
-func runREST(lg *leg, p *principal, rr restReq, okIf func([]byte) bool) result {
+func runREST(lg *leg, p *principal, rr restReq, okIf func([]byte) bool, preconditionMsgs ...string) result {
 	var body bytes.Buffer
 	if rr.body != nil {
 		_ = json.NewEncoder(&body).Encode(rr.body)
@@ -124,7 +124,7 @@ func runREST(lg *leg, p *principal, rr restReq, okIf func([]byte) bool) result {
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	rec := httptest.NewRecorder()
 	lg.router.ServeHTTP(rec, req)
-	r := restOutcome(rec.Code, rec.Body.String())
+	r := restOutcome(rec.Code, rec.Body.String(), preconditionMsgs...)
 	if r.Outcome == Allowed && okIf != nil && !okIf(rec.Body.Bytes()) {
 		// a 2xx whose body reports the item itself was refused (bulk ops answer
 		// 200 with per-item failures): the effect did not happen.
@@ -148,10 +148,12 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 	lg.applyVariation(tb, k.variation)
 	if modelOut != nil {
 		decide := func(p *principal, req requirement) Outcome {
-			if (model{lg.db}).allowed(p, req) && !patRefusesUngatedWrite(tb, lg.fx, spec, p) {
-				return Allowed
+			d := (model{lg.db}).decision(p, req)
+			// a restricted PAT is refused before any account-state check runs
+			if d != Denied && patRefusesUngatedWrite(tb, lg.fx, spec, p) {
+				return Denied
 			}
-			return Denied
+			return d
 		}
 		if spec.secretArgs && k.Arg != 0 {
 			modelOut.Model = ModelNA // owner/share/ACL fixture: outside the model's domain
@@ -200,7 +202,7 @@ func runLayer(tb testing.TB, spec opSpec, l layer, p *principal, k caseKey, t tg
 				tb.Fatalf("re-point handler globals: %v", err)
 			}
 		}
-		r := runREST(lg, p, spec.rest(lg.fx, t, k.Arg), okIf)
+		r := runREST(lg, p, spec.rest(lg.fx, t, k.Arg), okIf, spec.preconditionMsgs...)
 		if spec.globalHandler {
 			routerMu.Unlock()
 		}
@@ -357,6 +359,19 @@ func classify(spec opSpec, p *principal, r *caseResult) []string {
 			continue
 		}
 		switch {
+		// The precondition vocabulary is closed: a leg answering it must meet a
+		// model that says it, and a model that says it must meet a leg answering
+		// it. Every other pairing is a divergence no waiver absorbs (explain
+		// returns "unexplained").
+		case o == PreconditionFailed && r.Model == PreconditionFailed:
+		case o == PreconditionFailed:
+			out = append(out, "O2:precondition-but-model-"+string(r.Model)+":"+string(l))
+		case r.Model == PreconditionFailed && o == Allowed:
+			out = append(out, "O2:allowed-but-model-precondition-fails:"+string(l))
+		case r.Model == PreconditionFailed && o == Denied:
+			out = append(out, "O2:denied-but-model-precondition-fails:"+string(l))
+		case r.Model == PreconditionFailed:
+			out = append(out, "mapping-gap:other-where-model-precondition-fails:"+string(l))
 		case o == Allowed && r.Model == Denied:
 			out = append(out, "O2:allowed-but-model-denies:"+string(l))
 		case o == Denied && r.Model == Allowed:

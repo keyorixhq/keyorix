@@ -73,7 +73,6 @@ func explain(r *caseResult) string {
 	is := func(lo *legOutcome, o Outcome) bool { return lo != nil && lo.NA == "" && lo.Outcome == o }
 	na := func(lo *legOutcome) bool { return lo == nil || lo.NA != "" }
 	deniedOrNA := func(lo *legOutcome) bool { return na(lo) || is(lo, Denied) }
-	restBadRequest := is(rest, Other) && rest.Detail == "Bad Request"
 	pk := r.Principal
 	modelDenies := r.Model == Denied || r.Model == ModelNA
 
@@ -91,24 +90,6 @@ func explain(r *caseResult) string {
 	case is(core, Allowed) && is(rest, Denied) && deniedOrNA(grpc) && modelDenies &&
 		pk == pkViewer && r.Op == "bulk.suspend":
 		return "known-04"
-
-	// V5EXT5 known-12: mfa.activate, mfa.disable, mfa.recovery-codes.regenerate
-	// for a principal that lacks the required MFA account state (pending enrollment
-	// for activate; mfa_enabled=true for disable/regenerate). The router carries no
-	// RBAC gate; refusal is a business-rule 400 Bad Request ("no pending MFA
-	// enrolment" / "MFA is not enabled"), not an auth rejection, so REST returns
-	// Other, not Denied. The model correctly says Denied. No gRPC surface;
-	// coreEnforced=false for all three ops. The core leg returns a business-logic
-	// error (not ErrPermissionDenied) for these; !is(core,Allowed) prevents this
-	// from absorbing a hypothetical core-allows case. Only 400 is absorbed: a 500
-	// on these ops is a server fault, not the precondition refusal, and stays
-	// unexplained. The principal kind is deliberately unconstrained: the refusal
-	// depends on the caller's own MFA account state, not on its role, so every
-	// fixture principal without that state lands here.
-	// Tracking issue: #4525.
-	case slices.Contains([]string{"mfa.activate", "mfa.disable", "mfa.recovery-codes.regenerate"}, r.Op) &&
-		!is(core, Allowed) && restBadRequest && modelDenies && na(grpc):
-		return "known-12"
 	}
 	return "unexplained"
 }
@@ -119,7 +100,6 @@ func explain(r *caseResult) string {
 // is a decision recorded on its issue, not a date bump.
 var waivers = []struct{ id, issue, expires string }{
 	{"known-04", "#4161", "2027-02-13"},
-	{"known-12", "#4525", "2027-06-18"},
 }
 
 // waiverIDs is waivers' ids (the dead-waiver check's population).

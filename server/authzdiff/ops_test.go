@@ -94,6 +94,11 @@ type opSpec struct {
 	// restOK, when set, decides "allowed" for a REST 2xx from the body (bulk
 	// ops answer 200 even when the item was refused). Nil = any 2xx is allowed.
 	restOK func(body []byte, fx *fixtures, t tgt) bool
+	// preconditionMsgs: the 400 messages that mean "the caller's account state
+	// does not allow this" for THIS op (restOutcome → PreconditionFailed). Set
+	// only by the account-state ops (requirement.accountState); nil everywhere
+	// else, so no other op's 400 can map to PreconditionFailed.
+	preconditionMsgs []string
 	// invalidArg, when set, names (target, arg) pairs that no fixture
 	// principal can perform over any transport (a documented validation or
 	// ownership rule), so the transports cannot be compared there. They are
