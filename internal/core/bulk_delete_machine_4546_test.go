@@ -145,7 +145,10 @@ func TestBulkDeleteSecrets_LocalCallerStillDeletes(t *testing.T) {
 
 // TestBulkDeleteSecrets_MachineAuthorizationFaultFailsClosed: a failed read of the
 // machine's roles is not a pass. The first item's lookup faults and that item is
-// refused and survives; the second item, whose lookup succeeds, is deleted.
+// refused and survives; the second item, whose lookup succeeds, is deleted. The
+// refused item is reported as the retryable storage outage, not as "secret not
+// found", so a client does not read the outage as "already gone" (L-1 of
+// REVIEW-4613-DEEP-1).
 func TestBulkDeleteSecrets_MachineAuthorizationFaultFailsClosed(t *testing.T) {
 	t.Parallel()
 	w := newBulkDeleteMachineWorld(t, func(_, _ uint) uint { return 0 })
@@ -160,5 +163,9 @@ func TestBulkDeleteSecrets_MachineAuthorizationFaultFailsClosed(t *testing.T) {
 	assert.Equal(t, []uint{w.devSecret}, res.Deleted)
 	require.Len(t, res.Failed, 1)
 	assert.Equal(t, w.prodSecret, res.Failed[0].SecretID)
+	assert.Equal(t, StorageReadUnavailableMessage, res.Failed[0].Error)
+	assert.Equal(t, BulkErrCodeStorageUnavailable, res.Failed[0].Code)
+	assert.True(t, res.Failed[0].Retryable)
+	assert.Empty(t, res.Failed[0].Name, "a refused secret's name is not disclosed")
 	assert.True(t, w.secretExists(t, w.prodSecret), "a secret whose authorization could not be read must survive")
 }

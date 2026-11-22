@@ -175,6 +175,12 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 	default:
 		secret, err = c.GetSecretWithPermissionCheck(ctx, id, actorID)
 	}
+	if IsStorageReadUnavailable(err) {
+		// A fault in the machine's role read (bulkDeleteMachineSecret) is the same
+		// "retry" answer as the secret-read fault above, not a "not found".
+		result.addFailure(BulkOpError{SecretID: id, Error: StorageReadUnavailableMessage, Code: BulkErrCodeStorageUnavailable, Retryable: true})
+		return
+	}
 	if err != nil || secret == nil || secret.ProjectID != projectID {
 		result.Failed = append(result.Failed, BulkOpError{
 			SecretID: id,
@@ -271,8 +277,9 @@ func bulkDeleteFailure(ctx context.Context, err error) (msg, code string) {
 // (AuthorizeSecretPrincipalForSecret, the decision RequireScopedSecretPermission
 // makes). Shares, ACLs and ownership are user-only and never apply to a machine.
 // A missing machine ID, a refusal and a failed authorization lookup are all errors
-// (fail closed); the caller reports each as "secret not found", as it does a user's
-// refusal.
+// (fail closed). The caller reports a refusal as "secret not found", as it does a
+// user's refusal, and a lookup fault (returned wrapped in ErrStorageReadUnavailable)
+// as the retryable "storage temporarily unavailable".
 func (c *KeyorixCore) bulkDeleteMachineSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
 	machineID, ok := machineActorFromContext(ctx)
 	if !ok {
@@ -285,7 +292,10 @@ func (c *KeyorixCore) bulkDeleteMachineSecret(ctx context.Context, id uint) (*mo
 	allowed, err := c.AuthorizeSecretPrincipalForSecret(ctx, ActorTypeMachine, machineID, secret, "secrets.delete")
 	if err != nil {
 		log.Printf("bulk delete: secret %d not processed, machine %d authorization lookup failed: %v", id, machineID, err)
-		return nil, err
+		if errors.Is(err, errNoPrincipalPermission) {
+			return nil, err // a storage contract violation, not an outage
+		}
+		return nil, cmp.Or(ReadFault(err), err)
 	}
 	if !allowed {
 		return nil, permissionDeniedf("%s: insufficient permissions", i18n.T("ErrorPermissionDenied", nil))
