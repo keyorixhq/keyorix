@@ -1467,6 +1467,11 @@ jobs:
           - leg: encryption-2
             timeout: 1800
             coverage-file: coverage_encryption2.out
+          # encryption 2 -> 3 (2026-11-22, CI-LEG-SPLIT-1): encryption-2's go test
+          # step ran 1274-1408 s on the full merge_group rounds of 2026-11-22.
+          - leg: encryption-3
+            timeout: 1800
+            coverage-file: coverage_encryption3.out
           # server/faultops split out of root-4's catch-all into two test-name
           # shards (2026-10-15). It ran 1305s -> 1605s -> 1679s -> 1759s in
           # root-4 and then hit the 30m per-binary timeout on main (run
@@ -1520,6 +1525,15 @@ jobs:
           - leg: admin-2
             timeout: 1800
             coverage-file: coverage_admin2.out
+          # admin 2 -> 4 (2026-11-22, CI-LEG-SPLIT-1): admin-1/2 ran 1337-1776 s of
+          # their 1800 s per-binary timeout over 22 merge_group runs, and admin runs
+          # in nearly every round. 4 shards: ~593 weight units each.
+          - leg: admin-3
+            timeout: 1800
+            coverage-file: coverage_admin3.out
+          - leg: admin-4
+            timeout: 1800
+            coverage-file: coverage_admin4.out
           # server/authzdiff out of root-4's catch-all into two test-name shards
           # (2026-11-22, CI-ROUND-CUT-NOV-1): 1332 s of root-4's 1793 s go test step
           # on run 44956219344, and FAIL server/authzdiff 1806 s (30 min timeout) on
@@ -2356,7 +2370,7 @@ jobs:
           # floor). The coverage_storage_store*.out files below are included: they are THIS
           # leg's own new file, and omitting it would just be reproducing that
           # same gap in new code rather than inheriting an unrelated one.
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root4.out coverage_server1.out coverage_server2.out coverage_storage_store1.out coverage_encryption1.out coverage_encryption2.out coverage_faultops1.out coverage_faultops2.out coverage_faultops3.out coverage_faultops4.out coverage_faultops5.out coverage_admin1.out coverage_admin2.out coverage_authzdiff1.out coverage_authzdiff2.out coverage_grpc1.out coverage_grpc2.out coverage_grpc3.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root4.out coverage_server1.out coverage_server2.out coverage_storage_store1.out coverage_encryption1.out coverage_encryption2.out coverage_encryption3.out coverage_faultops1.out coverage_faultops2.out coverage_faultops3.out coverage_faultops4.out coverage_faultops5.out coverage_admin1.out coverage_admin2.out coverage_admin3.out coverage_admin4.out coverage_authzdiff1.out coverage_authzdiff2.out coverage_grpc1.out coverage_grpc2.out coverage_grpc3.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
