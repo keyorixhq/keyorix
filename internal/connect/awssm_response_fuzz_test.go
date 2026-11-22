@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -272,6 +273,15 @@ func FuzzAWSSMConnectorResponse(f *testing.F) {
 // so TestAWSSMResponseFuzzO4RedProof can show the O4 oracle bites without it.
 // MaxAttempts=3 with a zero-delay backoff: see the retry oracle in the fuzz body.
 func awssmResponseFuzzClient(baseURL string, hardened bool) *secretsmanager.Client {
+	if hardened {
+		return awssmResponseFuzzClientHTTP(baseURL, &http.Client{Transport: newConnectHardenedTransport(awsBaseTransport()), CheckRedirect: refuseRedirect})
+	}
+	return awssmResponseFuzzClientHTTP(baseURL, nil)
+}
+
+// awssmResponseFuzzClientHTTP is awssmResponseFuzzClient with the HTTP client
+// supplied by the caller (nil keeps the SDK default client).
+func awssmResponseFuzzClientHTTP(baseURL string, hc secretsmanager.HTTPClient) *secretsmanager.Client {
 	o := secretsmanager.Options{
 		Region:       "us-east-1",
 		Credentials:  credentials.NewStaticCredentialsProvider(awsFuzzAccessKeyID, awsFuzzSecretKey, ""),
@@ -280,41 +290,105 @@ func awssmResponseFuzzClient(baseURL string, hardened bool) *secretsmanager.Clie
 			o.MaxAttempts = 3
 			o.Backoff = retry.BackoffDelayerFunc(func(int, error) (time.Duration, error) { return 0, nil })
 		}),
-	}
-	if hardened {
-		o.HTTPClient = &http.Client{Transport: newConnectHardenedTransport(awsBaseTransport()), CheckRedirect: refuseRedirect}
+		HTTPClient: hc,
 	}
 	return secretsmanager.New(o)
 }
+
+// awssmSynthRoundTripper answers every request with a 500 whose body is `size`
+// bytes of 'A', generated on the fly, and counts the requests it served and the
+// body bytes the SDK actually consumed. No socket, no server goroutine: how much
+// of the body the client reads then depends only on the client's own code, never
+// on network timing (the real-server version of the red proof intermittently saw
+// the un-hardened client consume only 17-21 MB of 3 x 64 MiB on loaded CI).
+type awssmSynthRoundTripper struct {
+	size     int
+	requests atomic.Int32
+	consumed atomic.Int64
+}
+
+func (s *awssmSynthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	s.requests.Add(1)
+	return &http.Response{
+		Status:        "500 Internal Server Error",
+		StatusCode:    http.StatusInternalServerError,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Header:        http.Header{"Content-Type": []string{"application/x-amz-json-1.1"}},
+		Body:          &awssmSynthBody{left: s.size, consumed: &s.consumed},
+		ContentLength: -1,
+		Request:       req,
+	}, nil
+}
+
+type awssmSynthBody struct {
+	left     int
+	consumed *atomic.Int64
+}
+
+var awssmSynthChunk = bytes.Repeat([]byte("A"), 64<<10)
+
+func (b *awssmSynthBody) Read(p []byte) (int, error) {
+	if b.left == 0 {
+		return 0, io.EOF
+	}
+	n := 0
+	for n < len(p) && b.left > 0 {
+		c := copy(p[n:], awssmSynthChunk[:min(len(awssmSynthChunk), b.left)])
+		n += c
+		b.left -= c
+	}
+	b.consumed.Add(int64(n))
+	return n, nil
+}
+
+func (b *awssmSynthBody) Close() error { return nil }
 
 // TestAWSSMResponseFuzzO4RedProof shows the fuzz target's O4 oracle is not
 // vacuous: a deliberately unbounded error body (64 MiB, far over the 1 MiB
 // response cap) exceeds awssmO4Budget through the un-hardened client the target
 // used before #4531, and stays inside it through the hardened client.
+//
+// The un-hardened half is served by awssmSynthRoundTripper (in-process, no
+// socket) and first checks that the client consumed every byte of every attempt,
+// so the budget comparison is made on a response that really was read to the
+// end. runtime.MemStats.TotalAlloc is cumulative and unaffected by GC timing;
+// what moves it is how many bytes the client read, which is why that is pinned.
 func TestAWSSMResponseFuzzO4RedProof(t *testing.T) {
-	body := bytes.Repeat([]byte("A"), 64<<20)
-	run := func(hardened bool) (alloc uint64, wire int) {
-		var hits atomic.Int32
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			hits.Add(1)
-			w.Header().Set("Content-Type", "application/x-amz-json-1.1")
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write(body)
-		}))
-		defer srv.Close()
+	const bodySize = 64 << 20
+	runMem := func(cl *secretsmanager.Client) uint64 {
 		c := NewAWSSecretsManagerConnector("fuzz", "us-east-1", "", nil)
-		cl := awssmResponseFuzzClient(srv.URL, hardened)
 		c.newClient = func(_ context.Context, _ string) (smSecretGetter, error) { return cl, nil }
 		var m0, m1 runtime.MemStats
 		runtime.ReadMemStats(&m0)
 		_, _ = c.GetSecret(context.Background(), "fuzz/secret")
 		runtime.ReadMemStats(&m1)
-		return m1.TotalAlloc - m0.TotalAlloc, len(body) * int(max(hits.Load(), 1))
+		return m1.TotalAlloc - m0.TotalAlloc
 	}
-	if alloc, wire := run(false); alloc <= awssmO4Budget(wire) {
+
+	synth := &awssmSynthRoundTripper{size: bodySize}
+	alloc := runMem(awssmResponseFuzzClientHTTP("http://aws-synth.invalid", &http.Client{Transport: synth}))
+	wire := bodySize * int(max(synth.requests.Load(), 1))
+	if got := synth.consumed.Load(); got != int64(wire) {
+		t.Fatalf("red proof setup: un-hardened client consumed %d of %d wire bytes over %d attempts; the budget comparison would not be about an unbounded read", got, wire, synth.requests.Load())
+	}
+	if alloc <= awssmO4Budget(wire) {
 		t.Fatalf("red proof: un-hardened client allocated %d <= budget %d for %d wire bytes; the O4 oracle would not catch an unbounded response", alloc, awssmO4Budget(wire), wire)
 	}
-	if alloc, wire := run(true); alloc > awssmO4Budget(wire) {
+
+	body := bytes.Repeat([]byte("A"), bodySize)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	alloc = runMem(awssmResponseFuzzClient(srv.URL, true))
+	wire = bodySize * int(max(hits.Load(), 1))
+	if alloc > awssmO4Budget(wire) {
 		t.Fatalf("hardened client allocated %d > budget %d for %d wire bytes", alloc, awssmO4Budget(wire), wire)
 	}
 }
