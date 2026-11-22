@@ -101,6 +101,15 @@ func alterUsers(db *gorm.DB, exec func(string) error) error {
 			return err
 		}
 	}
+	// #4517: the model declares the column NOT NULL, like the ALTER above. A database a
+	// pre-release fresh install left with it nullable can hold NULLs, and the fresh-install
+	// tail's AutoMigrate of models.User then rebuilds the table on SQLite (users__temp) and
+	// fails copying them into the NOT NULL column. NULL means "not reset": false.
+	if tableExists(db, "users") && columnExists(db, "users", "mfa_enrolment_required") {
+		if err := exec("UPDATE users SET mfa_enrolment_required = false WHERE mfa_enrolment_required IS NULL"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -121,6 +130,12 @@ func createSetupTokens(db *gorm.DB, setupTokenExists bool) error {
 	if !setupTokenExists {
 		if err := db.AutoMigrate(&models.SetupToken{}); err != nil {
 			return fmt.Errorf("failed to migrate setup_tokens table: %w", err)
+		}
+	} else if !db.Migrator().HasColumn(&models.SetupToken{}, "CreatedByMachineIdentityID") {
+		// #1573, #4518: the machine-identity actor column a database first installed
+		// before v0.92 never got.
+		if err := db.Migrator().AddColumn(&models.SetupToken{}, "CreatedByMachineIdentityID"); err != nil {
+			return fmt.Errorf("failed to add setup_tokens.created_by_machine_identity_id column: %w", err)
 		}
 	}
 	return nil

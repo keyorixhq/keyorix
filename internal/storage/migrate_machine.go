@@ -46,6 +46,13 @@ func createMachineIdentities(db *gorm.DB, exec func(string) error, machineExists
 				return err
 			}
 		}
+		// #1573, #4518: the machine-identity actor column a database first installed
+		// before v0.92 never got. Added from the model, so it is the fresh definition.
+		if !db.Migrator().HasColumn(&models.MachineIdentity{}, "CreatedByMachineIdentityID") {
+			if err := db.Migrator().AddColumn(&models.MachineIdentity{}, "CreatedByMachineIdentityID"); err != nil {
+				return fmt.Errorf("failed to add machine_identities.created_by_machine_identity_id column: %w", err)
+			}
+		}
 	}
 	return nil
 }

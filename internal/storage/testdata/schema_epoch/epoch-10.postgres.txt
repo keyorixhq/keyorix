@@ -690,7 +690,7 @@ column users.last_login_at timestamp with time zone nullable=YES default=<none>
 column users.login_locked_until timestamp with time zone nullable=YES default=<none>
 column users.login_lockout_count bigint nullable=YES default=0
 column users.mfa_enabled boolean nullable=YES default=false
-column users.mfa_enrolment_required boolean nullable=YES default=false
+column users.mfa_enrolment_required boolean nullable=NO default=false
 column users.one_time_password_expires_at timestamp with time zone nullable=YES default=<none>
 column users.password_changed_at timestamp with time zone nullable=YES default=<none>
 column users.password_hash text nullable=YES default=<none>
