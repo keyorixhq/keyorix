@@ -4,8 +4,10 @@
   ctx tagged `ActorTypeMachine`) takes the singular DELETE route's machine rule:
   `secrets.delete` at the secret's own project and environment for the ctx machine identity
   (`AuthorizeSecretPrincipalForSecret`, the decision `RequireScopedSecretPermission` makes), so a
-  machine deletes in bulk only what it may delete one by one. A machine tag without a machine ID,
-  a refusal and a failed role read all refuse the item ("secret not found", nothing deleted).
+  machine deletes in bulk only what it may delete one by one. A machine tag without a machine ID
+  and a refusal refuse the item as "secret not found"; a failed role read refuses it as the
+  retryable "storage temporarily unavailable" (storage_unavailable). Nothing is deleted in any
+  of these cases.
   Only actorID 0 with no machine tag, an in-process caller with no authenticated principal
   (embedded/local mode), keeps the bare delete with the project match alone. Why: #4546 (L3 of
   REVIEW-4522-DEEP-1): a machine token arrived with UserID 0 and took the local branch, so core
