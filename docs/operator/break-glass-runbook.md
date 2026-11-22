@@ -7,6 +7,11 @@ normal case and in **degraded mode**: an activation made while the audit log ref
 writes. Configuration keys are in `docs/CONFIGURATION.md` (`break_glass`); the policy
 behind it is ADR-112 §3 and its Amendment 6.
 
+Output captured on `deb388fb3`, 2026-11-22, native (SQLite, server on 127.0.0.1 with `break_glass.enabled:
+true` and `emergency_role: project_developer`; section 1 only). Times, ids and the user names are those of
+the throwaway capture instance. The degraded-mode section 2 and the last-resort section 3 were **not**
+captured: they need a failing audit log or database, which the capture environment did not stage.
+
 ## 1. Normal activation
 
 ```bash
@@ -16,12 +21,16 @@ keyorix break-glass activate --project-id 3 --justification "INC-4711: prod DB d
 Replace `3` with the project's id (`keyorix project list`). The caller must be a member of the
 project and, on an install with `security.require_mfa` (the default), must already have a
 second factor: without one the activation is refused with `This deployment requires
-multi-factor authentication. Enrol MFA to continue. (HTTP 403)`.
+multi-factor authentication. Enrol MFA to continue. (HTTP 403)`. Captured in full, exit status 4:
+
+```
+Error: activate break-glass failed: This deployment requires multi-factor authentication. Enrol MFA to continue. (HTTP 403) Next step: this server requires multi-factor authentication. Enrol MFA with `keyorix mfa enroll`, then `keyorix mfa activate`, then log in again with `keyorix login` (it prompts for the code).
+```
 
 On success the CLI prints:
 
 ```
-Emergency access activated (id=1): role "project_developer" until 2026-11-14T13:34:46.676601Z.
+Emergency access activated (id=1): role "project_developer" until 2026-11-22T05:16:38.49165Z.
   "project_developer" is now granted to you on project 1, in addition to the access you already had there.
   It expires automatically; a project administrator can end it early with: keyorix break-glass revoke --project-id 1 --activation-id 1
 ```
@@ -48,24 +57,65 @@ a caller with `roles.read` on the project (an administrator) sees all of them:
 Break-glass activations — project 1:
 
 ID    USER  STATE     ROLE              EXPIRES (UTC)        JUSTIFICATION
-1     alice active    project_developer 2026-11-14 13:34:46  INC-4711: prod DB down, paging on-call
+1     alice active    project_developer 2026-11-22 05:16:38  INC-4711: prod DB down, paging on-call
 ```
 
-(The activator's own view starts `Your break-glass activations — project 1 (only your own;
-other users' need roles.read):`.) A project administrator ends an activation early with
+The activator's own view starts with a different heading line, then the same table:
+
+```
+Your break-glass activations — project 1 (only your own; other users' need roles.read):
+
+ID    USER  STATE     ROLE              EXPIRES (UTC)        JUSTIFICATION
+1     alice active    project_developer 2026-11-22 05:16:38  INC-4711: prod DB down, paging on-call
+```
+
+A project administrator ends an activation early with
 `keyorix break-glass revoke --project-id 1 --activation-id 1` (`Revoked break-glass
-activation 1 in project 1.`); `list` then shows `revoked`, and an activation that reaches its
-expiry shows `expired`. Both leave the grant removed, with these audit rows (`keyorix audit
-logs`): `break_glass.activated` + `role.assigned` on activation, `break_glass.revoked` +
-`role.removed` on revocation, and `break_glass.reviewed` on review. Expiry by itself writes no
-`break_glass.*` row. The review has no CLI command: `curl -H "Authorization: Bearer $TOKEN" -H
-'Content-Type: application/json' -d '{"note": "at least ten characters"}'
-https://HOST/api/v1/projects/1/break-glass/1/review` answers `Break-glass activation
-reviewed`, and refuses the activator themselves (403) and an activation that is still active
-(400).
+activation 1 in project 1.`); `list` then shows `revoked` in the STATE column, and an activation
+that reaches its expiry shows `expired`.
+
+The audit trail after the activation (`keyorix audit logs --limit 2`, as an administrator; the
+grant row is written first, so it has the lower id):
+
+```
+ID     TIME (UTC)           ACTOR            KIND      EVENT                 DESCRIPTION
+25     2026-11-22 01:16:38  alice            user      break_glass.activated break-glass: user 2 ("alice") self-granted "project_developer" until 2026-11-22T05:16:38Z — INC-4711: prod DB down, paging on-call
+24     2026-11-22 01:16:38  alice            user      role.assigned         role 8 ("project_developer") assigned to user 2 ("alice")
+```
+
+and after the revocation and the review (`--limit 5`, newest first; the review is the API call
+below, made by an administrator other than the activator):
+
+```
+ID     TIME (UTC)           ACTOR            KIND      EVENT                 DESCRIPTION
+28     2026-11-22 01:16:53  admin            user      break_glass.reviewed  break-glass: activation 1 (user 2, role "project_developer") reviewed
+27     2026-11-22 01:16:50  admin            user      break_glass.revoked   break-glass: revoked activation 1 (user 2 ("alice"), role "project_developer") early
+26     2026-11-22 01:16:50  admin            user      role.removed          role 8 ("project_developer") removed from user 2 ("alice")
+25     2026-11-22 01:16:38  alice            user      break_glass.activated break-glass: user 2 ("alice") self-granted "project_developer" until 2026-11-22T05:16:38Z — INC-4711: prod DB down, paging on-call
+24     2026-11-22 01:16:38  alice            user      role.assigned         role 8 ("project_developer") assigned to user 2 ("alice")
+```
+
+Replies of the review call, as captured (HTTP status after each):
+
+```
+$ curl ... -d '{"note": "..."}' https://127.0.0.1:8082/api/v1/projects/1/break-glass/1/review     # still active
+{"code":400,"error":"Error","message":"break-glass: activation still active: Validation error: activation is still active; revoke it or wait for it to expire before reviewing","success":false}   HTTP 400
+$ ...                                                                                              # after the revocation, by an administrator
+{"data":null,"message":"Break-glass activation reviewed","success":true}   HTTP 200
+$ ...                                                                                              # by the activator (a developer on the project)
+{"code":403,"error":"Forbidden","message":"Insufficient permissions"}   HTTP 403
+```
+
+Revocation and expiry both leave the grant removed. The audit rows are `break_glass.activated` + `role.assigned` on
+activation, `break_glass.revoked` + `role.removed` on revocation and `break_glass.reviewed` on review (all in the
+trails above); expiry by itself writes no `break_glass.*` row. The review has no CLI command: it is the `curl` call
+above, `-d '{"note": "at least ten characters"}'` to `https://HOST/api/v1/projects/1/break-glass/1/review`, which
+answers `Break-glass activation reviewed` and refuses an activation that is still active (400) and a caller
+without the project's `roles.assign` such as the activator (403).
 
 `keyorix compliance report` shows the count under "Emergency access (break-glass)" as
-`active / total activations : 1 / 1`. The JSON from `GET /api/v1/compliance/posture` carries
+`  active / total activations : 1 / 1` while the activation is active and `0 / 1` after the revocation; its
+`Audit integrity (ADR-029)` section read `chain verified : yes (25 chained events)` throughout. The JSON from `GET /api/v1/compliance/posture` carries
 `emergency_access.{active_activations, total_activations, unreviewed_activations,
 oldest_unreviewed_age_hours, review_window_hours}`; `unreviewed_activations` counts every
 unreviewed activation, still active or ended, once it is older than `review_window`, and
