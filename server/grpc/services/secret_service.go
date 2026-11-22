@@ -489,7 +489,12 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 			ReadCount:     intToU32(v.ReadCount),
 		})
 	}
-	return &pb.GetSecretVersionsResponse{Versions: out, TotalReads: s.totalReads(ctx, uint(req.GetId()))}, nil
+	resp := &pb.GetSecretVersionsResponse{Versions: out}
+	// Opt-in (#3444): the count is O(reads) over the access log (same default as GetSecret and REST).
+	if req.GetIncludeTotalReads() {
+		resp.TotalReads = s.totalReads(ctx, uint(req.GetId()))
+	}
+	return resp, nil
 }
 
 // GrantSecretACL grants (or updates) a per-secret ACL for a user.

@@ -1034,6 +1034,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		// must run on this path too, as the last step, same invariant as the
 		// transactional tail: only after every other step on this path (none,
 		// here -- the additive-migration section above already ran) has succeeded.
+		if err := recordLegacyServiceAccountsState(db, apiClientExists, apiTokenExists); err != nil {
+			return err
+		}
 		return recordSchemaEpoch(db)
 	}
 	// Everything from here to the end of the function applies atomically,
@@ -1220,6 +1223,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		// ADR-097: only after every migration step above has succeeded -- a crash
 		// or error partway through must not advance the recorded epoch past what
 		// was actually, successfully applied.
+		if err := recordLegacyServiceAccountsState(tx, apiClientExists, apiTokenExists); err != nil {
+			return err
+		}
 		return recordSchemaEpoch(tx)
 	})
 }

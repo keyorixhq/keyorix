@@ -908,10 +908,13 @@ func (x *ListSecretsResponse) GetSharedCount() uint32 {
 }
 
 type GetSecretVersionsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	// Opt in to GetSecretVersionsResponse.total_reads, which costs an O(reads)
+	// count; off by default (#3444, like GetSecretRequest.include_total_reads).
+	IncludeTotalReads bool `protobuf:"varint,2,opt,name=include_total_reads,json=includeTotalReads,proto3" json:"include_total_reads,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *GetSecretVersionsRequest) Reset() {
@@ -949,6 +952,13 @@ func (x *GetSecretVersionsRequest) GetId() uint32 {
 		return x.Id
 	}
 	return 0
+}
+
+func (x *GetSecretVersionsRequest) GetIncludeTotalReads() bool {
+	if x != nil {
+		return x.IncludeTotalReads
+	}
+	return false
 }
 
 type SetSecretAutoRotateRequest struct {
@@ -1100,6 +1110,7 @@ type GetSecretVersionsResponse struct {
 	Versions []*SecretVersion       `protobuf:"bytes,1,rep,name=versions,proto3" json:"versions,omitempty"`
 	// Lifetime count of reads of the secret's value (core.SecretTotalReads). Each
 	// version's read_count counts only reads charged against max_reads. (#2971)
+	// Set only when the request sets include_total_reads (#3444).
 	TotalReads    *int64 `protobuf:"varint,2,opt,name=total_reads,json=totalReads,proto3,oneof" json:"total_reads,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -11566,9 +11577,10 @@ const file_keyorix_proto_rawDesc = "" +
 	"totalPages\x12\x1f\n" +
 	"\vowned_count\x18\x06 \x01(\rR\n" +
 	"ownedCount\x12!\n" +
-	"\fshared_count\x18\a \x01(\rR\vsharedCount\"*\n" +
+	"\fshared_count\x18\a \x01(\rR\vsharedCount\"Z\n" +
 	"\x18GetSecretVersionsRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\rR\x02id\"\xa4\x01\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id\x12.\n" +
+	"\x13include_total_reads\x18\x02 \x01(\bR\x11includeTotalReads\"\xa4\x01\n" +
 	"\x1aSetSecretAutoRotateRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x18\n" +
 	"\aenabled\x18\x02 \x01(\bR\aenabled\x12\x16\n" +
