@@ -280,9 +280,24 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	return codes, nil
 }
 
-// DisableMFA turns MFA off after verifying a current TOTP code OR the account
-// password, then clears the secret and all recovery codes.
-func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPassword, keepSessionToken string) error {
+// reauthProof picks the single value requireReauth evaluates: the code when one
+// was sent, else the password. It feeds requireReauth only. The recovery-code
+// path (reauthWithRecoveryCode) is handed code alone, so a value sent as the
+// password is never SHA-256'd or consumed as a recovery code.
+func reauthProof(code, password string) string {
+	if code != "" {
+		return code
+	}
+	return password
+}
+
+// DisableMFA turns MFA off after verifying a current TOTP code or an unused
+// recovery code (#4224), both in code, OR the account password in password (with
+// a reauth step-up grant once a second factor is enrolled), then clears the
+// secret and all recovery codes. A recovery code is consumed in the same
+// transaction as the disable (reauthWithRecoveryCode). Only code can be a
+// recovery code: a recovery-shaped password is just a password.
+func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, code, password, keepSessionToken string) error {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
@@ -291,43 +306,65 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	if !user.MFAEnabled {
 		return fmt.Errorf("MFA is not enabled")
 	}
-	if err := c.requireReauth(ctx, user, codeOrPassword, "disable"); err != nil {
-		return err
-	}
 	// #G08: flipping MFAEnabled and clearing the secret/recovery codes must move
 	// together — a storage failure between the two previously could leave MFAEnabled
 	// false while stale credential material survived (or vice versa), an inconsistent
 	// state the API nonetheless reported as a clean failure.
-	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+	disable := func(tx storage.Storage) error {
 		if err := tx.SetUserMFAEnabled(ctx, userID, false); err != nil {
 			return err
 		}
 		return tx.DeleteMFAForUser(ctx, userID)
-	}); err != nil {
-		return err
+	}
+	method := ""
+	if handled, err := c.reauthWithRecoveryCode(ctx, user, code, "disable", disable); handled {
+		if err != nil {
+			return err
+		}
+		method = reauthMethodRecoveryCode
+	} else {
+		if err := c.requireReauth(ctx, user, reauthProof(code, password), "disable"); err != nil {
+			return err
+		}
+		if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error { return disable(tx) }); err != nil {
+			return err
+		}
 	}
 	// Purge all OTHER sessions now that MFA is disabled — the security downgrade must
 	// not leave sessions that were minted under MFA enforcement still valid (symmetric
 	// with ActivateMFA's session purge on upgrade). The CALLING session is kept (same
 	// keepSessionToken resolution as ActivateMFA/ChangePassword): it just proved a
-	// current code or the account password via requireReauth above, and revoking it
+	// current code, a recovery code or the account password above, and revoking it
 	// too only forces an immediate, surprising logout of the very request that just
 	// disabled MFA, with no security benefit over letting it continue normally.
+	// After a recovery-code disable this purge is what ends the sessions a holder
+	// of the lost device may still have (#4224).
 	// Best-effort: disable must not fail on a cleanup error.
 	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "disable_mfa")
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	c.clearCachedTokens(keepHash) // #2978: same stale-MFAEnabled cache entry as ActivateMFA
 	uid := userID
-	c.writeAuditEventFull(ctx, "mfa.disabled", &uid, nil, nil, "", fmt.Sprintf("user %s disabled MFA", user.Username))
+	c.writeAuditEventFull(ctx, "mfa.disabled", &uid, nil, nil, "", withReauthMethod(fmt.Sprintf("user %s disabled MFA", user.Username), method))
 	return nil
 }
 
+// withReauthMethod appends the re-authentication method to an audit
+// description; method "" (a TOTP code or the password) leaves it unchanged.
+func withReauthMethod(description, method string) string {
+	if method == "" {
+		return description
+	}
+	return fmt.Sprintf("%s (method: %s)", description, method)
+}
+
 // RegenerateMFARecoveryCodes issues a fresh set of recovery codes after verifying a
-// current TOTP code OR the account password (same re-auth as DisableMFA), replacing
-// any existing codes (used and unused). The plaintext codes are returned once and
-// never stored. Invalidating the old set means a regenerate also revokes leaked or
-// previously-recorded codes.
-func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uint, codeOrPassword string) ([]string, error) {
+// current TOTP code or an unused recovery code (#4224), both in code, OR the account
+// password in password (same re-auth as DisableMFA), replacing any existing codes
+// (used and unused). The plaintext codes are returned once and never stored.
+// Invalidating the old set means a regenerate also revokes leaked or
+// previously-recorded codes. A recovery code used as the proof is consumed in the
+// same transaction as the replacement; only code can be one.
+func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uint, code, password string) ([]string, error) {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		// A read fault is ErrStorageReadUnavailable (503), not "user not found".
@@ -335,9 +372,6 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 	}
 	if !user.MFAEnabled {
 		return nil, fmt.Errorf("MFA is not enabled")
-	}
-	if err := c.requireReauth(ctx, user, codeOrPassword, "regenerate_recovery_codes"); err != nil {
-		return nil, err
 	}
 	codes, hashes, err := generateRecoveryCodes(mfaRecoveryCodeCount)
 	if err != nil {
@@ -347,17 +381,29 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 	// storage failure between the two previously could leave the account with ZERO
 	// recovery codes (old set gone, new set never landed), an unsafe state the API
 	// nonetheless reported as a clean failure.
-	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+	replace := func(tx storage.Storage) error {
 		if err := tx.DeleteMFARecoveryCodes(ctx, userID); err != nil {
 			return fmt.Errorf("failed to clear old recovery codes: %w", err)
 		}
 		return tx.CreateMFARecoveryCodes(ctx, userID, hashes)
-	}); err != nil {
-		return nil, fmt.Errorf("failed to store recovery codes: %w", err)
+	}
+	method := ""
+	if handled, err := c.reauthWithRecoveryCode(ctx, user, code, "regenerate_recovery_codes", replace); handled {
+		if err != nil {
+			return nil, err
+		}
+		method = reauthMethodRecoveryCode
+	} else {
+		if err := c.requireReauth(ctx, user, reauthProof(code, password), "regenerate_recovery_codes"); err != nil {
+			return nil, err
+		}
+		if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error { return replace(tx) }); err != nil {
+			return nil, fmt.Errorf("failed to store recovery codes: %w", err)
+		}
 	}
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.recovery_codes_regenerated", &uid, nil, nil, "",
-		fmt.Sprintf("user %s regenerated MFA recovery codes", user.Username))
+		withReauthMethod(fmt.Sprintf("user %s regenerated MFA recovery codes", user.Username), method))
 	return codes, nil
 }
 
@@ -560,7 +606,7 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 		// "unavailable" (503, uncounted) while a CORRECT one whose anti-replay
 		// mark failed stayed "invalid code" (401, counted) — the status code
 		// answered "was the TOTP code right?" (#2894 review).
-		if consumed, err := c.consumeRecoveryCodeRecovering(ctx, ch.UserID, code); err != nil {
+		if consumed, err := c.consumeRecoveryCodeRecovering(ctx, c.storage, ch.UserID, code); err != nil {
 			storageErr = err
 		} else if consumed {
 			verified, usedRecovery, storageErr = true, true, nil
@@ -615,8 +661,10 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 }
 
 // consumeRecoveryCodeRecovering is the ConsumeMFARecoveryCode call of every
-// recovery-code check: the login second factor (VerifyMFACredentials) and the
-// step-up (verifyMFAStepUpCode). The conditional consume IS the recovery-code
+// recovery-code check: the login second factor (VerifyMFACredentials), the
+// step-up (verifyMFAStepUpCode) and the factor-change re-auth
+// (reauthWithRecoveryCode, which passes its transaction handle as st; the
+// others pass c.storage). The conditional consume IS the recovery-code
 // check, so a wrong code reaches it as well and a fault here is pre-verdict
 // either way. A PANIC comes back as an error (#3557), so each caller handles it
 // exactly like the error kind: audited mfa.error, answered "unavailable",
@@ -624,7 +672,7 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 // nothing audited, so a consume that landed before the panic burned a correct
 // recovery code with no trace in the audit log; now that case is at least
 // audited.
-func (c *KeyorixCore) consumeRecoveryCodeRecovering(ctx context.Context, userID uint, code string) (consumed bool, err error) {
+func (c *KeyorixCore) consumeRecoveryCodeRecovering(ctx context.Context, st storage.Storage, userID uint, code string) (consumed bool, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("SECURITY: recovery-code consume for user %d panicked; answering it like a storage error: %v\n%s",
@@ -632,7 +680,7 @@ func (c *KeyorixCore) consumeRecoveryCodeRecovering(ctx context.Context, userID 
 			consumed, err = false, fmt.Errorf("recovery-code consume for user %d panicked: %v", userID, r)
 		}
 	}()
-	return c.storage.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now())
+	return st.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now())
 }
 
 // markTOTPStepUsedAfterMatch is MarkTOTPStepUsed for a login whose TOTP code

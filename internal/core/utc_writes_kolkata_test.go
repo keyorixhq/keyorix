@@ -103,7 +103,7 @@ func TestHookBypassTimeWriters_KolkataHostStoresUTC(t *testing.T) {
 			const code = "abcd-efgh-ijkl"
 			require.NoError(t, db.Create(&models.MFARecoveryCode{UserID: 1, CodeHash: sha256Hex(normalizeRecoveryCode(code))}).Error)
 			c := &KeyorixCore{storage: store.NewLocalStorage(db), now: hostClock()}
-			consumed, err := c.consumeRecoveryCodeRecovering(context.Background(), 1, code)
+			consumed, err := c.consumeRecoveryCodeRecovering(context.Background(), c.storage, 1, code)
 			require.NoError(t, err)
 			require.True(t, consumed)
 			requireStoredUTCText(t, db, "mfa_recovery_codes", "used_at", utcWritesInstant, "user_id = ?", 1)

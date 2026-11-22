@@ -32,7 +32,7 @@ func TestMFAFailed_IsStoredWithSuccessFalse(t *testing.T) {
 	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
 	activateMFAForTest(t, c, fixed)
-	require.Error(t, c.DisableMFA(context.Background(), 1, "000000", ""))
+	require.Error(t, c.DisableMFA(context.Background(), 1, "000000", "", ""))
 	assert.Equal(t, []bool{false}, auditSuccessValues(t, db, "mfa.failed"))
 }
 

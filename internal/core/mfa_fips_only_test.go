@@ -78,7 +78,7 @@ func TestTOTP_UnderFIPS140Only_RefusedNotPanic(t *testing.T) {
 	t.Run("reauth", func(t *testing.T) {
 		c, db, _ := newMFATestCore(t)
 		seedActivatedTOTP(t, c, db)
-		err := noPanic(t, "DisableMFA", func() error { return c.DisableMFA(ctx, 1, "123456", "") })
+		err := noPanic(t, "DisableMFA", func() error { return c.DisableMFA(ctx, 1, "123456", "", "") })
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), fipsTOTPText)
 	})

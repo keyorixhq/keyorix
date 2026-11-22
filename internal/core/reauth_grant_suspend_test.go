@@ -57,7 +57,7 @@ func countGrantsFor(t *testing.T, db *gorm.DB, userID uint) int64 {
 // generic refusal, and that the action had no effect.
 func requireStepUpActionRefused(t *testing.T, c *KeyorixCore, userID uint) {
 	t.Helper()
-	_, err := c.RegenerateMFARecoveryCodes(context.Background(), userID, mfaTestPassword)
+	_, err := c.RegenerateMFARecoveryCodes(context.Background(), userID, "", mfaTestPassword)
 	require.Error(t, err, "a disabled account's re-auth grant must not satisfy a step-up action")
 	assert.Contains(t, err.Error(), "invalid code or password",
 		"refusal must be the same generic error as an absent grant")
@@ -107,13 +107,13 @@ func TestSuspendUser_ActiveUserGrantUnaffected(t *testing.T) {
 
 	assert.EqualValues(t, 0, countGrantsFor(t, db, 2))
 	assert.EqualValues(t, 1, countGrantsFor(t, db, 1), "an active user's grant must survive someone else's suspension")
-	codes, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	codes, err := c.RegenerateMFARecoveryCodes(ctx, 1, "", mfaTestPassword)
 	require.NoError(t, err, "an active user's grant must still satisfy re-auth")
 	assert.NotEmpty(t, codes)
 
 	require.NoError(t, c.ReactivateUser(ctx, 0, 2))
 	mintReauthGrantFor(t, db, 1, fixed)
-	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, "", mfaTestPassword)
 	require.NoError(t, err)
 }
 

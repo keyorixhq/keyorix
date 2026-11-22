@@ -120,7 +120,7 @@ func TestDisableMFA_AtomicOnDeleteFailure(t *testing.T) {
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 
 	c.storage = failingStorage(c.storage, "DeleteMFAForUser")
-	err := c.DisableMFA(ctx, 1, mfaTestPassword, "")
+	err := c.DisableMFA(ctx, 1, "", mfaTestPassword, "")
 	require.Error(t, err)
 
 	var user models.User
@@ -151,7 +151,7 @@ func TestRegenerateMFARecoveryCodes_AtomicOnCreateFailure(t *testing.T) {
 	require.NoError(t, db.Create(&models.MFAStepUpGrant{UserID: 1, Purpose: models.MFAStepUpPurposeReauth, ExpiresAt: fixed.Add(15 * time.Minute)}).Error)
 
 	c.storage = failingStorage(c.storage, "CreateMFARecoveryCodes")
-	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "", mfaTestPassword)
 	require.Error(t, err)
 
 	var codeCount int64

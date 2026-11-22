@@ -90,7 +90,7 @@ func TestDisableMFA_KeepsTheCallingSessionButPurgesOthers(t *testing.T) {
 	// activateMFAForTest already consumed.
 	code, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	require.NoError(t, c.DisableMFA(ctx, 1, code, "calling-session"))
+	require.NoError(t, c.DisableMFA(ctx, 1, code, "", "calling-session"))
 
 	_, err = c.storage.GetSession(ctx, "calling-session")
 	require.NoError(t, err, "the calling session must survive DisableMFA")
@@ -144,7 +144,7 @@ func TestDisableMFA_ClearsTheKeptSessionsStaleAuthCacheEntry(t *testing.T) {
 
 	code, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	require.NoError(t, c.DisableMFA(ctx, 1, code, "calling-session"))
+	require.NoError(t, c.DisableMFA(ctx, 1, code, "", "calling-session"))
 
 	s, err := c.storage.GetSession(ctx, "calling-session")
 	require.NoError(t, err)

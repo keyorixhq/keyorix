@@ -128,7 +128,7 @@ func mfaDisableOps() []opSpec {
 				return requirement{mfaRequired: true}
 			},
 			// coreEnforced=false → excluded from Oracle 1.
-			// Core leg: DisableMFA(userID, codeOrPassword, "").
+			// Core leg: DisableMFA(userID, code, password, "").
 			// - pkMFAUser: user.MFAEnabled=true → requireReauth(TOTP code) → ok → Allowed.
 			// - Others: user.MFAEnabled=false → "MFA is not enabled" → Denied.
 			// - Machines/system actor: errNotAuthzLayer.
@@ -140,7 +140,7 @@ func mfaDisableOps() []opSpec {
 					return errNotAuthzLayer
 				}
 				code := currentTOTPCode(lg.fx.mfaUserTOTPSecret)
-				return lg.c.DisableMFA(ctx, p.userID, code, "")
+				return lg.c.DisableMFA(ctx, p.userID, code, "", "")
 			},
 			rest: func(fx *fixtures, _ tgt, _ byte) restReq {
 				code := currentTOTPCode(fx.mfaUserTOTPSecret)
@@ -165,7 +165,7 @@ func mfaRegenerateOps() []opSpec {
 				return requirement{mfaRequired: true}
 			},
 			// coreEnforced=false → excluded from Oracle 1.
-			// Core leg: RegenerateMFARecoveryCodes(userID, codeOrPassword).
+			// Core leg: RegenerateMFARecoveryCodes(userID, code, password).
 			// - pkMFAUser: user.MFAEnabled=true → requireReauth(TOTP code) → ok → returns codes.
 			// - Others: user.MFAEnabled=false → "MFA is not enabled" → Denied.
 			// - Machines/system actor: errNotAuthzLayer.
@@ -177,7 +177,7 @@ func mfaRegenerateOps() []opSpec {
 					return errNotAuthzLayer
 				}
 				code := currentTOTPCode(lg.fx.mfaUserTOTPSecret)
-				_, err := lg.c.RegenerateMFARecoveryCodes(ctx, p.userID, code)
+				_, err := lg.c.RegenerateMFARecoveryCodes(ctx, p.userID, code, "")
 				return err
 			},
 			rest: func(fx *fixtures, _ tgt, _ byte) restReq {

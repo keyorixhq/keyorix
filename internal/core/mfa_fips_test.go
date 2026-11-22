@@ -56,7 +56,7 @@ func TestTOTP_FIPSRefusal_PreVerdictOnEveryPath(t *testing.T) {
 	assert.ErrorIs(t, err, ErrMFAVerificationUnavailable, "stepup must be pre-verdict")
 	assert.False(t, errors.Is(err, ErrReauthRejected), "stepup must not keep the slot")
 
-	err = c.DisableMFA(ctx, 1, "123456", "")
+	err = c.DisableMFA(ctx, 1, "123456", "", "")
 	assert.ErrorIs(t, err, ErrTOTPUnavailableInFIPSMode, "reauth")
 	assert.False(t, errors.Is(err, ErrReauthRejected), "reauth must not keep the slot")
 
@@ -82,7 +82,7 @@ func TestTOTP_FIPSRefusal_ReauthPasswordStillCounted(t *testing.T) {
 	seedActivatedTOTP(t, c, db)
 	forceTOTPFIPS(t)
 
-	err := c.DisableMFA(ctx, 1, "not-the-password", "")
+	err := c.DisableMFA(ctx, 1, "", "not-the-password", "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReauthRejected)
 	assert.False(t, errors.Is(err, ErrTOTPUnavailableInFIPSMode))

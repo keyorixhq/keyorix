@@ -13,7 +13,7 @@ below and it weakens every account on the install.
 
 | The user | Path |
 |---|---|
-| Still has an **unused recovery code** | Section 2: it signs the user in, but does not replace the lost factor; for that, sections 3-4. |
+| Still has an **unused recovery code** | Section 2: it signs the user in and, spent on `mfa/disable`, lets them enrol a new device themselves. Sections 3-4 stay the fallback. |
 | Is a **global admin**, no recovery code, you have shell access to the server host | Section 3: `recover-admin`. |
 | Signs in through **SSO** | Their identity provider owns the second factor. Fix it there. Keyorix cannot reset it (`user reissue-one-time-password` also refuses SSO users). |
 | Is a **non-admin with local credentials**, no recovery code | Section 4: an administrator MFA reset (host command `admin reset-mfa`). |
@@ -31,25 +31,49 @@ Authenticator code (or an unused recovery code):
 Logged in to https://localhost:8080 as alice.
 ```
 
-A recovery code is a sign-in factor only. **It does not replace the lost factor**: the two
-calls that do (below) re-check the user with a current authenticator code, or with the account
-password after a passkey re-authentication. They refuse an unused recovery code, and refuse the
-password alone on an account that has TOTP and no passkey (HTTP 400 `invalid code or password`;
-each refusal counts toward the account lockout, section 5). So a user who lost the phone and
-holds only recovery codes and a password cannot clear or regenerate on their own
-(issue #4224): use section 3 (global admin) or section 4 (anyone else), and until then keep
-signing in with the remaining recovery codes.
+A recovery code also replaces the lost factor. The two calls below re-check the user in `code`
+with a current authenticator code **or an unused recovery code**, or in `password` with the
+account password right after a passkey re-authentication. A recovery code is accepted only in
+`code`: one sent in `password` is checked as a password, refused and not consumed. A user who lost the phone signs in
+with one recovery code and spends a second one on `POST /api/v1/auth/mfa/disable`, then enrols
+the new device (issue #4224). The rules for the recovery code there:
 
-A user who still has a working authenticator, or a passkey, can replace the factor in a signed-in
-session. The `keyorix` CLI has `mfa enroll`, `mfa activate` and `mfa stepup` only, so the first
-two go through the web UI or the API (all require a bearer session):
+- It is consumed in the same transaction as the disable or the regenerate. If the change fails,
+  nothing changes (the code stays unused, MFA stays on) and the answer is the same as for a wrong
+  code.
+- Every refusal is HTTP 400 `invalid code or password`, whether the code was wrong, already used
+  or the change failed, and each one counts toward the account lockout exactly like a wrong
+  authenticator code (section 5). A locked account is refused before the code is looked at, and
+  the code stays unused.
+- Two requests with the same code at the same time: one succeeds, the other is refused.
+- FIPS 140-only mode (`GODEBUG=fips140=only`): authenticator codes are refused there (HTTP 503
+  `TOTP is not available in FIPS mode`), recovery codes work exactly as above. On such an install a
+  recovery code is the only self-service way off TOTP.
+- The password alone is still refused on an account that has TOTP and no passkey re-authentication.
+
+If the user has no recovery code left, use section 3 (global admin) or section 4 (anyone else).
+
+The `keyorix` CLI has `mfa enroll`, `mfa activate` and `mfa stepup` only, so the three calls below go
+through the web UI or the API (all require a bearer session; the session from the recovery-code
+sign-in is enough):
 
 - `GET /api/v1/auth/mfa/recovery-codes` returns `{remaining, total}` (inside `data`).
 - `POST /api/v1/auth/mfa/recovery-codes/regenerate` issues ten new codes and invalidates every old
-  one, used or not; its body is `{"code": ...}` (a current TOTP code) or `{"password": ...}`
-  (accepted only right after a passkey re-authentication).
+  one, used or not; its body is `{"code": ...}` (a current TOTP code or an unused recovery code) or
+  `{"password": ...}` (accepted only right after a passkey re-authentication; never a recovery
+  code). It keeps the
+  current TOTP secret: a user who lost the phone disables instead.
 - `POST /api/v1/auth/mfa/disable` takes the same body, clears the secret and all recovery codes,
-  and ends the user's other sessions. The user then enrols a new device:
+  and ends the user's other sessions (the calling one stays), so a session on the lost phone stops
+  working. The audit row `mfa.disabled` (and `mfa.recovery_codes_regenerated`) ends with
+  `(method: recovery_code)` when a recovery code was the proof:
+
+  ```bash
+  curl -sS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -d '{"code":"ABCDE-FGHJK"}' https://keyorix.example.com/api/v1/auth/mfa/disable
+  ```
+
+  The user then enrols a new device:
 
   ```bash
   keyorix mfa enroll        # scan the otpauth:// URI or type the base32 secret into the new app
