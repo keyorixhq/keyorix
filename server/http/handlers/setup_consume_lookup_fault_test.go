@@ -34,22 +34,27 @@ func TestConsumeSetup_TokenLookupFaultIs503AndSaysNothingAboutTheToken(t *testin
 		return n
 	}
 
-	answers := map[string]string{}
-	for name, token := range map[string]string{"valid": valid, "dead": "kx_setup_not-a-real-token"} {
-		before := slots()
-		fs.Arm(&faultstorage.FaultSpec{Method: setupConsumeVerdictMethod, NthCall: 1, Kind: faultstorage.KindError, Err: errors.New("injected lookup fault")})
-		body := fmt.Sprintf(`{"token":%q,"password":%q}`, token, undeliveredSetupPassword+"x")
-		w := httptest.NewRecorder()
-		h.ConsumeSetup(w, httptest.NewRequest(http.MethodPost, "/auth/setup/consume", strings.NewReader(body)))
-		require.True(t, fs.Fired(), "%s: the lookup fault must be reached", name)
-		fs.Arm(nil)
+	// Every kind the fault sweep drives on the lookup (#3298 point 2: error and
+	// effect-then-error; point 3: panic, recovered by lookupSetupToken).
+	for _, kind := range []faultstorage.FaultKind{faultstorage.KindError, faultstorage.KindPanic, faultstorage.KindEffectThenError} {
+		answers := map[string]string{}
+		for name, token := range map[string]string{"valid": valid, "dead": "kx_setup_not-a-real-token"} {
+			name = kind.String() + "/" + name
+			before := slots()
+			fs.Arm(&faultstorage.FaultSpec{Method: setupConsumeVerdictMethod, NthCall: 1, Kind: kind, Err: errors.New("injected lookup fault")})
+			body := fmt.Sprintf(`{"token":%q,"password":%q}`, token, undeliveredSetupPassword+"x")
+			w := httptest.NewRecorder()
+			h.ConsumeSetup(w, httptest.NewRequest(http.MethodPost, "/auth/setup/consume", strings.NewReader(body)))
+			require.True(t, fs.Fired(), "%s: the lookup fault must be reached", name)
+			fs.Arm(nil)
 
-		assertStorageUnavailable503(t, w)
-		assert.NotContains(t, w.Body.String(), "injected", "%s: no storage text in the body", name)
-		assert.Equal(t, before, slots(), "%s: nothing was evaluated, so the slot goes back", name)
-		answers[name] = fmt.Sprintf("%d %s %s", w.Code, w.Header().Get("Retry-After"), w.Body.String())
+			assertStorageUnavailable503(t, w)
+			assert.NotContains(t, w.Body.String(), "injected", "%s: no storage text in the body", name)
+			assert.Equal(t, before, slots(), "%s: nothing was evaluated, so the slot goes back", name)
+			answers[name] = fmt.Sprintf("%d %s %s", w.Code, w.Header().Get("Retry-After"), w.Body.String())
+		}
+		assert.Equal(t, answers[kind.String()+"/dead"], answers[kind.String()+"/valid"], "%s: a lookup fault must not distinguish a valid token from a dead one", kind)
 	}
-	assert.Equal(t, answers["dead"], answers["valid"], "a lookup fault must not distinguish a valid token from a dead one")
 
 	// The link still works once storage is back: nothing was consumed.
 	ok := postSetupConsume(t, h, valid)
