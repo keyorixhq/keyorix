@@ -91,6 +91,14 @@ func runSystemInit(cmd *cobra.Command, _ []string) error {
 	server := strings.TrimRight(systemInitServer, "/")
 	warnIfInsecureEndpoint(server)
 
+	// The generated client refuses an address that is not name@domain while it encodes
+	// the request, so nothing is sent and the failure would read "contact <server>: json:
+	// error calling MarshalJSON ...". Say it is the flag, before asking for a password.
+	// The value is not echoed back.
+	if _, err := types.Email(systemInitAdminEmail).MarshalJSON(); err != nil {
+		return usageErrorf("--admin-email is not a valid email address.%s", systemInitValidationHint("email"))
+	}
+
 	password, err := resolveSystemInitAdminPassword(cmd)
 	if err != nil {
 		return err
