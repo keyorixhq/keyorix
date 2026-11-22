@@ -187,7 +187,7 @@ j6_run() {
 
     kubectl -n "$J6_NS" get secret "${J6_FULL}-secure-baseline" >/dev/null 2>&1 \
         && fail "J6: chart generated ${J6_FULL}-secure-baseline although secureBaseline.existingSecret is set"
-    for w in deploy/"${J6_FULL}-server" deploy/"${J6_FULL}-web" sts/"${J6_FULL}-postgresql"; do
+    for w in deploy/"${J6_FULL}-server" deploy/"${J6_FULL}-web" deploy/"${J6_FULL}-postgresql"; do
         kubectl -n "$J6_NS" get "$w" -o jsonpath='{.spec.template.spec.volumes[*].secret.secretName}' | grep -qw "$J6_SECRET" \
             || fail "J6: $w does not mount $J6_SECRET"
     done
@@ -226,7 +226,7 @@ $(diff "$d/state0" "$d/state$n" | head -20)"
     [ "$rc" -ne 0 ] || fail "J6: upgrade with a Secret missing server.key succeeded"
     # Print only the sanitized message line, never the raw helm output.
     local msg
-    msg="$(printf '%s' "$out" | grep -o 'missing required key(s): [A-Za-z0-9_., ]*' | head -1 || true)"
+    msg="$(printf '%s' "$out" | grep -o 'missing required key(s): [A-Za-z0-9_., ]*' | head -1 | sed 's/\. See .*$//' || true)"
     [ "$msg" = "missing required key(s): server.key" ] \
         || fail "J6: expected error 'missing required key(s): server.key', got: '${msg:-<no such message>}'"
     printf '%s' "$out" | grep -q 'BEGIN' && fail "J6: PEM material appears in the failed-upgrade error"
@@ -316,7 +316,7 @@ helm test keyorix -n "$J1_NS" >/dev/null
 
 log "J1: verifying admin bootstrap actually completed (not just that the pod is Ready)"
 kubectl -n "$J1_NS" logs deploy/keyorix-keyorix-server | grep -q "System initialised successfully\|already_initialized" \
-    || kubectl -n "$J1_NS" logs deploy/keyorix-keyorix-server | grep -q '"POST http://localhost:8080/system/init HTTP/1.1" from \[::1\][^-]*- 200' \
+    || kubectl -n "$J1_NS" logs deploy/keyorix-keyorix-server | grep -Eq '"POST https?://localhost:8080/system/init HTTP/1.1" from \[::1\][^-]*- 200' \
     || fail "server logs show no successful POST /system/init -- admin bootstrap did not complete"
 
 # Kept open for the rest of the script (J3/J4/J5 all issue machine tokens and
