@@ -15,12 +15,20 @@ import (
 // requests seen by totalReadsServer.
 var totalReadsQueries []string
 
+// versionsIncludeQueries records the `include` query values of GET
+// /api/v1/secrets/{id}/versions requests (#3444: total_reads is opt-in there too).
+var versionsIncludeQueries []string
+
 func totalReadsServer(t *testing.T, routes map[string]string) *httptest.Server {
 	t.Helper()
 	totalReadsQueries = nil
+	versionsIncludeQueries = nil
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/v1/secrets/") && !strings.HasSuffix(r.URL.Path, "/versions") {
 			totalReadsQueries = append(totalReadsQueries, r.URL.Query().Get("include"))
+		}
+		if strings.HasSuffix(r.URL.Path, "/versions") {
+			versionsIncludeQueries = append(versionsIncludeQueries, r.URL.Query().Get("include"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		body, ok := routes[r.URL.Path]
@@ -126,6 +134,10 @@ func TestSecretVersions_PrintsTotalReads(t *testing.T) {
 		})
 		if !strings.Contains(out, "Total Reads: 9") {
 			t.Fatalf("expected 'Total Reads: 9', got: %q", out)
+		}
+		// total_reads is opt-in on the server (#3444); the view that prints it must ask.
+		if len(versionsIncludeQueries) != 1 || versionsIncludeQueries[0] != "total_reads" {
+			t.Fatalf("secret versions must send include=total_reads, got include values %q", versionsIncludeQueries)
 		}
 	})
 
