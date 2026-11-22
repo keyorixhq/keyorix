@@ -1109,6 +1109,13 @@ var osKnownUndeclared5xx = []struct {
 	// uniqueness violation (missing-sentinel class). owner: catalog / secret-template handlers.
 	{id: "OPENAPI-STATEFUL-9", opID: "createSecretTemplate", princ: -1, code: 500, reason: "duplicate template name -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (missing Conflict sentinel in core). See TestOpenAPIStrictExceptions."},
 	{id: "OPENAPI-STATEFUL-9", opID: "createRejectionReasonTemplate", princ: -1, code: 500, reason: "duplicate rejection-reason-template name -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (missing Conflict sentinel in core). See TestOpenAPIStrictExceptions."},
+	// OPENAPI-STATEFUL-9 (createFolder, same missing-sentinel class): a duplicate folder name
+	// in the same (project, environment) hits the secret_nodes unique index (folders share it),
+	// the storage layer returns a raw unique-constraint error, CreateFolder passes it back
+	// unwrapped, and answerCoreError classifies it errclass.Internal -> undeclared 500. Fix:
+	// same as createSecretTemplate — wrap the unique-constraint in a Conflict sentinel in core.
+	// Caught by the STRICT fuzz pass (nightly gate working as intended). See TestOpenAPIStrictExceptions.
+	{id: "OPENAPI-STATEFUL-9", opID: "createFolder", princ: -1, code: 500, reason: "duplicate folder name in same project/environment -> DB unique violation classified errclass.Internal -> undeclared 500; should be 409 Conflict (missing Conflict sentinel in core, same class as createSecretTemplate). See TestOpenAPIStrictExceptions."},
 
 	// OPENAPI-STATEFUL-10 (NEW, caught by the STRICT fuzz pass itself, not the sweep — the
 	// nightly gate working as intended): createRotationPolicy answers an undeclared 500 when
