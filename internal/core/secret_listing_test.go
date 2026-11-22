@@ -65,6 +65,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo(t *testing.T) {
 		ID:        2,
 		Name:      "shared-secret",
 		OwnerID:   2,
+		ProjectID: 3,
 		CreatedAt: time.Now(),
 	}
 
@@ -73,6 +74,8 @@ func TestKeyorixCore_ListSecretsWithSharingInfo(t *testing.T) {
 		Username: "owner-user",
 	}
 
+	// A share is listed only while its recipient is a live member of the secret's project.
+	mockStorage.On("ProjectMembershipsAmong", ctx, userID, []uint{3}).Return(map[uint]bool{3: true}, nil)
 	// Mock expectations
 	mockStorage.On("ListSecrets", ctx, mock.AnythingOfType("*storage.SecretFilter")).Return(ownedSecrets, int64(1), nil)
 	mockStorage.On("ListSharesBySecretIDs", ctx, []uint{1}, mock.Anything).Return(ownedSecretShares, nil)
@@ -192,6 +195,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
 		ID:        2,
 		Name:      "shared-secret",
 		OwnerID:   2,
+		ProjectID: 3,
 		CreatedAt: time.Now(),
 	}
 
@@ -200,6 +204,8 @@ func TestKeyorixCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
 		Username: "owner-user",
 	}
 
+	// A share is listed only while its recipient is a live member of the secret's project.
+	mockStorage.On("ProjectMembershipsAmong", ctx, userID, []uint{3}).Return(map[uint]bool{3: true}, nil)
 	// Mock expectations (ShowSharedOnly=true skips getOwnedSecretsWithSharingInfo, so GetUser(1) is not called)
 	mockStorage.On("ListSharesByUser", ctx, userID).Return(userShares, nil)
 	mockStorage.On("GetSecretsByIDs", ctx, []uint{2}).Return([]*models.SecretNode{sharedSecret}, nil)

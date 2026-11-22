@@ -143,7 +143,8 @@ func TestGetSharedSecrets_OwnerNameLookupFailureLeavesNameEmpty(t *testing.T) {
 	ms.On("ListSharesByUser", ctx, uint(1)).Return([]*models.ShareRecord{
 		{ID: 1, SecretID: 2, OwnerID: 7, RecipientID: 1, Permission: "read"},
 	}, nil)
-	ms.On("GetSecretsByIDs", ctx, []uint{2}).Return([]*models.SecretNode{{ID: 2, Name: "s", OwnerID: 7}}, nil)
+	ms.On("GetSecretsByIDs", ctx, []uint{2}).Return([]*models.SecretNode{{ID: 2, Name: "s", OwnerID: 7, ProjectID: 3}}, nil)
+	ms.On("ProjectMembershipsAmong", ctx, uint(1), []uint{3}).Return(map[uint]bool{3: true}, nil)
 	ms.On("GetUsernamesByIDs", ctx, []uint{7}).Return(nil, errBatchLookup)
 
 	got, err := c.getSharedSecretsWithSharingInfo(ctx, 1, &models.SecretListFilter{})

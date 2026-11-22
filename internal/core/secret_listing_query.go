@@ -488,7 +488,7 @@ func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userI
 	if shareFetchMayBeTruncated(shares) {
 		return nil, ErrShareListOverCap
 	}
-	return c.sharedSecretRows(ctx, shares)
+	return c.sharedSecretRows(ctx, userID, shares)
 }
 
 // sharedSecretDecorations is the received-share fetch of
@@ -512,11 +512,11 @@ func (c *KeyorixCore) sharedSecretDecorations(ctx context.Context, userID uint) 
 		log.Printf("secret listing: user %d has at least %d received shares (the fetch cap); shares past the cap are not "+
 			"shown as IsShared/UserPermission on their rows, the listed rows themselves are complete", userID, len(shares))
 	}
-	return c.sharedSecretRows(ctx, shares)
+	return c.sharedSecretRows(ctx, userID, shares)
 }
 
 // sharedSecretRows builds the shared-with-me rows for shares.
-func (c *KeyorixCore) sharedSecretRows(ctx context.Context, shares []*models.ShareRecord) ([]*models.SecretWithSharingInfo, error) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- shares is the ListSharesByUser result (bounded by the storage fetch cap), not a client-supplied array; the lookups are two batched queries, not one per item
+func (c *KeyorixCore) sharedSecretRows(ctx context.Context, userID uint, shares []*models.ShareRecord) ([]*models.SecretWithSharingInfo, error) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- shares is the ListSharesByUser result (bounded by the storage fetch cap), not a client-supplied array; the lookups are two batched queries, not one per item
 	// Secrets and their owners' names for every share in two batched lookups
 	// (LIST-ENDPOINTS-1), not a GetSecret + GetUser per share. A share whose secret
 	// is gone is skipped, as before; an owner that cannot be resolved shows "".
@@ -528,9 +528,24 @@ func (c *KeyorixCore) sharedSecretRows(ctx context.Context, shares []*models.Sha
 	if err != nil {
 		return nil, err
 	}
+	// REVIEW-4628 M1: a share is listed only while userID is a live member of the shared
+	// secret's project, the rule batchShareStage applies when it authorizes. No path
+	// deletes a recipient's share rows when membership ends (RemoveProjectMember only
+	// deletes ACL rows). A failed membership read fails the listing rather than list a
+	// share unchecked.
+	projectIDs := make([]uint, 0, len(secretsByID))
+	for _, secret := range secretsByID {
+		projectIDs = append(projectIDs, secret.ProjectID)
+	}
+	members := &batchMembership{known: map[uint]bool{}}
+	if err := members.ensure(ctx, c, userID, projectIDs); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
 	ownerIDs := make([]uint, 0, len(secretsByID))
 	for _, secret := range secretsByID {
-		ownerIDs = append(ownerIDs, secret.OwnerID)
+		if members.known[secret.ProjectID] {
+			ownerIDs = append(ownerIDs, secret.OwnerID)
+		}
 	}
 	ownerNames := map[uint]string{}
 	if len(ownerIDs) > 0 {
@@ -542,7 +557,7 @@ func (c *KeyorixCore) sharedSecretRows(ctx context.Context, shares []*models.Sha
 	var result []*models.SecretWithSharingInfo
 	for _, share := range shares {
 		secret := secretsByID[share.SecretID]
-		if secret == nil {
+		if secret == nil || !members.known[secret.ProjectID] {
 			continue
 		}
 		s := &models.SecretWithSharingInfo{
