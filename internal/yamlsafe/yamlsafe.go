@@ -34,6 +34,18 @@ import (
 // It decodes only the first document, like yaml.Unmarshal, and an empty
 // document leaves v untouched.
 func Unmarshal(data []byte, v any) error {
+	return unmarshal(data, v)
+}
+
+// UnmarshalStrict is Unmarshal plus yaml.WithKnownFields: a key that has no field
+// in v is an error naming the key and its line ("line N: field K not found in type
+// T"), never the value. It is for closed, struct-typed configs where a typo must
+// not be silently dropped.
+func UnmarshalStrict(data []byte, v any) error {
+	return unmarshal(data, v, yaml.WithKnownFields())
+}
+
+func unmarshal(data []byte, v any, extra ...yaml.Option) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return err
@@ -44,7 +56,7 @@ func Unmarshal(data []byte, v any) error {
 	if err := CheckDuplicateKeys(&root); err != nil {
 		return err
 	}
-	return root.Load(v, yaml.WithV3Defaults(), yaml.WithUniqueKeys(false))
+	return root.Load(v, append([]yaml.Option{yaml.WithV3Defaults(), yaml.WithUniqueKeys(false)}, extra...)...)
 }
 
 // CheckDuplicateKeys returns an error naming the first mapping key that appears

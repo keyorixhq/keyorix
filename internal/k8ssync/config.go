@@ -108,7 +108,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 	var c Config
-	if err := yamlsafe.Unmarshal(raw, &c); err != nil {
+	// Strict, like config.Load: a typo'd key (prune_on_revok) must fail at startup, not
+	// leave the agent running with the default.
+	if err := yamlsafe.UnmarshalStrict(raw, &c); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := c.validate(); err != nil {
