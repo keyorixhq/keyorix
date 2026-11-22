@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("storage:\n  type: postgres\n  database:\n    native_read_pool_max: 12\n")
