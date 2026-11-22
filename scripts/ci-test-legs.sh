@@ -391,10 +391,13 @@ http_pkg() {
 # 45029561280, similar weight), so the shard counts are chosen for the slow class:
 # about 15 min of `go test` step there. Per-shard weights: admin 1185 -> 593,
 # encryption 1262 -> 842.
+# Same session, core 4 -> 5: with admin and encryption split, core-4 (1121-1525 s
+# on the full rounds, core-1..3 860-1379 s) is the next slowest leg of a full
+# round. Per-shard weight 1319 -> 1055; timeouts stay 3300.
 # This table, ci.yml's matrix and assert_matrix_consistent move together.
 sharded_legs() {
   cat <<'EOF'
-core|core_pkgs|4|-
+core|core_pkgs|5|-
 server|server_pkg|2|-
 http|http_pkg|6|-
 handlers|handlers_pkg|2|-

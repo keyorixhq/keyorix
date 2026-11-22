@@ -1424,6 +1424,13 @@ jobs:
           - leg: core-4
             timeout: 3300
             coverage-file: coverage_core4.out
+          # core 4 -> 5 (2026-11-22, CI-LEG-SPLIT-1): core-4 ran 1121-1525 s on the
+          # full merge_group rounds of 2026-11-22, the slowest leg of a full round
+          # once admin and encryption are split. Not in the coverage merge line,
+          # like core-1..4.
+          - leg: core-5
+            timeout: 3300
+            coverage-file: coverage_core5.out
           - leg: server-1
             timeout: 1800
             coverage-file: coverage_server1.out
