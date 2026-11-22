@@ -193,11 +193,14 @@ func TestListSecretsWithSharingInfo(t *testing.T) {
 
 	// Mock shared secret
 	sharedSecret := &models.SecretNode{
-		ID:      2,
-		Name:    "shared-secret",
-		OwnerID: 2,
-		Type:    "password",
+		ID:        2,
+		Name:      "shared-secret",
+		OwnerID:   2,
+		ProjectID: 3,
+		Type:      "password",
 	}
+	// A share is listed only while its recipient is a live member of the secret's project.
+	mockStorage.On("ProjectMembershipsAmong", mock.Anything, userID, []uint{3}).Return(map[uint]bool{3: true}, nil)
 
 	// Owned secrets are filtered by owner_id (the canonical ownership), not the
 	// created_by username.
@@ -308,12 +311,15 @@ func TestSecretListFiltering(t *testing.T) {
 	// Test filtering for shared secrets only
 	t.Run("ShowSharedOnly", func(t *testing.T) {
 		sharedSecret := &models.SecretNode{
-			ID:      2,
-			Name:    "shared-secret",
-			OwnerID: 2,
-			Type:    "password",
+			ID:        2,
+			Name:      "shared-secret",
+			OwnerID:   2,
+			ProjectID: 3,
+			Type:      "password",
 		}
 
+		// A share is listed only while its recipient is a live member of the secret's project.
+		mockStorage.On("ProjectMembershipsAmong", mock.Anything, userID, []uint{3}).Return(map[uint]bool{3: true}, nil)
 		mockStorage.On("ListSharesByUser", mock.Anything, userID).Return([]*models.ShareRecord{
 			{ID: 1, SecretID: 2, RecipientID: userID, Permission: "read", CreatedAt: time.Now()},
 		}, nil)
