@@ -582,7 +582,7 @@ describe('CompliancePage posture panel', () => {
 
         fireEvent.click(await screen.findByRole('button', { name: 'ISO 27001' }));
         const score = await screen.findByText('75%'); // 3 pass / 4 total — the 70-89% "warning" band
-        expect(score).toHaveStyle({ color: 'var(--warning)' });
+        expect(score.style.color).toBe('var(--warning)');
     });
 
     it('pluralizes the remediation note and renders a fallback N/A badge for an unrecognized control status', async () => {
