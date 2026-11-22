@@ -39,6 +39,13 @@ func TestRunComplianceReport_MatchesOldCLIOutputShape(t *testing.T) {
 	if !containsAll(out, "Compliance posture — 2026-01-01T00:00:00Z", "chain verified : yes (10 chained events)", "none — purges run normally", "not configured — compliance records kept indefinitely") {
 		t.Fatalf("output missing expected fields: %q", out)
 	}
+	// #3744 item 6: the section heading is plain words, no ADR number.
+	if !strings.Contains(out, "Audit integrity\n") {
+		t.Fatalf("output missing the plain 'Audit integrity' heading: %q", out)
+	}
+	if m := internalRefRE.FindString(out); m != "" {
+		t.Fatalf("compliance report carries the internal reference %q: %q", m, out)
+	}
 }
 
 // TestComplianceExportVerify_RoundTrip covers export --output then verify against the

@@ -32,7 +32,7 @@ import (
 var requestCmd = &cobra.Command{
 	Use:   "request",
 	Short: "Manage project access requests",
-	Long:  "Request access to a project, list, withdraw, and review (approve/reject) requests (ADR-024).",
+	Long:  "Request access to a project, list, withdraw, and review (approve/reject) requests.",
 }
 
 func init() {
@@ -189,7 +189,7 @@ var (
 var requestAccessCmd = &cobra.Command{
 	Use:   "access",
 	Short: "Request access to a project",
-	Long:  "Create a pending access request for the caller to a project, optionally suggesting a role (ADR-024).",
+	Long:  "Create a pending access request for the caller to a project, optionally suggesting a role.",
 	RunE:  runRequestAccess,
 }
 
@@ -338,7 +338,7 @@ var (
 var requestWithdrawCmd = &cobra.Command{
 	Use:   "withdraw",
 	Short: "Withdraw your own pending access request",
-	Long:  "Cancel a pending access request you own, by ID (self-service, ADR-024).",
+	Long:  "Cancel a pending access request you own, by ID (self-service).",
 	RunE:  runRequestWithdraw,
 }
 
@@ -398,7 +398,7 @@ var (
 var requestReviewCmd = &cobra.Command{
 	Use:   "review",
 	Short: "Approve or reject a pending access request",
-	Long: "Resolve a pending access request (admin-driven, ADR-024).\n" +
+	Long: "Resolve a pending access request (admin-driven).\n" +
 		"Approving grants the role at the project scope (--role overrides the suggested role);\n" +
 		"rejecting records a --reason.",
 	RunE: runRequestReview,
@@ -667,7 +667,7 @@ var requestBulkApproveIDs string
 var requestBulkApproveCmd = &cobra.Command{
 	Use:   "bulk-approve",
 	Short: "Approve multiple pending access requests at once",
-	Long: "Approve several pending access requests in a single call (ADR-024 extension).\n" +
+	Long: "Approve several pending access requests in a single call.\n" +
 		"Provide a comma-separated list of request IDs with --ids.",
 	RunE: runRequestBulkApprove,
 }
@@ -750,7 +750,7 @@ var (
 var requestBulkRejectCmd = &cobra.Command{
 	Use:   "bulk-reject",
 	Short: "Reject multiple pending access requests at once",
-	Long: "Reject several pending access requests in a single call (ADR-024 extension).\n" +
+	Long: "Reject several pending access requests in a single call.\n" +
 		"All rejected requests share the same --reason.",
 	RunE: runRequestBulkReject,
 }

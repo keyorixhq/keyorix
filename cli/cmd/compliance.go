@@ -191,7 +191,7 @@ var complianceReportCmd = &cobra.Command{
 			fmt.Println()
 		}
 
-		fmt.Println("Audit integrity (ADR-029)")
+		fmt.Println("Audit integrity")
 		fmt.Printf("  chain verified : %s (%d chained events)\n", yesNo(p.AuditIntegrity.ChainVerified), p.AuditIntegrity.ChainedEvents)
 		fmt.Printf("  checkpointed   : %s\n", yesNo(p.AuditIntegrity.Checkpointed))
 		if p.AuditIntegrity.Reason != "" {

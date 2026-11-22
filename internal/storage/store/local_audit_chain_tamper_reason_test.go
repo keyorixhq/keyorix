@@ -38,3 +38,26 @@ func TestVerifyAuditChain_ModifiedRowReasonIsPlainWords(t *testing.T) {
 		assert.NotContains(t, v.Reason, internal)
 	}
 }
+
+// TestVerifyAuditChain_UnmigratedRowReasonIsPlainWords: the reason for a row still
+// hashed in the old format (an upgrade step not run, not tampering) names the old
+// format in plain words and carries no issue number. Verdict, id and the migrate
+// endpoint it points to are unchanged.
+func TestVerifyAuditChain_UnmigratedRowReasonIsPlainWords(t *testing.T) {
+	ls := newAuditChainTestStore(t)
+	e1 := appendLegacyEncodedEvent(t, ls, "first", time.Now().UTC(), auditGenesisHash)
+
+	v, err := ls.VerifyAuditChain(context.Background(), nil)
+	require.NoError(t, err)
+	require.False(t, v.Valid)
+	require.NotNil(t, v.FirstBrokenID)
+	assert.Equal(t, e1.ID, *v.FirstBrokenID)
+
+	assert.Contains(t, v.Reason, "old audit-hash format")
+	assert.Contains(t, v.Reason, "NOT evidence of tampering")
+	assert.Contains(t, v.Reason, "/api/v1/audit/migrate-chain-encoding")
+	assert.NotRegexp(t, `#[0-9]{3,}`, v.Reason)
+	for _, internal := range []string{"design §", "ADR-", "pre-#", "§", "matches neither"} {
+		assert.NotContains(t, v.Reason, internal)
+	}
+}

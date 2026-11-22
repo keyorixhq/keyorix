@@ -24,7 +24,7 @@ import (
 var licenseCmd = &cobra.Command{
 	Use:   "license",
 	Short: "Offline license: install and check status",
-	Long: `Install and inspect a Keyorix offline license (ADR-062 Phase 2).
+	Long: `Install and inspect a Keyorix offline license.
 
 A license is a compact signed token validated locally against the license public key
 embedded in this binary at build time -- no phone-home. Enforcement is fail-safe: a missing,

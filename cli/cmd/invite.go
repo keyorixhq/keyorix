@@ -24,7 +24,7 @@ import (
 var inviteCmd = &cobra.Command{
 	Use:   "invite",
 	Short: "Manage project invitations",
-	Long:  "Send, list, resend, and revoke project invitations (ADR-024).",
+	Long:  "Send, list, resend, and revoke project invitations.",
 }
 
 func init() {
@@ -93,7 +93,7 @@ var (
 var inviteSendCmd = &cobra.Command{
 	Use:   "send",
 	Short: "Send a project invitation",
-	Long:  "Invite an email address to a project with an intended role (admin-driven, ADR-024).",
+	Long:  "Invite an email address to a project with an intended role (admin-driven).",
 	RunE:  runInviteSend,
 }
 
@@ -238,7 +238,7 @@ var (
 var inviteRevokeCmd = &cobra.Command{
 	Use:   "revoke",
 	Short: "Revoke a pending invitation",
-	Long:  "Cancel a pending project invitation by ID (ADR-024).",
+	Long:  "Cancel a pending project invitation by ID.",
 	RunE:  runInviteRevoke,
 }
 
@@ -282,10 +282,10 @@ var (
 
 var inviteResendCmd = &cobra.Command{
 	Use:   "resend",
-	Short: "Reissue and redeliver an invitation's setup link (ADR-028)",
+	Short: "Reissue and redeliver an invitation's setup link",
 	Long: "Reissue a pending invitation's accept link, invalidating any prior link, and\n" +
 		"deliver it again. In out-of-band mode the link is printed for you to relay.\n" +
-		"Throttled per the ADR-028 resend limits.",
+		"Resends are rate-limited.",
 	RunE: runInviteResend,
 }
 

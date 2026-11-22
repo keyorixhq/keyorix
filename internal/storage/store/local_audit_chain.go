@@ -1430,11 +1430,11 @@ func verifyBatchEvents(batch []*models.AuditEvent, prevHash string, started bool
 			// upgrade. Now the row is tested against the old encoding and the
 			// two are reported as what they are.
 			if ComputeAuditEntryHashPre1452(e, e.PrevHash) == e.EntryHash {
-				brokenChain(result, e.ID, "this row's entry_hash is valid under the pre-#1452 audit-hash "+
-					"encoding but not the current one — the chain has not been re-encoded since the "+
+				brokenChain(result, e.ID, "this row's entry_hash is valid under the old audit-hash "+
+					"format but not the current one — the chain has not been re-encoded since the "+
 					"2026-08-16 format change. This is an un-migrated upgrade, NOT evidence of tampering: "+
 					"run the one-time re-encoding (POST /api/v1/audit/migrate-chain-encoding), which "+
-					"refuses if it finds a row that matches neither encoding")
+					"refuses if it finds a row that was changed after it was written")
 				return prevHash, headID, started, true
 			}
 			brokenChain(result, e.ID, "the recorded entry_hash does not match this row's contents, "+

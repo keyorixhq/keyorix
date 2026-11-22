@@ -290,7 +290,7 @@ var (
 var machineMigrateFromUserCmd = &cobra.Command{
 	Use:   "migrate-from-user <username>",
 	Short: "Convert a service-account-shaped user into a machine identity",
-	Long: "Materialise a project machine identity (ADR-023) for an existing user and,\n" +
+	Long: "Materialise a project machine identity for an existing user and,\n" +
 		"unless --keep-user is set, suspend the source user so it can no longer log in.\n" +
 		"The user is never deleted; suspension is reversible via `keyorix user reactivate`.",
 	Args:         cobra.ExactArgs(1),

@@ -33,7 +33,7 @@ var trustCmd = &cobra.Command{
 	Use:   "trust",
 	Short: "Air-gap signing-key tooling (ed25519 keypairs for update bundles / licenses)",
 	Long: `Generate and inspect the asymmetric keys Keyorix uses to sign air-gapped update
-bundles and offline licenses (ADR-062). The private key never ships; its public key is
+bundles and offline licenses. The private key never ships; its public key is
 embedded into release builds so an air-gapped deployment can verify offline.`,
 }
 

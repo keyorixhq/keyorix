@@ -162,7 +162,7 @@ func mfaGraceWarning(profileBody []byte) string {
 	if err != nil || p.MFAGrace == nil {
 		return ""
 	}
-	return fmt.Sprintf("Warning: this server does not require MFA for your account yet (ADR-112 upgrade grace period): %d day(s) left, until %s, or until the first administrator enrols MFA if that comes first. After that you are sent to MFA enrolment when you sign in. Enrol now: keyorix mfa enroll, then keyorix mfa activate.",
+	return fmt.Sprintf("Warning: this server does not require MFA for your account yet (upgrade grace period): %d day(s) left, until %s, or until the first administrator enrols MFA if that comes first. After that you are sent to MFA enrolment when you sign in. Enrol now: keyorix mfa enroll, then keyorix mfa activate.",
 		p.MFAGrace.DaysLeft, p.MFAGrace.EndsAt.UTC().Format(time.RFC3339))
 }
 

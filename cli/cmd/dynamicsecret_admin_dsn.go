@@ -35,7 +35,7 @@ var dynSetAdminDSNCmd = &cobra.Command{
 	Use:   "set-admin-dsn <config-id>",
 	Short: "Replace a dynamic-secret config's admin DSN (from the environment or stdin)",
 	Long: `Replace the admin DSN stored for a dynamic-secret config, in place. Use it to remove an
-option the server has refused since #3952 (a private-CA sslrootcert or tlsCAFile) from a
+option the server now refuses (a private-CA sslrootcert or tlsCAFile) from a
 config that can no longer issue, without deleting and recreating the config.
 
 The new DSN is read from the ` + dynAdminDSNEnv + ` environment variable, or from
@@ -55,7 +55,7 @@ var dynRefusedDSNCmd = &cobra.Command{
 	Use:   "refused-dsn",
 	Short: "List a project's configs whose admin DSN names a refused option",
 	Long: `List the configs in a project whose stored admin DSN names a driver option the server
-has refused since #3952 (a server file such as sslrootcert or tlsCAFile, or ambient
+now refuses (a server file such as sslrootcert or tlsCAFile, or ambient
 credentials). They can no longer issue. Fix each with:
   keyorix dynamic-secret set-admin-dsn <config-id>
 

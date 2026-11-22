@@ -106,11 +106,11 @@ var userCreateCmd = &cobra.Command{
 		"hidden prompt, or in a script from KEYORIX_INITIAL_PASSWORD or the 0600 file named by\n" +
 		"KEYORIX_INITIAL_PASSWORD_FILE (never from the command line, where ps and shell\n" +
 		"history would show it).\n\n" +
-		"Or use --setup-link to provision an ADR-028 setup link instead: the account is created\n" +
+		"Or use --setup-link to provision a setup link instead: the account is created\n" +
 		"in pending_first_login state and the user sets their own password via the link.\n" +
 		"In out-of-band mode the link is printed for you to relay.\n\n" +
-		"Or use --one-time-password to have the server generate an initial password\n" +
-		"(ADR-028 Part E): the account is created in password_reset_required state, the\n" +
+		"Or use --one-time-password to have the server generate an initial password:\n" +
+		"the account is created in password_reset_required state, the\n" +
 		"password is printed once for you to relay, and the user must change it on first\n" +
 		"login.",
 	RunE: runUserCreate,
@@ -123,8 +123,8 @@ func init() {
 	userCreateCmd.Flags().StringVar(&userCreateEmail, "email", "", "Email (required)")
 	userCreateCmd.Flags().StringVar(&userCreatePassword, "password", "", "Initial password (INSECURE on the command line — prefer KEYORIX_INITIAL_PASSWORD or the interactive prompt; required in some form unless --setup-link or --one-time-password)")
 	userCreateCmd.Flags().StringVar(&userCreateDisplayName, "display-name", "", "Display name (defaults to username)")
-	userCreateCmd.Flags().BoolVar(&userCreateSetupLink, "setup-link", false, "Provision a setup link instead of an admin-set password (ADR-028)")
-	userCreateCmd.Flags().BoolVar(&userCreateOneTimePassword, "one-time-password", false, "Generate a one-time password instead of an admin-set password (ADR-028 Part E); must be changed on first login")
+	userCreateCmd.Flags().BoolVar(&userCreateSetupLink, "setup-link", false, "Provision a setup link instead of an admin-set password")
+	userCreateCmd.Flags().BoolVar(&userCreateOneTimePassword, "one-time-password", false, "Generate a one-time password instead of an admin-set password; must be changed on first login")
 	userCreateCmd.Flags().StringVar(&userCreateBy, "by", "", "Acting admin email (unused in this REST-only CLI -- kept for flag compatibility; the session behind your bearer token is always the acting admin)")
 	// Never read (SUBTRACT-202610; Andrei 2026-10-23): remove after one minor release.
 	_ = userCreateCmd.Flags().MarkDeprecated("by", "it has no effect (the acting admin is always your session) and will be removed in the next minor release")
@@ -693,10 +693,10 @@ var (
 
 var userResendSetupLinkCmd = &cobra.Command{
 	Use:   "resend-setup-link",
-	Short: "Reissue and redeliver a user's setup link (ADR-028)",
+	Short: "Reissue and redeliver a user's setup link",
 	Long: "Reissue an account's setup link, invalidating any prior link, and deliver it\n" +
-		"again. In out-of-band mode the link is printed for you to relay. Throttled per\n" +
-		"the ADR-028 resend limits.",
+		"again. In out-of-band mode the link is printed for you to relay. Resends are\n" +
+		"rate-limited.",
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if userResendSetupLinkID == 0 {
 			return usageErrorf("user id is required (use --id)")

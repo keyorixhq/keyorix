@@ -17,7 +17,7 @@ import (
 var machineTokenCmd = &cobra.Command{
 	Use:   "token",
 	Short: "Manage machine identity tokens",
-	Long:  "Issue, list, and revoke bearer tokens for a machine identity (ADR-030).",
+	Long:  "Issue, list, and revoke bearer tokens for a machine identity.",
 }
 
 var (

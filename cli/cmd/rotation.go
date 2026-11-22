@@ -78,7 +78,7 @@ var rotPlanCmd = &cobra.Command{
 	Short: "Print an automated rotation plan (dependency-safe waves, by urgency)",
 	Long: `Print the rotation plan for a project: its overdue and due-soon secrets, batched
 into dependency-safe waves (rotate a wave at a time, top to bottom; within a wave the
-most urgent first) and annotated with why each is due and what it must follow (ADR-053).
+most urgent first) and annotated with why each is due and what it must follow.
 
 With --all-projects, print the deployment-wide roll-up instead: every project's plan
 aggregated into install-wide totals, most pressing project first. Dependencies are
@@ -93,7 +93,7 @@ var rotOrderCmd = &cobra.Command{
 	Short: "Print a safe rotation sequence for a project's dependency graph",
 	Long: `Print the order in which a project's secrets should be rotated so that each secret
 is rotated before anything that depends on it (a topological sort of the dependency
-graph, ADR-052). Only secrets that appear in the graph are listed.`,
+graph). Only secrets that appear in the graph are listed.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runRotOrder,
