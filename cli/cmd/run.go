@@ -52,8 +52,8 @@ variables, then execute the supplied command.
 
 Project is resolved via: --project-id flag -> --project flag -> KEYORIX_PROJECT env.
 
---project-id bypasses the project-NAME lookup (GET /api/v1/projects). Since #2780
-that listing serves a project-scoped caller their own projects, so --project works
+--project-id bypasses the project-NAME lookup (GET /api/v1/projects). That
+listing serves a project-scoped caller their own projects, so --project works
 for a token scoped to this project. --project-id is still the only path for a token
 with NO project grant at all (it resolves nothing by name), and the cheaper one in
 CI -- it skips a round trip. See

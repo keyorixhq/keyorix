@@ -268,7 +268,7 @@ var secretGetCmd = &cobra.Command{
 	Long: `Retrieve a secret by ID, by name, or by a project/environment/name reference.
 
 --ref reads the secret's value by a human-readable "project/environment/name"
-reference (ADR-059) -- handy for scripts and automation. It always reads the
+reference -- handy for scripts and automation. It always reads the
 value (so it counts toward max_reads and is audited like any value read).`,
 	RunE: runSecretGet,
 }

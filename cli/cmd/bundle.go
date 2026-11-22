@@ -33,7 +33,7 @@ import (
 var bundleCmd = &cobra.Command{
 	Use:   "bundle",
 	Short: "Air-gap update bundles: verify and import offline",
-	Long: `Verify and stage Keyorix air-gap update bundles (ADR-062 Phase 1).
+	Long: `Verify and stage Keyorix air-gap update bundles.
 
 A bundle is a single signed tarball carrying a release's artifacts, pinned by sha256 in a
 manifest that is signed with an offline ed25519 key. An air-gapped operator carries the

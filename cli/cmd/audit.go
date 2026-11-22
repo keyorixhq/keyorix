@@ -413,7 +413,7 @@ func runAuditExport(cmd *cobra.Command, _ []string) error {
 
 var auditCheckpointCmd = &cobra.Command{
 	Use:          "checkpoint",
-	Short:        "Write a signed checkpoint of the current audit-chain head (ADR-029)",
+	Short:        "Write a signed checkpoint of the current audit-chain head",
 	SilenceUsage: true,
 	RunE:         runAuditCheckpoint,
 }

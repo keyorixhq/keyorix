@@ -448,7 +448,7 @@ Verify and export the tamper-evident audit trail
 
 **Subcommands:**
 
-- [`keyorix audit checkpoint`](#keyorix-audit-checkpoint) — Write a signed checkpoint of the current audit-chain head (ADR-029)
+- [`keyorix audit checkpoint`](#keyorix-audit-checkpoint) — Write a signed checkpoint of the current audit-chain head
 - [`keyorix audit export`](#keyorix-audit-export) — Stream the audit feed as NDJSON (one event per line) for SIEM pull
 - [`keyorix audit logs`](#keyorix-audit-logs) — Query the audit trail with filters (human-readable table)
 - [`keyorix audit migrate-chain-encoding`](#keyorix-audit-migrate-chain-encoding) — One-time re-derivation of the audit hash chain under the current encoding
@@ -457,7 +457,7 @@ Verify and export the tamper-evident audit trail
 
 ## `keyorix audit checkpoint`
 
-Write a signed checkpoint of the current audit-chain head (ADR-029)
+Write a signed checkpoint of the current audit-chain head
 
 **Usage:** `keyorix audit checkpoint`
 
@@ -726,7 +726,7 @@ keyorix break-glass revoke --project-id 3 --activation-id 9
 
 Air-gap update bundles: verify and import offline
 
-Verify and stage Keyorix air-gap update bundles (ADR-062 Phase 1).
+Verify and stage Keyorix air-gap update bundles.
 
 A bundle is a single signed tarball carrying a release's artifacts, pinned by sha256 in a
 manifest that is signed with an offline ed25519 key. An air-gapped operator carries the
@@ -1557,7 +1557,7 @@ keyorix dynamic-secret list --project-id 3
 List a project's configs whose admin DSN names a refused option
 
 List the configs in a project whose stored admin DSN names a driver option the server
-has refused since #3952 (a server file such as sslrootcert or tlsCAFile, or ambient
+now refuses (a server file such as sslrootcert or tlsCAFile, or ambient
 credentials). They can no longer issue. Fix each with:
 ```text
   keyorix dynamic-secret set-admin-dsn <config-id>
@@ -1636,7 +1636,7 @@ keyorix dynamic-secret revoke-all 5 --yes
 Replace a dynamic-secret config's admin DSN (from the environment or stdin)
 
 Replace the admin DSN stored for a dynamic-secret config, in place. Use it to remove an
-option the server has refused since #3952 (a private-CA sslrootcert or tlsCAFile) from a
+option the server now refuses (a private-CA sslrootcert or tlsCAFile) from a
 config that can no longer issue, without deleting and recreating the config.
 
 The new DSN is read from the KEYORIX_DYNAMIC_ADMIN_DSN environment variable, or from
@@ -1866,14 +1866,14 @@ keyorix hygiene --expiring-days 14 --stale-days 60
 
 Manage project invitations
 
-Send, list, resend, and revoke project invitations (ADR-024).
+Send, list, resend, and revoke project invitations.
 
 **Usage:** `keyorix invite [command]`
 
 **Subcommands:**
 
 - [`keyorix invite list`](#keyorix-invite-list) — List project invitations
-- [`keyorix invite resend`](#keyorix-invite-resend) — Reissue and redeliver an invitation's setup link (ADR-028)
+- [`keyorix invite resend`](#keyorix-invite-resend) — Reissue and redeliver an invitation's setup link
 - [`keyorix invite revoke`](#keyorix-invite-revoke) — Revoke a pending invitation
 - [`keyorix invite send`](#keyorix-invite-send) — Send a project invitation
 
@@ -1901,11 +1901,11 @@ keyorix invite list --project payments
 
 ## `keyorix invite resend`
 
-Reissue and redeliver an invitation's setup link (ADR-028)
+Reissue and redeliver an invitation's setup link
 
 Reissue a pending invitation's accept link, invalidating any prior link, and
 deliver it again. In out-of-band mode the link is printed for you to relay.
-Throttled per the ADR-028 resend limits.
+Resends are rate-limited.
 
 **Usage:** `keyorix invite resend [flags]`
 
@@ -1926,7 +1926,7 @@ keyorix invite resend --project payments --id 12
 
 Revoke a pending invitation
 
-Cancel a pending project invitation by ID (ADR-024).
+Cancel a pending project invitation by ID.
 
 **Usage:** `keyorix invite revoke [flags]`
 
@@ -1947,7 +1947,7 @@ keyorix invite revoke --project payments --id 12
 
 Send a project invitation
 
-Invite an email address to a project with an intended role (admin-driven, ADR-024).
+Invite an email address to a project with an intended role (admin-driven).
 
 **Usage:** `keyorix invite send [flags]`
 
@@ -2034,7 +2034,7 @@ keyorix legal-hold status
 
 Offline license: install and check status
 
-Install and inspect a Keyorix offline license (ADR-062 Phase 2).
+Install and inspect a Keyorix offline license.
 
 A license is a compact signed token validated locally against the license public key
 embedded in this binary at build time -- no phone-home. Enforcement is fail-safe: a missing,
@@ -2158,7 +2158,7 @@ Commands for listing, creating, and managing the lifecycle of project machine id
 **Subcommands:**
 
 - [`keyorix machine audit`](#keyorix-machine-audit) — Print a machine identity audit report (admin)
-- [`keyorix machine binding`](#keyorix-machine-binding) — Manage a machine identity's OIDC federation bindings (ADR-031)
+- [`keyorix machine binding`](#keyorix-machine-binding) — Manage a machine identity's OIDC federation bindings
 - [`keyorix machine create`](#keyorix-machine-create) — Create a machine identity in a project
 - [`keyorix machine describe`](#keyorix-machine-describe) — Show details of a machine identity
 - [`keyorix machine grant-role`](#keyorix-machine-grant-role) — Grant a machine identity a project-scoped role
@@ -2198,7 +2198,7 @@ keyorix machine audit --format csv
 
 ## `keyorix machine binding`
 
-Manage a machine identity's OIDC federation bindings (ADR-031)
+Manage a machine identity's OIDC federation bindings
 
 Bind external OIDC principals (issuer + subject) to a machine identity so workloads can authenticate with a platform-issued JWT instead of a stored secret.
 
@@ -2352,7 +2352,7 @@ keyorix machine list --project payments
 
 Convert a service-account-shaped user into a machine identity
 
-Materialise a project machine identity (ADR-023) for an existing user and,
+Materialise a project machine identity for an existing user and,
 unless --keep-user is set, suspend the source user so it can no longer log in.
 The user is never deleted; suspension is reversible via `keyorix user reactivate`.
 
@@ -2471,7 +2471,7 @@ keyorix machine suspend ci-deployer --project payments
 
 Manage machine identity tokens
 
-Issue, list, and revoke bearer tokens for a machine identity (ADR-030).
+Issue, list, and revoke bearer tokens for a machine identity.
 
 **Usage:** `keyorix machine token [command]`
 
@@ -2608,7 +2608,7 @@ Begin TOTP MFA enrolment
 enroll generates a fresh TOTP secret and prints the otpauth:// URI (for a QR code)
 and the base32 secret (for manual entry into an authenticator app). This only begins
 enrolment -- the account is not protected by MFA until you confirm with a code via
-"keyorix mfa activate". With security.require_mfa on (the default, ADR-112), a
+"keyorix mfa activate". With security.require_mfa on (the default), a
 session without MFA can reach only enroll/activate until this is done.
 
 **Usage:** `keyorix mfa enroll`
@@ -3486,7 +3486,7 @@ keyorix rbac remove-role-from-group --group platform-team --role project_develop
 
 Manage project access requests
 
-Request access to a project, list, withdraw, and review (approve/reject) requests (ADR-024).
+Request access to a project, list, withdraw, and review (approve/reject) requests.
 
 **Usage:** `keyorix request [command]`
 
@@ -3505,7 +3505,7 @@ Request access to a project, list, withdraw, and review (approve/reject) request
 
 Request access to a project
 
-Create a pending access request for the caller to a project, optionally suggesting a role (ADR-024).
+Create a pending access request for the caller to a project, optionally suggesting a role.
 
 **Usage:** `keyorix request access [flags]`
 
@@ -3528,7 +3528,7 @@ keyorix request access --project payments --role project_developer --reason "on-
 
 Approve multiple pending access requests at once
 
-Approve several pending access requests in a single call (ADR-024 extension).
+Approve several pending access requests in a single call.
 Provide a comma-separated list of request IDs with --ids.
 
 **Usage:** `keyorix request bulk-approve [flags]`
@@ -3549,7 +3549,7 @@ keyorix request bulk-approve --ids 4,5,6
 
 Reject multiple pending access requests at once
 
-Reject several pending access requests in a single call (ADR-024 extension).
+Reject several pending access requests in a single call.
 All rejected requests share the same --reason.
 
 **Usage:** `keyorix request bulk-reject [flags]`
@@ -3652,7 +3652,7 @@ keyorix request rejection-templates list
 
 Approve or reject a pending access request
 
-Resolve a pending access request (admin-driven, ADR-024).
+Resolve a pending access request (admin-driven).
 Approving grants the role at the project scope (--role overrides the suggested role);
 rejecting records a --reason.
 
@@ -3706,7 +3706,7 @@ keyorix request secret-access --ref payments/production/STRIPE_KEY --reason "deb
 
 Withdraw your own pending access request
 
-Cancel a pending access request you own, by ID (self-service, ADR-024).
+Cancel a pending access request you own, by ID (self-service).
 
 **Usage:** `keyorix request withdraw [flags]`
 
@@ -3902,7 +3902,7 @@ Print a safe rotation sequence for a project's dependency graph
 
 Print the order in which a project's secrets should be rotated so that each secret
 is rotated before anything that depends on it (a topological sort of the dependency
-graph, ADR-052). Only secrets that appear in the graph are listed.
+graph). Only secrets that appear in the graph are listed.
 
 **Usage:** `keyorix rotation order <project-id>`
 
@@ -3918,7 +3918,7 @@ Print an automated rotation plan (dependency-safe waves, by urgency)
 
 Print the rotation plan for a project: its overdue and due-soon secrets, batched
 into dependency-safe waves (rotate a wave at a time, top to bottom; within a wave the
-most urgent first) and annotated with why each is due and what it must follow (ADR-053).
+most urgent first) and annotated with why each is due and what it must follow.
 
 With --all-projects, print the deployment-wide roll-up instead: every project's plan
 aggregated into install-wide totals, most pressing project first. Dependencies are
@@ -3993,8 +3993,8 @@ variables, then execute the supplied command.
 ```
 Project is resolved via: --project-id flag -\> --project flag -\> KEYORIX_PROJECT env.
 
---project-id bypasses the project-NAME lookup (GET /api/v1/projects). Since #2780
-that listing serves a project-scoped caller their own projects, so --project works
+--project-id bypasses the project-NAME lookup (GET /api/v1/projects). That
+listing serves a project-scoped caller their own projects, so --project works
 for a token scoped to this project. --project-id is still the only path for a token
 with NO project grant at all (it resolves nothing by name), and the cheaper one in
 CI -- it skips a round trip. See
@@ -4578,7 +4578,7 @@ keyorix secret delete --project 3 --environment 2 --name DB_PASSWORD --force
 
 Inspect and manage a secret's dependency graph
 
-Manage the secret dependency graph (ADR-052): declare that one secret
+Manage the secret dependency graph: declare that one secret
 depends on another, list a secret's dependencies and dependents, and see the
 blast radius of rotating it.
 
@@ -4891,7 +4891,7 @@ Get a secret
 Retrieve a secret by ID, by name, or by a project/environment/name reference.
 
 --ref reads the secret's value by a human-readable "project/environment/name"
-reference (ADR-059) -- handy for scripts and automation. It always reads the
+reference -- handy for scripts and automation. It always reads the
 value (so it counts toward max_reads and is audited like any value read).
 
 **Usage:** `keyorix secret get [flags]`
@@ -5841,11 +5841,8 @@ keyorix sod violations
 
 Show the configured server, login state, and version-skew check
 
-status is the remote-only successor to the old CLI's "status" command
-(docs/cli-split-inventory.md §2.7): it has no local/embedded branch to fall back to (ADR-108
-Decision A removes local mode entirely). Unlike the old command, it actually parses GET
-/health's response body instead of discarding it, and reports the GET /api/v1/version
-skew check.
+status shows which server the CLI talks to and whether you are logged in. It parses
+GET /health's response body and reports the GET /api/v1/version skew check.
 
 status also prints the credential file it reads: keyorix/credentials.yaml under the OS user
 config directory (~/.config on Linux, ~/Library/Application Support on macOS). The file is
@@ -5974,7 +5971,7 @@ keyorix system token-expiry-check
 Air-gap signing-key tooling (ed25519 keypairs for update bundles / licenses)
 
 Generate and inspect the asymmetric keys Keyorix uses to sign air-gapped update
-bundles and offline licenses (ADR-062). The private key never ships; its public key is
+bundles and offline licenses. The private key never ships; its public key is
 embedded into release builds so an air-gapped deployment can verify offline.
 
 **Usage:** `keyorix trust [command]`
@@ -6055,7 +6052,7 @@ Create, read, update, delete, list, and manage the account lifecycle of users.
 - [`keyorix user list`](#keyorix-user-list) — List users
 - [`keyorix user reactivate`](#keyorix-user-reactivate) — Reactivate a user (restores login)
 - [`keyorix user reissue-one-time-password`](#keyorix-user-reissue-one-time-password) — Issue a new one-time password for an existing user
-- [`keyorix user resend-setup-link`](#keyorix-user-resend-setup-link) — Reissue and redeliver a user's setup link (ADR-028)
+- [`keyorix user resend-setup-link`](#keyorix-user-resend-setup-link) — Reissue and redeliver a user's setup link
 - [`keyorix user revoke-sessions`](#keyorix-user-revoke-sessions) — Force-logout a user (revoke all active sessions)
 - [`keyorix user suspend`](#keyorix-user-suspend) — Suspend a user (blocks login)
 - [`keyorix user suspend-inactive`](#keyorix-user-suspend-inactive) — Suspend users who have been inactive beyond a threshold
@@ -6070,12 +6067,12 @@ hidden prompt, or in a script from KEYORIX_INITIAL_PASSWORD or the 0600 file nam
 KEYORIX_INITIAL_PASSWORD_FILE (never from the command line, where ps and shell
 history would show it).
 
-Or use --setup-link to provision an ADR-028 setup link instead: the account is created
+Or use --setup-link to provision a setup link instead: the account is created
 in pending_first_login state and the user sets their own password via the link.
 In out-of-band mode the link is printed for you to relay.
 
-Or use --one-time-password to have the server generate an initial password
-(ADR-028 Part E): the account is created in password_reset_required state, the
+Or use --one-time-password to have the server generate an initial password:
+the account is created in password_reset_required state, the
 password is printed once for you to relay, and the user must change it on first
 login.
 
@@ -6094,8 +6091,8 @@ keyorix user create --username bob --email bob@example.com --setup-link
 |---|---|---|---|
 | `--display-name` | `string` | — | Display name (defaults to username) |
 | `--email` | `string` | — | Email (required) |
-| `--one-time-password` | — | — | Generate a one-time password instead of an admin-set password (ADR-028 Part E); must be changed on first login |
-| `--setup-link` | — | — | Provision a setup link instead of an admin-set password (ADR-028) |
+| `--one-time-password` | — | — | Generate a one-time password instead of an admin-set password; must be changed on first login |
+| `--setup-link` | — | — | Provision a setup link instead of an admin-set password |
 | `--username` | `string` | — | Username (required) |
 
 ## `keyorix user delete`
@@ -6224,11 +6221,11 @@ keyorix user reissue-one-time-password bob
 
 ## `keyorix user resend-setup-link`
 
-Reissue and redeliver a user's setup link (ADR-028)
+Reissue and redeliver a user's setup link
 
 Reissue an account's setup link, invalidating any prior link, and deliver it
-again. In out-of-band mode the link is printed for you to relay. Throttled per
-the ADR-028 resend limits.
+again. In out-of-band mode the link is printed for you to relay. Resends are
+rate-limited.
 
 **Usage:** `keyorix user resend-setup-link [flags]`
 

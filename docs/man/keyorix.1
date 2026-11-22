@@ -375,7 +375,7 @@ Verify and export the tamper\-evident audit trail
 .PP
 Usage: \fBkeyorix audit [command]\fR
 .SS keyorix audit checkpoint
-Write a signed checkpoint of the current audit\-chain head (ADR\-029)
+Write a signed checkpoint of the current audit\-chain head
 .PP
 Usage: \fBkeyorix audit checkpoint\fR
 .PP
@@ -662,7 +662,7 @@ Project (required)
 .SS keyorix bundle
 Air\-gap update bundles: verify and import offline
 .PP
-Verify and stage Keyorix air\-gap update bundles (ADR\-062 Phase 1).
+Verify and stage Keyorix air\-gap update bundles.
 .PP
 A bundle is a single signed tarball carrying a release's artifacts, pinned by sha256 in a manifest that is signed with an offline ed25519 key. An air\-gapped operator carries the file across the gap and verifies it offline against the public key embedded in this binary at build time \-\- trust follows a pinned chain, never a key shipped inside the bundle. "bundle build" (signing a new release) is maintainer\-only tooling and lives in the old CLI.
 .PP
@@ -1332,7 +1332,7 @@ Filter by project ID
 .SS keyorix dynamic\-secret refused\-dsn
 List a project's configs whose admin DSN names a refused option
 .PP
-List the configs in a project whose stored admin DSN names a driver option the server has refused since #3952 (a server file such as sslrootcert or tlsCAFile, or ambient credentials). They can no longer issue. Fix each with:
+List the configs in a project whose stored admin DSN names a driver option the server now refuses (a server file such as sslrootcert or tlsCAFile, or ambient credentials). They can no longer issue. Fix each with:
 .nf
   keyorix dynamic\-secret set\-admin\-dsn <config\-id>
 .fi
@@ -1398,7 +1398,7 @@ Skip the confirmation prompt
 .SS keyorix dynamic\-secret set\-admin\-dsn
 Replace a dynamic\-secret config's admin DSN (from the environment or stdin)
 .PP
-Replace the admin DSN stored for a dynamic\-secret config, in place. Use it to remove an option the server has refused since #3952 (a private\-CA sslrootcert or tlsCAFile) from a config that can no longer issue, without deleting and recreating the config.
+Replace the admin DSN stored for a dynamic\-secret config, in place. Use it to remove an option the server now refuses (a private\-CA sslrootcert or tlsCAFile) from a config that can no longer issue, without deleting and recreating the config.
 .PP
 The new DSN is read from the KEYORIX_DYNAMIC_ADMIN_DSN environment variable, or from stdin (a hidden prompt on a terminal, or whatever is piped in). It is never accepted as a flag, so it cannot land in shell history or a process listing; the server encrypts it at rest and never returns it.
 .PP
@@ -1605,7 +1605,7 @@ Unused\-secret window in days (default server\-side: 90)
 .SS keyorix invite
 Manage project invitations
 .PP
-Send, list, resend, and revoke project invitations (ADR\-024).
+Send, list, resend, and revoke project invitations.
 .PP
 Usage: \fBkeyorix invite [command]\fR
 .SS keyorix invite list
@@ -1632,9 +1632,9 @@ Project name (or set KEYORIX_PROJECT)
 \fB\-\-stale\-days\fR \fIint\fR
 Show only pending invitations older than this many days
 .SS keyorix invite resend
-Reissue and redeliver an invitation's setup link (ADR\-028)
+Reissue and redeliver an invitation's setup link
 .PP
-Reissue a pending invitation's accept link, invalidating any prior link, and deliver it again. In out\-of\-band mode the link is printed for you to relay. Throttled per the ADR\-028 resend limits.
+Reissue a pending invitation's accept link, invalidating any prior link, and deliver it again. In out\-of\-band mode the link is printed for you to relay. Resends are rate\-limited.
 .PP
 Usage: \fBkeyorix invite resend [flags]\fR
 .PP
@@ -1654,7 +1654,7 @@ Project name (or set KEYORIX_PROJECT)
 .SS keyorix invite revoke
 Revoke a pending invitation
 .PP
-Cancel a pending project invitation by ID (ADR\-024).
+Cancel a pending project invitation by ID.
 .PP
 Usage: \fBkeyorix invite revoke [flags]\fR
 .PP
@@ -1674,7 +1674,7 @@ Project name (or set KEYORIX_PROJECT)
 .SS keyorix invite send
 Send a project invitation
 .PP
-Invite an email address to a project with an intended role (admin\-driven, ADR\-024).
+Invite an email address to a project with an intended role (admin\-driven).
 .PP
 Usage: \fBkeyorix invite send [flags]\fR
 .PP
@@ -1746,7 +1746,7 @@ keyorix legal\-hold status
 .SS keyorix license
 Offline license: install and check status
 .PP
-Install and inspect a Keyorix offline license (ADR\-062 Phase 2).
+Install and inspect a Keyorix offline license.
 .PP
 A license is a compact signed token validated locally against the license public key embedded in this binary at build time \-\- no phone\-home. Enforcement is fail\-safe: a missing, expired, or invalid license degrades to the community baseline with a warning; it never denies access to existing secrets or stops the server. "license issue" (minting a new license) is maintainer\-only tooling and lives in the old CLI.
 .PP
@@ -1858,7 +1858,7 @@ Flags:
 \fB\-\-format\fR \fIstring\fR
 Output format: json or csv (default json)
 .SS keyorix machine binding
-Manage a machine identity's OIDC federation bindings (ADR\-031)
+Manage a machine identity's OIDC federation bindings
 .PP
 Bind external OIDC principals (issuer + subject) to a machine identity so workloads can authenticate with a platform\-issued JWT instead of a stored secret.
 .PP
@@ -2001,7 +2001,7 @@ Project name or numeric ID
 .SS keyorix machine migrate\-from\-user
 Convert a service\-account\-shaped user into a machine identity
 .PP
-Materialise a project machine identity (ADR\-023) for an existing user and, unless \-\-keep\-user is set, suspend the source user so it can no longer log in. The user is never deleted; suspension is reversible via `keyorix user reactivate`.
+Materialise a project machine identity for an existing user and, unless \-\-keep\-user is set, suspend the source user so it can no longer log in. The user is never deleted; suspension is reversible via `keyorix user reactivate`.
 .PP
 Usage: \fBkeyorix machine migrate\-from\-user <username> [flags]\fR
 .PP
@@ -2110,7 +2110,7 @@ Project name or numeric ID
 .SS keyorix machine token
 Manage machine identity tokens
 .PP
-Issue, list, and revoke bearer tokens for a machine identity (ADR\-030).
+Issue, list, and revoke bearer tokens for a machine identity.
 .PP
 Usage: \fBkeyorix machine token [command]\fR
 .SS keyorix machine token issue
@@ -2217,7 +2217,7 @@ keyorix mfa activate
 .SS keyorix mfa enroll
 Begin TOTP MFA enrolment
 .PP
-enroll generates a fresh TOTP secret and prints the otpauth:// URI (for a QR code) and the base32 secret (for manual entry into an authenticator app). This only begins enrolment \-\- the account is not protected by MFA until you confirm with a code via "keyorix mfa activate". With security.require_mfa on (the default, ADR\-112), a session without MFA can reach only enroll/activate until this is done.
+enroll generates a fresh TOTP secret and prints the otpauth:// URI (for a QR code) and the base32 secret (for manual entry into an authenticator app). This only begins enrolment \-\- the account is not protected by MFA until you confirm with a code via "keyorix mfa activate". With security.require_mfa on (the default), a session without MFA can reach only enroll/activate until this is done.
 .PP
 Usage: \fBkeyorix mfa enroll\fR
 .PP
@@ -2972,13 +2972,13 @@ Role name to remove (required)
 .SS keyorix request
 Manage project access requests
 .PP
-Request access to a project, list, withdraw, and review (approve/reject) requests (ADR\-024).
+Request access to a project, list, withdraw, and review (approve/reject) requests.
 .PP
 Usage: \fBkeyorix request [command]\fR
 .SS keyorix request access
 Request access to a project
 .PP
-Create a pending access request for the caller to a project, optionally suggesting a role (ADR\-024).
+Create a pending access request for the caller to a project, optionally suggesting a role.
 .PP
 Usage: \fBkeyorix request access [flags]\fR
 .PP
@@ -3004,7 +3004,7 @@ Suggested project role (optional)
 .SS keyorix request bulk\-approve
 Approve multiple pending access requests at once
 .PP
-Approve several pending access requests in a single call (ADR\-024 extension). Provide a comma\-separated list of request IDs with \-\-ids.
+Approve several pending access requests in a single call. Provide a comma\-separated list of request IDs with \-\-ids.
 .PP
 Usage: \fBkeyorix request bulk\-approve [flags]\fR
 .PP
@@ -3021,7 +3021,7 @@ Comma\-separated list of access request IDs (required)
 .SS keyorix request bulk\-reject
 Reject multiple pending access requests at once
 .PP
-Reject several pending access requests in a single call (ADR\-024 extension). All rejected requests share the same \-\-reason.
+Reject several pending access requests in a single call. All rejected requests share the same \-\-reason.
 .PP
 Usage: \fBkeyorix request bulk\-reject [flags]\fR
 .PP
@@ -3109,7 +3109,7 @@ Output format: table, json or yaml (default table)
 .SS keyorix request review
 Approve or reject a pending access request
 .PP
-Resolve a pending access request (admin\-driven, ADR\-024). Approving grants the role at the project scope (\-\-role overrides the suggested role); rejecting records a \-\-reason.
+Resolve a pending access request (admin\-driven). Approving grants the role at the project scope (\-\-role overrides the suggested role); rejecting records a \-\-reason.
 .PP
 Usage: \fBkeyorix request review [flags]\fR
 .PP
@@ -3168,7 +3168,7 @@ Secret ID (or use \-\-ref)
 .SS keyorix request withdraw
 Withdraw your own pending access request
 .PP
-Cancel a pending access request you own, by ID (self\-service, ADR\-024).
+Cancel a pending access request you own, by ID (self\-service).
 .PP
 Usage: \fBkeyorix request withdraw [flags]\fR
 .PP
@@ -3345,7 +3345,7 @@ Filter by project
 .SS keyorix rotation order
 Print a safe rotation sequence for a project's dependency graph
 .PP
-Print the order in which a project's secrets should be rotated so that each secret is rotated before anything that depends on it (a topological sort of the dependency graph, ADR\-052). Only secrets that appear in the graph are listed.
+Print the order in which a project's secrets should be rotated so that each secret is rotated before anything that depends on it (a topological sort of the dependency graph). Only secrets that appear in the graph are listed.
 .PP
 Usage: \fBkeyorix rotation order <project\-id>\fR
 .PP
@@ -3357,7 +3357,7 @@ keyorix rotation order 3
 .SS keyorix rotation plan
 Print an automated rotation plan (dependency\-safe waves, by urgency)
 .PP
-Print the rotation plan for a project: its overdue and due\-soon secrets, batched into dependency\-safe waves (rotate a wave at a time, top to bottom; within a wave the most urgent first) and annotated with why each is due and what it must follow (ADR\-053).
+Print the rotation plan for a project: its overdue and due\-soon secrets, batched into dependency\-safe waves (rotate a wave at a time, top to bottom; within a wave the most urgent first) and annotated with why each is due and what it must follow.
 .PP
 With \-\-all\-projects, print the deployment\-wide roll\-up instead: every project's plan aggregated into install\-wide totals, most pressing project first. Dependencies are per\-project, so each project keeps its own wave order.
 .PP
@@ -3423,7 +3423,7 @@ Fetch secrets for a project + environment, expose them as environment variables,
 .PP
 Project is resolved via: \-\-project\-id flag \-> \-\-project flag \-> KEYORIX_PROJECT env.
 .PP
-\-\-project\-id bypasses the project\-NAME lookup (GET /api/v1/projects). Since #2780 that listing serves a project\-scoped caller their own projects, so \-\-project works for a token scoped to this project. \-\-project\-id is still the only path for a token with NO project grant at all (it resolves nothing by name), and the cheaper one in CI \-\- it skips a round trip. See https://github.com/keyorixhq/keyorix/issues/2360 for the same shape on 'keyorix request'.
+\-\-project\-id bypasses the project\-NAME lookup (GET /api/v1/projects). That listing serves a project\-scoped caller their own projects, so \-\-project works for a token scoped to this project. \-\-project\-id is still the only path for a token with NO project grant at all (it resolves nothing by name), and the cheaper one in CI \-\- it skips a round trip. See https://github.com/keyorixhq/keyorix/issues/2360 for the same shape on 'keyorix request'.
 .PP
 Usage: \fBkeyorix run [flags]\fR
 .PP
@@ -3925,7 +3925,7 @@ Project ID (required with \-\-name) (default 1)
 .SS keyorix secret deps
 Inspect and manage a secret's dependency graph
 .PP
-Manage the secret dependency graph (ADR\-052): declare that one secret depends on another, list a secret's dependencies and dependents, and see the blast radius of rotating it.
+Manage the secret dependency graph: declare that one secret depends on another, list a secret's dependencies and dependents, and see the blast radius of rotating it.
 .PP
 Usage: \fBkeyorix secret deps [command]\fR
 .SS keyorix secret deps add
@@ -4210,7 +4210,7 @@ Get a secret
 .PP
 Retrieve a secret by ID, by name, or by a project/environment/name reference.
 .PP
-\-\-ref reads the secret's value by a human\-readable "project/environment/name" reference (ADR\-059) \-\- handy for scripts and automation. It always reads the value (so it counts toward max_reads and is audited like any value read).
+\-\-ref reads the secret's value by a human\-readable "project/environment/name" reference \-\- handy for scripts and automation. It always reads the value (so it counts toward max_reads and is audited like any value read).
 .PP
 Usage: \fBkeyorix secret get [flags]\fR
 .PP
@@ -5091,7 +5091,7 @@ keyorix sod violations
 .SS keyorix status
 Show the configured server, login state, and version\-skew check
 .PP
-status is the remote\-only successor to the old CLI's "status" command (docs/cli\-split\-inventory.md §2.7): it has no local/embedded branch to fall back to (ADR\-108 Decision A removes local mode entirely). Unlike the old command, it actually parses GET /health's response body instead of discarding it, and reports the GET /api/v1/version skew check.
+status shows which server the CLI talks to and whether you are logged in. It parses GET /health's response body and reports the GET /api/v1/version skew check.
 .PP
 status also prints the credential file it reads: keyorix/credentials.yaml under the OS user config directory (~/.config on Linux, ~/Library/Application Support on macOS). The file is per OS user, so two installs on one account share it. On Linux, XDG_CONFIG_HOME moves it (a separate login, ca_file and token per value); macOS ignores XDG_CONFIG_HOME, so use a different HOME there.
 .PP
@@ -5185,7 +5185,7 @@ keyorix system token\-expiry\-check
 .SS keyorix trust
 Air\-gap signing\-key tooling (ed25519 keypairs for update bundles / licenses)
 .PP
-Generate and inspect the asymmetric keys Keyorix uses to sign air\-gapped update bundles and offline licenses (ADR\-062). The private key never ships; its public key is embedded into release builds so an air\-gapped deployment can verify offline.
+Generate and inspect the asymmetric keys Keyorix uses to sign air\-gapped update bundles and offline licenses. The private key never ships; its public key is embedded into release builds so an air\-gapped deployment can verify offline.
 .PP
 Usage: \fBkeyorix trust [command]\fR
 .SS keyorix trust keygen
@@ -5251,9 +5251,9 @@ Create a new user
 .PP
 Create a new user. By default you set the initial password: it is read from a hidden prompt, or in a script from KEYORIX_INITIAL_PASSWORD or the 0600 file named by KEYORIX_INITIAL_PASSWORD_FILE (never from the command line, where ps and shell history would show it).
 .PP
-Or use \-\-setup\-link to provision an ADR\-028 setup link instead: the account is created in pending_first_login state and the user sets their own password via the link. In out\-of\-band mode the link is printed for you to relay.
+Or use \-\-setup\-link to provision a setup link instead: the account is created in pending_first_login state and the user sets their own password via the link. In out\-of\-band mode the link is printed for you to relay.
 .PP
-Or use \-\-one\-time\-password to have the server generate an initial password (ADR\-028 Part E): the account is created in password_reset_required state, the password is printed once for you to relay, and the user must change it on first login.
+Or use \-\-one\-time\-password to have the server generate an initial password: the account is created in password_reset_required state, the password is printed once for you to relay, and the user must change it on first login.
 .PP
 Usage: \fBkeyorix user create [flags]\fR
 .PP
@@ -5273,10 +5273,10 @@ Display name (defaults to username)
 Email (required)
 .TP
 \fB\-\-one\-time\-password\fR
-Generate a one\-time password instead of an admin\-set password (ADR\-028 Part E); must be changed on first login
+Generate a one\-time password instead of an admin\-set password; must be changed on first login
 .TP
 \fB\-\-setup\-link\fR
-Provision a setup link instead of an admin\-set password (ADR\-028)
+Provision a setup link instead of an admin\-set password
 .TP
 \fB\-\-username\fR \fIstring\fR
 Username (required)
@@ -5388,9 +5388,9 @@ Examples:
 keyorix user reissue\-one\-time\-password bob
 .fi
 .SS keyorix user resend\-setup\-link
-Reissue and redeliver a user's setup link (ADR\-028)
+Reissue and redeliver a user's setup link
 .PP
-Reissue an account's setup link, invalidating any prior link, and deliver it again. In out\-of\-band mode the link is printed for you to relay. Throttled per the ADR\-028 resend limits.
+Reissue an account's setup link, invalidating any prior link, and deliver it again. In out\-of\-band mode the link is printed for you to relay. Resends are rate\-limited.
 .PP
 Usage: \fBkeyorix user resend\-setup\-link [flags]\fR
 .PP

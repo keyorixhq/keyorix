@@ -12,11 +12,8 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show the configured server, login state, and version-skew check",
-	Long: `status is the remote-only successor to the old CLI's "status" command
-(docs/cli-split-inventory.md §2.7): it has no local/embedded branch to fall back to (ADR-108
-Decision A removes local mode entirely). Unlike the old command, it actually parses GET
-/health's response body instead of discarding it, and reports the GET /api/v1/version
-skew check.
+	Long: `status shows which server the CLI talks to and whether you are logged in. It parses
+GET /health's response body and reports the GET /api/v1/version skew check.
 
 status also prints the credential file it reads: keyorix/credentials.yaml under the OS user
 config directory (~/.config on Linux, ~/Library/Application Support on macOS). The file is

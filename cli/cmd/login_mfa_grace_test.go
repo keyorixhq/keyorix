@@ -19,6 +19,9 @@ func TestMFAGraceWarning(t *testing.T) {
 			t.Errorf("warning missing %q: %q", want, w)
 		}
 	}
+	if m := internalRefRE.FindString(w); m != "" {
+		t.Errorf("warning carries the internal reference %q: %q", m, w)
+	}
 	if w := mfaGraceWarning(loginBody(t, "", map[string]any{"username": "alice"})); w != "" {
 		t.Errorf("no mfa_grace, no warning; got %q", w)
 	}

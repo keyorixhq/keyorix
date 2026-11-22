@@ -115,7 +115,7 @@ without the project's `roles.assign` such as the activator (403).
 
 `keyorix compliance report` shows the count under "Emergency access (break-glass)" as
 `  active / total activations : 1 / 1` while the activation is active and `0 / 1` after the revocation; its
-`Audit integrity (ADR-029)` section read `chain verified : yes (25 chained events)` throughout. The JSON from `GET /api/v1/compliance/posture` carries
+`Audit integrity` section read `chain verified : yes (25 chained events)` throughout. The JSON from `GET /api/v1/compliance/posture` carries
 `emergency_access.{active_activations, total_activations, unreviewed_activations,
 oldest_unreviewed_age_hours, review_window_hours}`; `unreviewed_activations` counts every
 unreviewed activation, still active or ended, once it is older than `review_window`, and

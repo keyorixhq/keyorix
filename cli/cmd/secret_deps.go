@@ -18,7 +18,7 @@ var secretDepsCmd = &cobra.Command{
 	Use:     "deps",
 	Aliases: []string{"dependencies"},
 	Short:   "Inspect and manage a secret's dependency graph",
-	Long: `Manage the secret dependency graph (ADR-052): declare that one secret
+	Long: `Manage the secret dependency graph: declare that one secret
 depends on another, list a secret's dependencies and dependents, and see the
 blast radius of rotating it.`,
 }

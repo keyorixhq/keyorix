@@ -23,7 +23,7 @@ var mfaEnrollCmd = &cobra.Command{
 	Long: `enroll generates a fresh TOTP secret and prints the otpauth:// URI (for a QR code)
 and the base32 secret (for manual entry into an authenticator app). This only begins
 enrolment -- the account is not protected by MFA until you confirm with a code via
-"keyorix mfa activate". With security.require_mfa on (the default, ADR-112), a
+"keyorix mfa activate". With security.require_mfa on (the default), a
 session without MFA can reach only enroll/activate until this is done.`,
 	RunE: runMFAEnroll,
 }

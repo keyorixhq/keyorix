@@ -21,7 +21,7 @@ var (
 
 var machineBindingCmd = &cobra.Command{
 	Use:   "binding",
-	Short: "Manage a machine identity's OIDC federation bindings (ADR-031)",
+	Short: "Manage a machine identity's OIDC federation bindings",
 	Long:  "Bind external OIDC principals (issuer + subject) to a machine identity so workloads can authenticate with a platform-issued JWT instead of a stored secret.",
 }
 
