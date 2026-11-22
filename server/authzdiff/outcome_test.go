@@ -3,6 +3,7 @@ package authzdiff
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"google.golang.org/grpc/codes"
@@ -18,6 +19,15 @@ const (
 	Allowed Outcome = "allowed"
 	Denied  Outcome = "denied"
 	Other   Outcome = "other"
+	// PreconditionFailed: the caller is authorized, the request is well formed,
+	// and the operation is refused because the caller's own account state does
+	// not allow it ("MFA is not enabled", "no pending MFA enrolment"). It is a
+	// business-rule refusal, not an authorization one: the model says it only for
+	// the ops whose requirement is account-state (requirement.accountState), and
+	// restOutcome reports it only for the messages the op names in
+	// opSpec.preconditionMsgs. It is deliberately NOT Denied, so an op that must
+	// answer 400 cannot hide a 403 (or a 200) behind the same vocabulary.
+	PreconditionFailed Outcome = "precondition-failed"
 	// ModelNA: the case is outside the reference model's domain (Oracle 2 not applied).
 	ModelNA Outcome = "n/a"
 )
@@ -52,7 +62,13 @@ func coreOutcome(err error) result {
 // restOutcome maps an HTTP status (OUTCOMES.md, REST row). existing reports
 // that the addressed target was seeded (always true in this harness — the
 // precondition that lets 404 mean "denied").
-func restOutcome(code int, body string) result {
+//
+// preconditionMsgs are the 400 messages that mean "the caller's account state
+// does not allow this" for the op being driven (opSpec.preconditionMsgs). A 400
+// whose body carries one of them is PreconditionFailed; with none given (every
+// op but the account-state ones) every 400 stays Other, so no other op's
+// outcome can move.
+func restOutcome(code int, body string, preconditionMsgs ...string) result {
 	d := http.StatusText(code)
 	switch {
 	case code >= 200 && code < 300:
@@ -61,6 +77,8 @@ func restOutcome(code int, body string) result {
 		return result{Denied, d}
 	case code == http.StatusBadGateway && strings.Contains(body, core.ErrConnectUnknownConnector.Error()):
 		return result{Denied, "502-connect-collapse"}
+	case code == http.StatusBadRequest && slices.ContainsFunc(preconditionMsgs, func(m string) bool { return strings.Contains(body, m) }):
+		return result{PreconditionFailed, d}
 	}
 	return result{Other, d}
 }
