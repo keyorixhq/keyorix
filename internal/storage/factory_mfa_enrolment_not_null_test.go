@@ -2,9 +2,12 @@
 // a fresh install (the model's `not null` tag) as well as on an upgrade (migrate_users.go).
 //
 // A database first installed by an earlier pre-release build holds the column nullable, and
-// may hold NULL rows. Nothing in migrateDatabase tightens it (GORM's AutoMigrate only ever
-// relaxes a NOT NULL column, never adds the constraint), so the NOT NULL tag cannot fail a
-// boot on such a database: no backfill is needed because no step changes the column.
+// may hold NULL rows. GORM's AutoMigrate only ever relaxes a NOT NULL column, never adds the
+// constraint, so the model's own `not null` tag cannot tighten it. migrate_users.go backfills
+// instead: whenever the column exists and is nullable, it runs UPDATE ... SET
+// mfa_enrolment_required = false WHERE mfa_enrolment_required IS NULL (NULL means "not
+// reset"), before the fresh-install tail's AutoMigrate of models.User rebuilds the table on
+// SQLite (users__temp) and would otherwise fail copying a NULL into the NOT NULL column.
 package storage
 
 import (
