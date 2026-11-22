@@ -1,0 +1,20 @@
+empty_file_is_all_defaults: accept | {"environment":"","storage_type":"","native_read_pool_max":0,"require_mfa":true,"minimum_cli_version":""}
+comments_only_is_all_defaults: accept | {"environment":"","storage_type":"","native_read_pool_max":0,"require_mfa":true,"minimum_cli_version":""}
+minimal_scalars: accept | {"environment":"staging","storage_type":"","native_read_pool_max":0,"require_mfa":true,"minimum_cli_version":"1.2.0"}
+nested_typed_int: accept | {"environment":"","storage_type":"postgres","native_read_pool_max":12,"require_mfa":true,"minimum_cli_version":""}
+explicit_bool_false: accept | {"environment":"","storage_type":"","native_read_pool_max":0,"require_mfa":false,"minimum_cli_version":""}
+explicit_bool_true: accept | {"environment":"","storage_type":"","native_read_pool_max":0,"require_mfa":true,"minimum_cli_version":""}
+int_where_string_expected: accept | {"environment":"7","storage_type":"","native_read_pool_max":0,"require_mfa":true,"minimum_cli_version":""}
+string_where_int_expected: reject | unmarshal config: yaml: construct errors: line 3: cannot construct !!str `many` into int
+string_where_bool_expected: reject | unmarshal config: yaml: construct errors: line 2: cannot construct !!str `maybe` into bool
+mapping_where_scalar_expected: reject | unmarshal config: yaml: construct errors: line 2: cannot construct !!map into string
+sequence_where_mapping_expected: reject | unmarshal config: yaml: construct errors: line 2: cannot construct !!seq into config.StorageConfig
+null_value_keeps_zero: accept | {"environment":"","storage_type":"","native_read_pool_max":0,"require_mfa":true,"minimum_cli_version":""}
+anchor_and_alias_scalar: accept | {"environment":"production","storage_type":"","native_read_pool_max":0,"require_mfa":true,"minimum_cli_version":"production"}
+duplicate_known_key: reject | unmarshal config: yaml: construct errors: line 2: mapping key "environment" already defined at line 1
+unknown_key_is_rejected: reject | unmarshal config: yaml: construct errors: line 2: unknown key "environmnt" at the top level of the file (check its spelling and section in docs/CONFIGURATION.md)
+known_key_under_wrong_parent_is_rejected: reject | unmarshal config: yaml: construct errors: line 1: unknown key "encryption" at the top level of the file (check its spelling and section in docs/CONFIGURATION.md)
+unterminated_flow: reject | unmarshal config: yaml: line 2: did not find expected ',' or '}'
+tab_indentation: reject | unmarshal config: yaml: line 2: found character that cannot start any token
+top_level_scalar: reject | unmarshal config: yaml: construct errors: line 1: cannot construct !!str `just a ...` into config.Config
+top_level_sequence: reject | unmarshal config: yaml: construct errors: line 1: cannot construct !!seq into config.Config

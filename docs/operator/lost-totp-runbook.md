@@ -9,6 +9,13 @@ locked out entirely (password, MFA or lockout), the full procedure is
 Do **not** set `security.require_mfa: false` to get someone in. It is not needed for any path
 below and it weakens every account on the install.
 
+Output captured on `deb388fb3`, 2026-11-22, native (SQLite, `keyorix-server` and `keyorix` built from
+that commit, server on 127.0.0.1 with its generated self-signed certificate). User names, the
+address and times are those of the throwaway capture instance; tokens, codes and passwords are
+replaced by placeholders. The CLI prompts (`Password:`, `Authenticator code ...`) were **not**
+captured: the capture environment had no terminal, so the CLI was driven through
+`KEYORIX_PASSWORD` and `KEYORIX_MFA_CODE`, which print only the result line.
+
 ## 1. Decide which case you are in
 
 | The user | Path |
@@ -25,10 +32,20 @@ Ten single-use recovery codes are printed once, when MFA is activated. The login
 prompts for the authenticator code also accept an unused recovery code:
 
 ```
-$ keyorix login --server https://localhost:8080 --ca-file certs/server.crt --username alice
-Password:
-Authenticator code (or an unused recovery code):
-Logged in to https://localhost:8080 as alice.
+$ KEYORIX_PASSWORD=<password> KEYORIX_MFA_CODE=<unused recovery code> \
+    keyorix login --server https://127.0.0.1:8081 --ca-file certs/server.crt --username alice
+Logged in to https://127.0.0.1:8081 as alice.
+```
+
+At a terminal the same command prompts for `Password:` and then for `Authenticator code (or an
+unused recovery code):`; type the recovery code at the second prompt.
+
+Once signed in, the user can see how many codes are left (`remaining` is 9 after the one used
+to sign in):
+
+```
+$ curl -sS -H "Authorization: Bearer $TOKEN" https://127.0.0.1:8081/api/v1/auth/mfa/recovery-codes
+{"data":{"remaining":9,"total":10},"success":true}
 ```
 
 A recovery code also replaces the lost factor. The two calls below re-check the user in `code`
@@ -70,7 +87,20 @@ sign-in is enough):
 
   ```bash
   curl -sS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-    -d '{"code":"ABCDE-FGHJK"}' https://keyorix.example.com/api/v1/auth/mfa/disable
+    -d '{"code":"ABCDE-FGHJK"}' https://127.0.0.1:8081/api/v1/auth/mfa/disable
+  {"data":{"mfa_enabled":false},"message":"MFA disabled","success":true}
+  ```
+
+  The audit trail then reads (`keyorix audit logs --limit 6`, as an administrator; times in UTC):
+
+  ```
+  ID     TIME (UTC)           ACTOR            KIND      EVENT               DESCRIPTION
+  27     2026-11-22 01:15:24  alice            user      mfa.disabled        user alice disabled MFA (method: recovery_code)
+  26     2026-11-22 01:15:24  alice            user      mfa.reauth_verified user alice completed MFA re-authentication (phase: disable, method: recovery_code)
+  25     2026-11-22 01:15:09  alice            user      auth.login          User alice logged in
+  24     2026-11-22 01:15:09  alice            user      mfa.login_verified  user alice passed MFA
+  23     2026-11-22 01:15:09  alice            user      mfa.recovery_used   user alice used a recovery code
+  22     2026-11-22 01:14:40  alice            user      mfa.activated       user alice activated MFA
   ```
 
   The user then enrols a new device:

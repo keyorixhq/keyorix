@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("environment: a\nenvironmnt: typo\n")

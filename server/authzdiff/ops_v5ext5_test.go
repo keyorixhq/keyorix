@@ -59,6 +59,22 @@ import (
 //
 // TOTP code anti-replay: each leg has its own fresh DB copy (template clone), so
 // MarkTOTPStepUsed in one leg does not affect another.
+// mfaPreconditionMsgs are the 400 messages these ops answer when the caller's
+// account state does not allow them (handlers/mfa.go mfaSafeMessages, via
+// writeMFAErr): no pending enrolment (activate), MFA not enabled (disable,
+// regenerate), no user account behind the token (a machine: "user not found"),
+// and the re-authentication refusal an account whose MFA is already enabled
+// gets on activate ("invalid code or password": password alone is no proof).
+// Only these ops carry the list, so no other op's 400 maps to PreconditionFailed;
+// a wrong code from an account in the right state is caught because the model
+// then says Allowed, not PreconditionFailed.
+var mfaPreconditionMsgs = []string{
+	"no pending MFA enrolment",
+	"MFA is not enabled",
+	"user not found",
+	"invalid code or password",
+}
+
 func v5ext5Ops() []opSpec {
 	return append(append(mfaActivateOps(), mfaDisableOps()...), mfaRegenerateOps()...)
 }
@@ -68,13 +84,14 @@ func v5ext5Ops() []opSpec {
 func mfaActivateOps() []opSpec {
 	return []opSpec{
 		{
-			name:    "mfa.activate",
-			row:     "ActivateMFA",
-			targets: []tgt{tA}, // self-service, no project target; tA is the canonical single-target
+			name:             "mfa.activate",
+			row:              "ActivateMFA",
+			preconditionMsgs: mfaPreconditionMsgs,
+			targets:          []tgt{tA}, // self-service, no project target; tA is the canonical single-target
 			// controlAs: admin has no pending enrollment; pkMFAEnrollee does.
 			controlAs: []principalKind{pkMFAEnrollee},
 			req: func(_ *fixtures, _ tgt, _ byte) requirement {
-				return requirement{pendingMFARequired: true}
+				return requirement{pendingMFARequired: true, accountState: true}
 			},
 			// coreEnforced=false (core_refusal="none") → excluded from Oracle 1.
 			// Core leg for Oracle 2: ActivateMFA(userID, code, password, "").
@@ -119,13 +136,14 @@ func mfaActivateOps() []opSpec {
 func mfaDisableOps() []opSpec {
 	return []opSpec{
 		{
-			name:    "mfa.disable",
-			row:     "DisableMFA",
-			targets: []tgt{tA}, // self-service, no project target
+			name:             "mfa.disable",
+			row:              "DisableMFA",
+			preconditionMsgs: mfaPreconditionMsgs,
+			targets:          []tgt{tA}, // self-service, no project target
 			// controlAs: admin has mfa_enabled=false; pkMFAUser does not.
 			controlAs: []principalKind{pkMFAUser},
 			req: func(_ *fixtures, _ tgt, _ byte) requirement {
-				return requirement{mfaRequired: true}
+				return requirement{mfaRequired: true, accountState: true}
 			},
 			// coreEnforced=false → excluded from Oracle 1.
 			// Core leg: DisableMFA(userID, code, password, "").
@@ -156,13 +174,14 @@ func mfaDisableOps() []opSpec {
 func mfaRegenerateOps() []opSpec {
 	return []opSpec{
 		{
-			name:    "mfa.recovery-codes.regenerate",
-			row:     "RegenerateMFARecoveryCodes",
-			targets: []tgt{tA}, // self-service, no project target
+			name:             "mfa.recovery-codes.regenerate",
+			row:              "RegenerateMFARecoveryCodes",
+			preconditionMsgs: mfaPreconditionMsgs,
+			targets:          []tgt{tA}, // self-service, no project target
 			// controlAs: only pkMFAUser has mfa_enabled=true.
 			controlAs: []principalKind{pkMFAUser},
 			req: func(_ *fixtures, _ tgt, _ byte) requirement {
-				return requirement{mfaRequired: true}
+				return requirement{mfaRequired: true, accountState: true}
 			},
 			// coreEnforced=false → excluded from Oracle 1.
 			// Core leg: RegenerateMFARecoveryCodes(userID, code, password).

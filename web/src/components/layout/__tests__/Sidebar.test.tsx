@@ -129,11 +129,11 @@ describe('Sidebar', () => {
 
         const dashboardLink = screen.getByRole('link', { name: 'Dashboard' });
         expect(dashboardLink).toHaveClass('font-medium');
-        expect(dashboardLink).toHaveStyle({ backgroundColor: 'var(--accent-subtle)' });
+        expect(dashboardLink.style.backgroundColor).toBe('var(--accent-subtle)');
 
         const projectsLink = screen.getByRole('link', { name: 'Projects' });
         expect(projectsLink).toHaveClass('font-normal');
-        expect(projectsLink).not.toHaveStyle({ backgroundColor: 'var(--accent-subtle)' });
+        expect(projectsLink.style.backgroundColor).not.toBe('var(--accent-subtle)');
     });
 
     it('treats a nested sub-route as active for the matching leaf (prefix match)', () => {
@@ -153,7 +153,7 @@ describe('Sidebar', () => {
             renderSidebar();
 
             const integrationsButton = screen.getByRole('button', { name: 'Integrations' });
-            expect(integrationsButton).toHaveStyle({ color: 'var(--text-primary)' });
+            expect(integrationsButton.style.color).toBe('var(--text-primary)');
             expect(screen.getByRole('link', { name: 'Keyorix Connect' })).toBeInTheDocument();
             expect(screen.getByRole('link', { name: 'Keyorix Connect' })).toHaveClass('font-medium');
         }
@@ -222,7 +222,7 @@ describe('Sidebar', () => {
 
         const soonLink = screen.getByRole('link', { name: /Test Feature/ });
         fireEvent.mouseEnter(soonLink);
-        expect(soonLink).not.toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        expect(soonLink.style.backgroundColor).not.toBe('var(--bg-subtle)');
     });
 
     it('applies and clears a hover background on a non-active leaf, but not on the active one', () => {
@@ -231,15 +231,15 @@ describe('Sidebar', () => {
 
         const projectsLink = screen.getByRole('link', { name: 'Projects' }); // inactive
         fireEvent.mouseEnter(projectsLink);
-        expect(projectsLink).toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        expect(projectsLink.style.backgroundColor).toBe('var(--bg-subtle)');
         fireEvent.mouseLeave(projectsLink);
-        expect(projectsLink).toHaveStyle({ backgroundColor: '' });
+        expect(projectsLink.style.backgroundColor).toBe('');
 
         const dashboardLink = screen.getByRole('link', { name: 'Dashboard' }); // active
         fireEvent.mouseEnter(dashboardLink);
-        expect(dashboardLink).not.toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        expect(dashboardLink.style.backgroundColor).not.toBe('var(--bg-subtle)');
         fireEvent.mouseLeave(dashboardLink);
-        expect(dashboardLink).toHaveStyle({ backgroundColor: 'var(--accent-subtle)' });
+        expect(dashboardLink.style.backgroundColor).toBe('var(--accent-subtle)');
     });
 
     it('applies and clears a hover background on a group header button', () => {
@@ -247,9 +247,9 @@ describe('Sidebar', () => {
 
         const secretsButton = screen.getByRole('button', { name: 'Secrets' });
         fireEvent.mouseEnter(secretsButton);
-        expect(secretsButton).toHaveStyle({ backgroundColor: 'var(--bg-subtle)' });
+        expect(secretsButton.style.backgroundColor).toBe('var(--bg-subtle)');
         fireEvent.mouseLeave(secretsButton);
-        expect(secretsButton).toHaveStyle({ backgroundColor: '' });
+        expect(secretsButton.style.backgroundColor).toBe('');
     });
 
     it('treats a group with no entry at all in sidebarExpanded as collapsed by default (unless active)', () => {

@@ -1,0 +1,21 @@
+all_keys_known:
+  strict: accept | 1 document(s)
+  plain:  accept | 1 document(s)
+unknown_top_level_key:
+  strict: reject | yaml: construct errors: line 2: field server_ulr not found in type credstore.Credentials
+  plain:  accept | 1 document(s)
+unknown_key_null_value:
+  strict: reject | yaml: construct errors: line 1: field bogus not found in type credstore.Credentials
+  plain:  accept | 1 document(s)
+unknown_key_nested_value:
+  strict: reject | yaml: construct errors: line 1: field bogus not found in type credstore.Credentials
+  plain:  accept | 1 document(s)
+key_differs_by_case:
+  strict: reject | yaml: construct errors: line 1: field Server_URL not found in type credstore.Credentials
+  plain:  accept | 1 document(s)
+omitempty_tag_name_is_the_key:
+  strict: reject | yaml: construct errors: line 1: field token,omitempty not found in type credstore.Credentials
+  plain:  accept | 1 document(s)
+unknown_key_in_second_document:
+  strict: reject | yaml: construct errors: line 3: field bogus not found in type credstore.Credentials
+  plain:  accept | 2 document(s)

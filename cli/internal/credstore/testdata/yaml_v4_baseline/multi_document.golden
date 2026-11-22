@@ -1,0 +1,25 @@
+one_document:
+  doc 1: accept | {"server_url":"https://a.example.test","token_set":false,"active_project":"","ca_file":""}
+  documents decoded: 1
+two_documents:
+  doc 1: accept | {"server_url":"https://a.example.test","token_set":false,"active_project":"","ca_file":""}
+  doc 2: accept | {"server_url":"https://b.example.test","token_set":false,"active_project":"","ca_file":""}
+  documents decoded: 2
+second_document_wrong_type:
+  doc 1: accept | {"server_url":"https://a.example.test","token_set":false,"active_project":"","ca_file":""}
+  doc 2: reject | yaml: construct errors: line 3: cannot construct !!seq into string
+  documents decoded: 1
+second_document_syntax_error:
+  doc 1: accept | {"server_url":"https://a.example.test","token_set":false,"active_project":"","ca_file":""}
+  doc 2: reject | go-yaml load error in parser (while parsing a flow sequence) at L3.C13-L4.C1: did not find expected ',' or ']'
+  documents decoded: 1
+empty_second_document:
+  doc 1: accept | {"server_url":"https://a.example.test","token_set":false,"active_project":"","ca_file":""}
+  doc 2: accept | {"server_url":"","token_set":false,"active_project":"","ca_file":""}
+  documents decoded: 2
+anchor_does_not_cross_documents:
+  doc 1: accept | {"server_url":"https://a.example.test","token_set":false,"active_project":"","ca_file":""}
+  doc 2: reject | go-yaml load error in composer at L3.C10: unknown anchor 'u' referenced
+  documents decoded: 1
+empty_input:
+  documents decoded: 0

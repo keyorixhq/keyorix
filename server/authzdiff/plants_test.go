@@ -439,6 +439,40 @@ var fixRegressionPlants = []plant{
 		op:             "machine.token.issue",
 		minUnexplained: 2,
 	},
+	{
+		// Account-state precondition vocabulary (#4525). mfa.disable's handler
+		// answers 200 for an account whose MFA is not enabled, where the model says
+		// PreconditionFailed: REST allows what the model refuses. The 400 mapping
+		// (restOutcome -> PreconditionFailed) and the model's accountState ops must
+		// not hide an over-allow behind the old "400 is Other" waiver; no waiver
+		// absorbs it.
+		name: "mfa-disable-precondition-answers-200",
+		file: "server/http/handlers/mfa.go",
+		anchor: "\tsendError(w, \"Error\", msg, http.StatusBadRequest, nil)\n}\n\n" +
+			"// reauthFaultMessage",
+		repl: "\tif msg == \"MFA is not enabled\" { // PLANT: precondition answered 200\n" +
+			"\t\tsendSuccess(w, map[string]any{\"mfa_enabled\": false}, \"MFA disabled\")\n\t\treturn\n\t}\n" +
+			"\tsendError(w, \"Error\", msg, http.StatusBadRequest, nil)\n}\n\n" +
+			"// reauthFaultMessage",
+		op:             "mfa.disable",
+		minUnexplained: 5,
+	},
+	{
+		// Same handler, other direction: an unmet precondition answered 403 where the
+		// model says PreconditionFailed (mfa.activate, no pending enrolment). 403 is
+		// Denied, not PreconditionFailed, so authorization and precondition stay
+		// distinguishable: a gate that starts refusing here is a divergence.
+		name: "mfa-activate-precondition-answers-403",
+		file: "server/http/handlers/mfa.go",
+		anchor: "\tsendError(w, \"Error\", msg, http.StatusBadRequest, nil)\n}\n\n" +
+			"// reauthFaultMessage",
+		repl: "\tif msg == \"no pending MFA enrolment; begin enrolment first\" { // PLANT: precondition answered 403\n" +
+			"\t\tsendError(w, \"Forbidden\", msg, http.StatusForbidden, nil)\n\t\treturn\n\t}\n" +
+			"\tsendError(w, \"Error\", msg, http.StatusBadRequest, nil)\n}\n\n" +
+			"// reauthFaultMessage",
+		op:             "mfa.activate",
+		minUnexplained: 5,
+	},
 }
 
 func TestPlantsAreDetected(t *testing.T) {

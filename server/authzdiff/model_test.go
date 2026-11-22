@@ -384,6 +384,29 @@ type requirement struct {
 	// The check is on mfa_secrets.activated=false in the grant DB; a fully
 	// activated enrollment does NOT satisfy it. Machines and actor-0 always fail.
 	pendingMFARequired bool
+	// accountState: mfaRequired / pendingMFARequired on this op are business-rule
+	// preconditions on the caller's own account, not an authorization gate (no
+	// RBAC gate at the router; the handler answers 400). When the caller passes
+	// every OTHER check but fails one of those, decision says PreconditionFailed
+	// instead of Denied; a caller refused for any other reason (unauthenticated,
+	// suspended) is still Denied, so a 403 or a 200 here is a real divergence.
+	accountState bool
+}
+
+// decision is the model's outcome for (principal, requirement): Allowed,
+// Denied, or PreconditionFailed (accountState ops only).
+func (m model) decision(p *principal, req requirement) Outcome {
+	if m.allowed(p, req) {
+		return Allowed
+	}
+	if req.accountState {
+		authz := req
+		authz.mfaRequired, authz.pendingMFARequired = false, false
+		if m.allowed(p, authz) {
+			return PreconditionFailed
+		}
+	}
+	return Denied
 }
 
 // mfaEnabled: p has MFA enrolled and enabled (users.mfa_enabled = true).
