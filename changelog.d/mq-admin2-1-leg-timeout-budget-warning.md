@@ -1,0 +1,2 @@
+### Internal
+- **A test-suite leg that uses more than 80 % of its `go test -timeout` now says so.** `scripts/ci/rerun-known-flakes.py`, which wraps every leg's `go test`, times the run and prints a `::warning title=LEG-TIMEOUT-BUDGET::` annotation plus a greppable `LEG-TIMEOUT-BUDGET leg=... used=NN%` line when the run took more than 80 % of its `-timeout` (green or red; the exit code is never touched). admin-2 took 1400 to 1790 s of its 1800 s on the merge-queue runs of 2026-11-21/22 with no signal before the run that timed out.
