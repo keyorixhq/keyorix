@@ -26,7 +26,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `ApplyTemplate` | Y |  | none |  | POST /api/v1/secret-templates/{id}/apply | — | no gRPC |
 | `ApproveAccessRequestWithExpiry` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize | PUT /api/v1/projects/{id}/access-requests/{requestId} | — | no gRPC |
 | `ApproveMFAReset` | Y |  | none | Authorize | POST /api/v1/mfa-reset-requests/{id}/approve | — | no gRPC |
-| `ApproveRiskException` | Y |  | none |  | POST /api/v1/risk-exceptions/{id}/approve | — | no gRPC |
+| `ApproveRiskException` | Y |  | typed |  | POST /api/v1/risk-exceptions/{id}/approve | — | no gRPC |
 | `ApproveSecretAccessRequest` | Y |  | untyped | requireAdminAuthorityAt, requireAccessRequestAuthorityAt | PUT /api/v1/secret-access-requests/{requestId} | — | no gRPC |
 | `AssignGroupRoleWithExpiry` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize | POST /api/v1/groups/{id}/roles | — | no gRPC |
 | `AssignMachineRole` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize | DELETE /api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}<br>POST /api/v1/projects/{id}/machine-identities/{machineId}/roles | — | no gRPC |
@@ -63,7 +63,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `ClassifyMachineToken` | Y |  | none |  | PATCH /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification | keyorix.v1.MachineIdentityService.ClassifyMachineToken |  |
 | `ClassifySecret` | Y |  | none | Authorize | PATCH /api/v1/secrets/{id}/classification | — | no gRPC |
 | `CloneEnvironment` | Y | Y | typed+untyped | Authorize | POST /api/v1/projects/{id}/environments/{envId}/clone | — | no gRPC |
-| `CloseAccessReviewCampaign` | Y |  | none |  | POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close | — | no gRPC |
+| `CloseAccessReviewCampaign` | Y |  | typed |  | POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close | — | no gRPC |
 | `CompleteSAML` | Y |  | none | guardLastProjectAdmin | POST /auth/saml/{provider}/acs | — | no gRPC |
 | `CompleteSSO` | Y |  | none | guardLastProjectAdmin | GET /auth/sso/{provider}/callback | — | no gRPC |
 | `CompleteSetupHoldingLoginSlot` | Y |  | typed | requireGranterHoldsRolePermissions, Authorize, guardLastProjectAdmin | POST /auth/setup/consume | — | no gRPC |
@@ -231,7 +231,7 @@ Population: 386 REST routes (212 in scope), 89 gRPC methods (47 in scope).
 | `ResumeSecret` | Y |  | none |  | POST /api/v1/secrets/{id}/resume | — | no gRPC |
 | `ReviewBreakGlass` | Y |  | typed |  | POST /api/v1/projects/{id}/break-glass/{activationId}/review | — | no gRPC |
 | `RevokeAccessReviewGrant` | Y |  | typed | guardLastProjectAdmin | POST /api/v1/projects/{id}/access-review/revoke | — | no gRPC |
-| `RevokeBreakGlass` | Y |  | none | guardLastProjectAdmin | POST /api/v1/projects/{id}/break-glass/{activationId}/revoke | keyorix.v1.BreakGlassService.RevokeBreakGlass |  |
+| `RevokeBreakGlass` | Y |  | typed | guardLastProjectAdmin | POST /api/v1/projects/{id}/break-glass/{activationId}/revoke | keyorix.v1.BreakGlassService.RevokeBreakGlass |  |
 | `RevokeInvitation` | Y |  | none |  | DELETE /api/v1/projects/{id}/invitations/{invitationId} | — | no gRPC |
 | `RevokeLease` | Y |  | none |  | POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke | keyorix.v1.DynamicSecretService.RevokeLease |  |
 | `RevokeLeasesForConfig` | Y |  | none |  | POST /api/v1/dynamic-secrets/configs/{id}/revoke-all | keyorix.v1.DynamicSecretService.RevokeAllLeases |  |
