@@ -555,7 +555,12 @@ func TestSecretService_TotalReads_GetSecretAndVersions(t *testing.T) {
 	require.NotNil(t, got.TotalReads)
 	assert.Equal(t, int64(2), got.GetTotalReads(), "two value reads; the version max_reads counter stays 0 for this secret")
 
-	vers, err := r.svc.GetSecretVersions(ctx, &pb.GetSecretVersionsRequest{Id: created.GetId()})
+	// Opt-in (#3444): the default listing carries no total_reads.
+	def, err := r.svc.GetSecretVersions(ctx, &pb.GetSecretVersionsRequest{Id: created.GetId()})
+	require.NoError(t, err)
+	assert.Nil(t, def.TotalReads, "default GetSecretVersions must not carry total_reads")
+
+	vers, err := r.svc.GetSecretVersions(ctx, &pb.GetSecretVersionsRequest{Id: created.GetId(), IncludeTotalReads: true})
 	require.NoError(t, err)
 	require.NotNil(t, vers.TotalReads)
 	want, err := r.svc.core.SecretTotalReads(ctx, uint(created.GetId()))

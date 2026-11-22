@@ -647,7 +647,7 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--format json is non-interactive: pass --force to confirm the deletion")
 	}
 
-	vresp, err := client.GetSecretVersionsWithResponse(ctx, secretID)
+	vresp, err := client.GetSecretVersionsWithResponse(ctx, secretID, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get versions: %w", err)
 	}
