@@ -190,11 +190,17 @@ func (h *CatalogHandler) RevokeBreakGlass(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.coreService.RevokeBreakGlass(r.Context(), actor.UserID, machineID(r), uint(id), uint(activationID)); err != nil {
+		// #4546: a failed read of the acting account is a storage fault (503).
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		// #2905: by sentinel, as in ActivateBreakGlass above. A genuine
 		// retrieval FAILURE is deliberately not a 404: it falls to the 500.
 		switch {
+		case errors.Is(err, core.ErrPermissionDenied): // #4546: an inactive acting account
+			status = http.StatusForbidden
 		case errors.Is(err, storage.ErrBreakGlassNotFound):
 			status = http.StatusNotFound
 		case errors.Is(err, storage.ErrBreakGlassNotActive), errors.Is(err, core.ErrBreakGlassInvalidRequest):
