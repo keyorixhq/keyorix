@@ -15,8 +15,11 @@
   `AssignRoleToGroup`, `AddUserToGroup` (users.read + roles.assign, global),
   `CreateUserAudited` and `CreateUserWithAssignments` (users.read + users.write, global),
   `InviteGlobalWithLink` (users.write, global), `RestoreProject` (roles.assign at the
-  project) and `RevokeShare` (secrets.write at the secret's scope, after the
-  owner-or-manager rule, so a non-owner non-manager keeps `ErrShareNotOwner`);
+  project), `RevokeShare` (secrets.write at the secret's scope, after the
+  owner-or-manager rule, so a non-owner non-manager keeps `ErrShareNotOwner`) and
+  `SuspendProjectSecretsWithOptions` (secrets.write at the project, before any secret is
+  read; a per-secret ACL write or share does not stand in for it, and the per-secret
+  re-check still runs on top);
   `RequestProjectAccess` (no route permission) shares the transports' account-state
   refusal (`requireActorActive`). Why: core allowed where every transport denied on about
   4,500 differential cases over these ops, so the transport was the only gate; a core entry
@@ -26,16 +29,13 @@
   principal with a real grant short of the gate is refused with `ErrPermissionDenied`, an
   admitted one still succeeds; red before the gates),
   `TestCoreGateParity_InternalPseudoActorIsExempt`, and the strict differential sweep
-  (`server/authzdiff`), whose known-04 waiver is narrowed to the one owner-pass op still
-  open (bulk.suspend: core decides it per secret and has no project-level secrets.write
-  gate, so a per-secret ACL or write share passes core where the route gate refuses;
-  #4559 closed its owner pass; secret.tags, secret.description and secret.move were
-  #4508, closed by #4536), so a core-only over-allow anywhere else is `unexplained` and
-  fails the sweep (the reassign-owner plant proves it). Where an older core ceiling
+  (`server/authzdiff`), whose known-04 waiver is removed (its last row was bulk.suspend
+  for a viewer holding a per-secret ACL write, closed by the project gate above:
+  `TestSuspendProjectSecrets_ProjectGate`), so a core-only over-allow on any bound op is
+  `unexplained` and fails the sweep (the reassign-owner plant proves it). Where an older core ceiling
   already refuses the usual denied principal, the parity case uses a gate-isolating
   principal and a `grantGate` step (the same principal succeeds once it holds the
-  gate), so deleting that op's gate turns the case red. **Not covered**: bulk.suspend
-  for the viewer principal until that waiver is removed; three ops where core deliberately keeps a FINER rule than the router's
+  gate), so deleting that op's gate turns the case red. **Not covered**: three ops where core deliberately keeps a FINER rule than the router's
   global gate and does not re-derive the gate — `BulkApproveAccessRequests` /
   `BulkRejectAccessRequests` (roles.assign at each request's project, which also admits a
   machine approver, #2495) and `SetUserRoles` (the per-scope granter ceiling and
