@@ -369,7 +369,8 @@ func TestSleepClockMetersAndNeverBlocks(t *testing.T) {
 	start := time.Now()
 	c.Sleep(10 * time.Second) // must not actually sleep
 	c.Sleep(-5 * time.Second) // a negative RetryDelay: magnitude still metered
-	if time.Since(start) > time.Second {
+	// A real sleep would take 10s; 5s tolerates a loaded runner.
+	if time.Since(start) > 5*time.Second {
 		t.Fatalf("SleepClock must not block")
 	}
 	if c.Total() != 15*time.Second {

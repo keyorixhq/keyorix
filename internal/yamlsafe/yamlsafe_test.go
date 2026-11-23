@@ -145,25 +145,79 @@ func TestUnmarshal_DuplicateShapesStayLinear(t *testing.T) {
 	}
 }
 
+// distinctKeysDoc returns a mapping document of n distinct keys.
+func distinctKeysDoc(n int) []byte {
+	var b strings.Builder
+	for i := range n {
+		fmt.Fprintf(&b, "k%d: v\n", i)
+	}
+	return []byte(b.String())
+}
+
+// bestDecodeTime decodes data runs times and returns the fastest run. The
+// minimum is the run least disturbed by a busy machine: on a starved runner one
+// run can take minutes (seen: 1m51s for a decode that takes 30 ms) while the
+// others are unaffected, so a single slow run must not decide the test.
+func bestDecodeTime(t *testing.T, decode func([]byte, any) error, data []byte, want, runs int) time.Duration {
+	t.Helper()
+	best := time.Duration(1<<63 - 1)
+	for range runs {
+		var m map[string]string
+		start := time.Now()
+		if err := decode(data, &m); err != nil {
+			t.Fatal(err)
+		}
+		d := time.Since(start)
+		if len(m) != want {
+			t.Fatalf("decoded %d keys, want %d", len(m), want)
+		}
+		best = min(best, d)
+	}
+	return best
+}
+
 // TestUnmarshal_DistinctKeysLinear: a document without duplicates must not pay
 // the library's O(n^2) pairwise key comparison either (100000 keys took ~2 minutes).
+//
+// It asserts the growth between two sizes, not a wall-clock limit, so a loaded
+// runner that slows both measurements equally cannot fail it: quadratic decoding
+// grows 16x from 25000 to 100000 keys, linear decoding 4x. The bound sits between
+// them with margin for GC and cache effects. The absolute backstop only catches a
+// hang; it is far above any plausible load slowdown of the linear decode (well
+// under a second on an idle machine) and far below the old quadratic cost (about
+// two minutes at 100000 keys).
+//
+// Both sizes are measured at tens of milliseconds, where one lucky-fast or
+// descheduled run moves the ratio, so a measurement above the bound is repeated
+// (up to attempts times) and the test fails only if every attempt is above it. A
+// quadratic decode exceeds the bound in every attempt; scheduler noise does not.
 func TestUnmarshal_DistinctKeysLinear(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing measurement; skipped in -short")
 	}
-	var b strings.Builder
-	for i := range 100000 {
-		fmt.Fprintf(&b, "k%d: v\n", i)
+	const (
+		small, large = 25000, 100000
+		runs         = 5 // best of runs per size
+		attempts     = 3
+		maxGrowth    = 10.0 // linear is 4x, quadratic 16x
+		backstop     = 60 * time.Second
+	)
+	smallDoc, largeDoc := distinctKeysDoc(small), distinctKeysDoc(large)
+	var growth float64
+	for attempt := 1; attempt <= attempts; attempt++ {
+		tSmall := bestDecodeTime(t, Unmarshal, smallDoc, small, runs)
+		if tSmall > backstop {
+			t.Fatalf("%d distinct keys took %v at best (backstop %v); decoding must be linear", small, tSmall, backstop)
+		}
+		tLarge := bestDecodeTime(t, Unmarshal, largeDoc, large, runs)
+		if tLarge > backstop {
+			t.Fatalf("%d distinct keys took %v (backstop %v); decoding must be linear", large, tLarge, backstop)
+		}
+		growth = float64(tLarge) / float64(max(tSmall, time.Microsecond))
+		t.Logf("attempt %d: %d keys %v, %d keys %v, growth %.1fx (linear 4x, quadratic 16x, limit %.0fx)", attempt, small, tSmall, large, tLarge, growth, maxGrowth)
+		if growth <= maxGrowth {
+			return
+		}
 	}
-	var m map[string]string
-	start := time.Now()
-	if err := Unmarshal([]byte(b.String()), &m); err != nil {
-		t.Fatal(err)
-	}
-	if d := time.Since(start); d > 5*time.Second {
-		t.Fatalf("100000 distinct keys took %v; decoding must be linear", d)
-	}
-	if len(m) != 100000 {
-		t.Fatalf("decoded %d keys, want 100000", len(m))
-	}
+	t.Fatalf("%d attempts all grew more than %.0fx for 4x the input (last %.1fx); decoding must be linear", attempts, maxGrowth, growth)
 }
