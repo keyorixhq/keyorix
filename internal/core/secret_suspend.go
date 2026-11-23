@@ -317,6 +317,12 @@ func (c *KeyorixCore) ResumeProjectSecrets(ctx context.Context, projectID, actor
 	if projectID == 0 || actorID == 0 {
 		return 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required"))
 	}
+	// The route gate, decided in core (#4657, as SuspendProjectSecretsWithOptions):
+	// secrets.write at the project, before any secret is read or resumed. A refusal
+	// is the whole request, with no audit row and nothing resumed.
+	if err := c.requireScopedGate(ctx, actorID, permSecretsWrite, Scope{ProjectID: projectID}); err != nil {
+		return 0, err
+	}
 	secrets, err := c.listProjectSecrets(ctx, projectID)
 	if err != nil {
 		return 0, err
