@@ -1,7 +1,7 @@
 # Key-custody availability: coalescer Stop + KeyManager fsync-under-lock
 
 Date: 2026-11-15 · Branch: `fuzz/s3-key-custody` · Task S3 (design phase)
-Status (2026-11-21, #4376): §2 implemented for `RotateKEKPassphraseWithPrepare` and `RewrapDEKWithPrepare` (`rotateMu` + an immutable `keyState` published with `atomic.Pointer`); `RotateDEKWithSweep` is unchanged and still holds `KeyManager.mu` across its sweep (follow-up).
+Status (2026-11-21, #4376): §2 implemented for `RotateKEKPassphraseWithPrepare` and `RewrapDEKWithPrepare` (`rotateMu` + an immutable `keyState` published with `atomic.Pointer`); `RotateDEKWithSweep` still holds `KeyManager.mu` across its sweep, and since #4654 `Service.mu` too, by decision (#4624, §2.6).
 Source: fuzz-corpus issue 114 (two availability/integrity risks in key custody).
 
 This document covers two findings:
@@ -169,8 +169,9 @@ leaves crash-safety and rotation ordering unchanged*. It cannot be small here:
 - Crash-consistency is covered by `FuzzDEKSweepCrashConsistency`,
   `FuzzDEKRewrapCrashConsistency` and the `rotationCheckpointHook` seams at every
   write/rename/syncdir boundary. Any lock narrowing must re-prove all of them.
-- `RotateDEKWithSweep` holds the lock across the whole DB sweep by design (readers must
-  not observe a half-rotated world); narrowing that is a separate, deeper change.
+- `RotateDEKWithSweep` holds the lock across the whole DB sweep by design; narrowing it was
+  rejected (§2.6, Facts 0-2) and the Service now holds its own write lock across the sweep
+  and the swap as well (#4654).
 
 Narrowing is a multi-PR effort with a real regression surface against the most
 safety-critical code in the tree. Per the task, it is specified here, not implemented.
@@ -233,8 +234,29 @@ a short grace, since the old DEK bytes are still valid ciphertext keys until the
   closes.
 - **A reader-side timeout / `TryRLock`.** Turns a stall into an error on the read path
   (secret reads failing) rather than removing the coupling; worse availability shape.
-- **Shrink `RotateDEKWithSweep`'s lock to exclude the sweep.** Readers would observe a
-  half-rotated DEK during the sweep; separate, larger change, out of scope here.
+- **Shrink `RotateDEKWithSweep`'s lock to exclude the sweep.** Rejected (#4624, decision
+  2026-11-23). What the lock actually protects, measured with a probe stalled at the
+  `sweep:after-sweep-commit` seam (#4654):
+  - *Fact 0: no shipped deployment waits on it.* The callers are the admin CLI rotate
+    commands, and `Service.RotateDEKWithSweep` first takes the exclusive `dek.lock`, which a
+    live server holds for its whole lifetime, so no server runs on the key directory during a
+    sweep. Other PostgreSQL replicas have their own KeyManager and are fenced by the DEK epoch
+    (INV-ENCRYPTION-dek-epoch-cross-replica). Narrowing would help only in-process users of the
+    package (tests, fuzzers, embedders).
+  - *Fact 1: reads never waited on `KeyManager.mu`* (`Decrypt*` use only
+    `s.encryptionService`). Between the sweep commit and the Service swap they failed closed on
+    swept rows (AEAD error, never wrong plaintext).
+  - *Fact 2: a write that waited out the sweep sealed under the superseded DEK.* `Encrypt*`
+    held `Service.mu.RLock`, blocked in `GetKeyVersion` on `KeyManager.mu`, then resumed after
+    the key manager published the new version but before the swap: old DEK, new version label,
+    a value that never opened again. Narrowing `KeyManager.mu` alone would make every write
+    during the sweep do this.
+  The fix kept the lock and widened the Service's: `Service.RotateDEKWithSweep` holds
+  `Service.mu` for writing across the sweep and the swap, so readers and writers wait and every
+  write pairs the DEK with its own version
+  (INV-ENCRYPTION-dek-sweep-holds-service-write-lock). No availability change in any shipped
+  deployment. Narrowing with a Service write gate (and optionally dual-key reads) stays open
+  only if an in-process concurrent user of the package is ever planned.
 
 ### 2.7 Test plan (for the future change)
 
