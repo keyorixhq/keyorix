@@ -34,7 +34,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 26 | 26 | 0 |
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 2 | 2 | 0 |
-| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 183 | 183 | 0 |
+| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 184 | 184 | 0 |
 | `internal/delivery` | [internal/delivery/INVARIANTS.md](../internal/delivery/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 56 | 56 | 0 |
 | `internal/evidencesink` | [internal/evidencesink/INVARIANTS.md](../internal/evidencesink/INVARIANTS.md) | 1 | 1 | 0 |
@@ -45,7 +45,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/fuzzutil/resguard` | [internal/fuzzutil/resguard/INVARIANTS.md](../internal/fuzzutil/resguard/INVARIANTS.md) | 8 | 8 | 0 |
 | `internal/i18n` | [internal/i18n/INVARIANTS.md](../internal/i18n/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/identity` | [internal/identity/INVARIANTS.md](../internal/identity/INVARIANTS.md) | 1 | 1 | 0 |
-| `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 4 | 3 | 1 |
+| `internal/k8ssync` | [internal/k8ssync/INVARIANTS.md](../internal/k8ssync/INVARIANTS.md) | 5 | 5 | 0 |
 | `internal/kdfmeter` | [internal/kdfmeter/INVARIANTS.md](../internal/kdfmeter/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/keyfiles` | [internal/keyfiles/INVARIANTS.md](../internal/keyfiles/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 18 | 18 | 0 |
