@@ -157,8 +157,8 @@ const projectSuspendPageSize = 500
 // breach-response "freeze the project" action) and returns how many it suspended.
 // Already-suspended secrets are left untouched; a per-secret failure (including a
 // per-secret authorization denial — see the EnforceSecretWritePermission re-check
-// below) is skipped so one bad secret doesn't abort the freeze. The caller must have
-// enforced scoped secrets.write on the project.
+// below) is skipped so one bad secret doesn't abort the freeze. Core refuses the whole
+// request unless the actor holds secrets.write on the project (the route gate).
 func (c *KeyorixCore) SuspendProjectSecrets(ctx context.Context, projectID, actorID uint, reason string) (int, error) {
 	return c.SuspendProjectSecretsWithOptions(ctx, projectID, actorID, reason, SuspendOptions{})
 }
@@ -189,6 +189,13 @@ func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, proj
 	}
 	if projectID == 0 || actorID == 0 {
 		return 0, secretInvalidInput(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required"))
+	}
+	// The route gate, decided in core (#4161 known-04 row 25): secrets.write at the
+	// project, before any secret is read or written. A per-secret grant (ACL, share,
+	// ownership) does not stand in for it; the per-secret re-check below still runs
+	// on top. A refusal is the whole request, with no audit row and nothing suspended.
+	if err := c.requireScopedGate(ctx, actorID, permSecretsWrite, Scope{ProjectID: projectID}); err != nil {
+		return 0, err
 	}
 	secrets, err := c.listProjectSecrets(ctx, projectID)
 	if err != nil {

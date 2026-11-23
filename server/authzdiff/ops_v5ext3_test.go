@@ -152,8 +152,9 @@ func bulkSecretDeleteRenameOps() []opSpec {
 // POST /api/v1/projects/{id}/secrets/suspend-all:
 //
 //	Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
-//	Core gate: SuspendProjectSecretsWithOptions → per-item EnforceSecretWritePermission
-//	  with RBAC fallback for secrets.write.
+//	Core gate: SuspendProjectSecretsWithOptions → secrets.write @ project
+//	  (requireScopedGate, before any secret is read; #4161 row 25), then the
+//	  per-item EnforceSecretWritePermission re-check with RBAC fallback.
 //	Model: secrets.write @ project.
 //	restOK: jsonNumberPositive(b, "suspended") — at least one secret was suspended.
 //	Positive control calibration: the fixture always has active secrets (pp.secretID

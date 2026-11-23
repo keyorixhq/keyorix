@@ -58,8 +58,10 @@ func TestWriteShareHolderWithoutSecretsWrite_BulkOpsSkip(t *testing.T) {
 
 	report, err := c.BulkRenameSecrets(ctx, proj.ID, []SecretRename{{ID: active.ID, NewName: "shared-renamed"}}, false, "holder", holder.ID, "", "")
 	require.NoError(t, err)
+	// Suspend now refuses the whole request at core's project gate (#4161 row 25)
+	// before the per-secret re-check is reached.
 	suspendedN, err := c.SuspendProjectSecrets(ctx, proj.ID, holder.ID, "share holder gate")
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrPermissionDenied)
 	resumedN, err := c.ResumeProjectSecrets(ctx, proj.ID, holder.ID)
 	require.NoError(t, err)
 	extendedN, _, err := c.ExtendExpiringSecrets(ctx, proj.ID, 7, 30, "holder", holder.ID)
