@@ -37,6 +37,8 @@
 - [SECRET_SHARING_USER_GUIDE.md](./SECRET_SHARING_USER_GUIDE.md): sharing.
 - [MIGRATION.md](./MIGRATION.md), [migrate-from-vault.md](./migrate-from-vault.md): importing secrets.
 - [CI_CD.md](./CI_CD.md): fetching secrets in GitHub Actions, GitLab CI and CircleCI.
+- [k8s-serviceaccount-auth.md](./k8s-serviceaccount-auth.md): a Kubernetes workload authenticates with its ServiceAccount token (no stored Keyorix secret).
+- [dynamic-secrets-postgresql.md](./dynamic-secrets-postgresql.md): short-lived PostgreSQL credentials with a TTL, issue and revoke.
 - [sdks.md](./sdks.md): Go, Python, Node.js and Java SDKs.
 
 ## Security
