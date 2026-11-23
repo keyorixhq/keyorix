@@ -2098,6 +2098,32 @@ jobs:
           AUTHZDIFF_PLANTS: '1'
         run: go test ./server/authzdiff/ -run '^TestPlantsAreDetected$' -count=1 -timeout 60m -v
 
+  # #3464: the storage package has a build tag, `nplus1`, that adds a NOT NULL
+  # DEFAULT column to every table after migration (the rolling-upgrade case in
+  # docs/rolling-upgrade-columns.md) and so checks that no query depends on a
+  # table having exactly the columns the model lists. Nothing ran it. About
+  # 95 s on a laptop. Same trigger shape as authzdiff-plants: the nightly full
+  # run, a manual dispatch, or a PR labelled ci:full; the merge queue does not
+  # pay for it. A nightly failure reaches the "Nightly main CI failed" issue
+  # through nightly-failure-issue below.
+  storage-nplus1:
+    needs: [preflight, changes]
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.4'
+
+      - name: Storage tests against a schema with an extra NOT NULL column on every table
+        run: go test -tags nplus1 -count=1 -timeout 15m ./internal/storage/...
+
   # G80 C5: fails (does not warn) when a TEMPORARY exclusion in
   # scripts/ci-test-legs.sh has sat unreviewed for more than 30 days. Cheap
   # and fast (bash + `date`, no Go/checkout of test code needed beyond the
@@ -4955,6 +4981,7 @@ jobs:
       - helm-chart-policy
       - openapi-lint
       - edge-builds
+      - storage-nplus1
     if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
     runs-on: ubuntu-24.04
     permissions:
