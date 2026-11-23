@@ -98,7 +98,9 @@ func TestSuspendResumeProjectSecrets(t *testing.T) {
 // authority over "shared" via a direct share, but no ownership, share, ACL, or
 // project role gives it any authority over "unshared" in the same project. A
 // caller who could not PUT-update "unshared" individually must not be able to
-// suspend/resume it via the bulk project-wide op either.
+// suspend/resume it via the bulk project-wide op either. Since #4161 row 25
+// (suspend) and #4657 (resume) core decides the project route gate first, so this
+// per-secret-only caller is refused the whole request and changes nothing.
 func TestSuspendResumeProjectSecrets_PerSecretAuthzReCheck(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
@@ -184,7 +186,7 @@ func TestSuspendResumeProjectSecrets_PerSecretAuthzReCheck(t *testing.T) {
 		}
 	})
 
-	t.Run("resume-all only resumes the secret the caller has write authority over", func(t *testing.T) {
+	t.Run("resume-all refuses a caller whose only write authority is per secret", func(t *testing.T) {
 		// Suspend every secret directly (bypassing the bulk op) so all start suspended.
 		_, err := c.SuspendSecret(ctx, sharedID, otherOwnerID, "setup")
 		require.NoError(t, err)
@@ -193,20 +195,19 @@ func TestSuspendResumeProjectSecrets_PerSecretAuthzReCheck(t *testing.T) {
 		_, err = c.SuspendSecret(ctx, writeSharedID, otherOwnerID, "incident freeze")
 		require.NoError(t, err)
 
+		// #4657, as suspend-all above: the per-secret ACL write passes the re-check on
+		// "shared", but the caller holds no secrets.write at the project (the route
+		// gate), so core refuses the whole request and resumes nothing, "shared"
+		// included. A write share must not let the recipient undo an incident freeze
+		// either way.
 		n, err := c.ResumeProjectSecrets(ctx, p.ID, actorID)
-		require.NoError(t, err)
-		assert.Equal(t, 1, n, "only the shared secret is resumed")
+		require.ErrorIs(t, err, ErrPermissionDenied)
+		assert.Zero(t, n)
 
-		shared, err := c.storage.GetSecret(ctx, sharedID)
-		require.NoError(t, err)
-		assert.Equal(t, SecretStatusActive, shared.Status)
-
-		unshared, err := c.storage.GetSecret(ctx, unsharedID)
-		require.NoError(t, err)
-		assert.Equal(t, SecretStatusSuspended, unshared.Status, "denied secret must be left untouched, not silently resumed")
-
-		writeShared, err := c.storage.GetSecret(ctx, writeSharedID)
-		require.NoError(t, err)
-		assert.Equal(t, SecretStatusSuspended, writeShared.Status, "a write share must not let the recipient undo an incident freeze")
+		for _, id := range []uint{sharedID, unsharedID, writeSharedID} {
+			s, err := c.storage.GetSecret(ctx, id)
+			require.NoError(t, err)
+			assert.Equal(t, SecretStatusSuspended, s.Status, "%s: nothing is resumed", s.Name)
+		}
 	})
 }
