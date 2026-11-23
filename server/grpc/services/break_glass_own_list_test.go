@@ -35,6 +35,7 @@ func TestBreakGlassGRPC_OwnList(t *testing.T) {
 	t.Cleanup(h.Cleanup)
 	require.NoError(t, h.DB.AutoMigrate(&models.BreakGlassActivation{}, &models.AuditEvent{}))
 	h.AssignUserRole(t, 1, 1, nil) // user 1: global super_admin (roles.read everywhere)
+	h.EnsureActiveUser(t, 1)       // user 1 revokes through core (#4546)
 	h.CreateTestRole(t, "emergency", "break-glass role", 90)
 	h.CoreService.SetBreakGlassPolicy(core.BreakGlassPolicy{
 		Enabled: true, EmergencyRole: "emergency", DefaultTTL: time.Hour, MaxTTL: 4 * time.Hour,

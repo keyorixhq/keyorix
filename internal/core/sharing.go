@@ -122,6 +122,12 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 		})
 		return nil
 	}); err != nil {
+		// The membership check above counts a surviving grant of a soft-deleted user; the
+		// write then finds no user row. The caller is told what an unknown recipient is
+		// told: not a member (#4641).
+		if errors.Is(err, storage.ErrUserNotFound) {
+			return nil, shareRefusal(ErrShareRecipientNotMember)
+		}
 		return nil, err
 	}
 

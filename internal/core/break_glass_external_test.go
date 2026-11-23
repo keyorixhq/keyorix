@@ -180,6 +180,7 @@ func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
 	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
 	require.NoError(t, err)
 
+	seedActiveActors(t, h.DB, 1) // the revoker (#4546: RevokeBreakGlass refuses an inactive actor)
 	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, act.ID))
 
 	// The emergency role is gone.
@@ -223,6 +224,7 @@ func TestRevokeBreakGlass_NotBlockedByExpiredState(t *testing.T) {
 		Where("id = ?", act.ID).
 		Update("state", core.BreakGlassExpired).Error)
 
+	seedActiveActors(t, h.DB, 1) // the revoker (#4546)
 	err = h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, act.ID)
 	require.NoError(t, err, "revoking a TTL-lapsed (State == expired) activation must succeed, not be refused as 'not active'")
 
@@ -316,6 +318,7 @@ func TestRevokeBreakGlass_ConcurrentRevokesOnlyOneWins(t *testing.T) {
 	require.NoError(t, err)
 
 	admins := []uint{100, 200}
+	seedActiveActors(t, h.DB, admins...) // the revokers (#4546)
 	errs := make([]error, len(admins))
 	var wg sync.WaitGroup
 	for i, admin := range admins {
@@ -473,6 +476,7 @@ func TestActivateBreakGlass_RejectsConcurrentReactivation(t *testing.T) {
 	require.Len(t, list, 1)
 
 	// Once the first is revoked, a fresh activation is allowed again.
+	seedActiveActors(t, h.DB, 1) // the revoker (#4546)
 	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, list[0].ID))
 	_, err = h.CoreService.ActivateBreakGlass(ctx, proj, 10, "new incident", "")
 	require.NoError(t, err)
