@@ -2817,8 +2817,14 @@ func TestSuspendProjectSecrets_Unauthorized(t *testing.T) {
 }
 
 func TestSuspendProjectSecrets_HappyPath(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"reason":"test"}`)), "id", "1"))
+	// A fresh core: the project grant below must not leak into the shared S4 core.
+	cs := freshCoreS12(t)
+	proj, err := cs.CreateProject(context.Background(), "s4suspend", "")
+	require.NoError(t, err)
+	grantProjectPermissions(t, cs, 1, proj.ID, "secrets.write") // the route gate, which core decides too (#4161)
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
+	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"reason":"test"}`)), "id", fmt.Sprintf("%d", proj.ID)))
 	w := httptest.NewRecorder()
 	h.SuspendProjectSecrets(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

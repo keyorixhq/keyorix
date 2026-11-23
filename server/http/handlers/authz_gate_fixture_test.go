@@ -44,3 +44,29 @@ func grantGlobalPermissions(t *testing.T, cs *core.KeyorixCore, userID uint, per
 		FirstOrCreate(&models.UserRole{UserID: userID, RoleID: role.ID}).Error)
 	_ = ctx
 }
+
+// grantProjectPermissions is grantGlobalPermissions at one project: userID gets
+// a fresh role carrying exactly perms, assigned at projectID only (the scope a
+// RequireScopedPermission(perm, projectScope) route gate checks, and core with it).
+func grantProjectPermissions(t *testing.T, cs *core.KeyorixCore, userID, projectID uint, perms ...string) {
+	t.Helper()
+	ls, ok := cs.Storage().(*store.LocalStorage)
+	require.True(t, ok, "grantProjectPermissions needs a LocalStorage-backed core")
+	db := ls.DB()
+	require.NoError(t, db.AutoMigrate(
+		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{},
+	))
+	ensureActiveActorUser(t, cs.Storage(), userID)
+	name := fmt.Sprintf("gate-fixture-%d-p%d-%d", userID, projectID, len(perms))
+	role := &models.Role{Name: name, NameFolded: name, Description: "project route-gate permissions for a handler test"}
+	require.NoError(t, db.Where(models.Role{Name: name}).FirstOrCreate(role).Error)
+	for _, p := range perms {
+		perm := &models.Permission{Name: p}
+		require.NoError(t, db.Where(models.Permission{Name: p}).FirstOrCreate(perm).Error)
+		require.NoError(t, db.Where(models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).
+			FirstOrCreate(&models.RolePermission{RoleID: role.ID, PermissionID: perm.ID}).Error)
+	}
+	require.NoError(t, db.Where(models.UserRole{UserID: userID, RoleID: role.ID, ProjectID: projectID}).
+		FirstOrCreate(&models.UserRole{UserID: userID, RoleID: role.ID, ProjectID: projectID}).Error)
+}
