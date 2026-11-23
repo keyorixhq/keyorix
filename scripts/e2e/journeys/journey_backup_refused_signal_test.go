@@ -21,8 +21,9 @@ import (
 // kek.salt.pending in the running server's key directory, so the cron
 // `keyorix-server admin backup` exits 4 with its keyorix-backup-refused line and
 // writes nothing; the administrator sees security.backup_refused in GET
-// /api/v1/system/info naming the file; once the file is moved away the signal
-// clears and, with the server stopped, the backup succeeds.
+// /api/v1/system/info naming the file and the remedy; `admin encryption
+// clear-stale-salt-pending` refuses beside the live server and, with the server
+// stopped, removes the file, after which the backup succeeds.
 func TestJourney_BackupRefusedSignalWhileStagingSaltPresent(t *testing.T) {
 	serverBin, _ := harness.BuildBinaries(t)
 	s := harness.StartServer(t, serverBin, harness.DBBackend{Name: "sqlite"})
@@ -89,20 +90,42 @@ func TestJourney_BackupRefusedSignalWhileStagingSaltPresent(t *testing.T) {
 	if st.Reason != "key-rotation-staging-file" || !st.StagingSaltOnly || len(st.Files) != 1 || !strings.HasSuffix(st.Files[0], "kek.salt.pending") {
 		t.Fatalf("backup_refused: %+v", st)
 	}
-	if !strings.Contains(st.Remedy, "move the staging file out of the key directory") {
+	if !strings.Contains(st.Remedy, "admin encryption clear-stale-salt-pending") {
 		t.Fatalf("backup_refused remedy: %q", st.Remedy)
 	}
 
-	if err := os.Rename(pending, filepath.Join(t.TempDir(), "kek.salt.pending")); err != nil {
-		t.Fatal(err)
+	// The named command refuses beside the live server (it holds the key lock),
+	// removes the file once the server is stopped, and has nothing to do after.
+	clearSalt := func(extra ...string) (string, error) {
+		t.Helper()
+		args := append([]string{"encryption", "clear-stale-salt-pending", "--config", s.ConfigPath}, extra...)
+		return harness.RunAdminCmd(s.Binary, s.Dir, s.Env, args...)
 	}
-	if st := status(); st != nil {
-		t.Fatalf("the signal must clear once the file is moved away: %+v", st)
+	if out, err := clearSalt(); err == nil {
+		t.Fatalf("clear-stale-salt-pending beside a live server must refuse:\n%s", out)
+	}
+	if _, err := os.Stat(pending); err != nil {
+		t.Fatalf("a refused clear-stale-salt-pending must leave %s: %v", pending, err)
 	}
 
 	s.Close() // SQLite backups need the database to themselves
+	if out, err := clearSalt("--dry-run"); err != nil || !strings.Contains(out, "would remove") {
+		t.Fatalf("clear-stale-salt-pending --dry-run: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(pending); err != nil {
+		t.Fatalf("--dry-run must leave %s: %v", pending, err)
+	}
+	if out, err := clearSalt(); err != nil || !strings.Contains(out, "removed ") || !strings.Contains(out, "kek.salt.pending") {
+		t.Fatalf("clear-stale-salt-pending: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(pending); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("%s must be gone: %v", pending, err)
+	}
+	if out, err := clearSalt(); err != nil || !strings.Contains(out, "nothing to do") {
+		t.Fatalf("a second clear-stale-salt-pending must have nothing to do: %v\n%s", err, out)
+	}
 	if code, out := backup(filepath.Join(outDir, "after.tar.gz")); code != 0 {
-		t.Fatalf("backup after moving the staging salt away: exit %d:\n%s", code, out)
+		t.Fatalf("backup after clear-stale-salt-pending: exit %d:\n%s", code, out)
 	}
 }
 

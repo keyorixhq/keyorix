@@ -290,47 +290,101 @@ A `rotate-kek` that was interrupted before it changed any active key leaves
 it and leaves the file in place, and every later `admin backup` is refused while it
 exists. The refusal exits with status **4** (every other backup failure exits 1) and prints
 `keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="keys/kek.salt.pending"`
-on stderr, so a cron wrapper can match either. The server's start log says it too:
-a `[WARN] key set:` line containing ``admin backup` will refuse until keys/kek.salt.pending is moved away``,
-and `keyorix-server admin diagnose` prints `[WARN] backups would be refused: staging file
-present (keys/kek.salt.pending)` followed by the same steps as the refusal. Those are: check
-that no `rotate-kek` is running, `mv keys/kek.salt.pending` to a directory outside the key
-directory, back up, and delete the moved copy once that backup and a server start have
-succeeded. A `keys/dek.key.pending` is different: never delete it by hand (it can be the only
-copy of the new DEK); start the server so boot recovery settles it. Boot never removes
-either file itself. All of this was run on a throwaway SQLite install with a leftover
-`kek.salt.pending` (a copy of `kek.salt`, placed after a completed `rotate-kek`); the DEK variant of
-the `diagnose` line is covered by a test only. The refusal, as captured (stderr; exit status 4, no
+on stderr, so a cron wrapper can match either. Each refusal is also an `admin.backup_refused`
+audit event (`success=false`, naming the file) whenever the database can be opened without
+changing anything: on SQLite that means with the server stopped, as a SQLite backup needs anyway,
+and on any backend only when the database is already at this binary's schema epoch (a refused
+backup never migrates the database). When it cannot be written, the refusal says so on stderr
+(`note: this refusal was not recorded to the audit chain: ...`) and is otherwise the same.
+
+The server's start log says it too:
+
+```
+[WARN] key set: keys/kek.salt.pending is a staging file left over from a key operation that was interrupted before it changed the active key set; the set is coherent without it and the file can be deleted. `admin backup` will refuse until keys/kek.salt.pending is gone: with the server stopped, run `keyorix-server admin encryption clear-stale-salt-pending`, which removes it only after proving the active key set opens without it
+```
+
+`keyorix-server admin diagnose` prints `[WARN] backups would be refused: staging file present
+(keys/kek.salt.pending)` followed by the refusal's text, and `admin validate --posture` reports
+`[backup/explicit] backups are refused: key-rotation staging file present (keys/kek.salt.pending)`
+and exits 1. A `keys/dek.key.pending` is different: never delete it by hand (it can be the only
+copy of the new DEK); start the server so boot recovery settles it. Boot never removes either
+file itself, and neither does `admin backup`.
+
+**Remove the stale salt with `admin encryption clear-stale-salt-pending`.** Stop the server
+(the command holds the database lock and the key-directory lock `rotate-kek` holds, so it
+refuses beside a server or a running `rotate-kek`), look at its decision, then run it:
+
+```bash
+keyorix-server admin encryption clear-stale-salt-pending --config ./keyorix.yaml --dry-run
+keyorix-server admin encryption clear-stale-salt-pending --config ./keyorix.yaml
+```
+
+It removes `keys/kek.salt.pending` only when no DEK staging file is present, the key-set
+manifest records no interrupted operation boot would still finish from it, and the DEK unwraps
+under the active KEK with the current master passphrase (the proof a server start makes). In
+every other case it refuses with `clear-stale-salt-pending refused, nothing was removed: <why>`
+and exit status 1. A removal is an `admin.encryption.clear_stale_salt_pending` audit event; a
+second run has nothing to do.
+
+All of this was run on `BACKUP-STALE-SALT-NOV-1`'s branch, 2026-11-23, native, on a throwaway
+SQLite install with a leftover `kek.salt.pending` (a copy of `kek.salt`, as a rotate-kek stopped
+before any rename leaves it), after one successful server start. Beside the live server both
+commands refused (the backup with exit 4 and the audit note, `clear-stale-salt-pending` with the
+database-lock refusal). With the server stopped, the refused backup (stderr; exit status 4, no
 archive written):
 
 ```
-$ keyorix-server admin backup --output ./post-rotation.tar.gz --config ./keyorix.yaml
+$ keyorix-server admin backup --output ./refused.tar.gz --config ./keyorix.yaml
+This refusal was recorded to the audit chain (admin.backup_refused).
 keyorix-backup-refused reason=key-rotation-staging-file exit_code=4 files="keys/kek.salt.pending"
-Error: backup refused: a key rotation is running or was interrupted (found keys/kek.salt.pending). An archive taken now would include that staging file and `admin restore` would refuse it on any other host, so no archive was written and no key file was changed. If a rotation is running, wait for it to finish. Otherwise start the server once so boot recovery completes the rotation, then back up again. keys/kek.salt.pending is the KEK salt's staging file. After an interrupted rotate-kek the start may need it and the new passphrase, and if it is refused, follow the recovery it prints. A server start that succeeds and leaves keys/kek.salt.pending in place (its log says the file "can be deleted") has proved that the active key set opens without it: the rotation never changed the active keys, and every backup is refused until the file is gone. To remove it safely, check that no `admin encryption rotate-kek` is running, move it out of the key directory (mv keys/kek.salt.pending <a directory outside the key directory>), back up again, and delete the moved copy once that backup and a server start have succeeded. Never delete a DEK's .pending file by hand: it can be the only copy of the new DEK. `admin validate --posture` reports this state until it is resolved
+Error: backup refused: a key rotation is running or was interrupted (found keys/kek.salt.pending). An archive taken now would include that staging file and `admin restore` would refuse it on any other host, so no archive was written and no key file was changed. If a rotation is running, wait for it to finish. Otherwise start the server once so boot recovery completes the rotation, then back up again. keys/kek.salt.pending is the KEK salt's staging file. After an interrupted rotate-kek the start may need it and the new passphrase, and if it is refused, follow the recovery it prints. A server start that succeeds and leaves keys/kek.salt.pending in place (its log says the file "can be deleted") has proved that the active key set opens without it: the rotation never changed the active keys, and every backup is refused until the file is gone. Remove it with `keyorix-server admin encryption clear-stale-salt-pending` (server stopped; `--dry-run` shows its decision first): it removes keys/kek.salt.pending only when no DEK staging file is present, no `admin encryption rotate-kek` is running and the active key set opens with the current passphrase without it, records that in the audit chain, and refuses otherwise; then back up again. Never delete a DEK's .pending file by hand: it can be the only copy of the new DEK. `admin validate --posture` reports this state until it is resolved
 ```
 
-`keyorix-server admin diagnose` printed the same text on a `[WARN] backups would be refused: staging
-file present (keys/kek.salt.pending). ...` line (the other checks stayed `[ OK ]`), and `admin
-validate --posture` printed `1 deviation(s) found` with `[backup/explicit] backups are refused:
-key-rotation staging file present (keys/kek.salt.pending). ...` and exited 1. After `mv
-keys/kek.salt.pending` to a directory outside `keys/`, the same `admin backup` succeeded:
+The command, with the wrong passphrase, then for real, then again:
 
 ```
-Backup written to <archive path> (80 table(s), 153 row(s) total, 2 key file(s))
+$ keyorix-server admin encryption clear-stale-salt-pending --config ./keyorix.yaml --dry-run
+Found keys/kek.salt.pending. Checking that the active key set opens with the current passphrase without it...
+dry run: would remove keys/kek.salt.pending (no DEK staging file is present, and the active key set opens with the current passphrase without it); nothing was removed
+
+$ KEYORIX_MASTER_PASSWORD=<a wrong one> keyorix-server admin encryption clear-stale-salt-pending --config ./keyorix.yaml
+Found keys/kek.salt.pending. Checking that the active key set opens with the current passphrase without it...
+Error: clear-stale-salt-pending refused, nothing was removed: the active key set does not open with the current passphrase without keys/kek.salt.pending (failed to initialize key manager: failed to unwrap DEK — wrong passphrase or corrupted key file: ...). The file may be the salt an interrupted rotate-kek needs, so it is left in place: if the server does not start either, follow "Interrupted rotate-kek or migrate-provider" in docs/operator/key-rotation-runbook.md
+
+$ keyorix-server admin encryption clear-stale-salt-pending --config ./keyorix.yaml
+Found keys/kek.salt.pending. Checking that the active key set opens with the current passphrase without it...
+removed keys/kek.salt.pending. Run `keyorix-server admin backup` again.
+ran `keyorix-server admin encryption clear-stale-salt-pending`: removed keys/kek.salt.pending, a KEK salt staging file left by an interrupted rotate-kek (no DEK staging file present, the active key set opened with the current passphrase without it)
+
+$ keyorix-server admin encryption clear-stale-salt-pending --config ./keyorix.yaml
+nothing to do: no KEK salt staging file is present, and `admin backup` is not refused for one
+```
+
+and the same `admin backup` succeeded:
+
+```
+Backup written to <archive path> (80 table(s), 24 row(s) total, 2 key file(s))
 Store this archive OFF this host. Restore with:
   keyorix-server admin restore --input <archive path>
-created backup archive <archive path> (80 table(s), 153 row(s), 2 key file(s))
+created backup archive <archive path> (80 table(s), 24 row(s), 2 key file(s))
 ```
+
+The audit chain then held `admin.backup_refused` (success false),
+`admin.encryption.clear_stale_salt_pending` and `admin.backup_created`, and `admin verify-audit`
+reported `Verdict: VALID`. An archive taken before the refusal restores on the same host only
+with `--allow-rollback`: the refusal's own audit event is newer than it, as after any audited
+admin action.
 
 The running server reports it too, for a monitor to poll: while a staging file is in its key
 directory, `GET /api/v1/system/info` (for a caller with `system.write`) carries
 `security.backup_refused` with `reason` `key-rotation-staging-file` (the same token as the
 stderr line), the `files`, `staging_salt_only` (true when only the salt's staging file is
-there) and a one-line `remedy`. Each replica reports its own key directory. The field is
-absent while backups are not refused, and goes away on the next request once the file has
-been moved. Alert on its presence. Reading it only checks whether the files exist; it never
-moves or deletes one. Covered by `TestJourney_BackupRefusedSignalWhileStagingSaltPresent`
-(real server, SQLite).
+there) and a one-line `remedy` naming `clear-stale-salt-pending`. Each replica reports its own
+key directory. The field is absent while backups are not refused, and goes away on the next
+request once the file is gone. Alert on its presence. Reading it only checks whether the files
+exist; it never moves or deletes one. Covered by
+`TestJourney_BackupRefusedSignalWhileStagingSaltPresent` (real server, SQLite; it also drives
+`clear-stale-salt-pending` beside the server, with `--dry-run`, for real and again).
 
 ## Rehearse it: `scripts/drills/key-rotation.sh`
 
