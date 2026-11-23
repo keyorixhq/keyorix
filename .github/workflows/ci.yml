@@ -2886,16 +2886,34 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ runner.os }}-${{ hashFiles('web/pnpm-lock.yaml') }}
+      # Browser binary only (CDN download, no apt). The OS packages are handled by
+      # the next step.
       - name: Install Playwright browser
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: web
         timeout-minutes: 10
-        run: timeout -k 10 300 pnpm exec playwright install --with-deps chromium || timeout -k 10 300 pnpm exec playwright install --with-deps chromium
-      - name: Install Playwright OS dependencies (cache hit -- browser binary already present)
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: timeout -k 10 300 pnpm exec playwright install chromium || timeout -k 10 300 pnpm exec playwright install chromium
+      # WEB-E2E-DEPS-NOV-1 (#3674, #3676): `playwright install-deps` is `apt-get
+      # update` + `apt-get install` of 33 named packages, and on the ubuntu-24.04
+      # image every shared library Chromium links against is already installed; only
+      # cosmetic fonts (fonts-freefont-ttf, CJK/Thai fonts, xfonts-*) and a mesa
+      # upgrade are fetched, from an Ubuntu mirror that stalls or is missing from
+      # apt-get update (queue run 45207072696: two downloads stalled for 106 s and
+      # 155 s until `timeout` killed the step, and the orphaned apt-get kept the
+      # dpkg lock so the retry died with "Could not get lock"). No spec compares
+      # screenshots. So ask Playwright's own launcher check (ldd + dlopen over the
+      # browser files; it throws "Host system is missing dependencies to run
+      # browsers" otherwise) and run apt only if Chromium really cannot start.
+      - name: Install Playwright OS dependencies (only if Chromium cannot launch)
         working-directory: web
         timeout-minutes: 10
-        run: timeout -k 10 300 pnpm exec playwright install-deps chromium || timeout -k 10 300 pnpm exec playwright install-deps chromium
+        run: |
+          if node -e "require('@playwright/test').chromium.launch().then(b => b.close())"; then
+            echo "Chromium launches: its OS libraries are already present, skipping apt"
+            exit 0
+          fi
+          echo "::warning::Chromium cannot launch; installing OS dependencies with apt"
+          timeout -k 10 300 pnpm exec playwright install-deps chromium || timeout -k 10 300 pnpm exec playwright install-deps chromium
       - name: Real-backend web UI smoke
         env:
           KEYORIX_E2E_SHARD: ${{ matrix.shard }}/2
