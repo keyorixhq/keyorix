@@ -6,11 +6,13 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log"
 
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -136,16 +138,21 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 	// absent) is reported identically as "secret not found": its name must
 	// never leak to a caller who was never authorized to see it.
 	//
-	// actorID == 0 is the embedded/local-CLI caller (bulk_delete.go's
-	// runBulkDeleteEmbedded) — single-user local mode has no RBAC concept at
-	// all, matching the singular CLI `secret delete` command's use of the
-	// bare, unguarded GetSecret/DeleteSecret (delete.go): physical access to
-	// the local DB file is the authorization boundary there, not a userID.
-	// Authenticated HTTP/gRPC users supply a real actorID
-	// (secrets_bulk_delete.go's handler uses userCtx.UserID). A machine token
-	// has UserID 0 and also takes this branch: for it the router gate
-	// (secrets.delete@project) is the only authorization, plus the project
-	// match below; whether that is enough is tracked in #4546.
+	// Three callers, told apart by actorID and the actor type on ctx:
+	//   - an authenticated user (actorID != 0, secrets_bulk_delete.go's handler
+	//     passes userCtx.UserID): the per-user owner/share/role check of the
+	//     singular delete (GetSecretWithPermissionCheck /
+	//     DeleteSecretWithPermissionCheck);
+	//   - a machine token (actorID 0, ctx tagged ActorTypeMachine by the auth
+	//     middleware, its UserID is always 0): the rule the singular DELETE route
+	//     applies to a machine, secrets.delete at the secret's own scope
+	//     (RequireScopedSecretPermission, AuthorizeSecretPrincipalForSecret), so a
+	//     machine deletes in bulk only what it may delete one by one (#4546). A
+	//     machine tag without a machine ID is refused (fail closed);
+	//   - actorID 0 with no machine tag: an in-process caller with no
+	//     authenticated principal (embedded/local mode, which has no RBAC concept
+	//     at all; physical access to the local DB file is the boundary there),
+	//     using the bare GetSecret/DeleteSecret as the singular local delete does.
 	//
 	// A storage FAULT is not a "not found": the item is reported as "storage
 	// temporarily unavailable, please retry" (distinct text), because the
@@ -157,12 +164,24 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 		result.addFailure(BulkOpError{SecretID: id, Error: StorageReadUnavailableMessage, Code: BulkErrCodeStorageUnavailable, Retryable: true})
 		return
 	}
+	machine := actorID == 0 && actorTypeFromContext(ctx) == ActorTypeMachine
 	var secret *models.SecretNode
 	var err error
-	if actorID == 0 {
+	switch {
+	case machine:
+		secret, err = c.bulkDeleteMachineSecret(ctx, id)
+	case actorID == 0:
 		secret, err = c.GetSecret(ctx, id)
-	} else {
+	default:
 		secret, err = c.GetSecretWithPermissionCheck(ctx, id, actorID)
+	}
+	if IsStorageReadUnavailable(err) {
+		// A storage fault on any lookup in the switch above (the machine's role read
+		// in bulkDeleteMachineSecret, GetSecret, or the user's permission-checked
+		// read) is the same "retry" answer as the secret-read fault above, not a
+		// "not found".
+		result.addFailure(BulkOpError{SecretID: id, Error: StorageReadUnavailableMessage, Code: BulkErrCodeStorageUnavailable, Retryable: true})
+		return
 	}
 	if err != nil || secret == nil || secret.ProjectID != projectID {
 		result.Failed = append(result.Failed, BulkOpError{
@@ -175,7 +194,7 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 	secretName := secret.Name
 	secretProjectID := secret.ProjectID
 
-	if actorID == 0 {
+	if actorID == 0 { // a machine was authorized for this secret above
 		err = c.DeleteSecret(ctx, id)
 	} else {
 		err = c.DeleteSecretWithPermissionCheck(ctx, id, actorID)
@@ -252,4 +271,36 @@ func bulkDeleteFailure(ctx context.Context, err error) (msg, code string) {
 	default:
 		return "internal error", ""
 	}
+}
+
+// bulkDeleteMachineSecret fetches secret id for a machine caller of BulkDeleteSecrets
+// and authorizes it the way the singular DELETE route does: secrets.delete at the
+// secret's own project and environment for the machine identity tagged on ctx
+// (AuthorizeSecretPrincipalForSecret, the decision RequireScopedSecretPermission
+// makes). Shares, ACLs and ownership are user-only and never apply to a machine.
+// A missing machine ID, a refusal and a failed authorization lookup are all errors
+// (fail closed). The caller reports a refusal as "secret not found", as it does a
+// user's refusal, and a lookup fault (returned wrapped in ErrStorageReadUnavailable)
+// as the retryable "storage temporarily unavailable".
+func (c *KeyorixCore) bulkDeleteMachineSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
+	machineID, ok := machineActorFromContext(ctx)
+	if !ok {
+		return nil, permissionDeniedf("%s: machine caller without a machine identity", i18n.T("ErrorPermissionDenied", nil))
+	}
+	secret, err := c.GetSecret(ctx, id)
+	if err != nil || secret == nil {
+		return nil, cmp.Or(err, errSecretNotFoundText())
+	}
+	allowed, err := c.AuthorizeSecretPrincipalForSecret(ctx, ActorTypeMachine, machineID, secret, "secrets.delete")
+	if err != nil {
+		log.Printf("bulk delete: secret %d not processed, machine %d authorization lookup failed: %v", id, machineID, err)
+		if errors.Is(err, errNoPrincipalPermission) {
+			return nil, err // a storage contract violation, not an outage
+		}
+		return nil, cmp.Or(ReadFault(err), err)
+	}
+	if !allowed {
+		return nil, permissionDeniedf("%s: insufficient permissions", i18n.T("ErrorPermissionDenied", nil))
+	}
+	return secret, nil
 }

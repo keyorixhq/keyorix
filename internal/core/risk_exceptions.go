@@ -375,6 +375,9 @@ func (c *KeyorixCore) RevokeRiskException(ctx context.Context, actorID, id uint)
 // unconditionally rather than trying to make the comparison "work" for a
 // principal type it was never written to represent.
 func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID uint, actorIsMachine bool, id uint) error {
+	if err := c.requireActorActive(ctx, humanActorID(actorID, actorIsMachine)); err != nil { // #4159
+		return err
+	}
 	e, err := c.storage.GetRiskException(ctx, id)
 	if err != nil {
 		return err

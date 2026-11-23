@@ -263,6 +263,7 @@ func TestCloseAccessReviewCampaign_PendingGuardAndForce(t *testing.T) {
 	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
+	h.EnsureActiveUser(t, 1) // the closer must be an active account (#4546)
 	migrateCampaignTables(t, h)
 
 	const proj = uint(2)
