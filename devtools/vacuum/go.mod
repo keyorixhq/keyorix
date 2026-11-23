@@ -13,7 +13,7 @@ require (
 	charm.land/bubbletea/v2 v2.1.1 // indirect
 	charm.land/lipgloss/v2 v2.1.1 // indirect
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
-	github.com/a-h/templ v0.3.1118 // indirect
+	github.com/a-h/templ v0.3.1070 // indirect
 	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
