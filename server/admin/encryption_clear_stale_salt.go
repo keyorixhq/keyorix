@@ -76,9 +76,9 @@ func runEncClearStaleSalt(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	recordAdminAction(cfg, clearStaleSaltEventType, fmt.Sprintf(
-		"ran `keyorix-server admin encryption %s`: removed %s, a KEK salt staging file left by an interrupted rotate-kek "+
-			"(no DEK staging file present, the active key set opened with the current passphrase without it)",
-		clearStaleSaltCmdName, removed), true)
+		"ran `keyorix-server admin encryption clear-stale-salt-pending`: removed %s, a KEK salt staging file left by an "+
+			"interrupted rotate-kek (no DEK staging file present, the active key set opened with the current passphrase without it)",
+		removed), true)
 	return nil
 }
 

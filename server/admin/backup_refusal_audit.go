@@ -71,7 +71,7 @@ func writeBackupRefusalEvent(cfg *config.Config, r *pendingRotationRefusal) erro
 	description := fmt.Sprintf("backup refused: key rotation staging file present (%s); no archive was written and no "+
 		"key file was changed", strings.Join(r.paths, ", "))
 	if !r.dek {
-		description += ". Remedy: keyorix-server admin encryption " + clearStaleSaltCmdName
+		description += ". Remedy: `keyorix-server admin encryption clear-stale-salt-pending`"
 	}
 	return withUsableStorage(cfg, func(st corestorage.Storage) error {
 		ok := false

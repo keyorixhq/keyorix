@@ -670,10 +670,10 @@ func refusePendingKeyRotation(cfg *config.Config) error {
 			saltAdvice = fmt.Sprintf(" %[1]s is the KEK salt's staging file. After an interrupted rotate-kek the start may need it and the "+
 				"new passphrase, and if it is refused, follow the recovery it prints. A server start that succeeds and leaves %[1]s in "+
 				"place (its log says the file \"can be deleted\") has proved that the active key set opens without it: the rotation never "+
-				"changed the active keys, and every backup is refused until the file is gone. Remove it with `keyorix-server admin "+
-				"encryption %[2]s` (server stopped; `--dry-run` shows its decision first): it removes %[1]s only when no DEK "+
+				"changed the active keys, and every backup is refused until the file is gone. Remove it with "+
+				"`keyorix-server admin encryption clear-stale-salt-pending` (server stopped; `--dry-run` shows its decision first): it removes %[1]s only when no DEK "+
 				"staging file is present, no `admin encryption rotate-kek` is running and the active key set opens with the current "+
-				"passphrase without it, records that in the audit chain, and refuses otherwise; then back up again.", p.Path, clearStaleSaltCmdName)
+				"passphrase without it, records that in the audit chain, and refuses otherwise; then back up again.", p.Path)
 		}
 	}
 	return &pendingRotationRefusal{paths: paths, dek: dek, msg: fmt.Sprintf("backup refused: a key rotation is running or was interrupted (found %s). "+
