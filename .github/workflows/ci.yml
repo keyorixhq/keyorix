@@ -1160,6 +1160,41 @@ jobs:
         if: needs.changes.outputs.proven_preflight != 'true'
         run: go mod verify
 
+      # CI-TIDY-1: go mod verify only checks the module cache against go.sum;
+      # it does not notice a stale `// indirect` marker or a missing/extra
+      # require. That drift stayed invisible on main until Dependabot's own
+      # tidy fixed it and turned the egress guard red on #4651/#4652. Every
+      # module in the repo is checked on its own (GOWORK=off, as `go mod tidy`
+      # is run by hand and by Dependabot). Needs only the module proxy the
+      # build already uses; `-diff` never writes.
+      - name: go mod tidy -diff
+        if: needs.changes.outputs.proven_preflight != 'true'
+        env:
+          GOWORK: 'off'
+          GOFLAGS: -mod=readonly
+        run: |
+          mapfile -t mods < <(git ls-files '*/go.mod' go.mod)
+          bad=()
+          for gomod in "${mods[@]}"; do
+            dir=$(dirname "$gomod")
+            # replace => ../../../../../../../keyorix-sdks/go: a sibling repo
+            # that a plain checkout does not have, so it cannot be tidied here.
+            if [ "$dir" = scripts/e2e/sdkdiff/drivers/go ]; then
+              echo "SKIP $dir: replace directive points at the sibling keyorix-sdks checkout"
+              continue
+            fi
+            echo "== go mod tidy -diff in $dir"
+            if ! go -C "$dir" mod tidy -diff; then
+              bad+=("$dir")
+            fi
+          done
+          if [ "${#bad[@]}" -gt 0 ]; then
+            for dir in "${bad[@]}"; do
+              echo "::error file=$dir/go.mod::go.mod/go.sum in $dir is not tidy (diff above). Fix: run 'go mod tidy' in $dir and commit go.mod and go.sum."
+            done
+            exit 1
+          fi
+
       # go build before go vet: a compile error turns this job red in about a
       # minute instead of after the full vet pass, and vet reuses the build
       # cache this step fills.
