@@ -207,7 +207,10 @@ current verified-compatible state.
 - Role-based access control (RBAC)
 - Group-based permissions
 - Service tokens for CI/CD and automation
+- Kubernetes ServiceAccount authentication — a pod authenticates with its own projected
+  token, no stored Keyorix secret ([guide](docs/k8s-serviceaccount-auth.md))
 - Dynamic secrets — on-demand credential generation with TTL
+  ([PostgreSQL guide](docs/dynamic-secrets-postgresql.md))
 
 **Audit and compliance**
 - Every access logged: who, what, when, from where
@@ -255,12 +258,6 @@ login — need network reachability to that provider; see
 - Secrets never logged or exposed in error messages
 
 Security issues: security@keyorix.com
-
----
-
-## Roadmap
-
-- Kubernetes service account authentication
 
 ---
 
