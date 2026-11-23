@@ -149,6 +149,11 @@ func breakGlassError(err error) error {
 	if aerr, ok := auditUnavailableStatus(err); ok {
 		return aerr
 	}
+	// STORAGE-ERR-CLASS-1: a storage read fault (the revoke's actor read, #4546) is
+	// retryable Unavailable, as REST answers it 503, not Internal.
+	if serr, ok := storageUnavailableStatus(err); ok {
+		return serr
+	}
 	// #3546: a role-scope refusal is the caller's to fix (fixed, client-safe text).
 	if scopeMsg, ok := core.RoleScopeClientMessage(err); ok {
 		return status.Error(codes.InvalidArgument, scopeMsg)

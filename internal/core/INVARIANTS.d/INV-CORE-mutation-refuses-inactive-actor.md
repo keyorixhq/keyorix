@@ -23,6 +23,10 @@
   when the request's transport gate already allowed this read (`gateAllowedRead`, the
   OPT-READPATH-2 memo: that request was authenticated by the transport), so the hot read path
   pays no extra statement. Guard: `TestGetSecretForRead_RefusesInactiveActor`.
+  `ApproveRiskException`, `RevokeBreakGlass` and `CloseAccessReviewCampaign` make the same
+  refusal (#4546). Their core makes no permission decision (the transports gate them), so their
+  authzdiff bindings set `coreGateExcluded` and only `TestCoreRefusesSuspendedActor` reads their
+  core leg. Guard: `TestSuspendedActorRefused_4546` and `TestActorReadFaultRefused_4546`.
   **Not covered**: `CreateSecret`, which takes no acting-user
   ID (only the new secret's `OwnerID` and a `CreatedBy` name) and makes no authorization decision
   in core; `GrantSecretACL`, which makes no authorization decision in core either (the
