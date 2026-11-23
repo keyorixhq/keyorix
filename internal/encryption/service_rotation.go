@@ -35,7 +35,9 @@ const DEKRotationPromotePendingMetadataKey = dekRotationPromotePendingKey
 //
 // The DB transaction is owned here: committed on sweep success, rolled back on
 // any failure. The old DEK remains active if anything fails. This is a
-// write-locking operation — avoid accepting write traffic during the sweep.
+// write-locking operation — avoid accepting write traffic during the sweep:
+// every Encrypt*/Decrypt* on this Service waits from the sweep's start until
+// the Service has swapped to the new DEK (#4654).
 //
 // Returns the completed SweepResult so callers (the rotate CLI) can report every
 // field of it to the operator, not just the subset logged below.
@@ -77,6 +79,22 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 	// otherwise promote the uncommitted DEK.
 	if err := s.clearCompletedRotationMarker(db); err != nil {
 		return nil, fmt.Errorf("clear the redo marker of an earlier DEK rotation: %w", err)
+	}
+
+	// Write gate (#4654, INV-ENCRYPTION-dek-sweep-holds-service-write-lock): hold
+	// s.mu for writing from before the sweep until the Service has swapped to the
+	// new DEK. Encrypt* read the pair (s.encryptionService, key version) under
+	// s.mu.RLock; with only km.mu held across the sweep, a write that waited on
+	// GetKeyVersion resumed after the key manager published the new version but
+	// before the swap, and sealed under the superseded DEK a value labelled with
+	// the new version, which never opened again. Readers wait too (they used to
+	// fail closed on swept rows between the commit and the swap). Deferred, so a
+	// panic in the sweep (or a crash seam) releases it. Lock order: s.mu → km.mu
+	// → flock (keymanager_state.go); nothing under km.mu takes s.mu.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return nil, fmt.Errorf("encryption service not initialized")
 	}
 
 	var sweepResult *SweepResult
@@ -202,8 +220,7 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 		log.Printf("[WARN] DEK rotation completed but failed to clear the redo marker (harmless — recovery will clear it): %v", err)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Still under the s.mu write lock taken before the sweep.
 	dek := s.keyManager.GetDEK()
 	encSvc, err := NewEncryptionService(dek)
 	if err != nil {
