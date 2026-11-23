@@ -80,6 +80,7 @@ func TestSoD_SuppressedByApprovedRiskException(t *testing.T) {
 	assert.GreaterOrEqual(t, p.AccessGovernance.SoDViolations, 1, "an unapproved exception must not suppress anything yet")
 
 	// A different actor approves it — now suppressed.
+	seedActiveActors(t, h.DB, 2) // the approver (#4546: ApproveRiskException refuses an inactive actor)
 	require.NoError(t, h.CoreService.ApproveRiskException(ctx, 2, false, exc.ID))
 	p, err = h.CoreService.GetCompliancePosture(ctx)
 	require.NoError(t, err)

@@ -36,11 +36,12 @@ import (
 // the handler's core call returns 403 Denied. For suspend/expired/PAT cases,
 // humanOnly has no effect (suspension and PAT are checked separately).
 //
-// CAMPAIGN.CLOSE (ID-2, no coreGateExcluded needed):
+// CAMPAIGN.CLOSE (coreGateExcluded since #4546):
 //
-// CloseAccessReviewCampaign has core_refusal:"none" → coreEnforced=false → the
-// core leg is excluded by the existing ID-2 mechanism. No harness change needed.
-// The model is simply roles.assign@project.
+// CloseAccessReviewCampaign refuses an inactive acting account (core_refusal:
+// "typed") but does not re-check roles.assign, so like the four ops above its
+// core leg is excluded from both oracles and checked only by
+// TestCoreRefusesSuspendedActor. The model is simply roles.assign@project.
 //
 // Red/green proofs for all five ops are in plants_test.go.
 func v5ext2Ops() []opSpec {
@@ -127,8 +128,9 @@ func decisionBody(d core.AccessReviewDecision) map[string]any {
 //
 // POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close:
 // freezes the campaign. Router gate: RequireScopedPermission(roles.assign, projectScope).
-// Core: CloseAccessReviewCampaign does NOT enforce a permission gate (core_refusal:none →
-// coreEnforced=false → ID-2). Close uses force=false on a fully-decided campaign so
+// Core: CloseAccessReviewCampaign does NOT enforce a permission gate; since #4546 it
+// refuses an inactive acting account (core_refusal:typed), so its core leg runs with
+// coreGateExcluded for TestCoreRefusesSuspendedActor. Close uses force=false on a fully-decided campaign so
 // no items remain pending, avoiding the force-close-independence check entirely.
 //
 // Both use perProject.campaignProjectID (a minimal project: only u-target).
@@ -161,9 +163,18 @@ func campaignOps() []opSpec {
 		},
 		{
 			name: "campaign.close", row: "CloseAccessReviewCampaign", targets: projTargets,
+			// #4546: core refuses an inactive actor (requireActorActive) but still does
+			// not check roles.assign, so its leg feeds TestCoreRefusesSuspendedActor
+			// only and stays out of both oracles.
+			coreGateExcluded: true,
 			req: func(fx *fixtures, t tgt, _ byte) requirement {
 				pp := fx.proj(byte(t))
 				return requirement{perms: []string{"roles.assign"}, scope: pp.campaignProjectID}
+			},
+			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
+				pp := lg.fx.proj(byte(t))
+				_, err := lg.c.CloseAccessReviewCampaign(ctx, p.userID, p.machineID, pp.campaignProjectID, pp.closeCampaignID, false)
+				return err
 			},
 			rest: func(fx *fixtures, t tgt, _ byte) restReq {
 				pp := fx.proj(byte(t))
