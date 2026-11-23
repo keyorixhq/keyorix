@@ -216,6 +216,7 @@ func TestApproveRiskException_DeniesSelfApproval(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
+	stubActiveActors(store) // the approver is an active account (#4546)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
 	var audited *models.AuditEvent
 	store.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(ev *models.AuditEvent) bool {
@@ -242,6 +243,7 @@ func TestApproveRiskException_DifferentActorSucceeds(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
+	stubActiveActors(store) // the approver is an active account (#4546)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
 	store.On("ApproveRiskExceptionIfPending", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
 		return e.ID == 5 && e.Approved && e.ApprovedBy == 3 && e.ApprovedAt != nil
@@ -265,6 +267,7 @@ func TestApproveRiskException_DeniesMachineActor(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
+	stubActiveActors(store) // the approver is an active account (#4546)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
 	var audited *models.AuditEvent
 	store.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(ev *models.AuditEvent) bool {
@@ -293,6 +296,7 @@ func TestApproveRiskException_LostRaceReturnsError(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
+	stubActiveActors(store) // the approver is an active account (#4546)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
 	store.On("ApproveRiskExceptionIfPending", mock.Anything, mock.Anything).Return(false, nil)
 
@@ -308,6 +312,7 @@ func TestApproveRiskException_RejectsAlreadyApproved(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
 	store := new(MockStorage)
+	stubActiveActors(store) // the approver is an active account (#4546)
 	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, Approved: true, ExpiresAt: now.Add(24 * time.Hour)}, nil)
 
 	c := riskCore(store, now)

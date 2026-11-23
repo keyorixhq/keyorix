@@ -51,6 +51,7 @@ func TestConcurrency_DecideAccessReviewItem_RejectsWhenRacingClose(t *testing.T)
 
 	const reviewers = 16
 	seedActiveActors(t, db, reviewerIDs(100, reviewers)...) // the reviewers must be active accounts (#4159)
+	seedActiveActors(t, db, 1)                              // and the closer (#4546)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 

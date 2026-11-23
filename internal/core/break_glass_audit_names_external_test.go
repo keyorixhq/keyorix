@@ -41,6 +41,7 @@ func TestBreakGlassAudit_NamesTheUser(t *testing.T) {
 	assert.Contains(t, breakGlassAuditDescription(t, h, core.EventBreakGlassActivated),
 		`break-glass: user 10 ("alice") self-granted "project_developer"`)
 
+	seedActiveActors(t, h.DB, 1) // the revoker (#4546: RevokeBreakGlass refuses an inactive actor)
 	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, act.ID))
 	assert.Contains(t, breakGlassAuditDescription(t, h, core.EventBreakGlassRevoked),
 		`(user 10 ("alice"), role "project_developer") early`)
@@ -64,6 +65,7 @@ func TestBreakGlassAudit_DeletedUserFallsBackToTheID(t *testing.T) {
 
 	require.NoError(t, h.DB.Delete(&models.User{}, 10).Error, "soft-delete the user")
 
+	seedActiveActors(t, h.DB, 1) // the revoker (#4546)
 	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, 0, proj, act.ID), "an unreadable user must not fail the revoke")
 	desc := breakGlassAuditDescription(t, h, core.EventBreakGlassRevoked)
 	assert.Contains(t, desc, `(user 10, role "project_developer") early`)

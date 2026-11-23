@@ -112,3 +112,26 @@ func TestBreakGlass_ZeroProjectIDRejectedBeforeAuthz(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err),
 		"project_id: 0 must be rejected before the (wrong) global-scope authorization check runs")
 }
+
+// TestBreakGlass_RevokeRefusesInactiveActor: core refuses an acting account that is
+// not active (#4546) with a typed refusal, answered PermissionDenied, and the
+// activation stays active.
+func TestBreakGlass_RevokeRefusesInactiveActor(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	t.Cleanup(h.Cleanup)
+	require.NoError(t, h.DB.AutoMigrate(&models.BreakGlassActivation{}, &models.AuditEvent{}))
+	h.AssignUserRole(t, 1, 1, nil) // super_admin, so the scoped roles.assign gate passes
+	expires := time.Now().UTC().Add(time.Hour)
+	act := &models.BreakGlassActivation{ProjectID: 1, UserID: 2, RoleID: 3, RoleName: "emergency",
+		State: "active", Justification: "seeded", CreatedAt: time.Now().UTC(), ExpiresAt: &expires}
+	require.NoError(t, h.DB.Create(act).Error)
+	h.EnsureActiveUser(t, 1)
+	require.NoError(t, h.DB.Model(&models.User{}).Where("id = ?", 1).Update("is_active", false).Error)
+	svc := NewBreakGlassService(h.CoreService)
+
+	_, err := svc.RevokeBreakGlass(bgCtx(), &pb.RevokeBreakGlassRequest{ProjectId: 1, ActivationId: uint32(act.ID)})
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "%v", err)
+	var got models.BreakGlassActivation
+	require.NoError(t, h.DB.First(&got, act.ID).Error)
+	assert.Equal(t, "active", got.State, "a refused revoke must leave the activation active")
+}

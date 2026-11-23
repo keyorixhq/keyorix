@@ -203,7 +203,8 @@ var plants = append([]plant{
 	{
 		// V8b: removes the risk-exception APPROVE router gate (RequirePermission
 		// system.write@global). core.ApproveRiskException performs no permission check
-		// (matrix core_refusal:"none"; it enforces only the dual-control business rules —
+		// (its core leg is coreGateExcluded; beyond the inactive-actor refusal of #4546
+		// it enforces only the dual-control business rules —
 		// pending-state, human-only, creator!=approver, SoD re-validation), none of which
 		// bite for the fixture's probed principals (the exception is pending in every
 		// fresh leg, created by a dedicated non-probed user, and machines are model-denied
@@ -244,7 +245,7 @@ var plants = append([]plant{
 	{
 		// V5EXT: removes the break-glass REVOKE REST router gate (RequireScopedPermission
 		// roles.assign@project), keeping the gRPC interceptor's identical gate. core.RevokeBreakGlass
-		// performs no permission check (matrix core_refusal:"none"), so with the REST gate gone
+		// performs no permission check (core leg coreGateExcluded), so with the REST gate gone
 		// REST lets any authenticated principal revoke an activation, while gRPC still refuses
 		// the same principal: REST allows what gRPC and the roles.assign@project model rule deny —
 		// a transport-disagreement no waiver absorbs.
@@ -300,8 +301,8 @@ var plants = append([]plant{
 	{
 		// V5EXT2: removes the campaign CLOSE REST router gate
 		// (RequireScopedPermission roles.assign@project).
-		// core.CloseAccessReviewCampaign has core_refusal:"none" (ID-2: core
-		// enforces no permission gate of its own). With the router gate gone,
+		// core.CloseAccessReviewCampaign enforces no permission gate of its own
+		// (core leg coreGateExcluded). With the router gate gone,
 		// REST lets any authenticated principal close a fully-decided campaign,
 		// over-allowing principals the roles.assign@campaignProject model rule
 		// denies — a clean router-gate differential.
