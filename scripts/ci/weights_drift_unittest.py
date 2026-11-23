@@ -43,9 +43,28 @@ OLD_WEIGHTS = os.path.join(DATA, "weights-at-3168ca1e8.tsv")
 MAIN_WEIGHTS = os.path.join(DATA, "weights-main-2026-11-09.tsv")
 
 
+# The two measuring runs were made when internal/core had 4 shards; scripts/ci-test-legs.sh
+# has 5 since CI-LEG-SPLIT-1 (2026-11-22). Their per-test timings and `leg` columns are
+# recorded facts, so the calibration replays them under the layout they ran with. Only
+# the shard count is pinned: the packer and the weights stay the repo's own.
+MEASURING_RUN_SHARDS = {"internal/core": 4}
+
+
 def run(timings, weights):
     rows = cwd.read_timings(timings)
-    return cwd.analyse(rows, weights)
+    live = layout.sharded_packages
+
+    def at_measuring_run():
+        pk = live()
+        for pkg, shards in MEASURING_RUN_SHARDS.items():
+            pk[pkg] = dict(pk[pkg], shards=shards)
+        return pk
+
+    layout.sharded_packages = at_measuring_run
+    try:
+        return cwd.analyse(rows, weights)
+    finally:
+        layout.sharded_packages = live
 
 
 def rule_a(findings):
@@ -60,7 +79,7 @@ class LayoutTest(unittest.TestCase):
     def test_layout_comes_from_sharded_legs(self):
         pk = layout.sharded_packages()
         self.assertEqual(pk["server/faultops"]["shards"], 5)
-        self.assertEqual(pk["internal/core"]["shards"], 4)
+        self.assertEqual(pk["internal/core"]["shards"], 5)
         self.assertEqual(pk["server/faultops"]["prefix"], "faultops")
         self.assertNotIn("internal/storage/store", pk, "a one-shard row is not a split")
 

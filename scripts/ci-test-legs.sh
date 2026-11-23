@@ -382,16 +382,28 @@ http_pkg() {
 # CI-ROUND-CUT-NOV-1 (2026-11-22): authzdiff new, 2 shards (server/authzdiff out of
 # root-4, see authzdiff_pkg): root-4's `go test` step was 1585 s median and 2545 s at
 # the worst over 20 merge_group runs, 1332 s of it one package.
+# CI-LEG-SPLIT-1 (2026-11-22): admin 2 -> 4, encryption 2 -> 3. With root-4 down
+# to 221-921 s after authzdiff left it, the slowest legs of 22 merge_group runs
+# were admin-1/2 (`go test` step 1337-1776 s; admin runs in every round, the
+# selection picks server/admin for nearly any change) and encryption-2
+# (1274-1408 s). Each leg's time is bimodal: on an Azure runner the test binary
+# takes ~1.3x as long as on an AWS one (admin-2 1625 s vs admin-1 1247 s on run
+# 45029561280, similar weight), so the shard counts are chosen for the slow class:
+# about 15 min of `go test` step there. Per-shard weights: admin 1185 -> 593,
+# encryption 1262 -> 842.
+# Same session, core 4 -> 5: with admin and encryption split, core-4 (1121-1525 s
+# on the full rounds, core-1..3 860-1379 s) is the next slowest leg of a full
+# round. Per-shard weight 1319 -> 1055; timeouts stay 3300.
 # This table, ci.yml's matrix and assert_matrix_consistent move together.
 sharded_legs() {
   cat <<'EOF'
-core|core_pkgs|4|-
+core|core_pkgs|5|-
 server|server_pkg|2|-
 http|http_pkg|6|-
 handlers|handlers_pkg|2|-
-encryption|encryption_pkgs|2|-
+encryption|encryption_pkgs|3|-
 faultops|faultops_pkgs|5|-
-admin|admin_pkg|2|-
+admin|admin_pkg|4|-
 grpc|grpc_pkg|3|-
 authzdiff|authzdiff_pkg|2|-
 storage-store|storage_store_pkgs|1|-
