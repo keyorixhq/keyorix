@@ -35,6 +35,10 @@ updates:
   # blocks on the slowest one.
   - package-ecosystem: gomod
     directory: /
+    # Indirect dependencies are skipped by default, so a stale transitive pin
+    # (e.g. go-toml/v2 via viper) never got a bump PR. They join the same groups.
+    allow:
+      - dependency-type: all
     schedule:
       interval: monthly
     cooldown:
@@ -46,6 +50,8 @@ updates:
           - "patch"
   - package-ecosystem: gomod
     directory: /operator
+    allow:
+      - dependency-type: all
     schedule:
       interval: monthly
     cooldown:
@@ -60,6 +66,8 @@ updates:
   # so it needs the job's red/green canary to pass, same as any ruleset edit.
   - package-ecosystem: gomod
     directory: /devtools/vacuum
+    allow:
+      - dependency-type: all
     schedule:
       interval: monthly
     cooldown:
@@ -78,6 +86,8 @@ updates:
   # entries exist to remove.
   - package-ecosystem: gomod
     directory: /migrate
+    allow:
+      - dependency-type: all
     schedule:
       interval: weekly
     cooldown:
@@ -89,6 +99,8 @@ updates:
           - "patch"
   - package-ecosystem: gomod
     directory: /cli
+    allow:
+      - dependency-type: all
     schedule:
       interval: weekly
     cooldown:
@@ -100,6 +112,8 @@ updates:
           - "patch"
   - package-ecosystem: gomod
     directory: /fuzzkit
+    allow:
+      - dependency-type: all
     schedule:
       interval: weekly
     cooldown:
