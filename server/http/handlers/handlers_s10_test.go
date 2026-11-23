@@ -296,16 +296,20 @@ func TestResumeProjectSecrets_BadID_S10(t *testing.T) {
 // ── SuspendProjectSecrets / ResumeProjectSecrets: happy path ─────────────────
 
 func TestSuspendProjectSecrets_HappyPath_S10(t *testing.T) {
-	cs := newHandlerCoreS4(t)
+	// A fresh core: the project grant below must not leak into the shared S4 core.
+	cs := freshCoreS12(t)
 	ensureActiveActorUser(t, cs.Storage(), 1) // the withUserCtx user acts through core (#4159)
+	proj, err := cs.CreateProject(context.Background(), "s10suspend", "")
+	require.NoError(t, err)
+	grantProjectPermissions(t, cs, 1, proj.ID, "secrets.write") // the route gate, which core decides too (#4161)
 	h, err := NewSecretHandler(cs)
 	require.NoError(t, err)
 	body := `{"reason":"s10 test"}`
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/9999/secrets/suspend-all",
+	r := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/secrets/suspend-all", proj.ID),
 		strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	r = withUserCtx(r)
-	r = withChiParam(r, "id", "9999")
+	r = withChiParam(r, "id", fmt.Sprintf("%d", proj.ID))
 	w := httptest.NewRecorder()
 
 	h.SuspendProjectSecrets(w, r)

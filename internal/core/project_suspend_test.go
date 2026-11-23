@@ -110,6 +110,9 @@ func TestSuspendResumeProjectSecrets_PerSecretAuthzReCheck(t *testing.T) {
 		&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{},
 		&models.SecretAccessLog{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
 		&models.GroupRole{}, &models.SecretACL{}, &models.User{},
+		// The project gate reads the actor's roles: with the tables present the
+		// refusal is a denial, not a read fault.
+		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()
@@ -166,27 +169,26 @@ func TestSuspendResumeProjectSecrets_PerSecretAuthzReCheck(t *testing.T) {
 	_, err = c.EnforceSecretWritePermission(ctx, writeSharedID, actorID)
 	require.Error(t, err, "precondition: a write share is not suspend/resume authority")
 
-	t.Run("suspend-all only suspends the secret the caller has write authority over", func(t *testing.T) {
+	t.Run("suspend-all refuses a caller whose only write authority is per secret", func(t *testing.T) {
+		// #4161 row 25: the per-secret ACL write passes the re-check on "shared", but
+		// the caller holds no secrets.write at the project (the route gate), so core
+		// refuses the whole request and suspends nothing, "shared" included.
 		n, err := c.SuspendProjectSecrets(ctx, p.ID, actorID, "breach")
-		require.NoError(t, err)
-		assert.Equal(t, 1, n, "only the shared secret is suspended")
+		require.ErrorIs(t, err, ErrPermissionDenied)
+		assert.Zero(t, n)
 
-		shared, err := c.storage.GetSecret(ctx, sharedID)
-		require.NoError(t, err)
-		assert.Equal(t, SecretStatusSuspended, shared.Status)
-
-		unshared, err := c.storage.GetSecret(ctx, unsharedID)
-		require.NoError(t, err)
-		assert.Equal(t, SecretStatusActive, unshared.Status, "denied secret must be left untouched, not silently suspended")
-
-		writeShared, err := c.storage.GetSecret(ctx, writeSharedID)
-		require.NoError(t, err)
-		assert.Equal(t, SecretStatusActive, writeShared.Status, "a write share must not let the recipient suspend it")
+		for _, id := range []uint{sharedID, unsharedID, writeSharedID} {
+			s, err := c.storage.GetSecret(ctx, id)
+			require.NoError(t, err)
+			assert.Equal(t, SecretStatusActive, s.Status, "%s: nothing is suspended", s.Name)
+		}
 	})
 
 	t.Run("resume-all only resumes the secret the caller has write authority over", func(t *testing.T) {
-		// Suspend the others directly (bypassing the bulk op) so all start suspended.
-		_, err := c.SuspendSecret(ctx, unsharedID, otherOwnerID, "setup")
+		// Suspend every secret directly (bypassing the bulk op) so all start suspended.
+		_, err := c.SuspendSecret(ctx, sharedID, otherOwnerID, "setup")
+		require.NoError(t, err)
+		_, err = c.SuspendSecret(ctx, unsharedID, otherOwnerID, "setup")
 		require.NoError(t, err)
 		_, err = c.SuspendSecret(ctx, writeSharedID, otherOwnerID, "incident freeze")
 		require.NoError(t, err)

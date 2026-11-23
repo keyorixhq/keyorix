@@ -61,7 +61,12 @@ func TestOwnerWithoutSecretsWrite_BulkOpsSkipTheirSecrets(t *testing.T) {
 			report, err := c.BulkRenameSecrets(ctx, proj.ID, []SecretRename{{ID: active.ID, NewName: "owned-renamed"}}, false, "owner", owner.ID, "", "")
 			require.NoError(t, err)
 			suspendedN, err := c.SuspendProjectSecrets(ctx, proj.ID, owner.ID, "owner gate")
-			require.NoError(t, err)
+			if tc.allowed {
+				require.NoError(t, err)
+			} else {
+				// The viewer-owner is refused at core's project gate (#4161 row 25).
+				require.ErrorIs(t, err, ErrPermissionDenied)
+			}
 			resumedN, err := c.ResumeProjectSecrets(ctx, proj.ID, owner.ID)
 			require.NoError(t, err)
 			extendedN, _, err := c.ExtendExpiringSecrets(ctx, proj.ID, 7, 30, "owner", owner.ID)
