@@ -1131,7 +1131,7 @@ jobs:
     steps:
       - name: Proven on the PR head (merge_group tree proof)
         if: needs.changes.outputs.proven_preflight == 'true'
-        run: echo "preflight (go build, go vet, go mod verify) already passed on the byte-identical tree of the PR head; skipping the work."
+        run: echo "preflight (go build, go vet, go mod verify, go mod tidy -diff) already passed on the byte-identical tree of the PR head; skipping the work."
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.proven_preflight != 'true'
@@ -1159,6 +1159,52 @@ jobs:
       - name: go mod verify
         if: needs.changes.outputs.proven_preflight != 'true'
         run: go mod verify
+
+      # CI-TIDY-1: go mod verify only checks the module cache against go.sum;
+      # it does not notice a stale `// indirect` marker or a missing/extra
+      # require. That drift stayed invisible on main until Dependabot's own
+      # tidy fixed it and turned the egress guard red on #4651/#4652. Every
+      # module in the repo is checked on its own (GOWORK=off, as `go mod tidy`
+      # is run by hand and by Dependabot). Needs only the module proxy the
+      # build already uses; `-diff` never writes.
+      - name: go mod tidy -diff
+        if: needs.changes.outputs.proven_preflight != 'true'
+        env:
+          GOWORK: 'off'
+          GOFLAGS: -mod=readonly
+        run: |
+          mapfile -t mods < <(git ls-files '*/go.mod' go.mod)
+          # The process substitution's exit status is lost: fail closed if the
+          # listing came back empty or without the root module.
+          if [ "${#mods[@]}" -eq 0 ] || ! printf '%s\n' "${mods[@]}" | grep -qx go.mod; then
+            echo "::error::go mod tidy -diff: git ls-files found no modules, or not the root go.mod"
+            exit 1
+          fi
+          bad=()
+          for gomod in "${mods[@]}"; do
+            dir=$(dirname "$gomod")
+            # replace => ../../../../../../../keyorix-sdks/go: a sibling repo
+            # that a plain checkout does not have, so it cannot be tidied here.
+            if [ "$dir" = scripts/e2e/sdkdiff/drivers/go ]; then
+              # Guard the skip's premise: once the replace is gone, tidy it.
+              if ! grep -q '=> .*/keyorix-sdks/go' "$gomod"; then
+                echo "::error file=$gomod::the tidy skip for $dir is stale: its keyorix-sdks replace is gone. Remove the skip in ci.yml."
+                exit 1
+              fi
+              echo "SKIP $dir: replace directive points at the sibling keyorix-sdks checkout"
+              continue
+            fi
+            echo "== go mod tidy -diff in $dir"
+            if ! go -C "$dir" mod tidy -diff; then
+              bad+=("$dir")
+            fi
+          done
+          if [ "${#bad[@]}" -gt 0 ]; then
+            for dir in "${bad[@]}"; do
+              echo "::error file=$dir/go.mod::go.mod/go.sum in $dir is not tidy (diff above). Fix: run 'go mod tidy' in $dir and commit go.mod and go.sum."
+            done
+            exit 1
+          fi
 
       # go build before go vet: a compile error turns this job red in about a
       # minute instead of after the full vet pass, and vet reuses the build
@@ -3583,6 +3629,15 @@ jobs:
         run: |
           go vet ./...
           go build ./...
+
+      # CI-TIDY-1: preflight (which runs the repo-wide tidy check) is skipped
+      # when a PR is operator_only, so operator/go.mod drift would land unseen
+      # and turn every later PR's preflight red. Check it here instead.
+      - name: go mod tidy -diff
+        env:
+          GOFLAGS: -mod=readonly
+        run: |
+          go mod tidy -diff || { echo "::error file=operator/go.mod::go.mod/go.sum in operator is not tidy (diff above). Fix: run 'go mod tidy' in operator and commit go.mod and go.sum."; exit 1; }
 
       - name: go test
         run: go test -race -timeout 600s ./...
