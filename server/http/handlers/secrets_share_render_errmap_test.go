@@ -93,6 +93,14 @@ func TestShareSecret_RefusalsAnswerTheirStatus(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "share-target", UsernameFolded: "share-target",
 		Email: "share-target@example.com", EmailFolded: "share-target@example.com", AccountState: "active"}).Error)
 	require.NoError(t, db.Create(&models.SecretNode{ID: 101, Name: "share-me", IsSecret: true, OwnerID: 1, ProjectID: 1}).Error)
+	// A recipient deleted after being granted a role: the soft delete leaves the user_roles
+	// row, so the project-membership check still sees a grant while the user row is gone
+	// (#4641: the nightly strict fuzz found this as an undeclared 500).
+	gone := &models.User{ID: 3, Username: "share-gone", UsernameFolded: "share-gone",
+		Email: "share-gone@example.com", EmailFolded: "share-gone@example.com", AccountState: "active"}
+	require.NoError(t, db.Create(gone).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 1, ProjectID: 1}).Error)
+	require.NoError(t, db.Delete(gone).Error)
 	h, err := NewShareHandler(cs)
 	require.NoError(t, err)
 
@@ -106,6 +114,7 @@ func TestShareSecret_RefusalsAnswerTheirStatus(t *testing.T) {
 		{"duplicate share", "101", `{"recipient_id":2,"permission":"read"}`, http.StatusCreated},
 		{"self-share", "101", `{"recipient_id":1,"permission":"read"}`, http.StatusBadRequest},
 		{"unknown recipient", "101", `{"recipient_id":99999,"permission":"read"}`, http.StatusForbidden},
+		{"deleted recipient with a surviving grant", "101", `{"recipient_id":3,"permission":"read"}`, http.StatusForbidden},
 		{"unknown group", "101", `{"recipient_id":99999,"is_group":true,"permission":"read"}`, http.StatusForbidden},
 		{"absent secret", "987654", `{"recipient_id":2,"permission":"read"}`, http.StatusNotFound},
 		{"expiry in the past", "101", `{"recipient_id":2,"permission":"read","expires_at":"2001-01-01T00:00:00Z"}`, http.StatusBadRequest},
