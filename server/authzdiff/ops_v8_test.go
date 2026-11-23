@@ -12,7 +12,9 @@ import (
 //
 // Both ops bound here are PURE ROUTER-GATE differentials: the matrix marks their
 // core row `core_refusal:"none"` (coreEnforced==false), so the core leg is
-// recorded but excluded from both oracles (ID-2, transport-enforced), and Oracle 2
+// recorded but excluded from both oracles (ID-2, transport-enforced; for
+// riskexception.approve, `typed` since #4546 for its inactive-actor refusal,
+// coreGateExcluded does the same), and Oracle 2
 // checks the REST router's scoped-permission gate against the independent model —
 // exactly the shape the existing `router-gate-removed` plant exercises. The
 // business state machines these endpoints also run (campaign lifecycle / review
@@ -120,7 +122,8 @@ func v8RiskExceptionOps() []opSpec {
 // POST /api/v1/risk-exceptions/{id}/approve approves a pending risk exception.
 // The router gates it with RequirePermission(permSystemWrite) at GLOBAL scope
 // (server/http/router.go:1265), the SAME gate as create. core.ApproveRiskException
-// performs no permission check (matrix row `core_refusal:"none"`); it enforces
+// performs no permission check; it refuses an inactive acting account (#4546, so its
+// matrix row is `core_refusal:"typed"`, coreGateExcluded) and otherwise enforces
 // only the dual-control business rules (break_glass of risk governance, #170/#1524):
 //   - the exception must be pending (not revoked / expired / already approved);
 //   - a MACHINE credential can never approve (human-only dual control);
@@ -150,6 +153,10 @@ func v8RiskExceptionApproveOps() []opSpec {
 	return []opSpec{
 		{
 			name: "riskexception.approve", row: "ApproveRiskException", targets: []tgt{tGlobal},
+			// #4546: core refuses an inactive actor (requireActorActive) but still does
+			// not check system.write, so its leg feeds TestCoreRefusesSuspendedActor
+			// only (the suspended fixture admin) and stays out of both oracles.
+			coreGateExcluded: true,
 			req: func(*fixtures, tgt, byte) requirement {
 				return requirement{globalPerms: []string{"system.write"}}
 			},

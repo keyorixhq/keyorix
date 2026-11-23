@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"time"
@@ -94,6 +95,11 @@ func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareS
 		})
 		return nil
 	}); err != nil {
+		// A group deleted between the scope check and the write: the same answer as a
+		// group outside the project (#4641).
+		if errors.Is(err, storage.ErrGroupNotFound) {
+			return nil, shareRefusal(ErrShareGroupNotInProject)
+		}
 		return nil, err
 	}
 

@@ -93,7 +93,9 @@ func v5extRiskExceptionOps() []opSpec {
 // at BOTH transports — the REST router (RequireScopedPermission(permRolesAssign,
 // projectScope), router.go:590) and the gRPC interceptor (authorizeScoped
 // "roles.assign", break_glass_service.go). core.RevokeBreakGlass performs NO
-// permission check (matrix core_refusal:"none"): it validates the activation
+// permission check (since #4546 it refuses an inactive acting account, so its
+// matrix row is core_refusal:"typed", and coreGateExcluded keeps the core leg out
+// of the gate oracles): it validates the activation
 // exists, is not already revoked, and runs the last-project-admin guard — none of
 // which varies by probed principal on a freshly-cloned active activation whose
 // emergency role (project_developer, held by a non-probed member) is not an admin
@@ -111,7 +113,11 @@ func v5extBreakGlassOps() []opSpec {
 	return []opSpec{
 		{
 			name: "breakglass.revoke", row: "RevokeBreakGlass", targets: projTargets,
-			req: atP("roles.assign"),
+			// #4546: core refuses an inactive actor (requireActorActive) but still does
+			// not check roles.assign, so its leg feeds TestCoreRefusesSuspendedActor
+			// only and stays out of both oracles.
+			coreGateExcluded: true,
+			req:              atP("roles.assign"),
 			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
 				pp := lg.fx.proj(byte(t))
 				return lg.c.RevokeBreakGlass(ctx, p.userID, p.machineID, pp.projectID, pp.breakGlassActivationID)

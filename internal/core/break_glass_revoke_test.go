@@ -40,6 +40,7 @@ func TestRevokeBreakGlass_GenuineRoleRemovalFailureAbortsRevoke(t *testing.T) {
 	c := &KeyorixCore{storage: mockStorage, now: func() time.Time { return now }}
 	ctx := context.Background()
 
+	stubActiveActors(mockStorage) // the revoker is an active account (#4546)
 	activation := newTestActivation()
 	mockStorage.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(activation, nil)
 
@@ -76,6 +77,7 @@ func TestRevokeBreakGlass_AlreadyGoneRoleRemovalIsNotAFailure(t *testing.T) {
 	c := &KeyorixCore{storage: mockStorage, now: func() time.Time { return now }}
 	ctx := context.Background()
 
+	stubActiveActors(mockStorage) // the revoker is an active account (#4546)
 	activation := newTestActivation()
 	mockStorage.On("GetBreakGlassActivation", mock.Anything, uint(7)).Return(activation, nil)
 	// FIX-2: see the identical stubs' comment in
