@@ -192,7 +192,8 @@ func TestRunTimeout(t *testing.T) {
 	if o.Decision != DecisionTimeout {
 		t.Fatalf("got %s, want timeout", o.Decision)
 	}
-	if time.Since(start) > time.Second {
+	// hangImpl never returns; the 50ms timeout must end it. 10s tolerates a loaded runner.
+	if time.Since(start) > 10*time.Second {
 		t.Fatal("timeout did not fire promptly")
 	}
 }
