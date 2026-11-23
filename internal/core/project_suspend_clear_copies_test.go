@@ -32,6 +32,14 @@ type projectSuspendWorld struct {
 
 func newProjectSuspendWorld(t *testing.T) *projectSuspendWorld {
 	t.Helper()
+	return newProjectSuspendWorldAt(t, false)
+}
+
+// newProjectSuspendWorldAt builds the world; with envOnly the acting user holds
+// secrets.write at the fixture environment only, not at the project, so the
+// project gate of SuspendProjectSecretsWithOptions refuses them (#4161 row 25).
+func newProjectSuspendWorldAt(t *testing.T, envOnly bool) *projectSuspendWorld {
+	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -50,10 +58,15 @@ func newProjectSuspendWorld(t *testing.T) *projectSuspendWorld {
 	require.NoError(t, err)
 	// Actor 1 is a live project member and owns the secrets it creates.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: p.ID}).Error)
-	// The owner also holds the route's gate (CORE-AUTHZ-RACE-NOV-1 item 2) — at THIS
-	// environment only, so a secret the fixture puts in another environment stays
-	// outside the actor's authority (the denied-caller case below).
-	grantSecretsWriteAt(t, db, 1, Scope{ProjectID: p.ID, EnvironmentID: e.ID})
+	// The owner also holds the route's gate, secrets.write at the project, which core
+	// decides too (CORE-AUTHZ-RACE-NOV-1 item 2, #4161 row 25). envOnly grants it at
+	// THIS environment only: the per-secret re-check would pass there, the project
+	// gate does not (the denied-caller case below).
+	scope := Scope{ProjectID: p.ID}
+	if envOnly {
+		scope.EnvironmentID = e.ID
+	}
+	grantSecretsWriteAt(t, db, 1, scope)
 	ensureActiveActor(t, c.storage, 1) // the acting user must be an active account (#4159)
 	return &projectSuspendWorld{c: c, db: db, projectID: p.ID, envID: e.ID}
 }
@@ -67,21 +80,6 @@ func (w *projectSuspendWorld) secret(t *testing.T, name string, owner uint, stat
 	require.NoError(t, err)
 	_, err = w.c.storage.CreateSecretVersion(context.Background(), &models.SecretVersion{
 		SecretNodeID: s.ID, VersionNumber: 1, EncryptedValue: []byte("v"),
-	})
-	require.NoError(t, err)
-	return s.ID
-}
-
-// secretInOtherEnv is secret() in a second environment of the project, which the
-// acting user holds no secrets.write at (see newProjectSuspendWorld): an active
-// secret owned by someone else there is outside their authority.
-func (w *projectSuspendWorld) secretInOtherEnv(t *testing.T, name string, owner uint) uint {
-	t.Helper()
-	e, err := w.c.storage.CreateEnvironment(context.Background(), &models.Environment{Name: "staging-" + name, ProjectID: w.projectID})
-	require.NoError(t, err)
-	s, err := w.c.storage.CreateSecret(context.Background(), &models.SecretNode{
-		Name: name, ProjectID: w.projectID, EnvironmentID: e.ID, Type: "password", OwnerID: owner, IsSecret: true,
-		Status: SecretStatusActive, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	})
 	require.NoError(t, err)
 	return s.ID
@@ -184,32 +182,21 @@ func TestSuspendProjectSecrets_ClearSyncedCopies(t *testing.T) {
 		assert.False(t, suspendedRefusal(t, w.c, a).ClearSyncedCopies, "a later plain suspension must not inherit the old choice")
 	})
 
-	t.Run("a caller without write authority over a secret neither suspends nor marks it", func(t *testing.T) {
-		w := newProjectSuspendWorld(t)
+	t.Run("a caller without secrets.write at the project neither suspends nor marks anything", func(t *testing.T) {
+		// secrets.write at one environment passes the per-secret re-check on the
+		// secret there but not the project gate (#4161 row 25): the whole request is
+		// refused before any secret is read, so there is no effect and no bulk row.
+		w := newProjectSuspendWorldAt(t, true)
 		mine := w.secret(t, "mine", 1, SecretStatusActive, false)
-		theirs := w.secretInOtherEnv(t, "theirs", 99) // owned by someone else, in an environment actor 1 holds no write at; no share/ACL
 
 		n, err := w.c.SuspendProjectSecretsWithOptions(ctx, w.projectID, 1, "", SuspendOptions{ClearSyncedCopies: true})
-		require.NoError(t, err)
-		assert.Equal(t, 1, n)
-		assert.True(t, w.stored(t, mine).SuspendClearSyncedCopies)
-		other := w.stored(t, theirs)
-		assert.Equal(t, SecretStatusActive, other.Status, "denied secret left untouched")
-		assert.False(t, other.SuspendClearSyncedCopies, "and unmarked")
-
-		bulk := w.events(t, "secret.bulk_suspend_attempted")
-		require.Len(t, bulk, 1)
-		assert.Contains(t, bulk[0].Description, "1 secret(s) targeted", "the count is of secrets the actor may actually affect")
-
-		// An actor with no authority over anything: nothing happens, the attempt is still on record.
-		w2 := newProjectSuspendWorld(t)
-		only := w2.secretInOtherEnv(t, "only", 99)
-		n, err = w2.c.SuspendProjectSecretsWithOptions(ctx, w2.projectID, 1, "", SuspendOptions{ClearSyncedCopies: true})
-		require.NoError(t, err)
+		require.ErrorIs(t, err, ErrPermissionDenied)
 		assert.Zero(t, n)
-		assert.Equal(t, SecretStatusActive, w2.stored(t, only).Status)
-		assert.False(t, w2.stored(t, only).SuspendClearSyncedCopies)
-		require.Len(t, w2.events(t, "secret.bulk_suspend_attempted"), 1)
+		s := w.stored(t, mine)
+		assert.Equal(t, SecretStatusActive, s.Status, "nothing suspended")
+		assert.False(t, s.SuspendClearSyncedCopies, "and nothing marked")
+		assert.Empty(t, w.events(t, "secret.bulk_suspend_attempted"))
+		assert.Empty(t, w.events(t, EventSecretSuspended))
 	})
 
 	t.Run("validates ids", func(t *testing.T) {

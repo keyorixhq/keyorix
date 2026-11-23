@@ -116,8 +116,8 @@ var plants = append([]plant{
 		// "core allows, every present transport denies, the model denies". Until
 		// #4161 that shape was the known-04 waiver and this plant could only
 		// prove the harness RECORDED it (240 known-04 cases planted, 0 clean, at
-		// introduction). known-04 is now narrowed to the one owner-pass op still
-		// open, bulk.suspend (partition_test.go), so the same core-only over-allow is "unexplained"
+		// introduction). known-04 is now removed (its last op, bulk.suspend, got
+		// its core project gate), so the same core-only over-allow is "unexplained"
 		// and this plant proves a strict sweep FAILS on a dropped core gate while
 		// both transports still gate the op — the defence-in-depth regression the
 		// partition used to be blind to.
@@ -227,9 +227,9 @@ var plants = append([]plant{
 		// but NO admin role — which passes the router but the model's globalAdminRole rule
 		// denies — is over-allowed on BOTH the core leg and the REST leg (REST relies on
 		// core for the real decision): a transport-allows-over-model-denies case no waiver
-		// absorbs. Principals WITHOUT system.write stay refused by the router (core-only
-		// over-allow → known-04), so the unexplained cases are exactly the system.write
-		// holders that are not admin-tier.
+		// absorbs. Principals WITHOUT system.write stay refused by the router (a core-only
+		// over-allow, "unexplained" too since known-04 was removed), so the unexplained
+		// cases include at least the system.write holders that are not admin-tier.
 		name: "riskexception-delete-core-gate-removed",
 		file: "internal/core/risk_exceptions.go",
 		anchor: "\tif actorID != e.CreatedBy && !isAdminTier {\n" +
