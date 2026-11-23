@@ -48,8 +48,10 @@ func TestSCRAMNotSelectedWithoutTLS(t *testing.T) {
 	}()
 	select {
 	case r := <-done:
-		if r.took > 100*time.Millisecond {
-			t.Errorf("send against a relay announcing i=2147483647 took %v, want under 100ms", r.took)
+		// Refusing is instant; deriving the key takes minutes. 3s sits far from both
+		// so a loaded runner cannot trip it.
+		if r.took > 3*time.Second {
+			t.Errorf("send against a relay announcing i=2147483647 took %v, want under 3s", r.took)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("still deriving a SCRAM key 5s after a relay announced i=2147483647 over a connection without TLS")
