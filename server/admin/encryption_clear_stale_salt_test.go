@@ -7,6 +7,7 @@ package admin
 // checks dek.key.pending (when planted) is byte-identical afterwards.
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -43,9 +44,7 @@ func keyFilesSnapshot(t *testing.T, planted map[string][]byte) map[string][]byte
 		require.NoError(t, err)
 		out[name] = data
 	}
-	for name, data := range planted {
-		out[name] = data
-	}
+	maps.Copy(out, planted)
 	return out
 }
 
