@@ -30,9 +30,11 @@
 //     (a file, or a directory prefix ending in "/"), whose class must exist in
 //     the table of docs/security/egress-inventory.md. Rows that cover no site,
 //     and inventory classes with no row, fail too, so neither file can drift.
-//   - The lists of call forms are themselves checked against go.mod:
+//   - The lists of call forms are themselves checked against the dependencies:
 //     TestEgressEveryDirectDependencyIsClassified requires every direct dependency
-//     of every module in the repository to be classified in dependencyKinds as
+//     of every module in the repository (a module some .go file, test files
+//     included, imports; the "// indirect" marker of go.mod is not trusted, it is
+//     only as fresh as the last go mod tidy) to be classified in dependencyKinds as
 //     "client" (and then recognised by the scanner) or "local: <reason>". The first
 //     version of clientImports missed the MongoDB driver; this is what would have
 //     caught it.
@@ -960,9 +962,15 @@ var (
 	requireSingleRe = regexp.MustCompile(`^require\s+(\S+)\s+v\S+(\s*//.*)?$`)
 )
 
-// directRequires returns the module paths a go.mod requires without "// indirect".
-func directRequires(goMod string) []string {
-	var out []string
+// requireEntry is one line of a go.mod require directive.
+type requireEntry struct {
+	Path     string
+	Indirect bool // the "// indirect" marker: a hint written by go mod tidy, not a fact
+}
+
+// requireEntries returns every module a go.mod requires, with its marker.
+func requireEntries(goMod string) []requireEntry {
+	var out []requireEntry
 	inBlock := false
 	for line := range strings.SplitSeq(goMod, "\n") {
 		line = strings.TrimRight(line, " \t\r")
@@ -972,16 +980,97 @@ func directRequires(goMod string) []string {
 		case inBlock && line == ")":
 			inBlock = false
 		case inBlock:
-			if m := requireLineRe.FindStringSubmatch(line); m != nil && !strings.Contains(m[2], "indirect") {
-				out = append(out, m[1])
+			if m := requireLineRe.FindStringSubmatch(line); m != nil {
+				out = append(out, requireEntry{m[1], strings.Contains(m[2], "indirect")})
 			}
 		default:
-			if m := requireSingleRe.FindStringSubmatch(line); m != nil && !strings.Contains(m[2], "indirect") {
-				out = append(out, m[1])
+			if m := requireSingleRe.FindStringSubmatch(line); m != nil {
+				out = append(out, requireEntry{m[1], strings.Contains(m[2], "indirect")})
 			}
 		}
 	}
 	return out
+}
+
+// directRequires returns the module paths a go.mod requires without "// indirect".
+func directRequires(goMod string) []string {
+	var out []string
+	for _, r := range requireEntries(goMod) {
+		if !r.Indirect {
+			out = append(out, r.Path)
+		}
+	}
+	return out
+}
+
+// requiredModule returns the longest module path in mods that is imp or a parent
+// of it, or "" when imp is not provided by any of them (the standard library, or
+// a package of the module itself).
+func requiredModule(mods []string, imp string) string {
+	best := ""
+	for _, m := range mods {
+		if (imp == m || strings.HasPrefix(imp, m+"/")) && len(m) > len(best) {
+			best = m
+		}
+	}
+	return best
+}
+
+// importedModules parses the imports of every .go file of the module rooted at
+// dir (test files included, build tags ignored, nested modules left to their own
+// go.mod) and returns required module -> the first file that imports it. The
+// import is what makes a module direct; the go.mod marker is only go mod tidy's
+// record of that fact and is stale until someone runs it. A third-party import
+// (dotted first element, not below a module in own) that no require line provides
+// is an error, so a multi-module go.work cannot hide a dependency.
+func importedModules(root, dir string, nested, required, own []string) (map[string]string, error) {
+	out := map[string]string{}
+	fset := token.NewFileSet()
+	start := filepath.Join(root, filepath.FromSlash(dir))
+	err := filepath.WalkDir(start, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if p == start {
+				return nil
+			}
+			rel, _ := filepath.Rel(root, p)
+			if skipDir(root, p) || slices.Contains(nested, filepath.ToSlash(rel)) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") {
+			return nil
+		}
+		f, err := parser.ParseFile(fset, p, nil, parser.ImportsOnly)
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", p, err)
+		}
+		rel, _ := filepath.Rel(root, p)
+		for _, imp := range f.Imports {
+			ip, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				continue
+			}
+			m := requiredModule(required, ip)
+			if m == "" {
+				// A dotted path that no require line and no module of this
+				// repository provides would hide a dependency: fail closed.
+				if first, _, _ := strings.Cut(ip, "/"); strings.Contains(first, ".") &&
+					!slices.ContainsFunc(own, func(o string) bool { return ip == o || strings.HasPrefix(ip, o+"/") }) {
+					return fmt.Errorf("%s imports %s, which no require line of %s/go.mod provides", filepath.ToSlash(rel), ip, dir)
+				}
+				continue
+			}
+			if _, seen := out[m]; !seen {
+				out[m] = filepath.ToSlash(rel)
+			}
+		}
+		return nil
+	})
+	return out, err
 }
 
 // checkDependencies returns one message per direct dependency that is unclassified,
@@ -1001,8 +1090,9 @@ func checkDependencies(deps map[string]string, kinds map[string]string, own []st
 		kind, ok := kinds[d]
 		switch {
 		case !ok:
-			msgs = append(msgs, fmt.Sprintf("%s (direct dependency in %s) is not classified: decide whether it can open a connection. If it can, add its import path to clientImports (or its dialing functions to refForms) in this file and a row for each file that uses it to %s, then add it to dependencyKinds as \"client\"; if it cannot, add it as \"local: <why>\"",
-				d, deps[d], allowlistRel))
+			msgs = append(msgs, fmt.Sprintf("%s is a direct dependency (%s) and has no row in dependencyKinds (%s, documented in %s): decide whether it can open a connection. "+
+				"Add the row to dependencyKinds: \"local: <why it opens none>\", or, if it can, \"client\" after adding its import path to clientImports (or its dialing functions to refForms) and a row for each file that uses it to %s",
+				d, deps[d], "internal/egressguard/egress_inventory_guard_test.go", inventoryRel, allowlistRel))
 		case kind == "client" && !detected(d):
 			msgs = append(msgs, fmt.Sprintf("%s is classified client, but neither clientImports nor refForms cover it: a file using it would not be flagged", d))
 		case kind != "client" && (!strings.HasPrefix(kind, "local: ") || strings.TrimSpace(strings.TrimPrefix(kind, "local: ")) == ""):
@@ -1012,7 +1102,12 @@ func checkDependencies(deps map[string]string, kinds map[string]string, own []st
 	return msgs
 }
 
-// goModDeps returns module path -> the go.mod (relative) that requires it directly.
+// goModDeps returns module path -> where it is used directly, and the module
+// paths of the repository itself. A module is direct when a .go file of a module
+// of the repository imports it (test files included), whatever the go.mod marker
+// says; a requirement without "// indirect" that nothing imports is kept too (it
+// can be a tool dependency), so the result is a superset of the old marker-only
+// view. The value names the importing file, or the go.mod for the marker-only case.
 func goModDeps(root string) (map[string]string, []string, error) {
 	deps := map[string]string{}
 	var own []string
@@ -1032,9 +1127,29 @@ func goModDeps(root string) (map[string]string, []string, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		for _, d := range directRequires(string(data)) {
-			if _, seen := deps[d]; !seen {
-				deps[d] = rel
+		entries := requireEntries(string(data))
+		var required []string
+		for _, e := range entries {
+			required = append(required, e.Path)
+		}
+		var nested []string
+		for _, other := range dirs {
+			if other != "" && other != dir && (dir == "" || strings.HasPrefix(other, dir+"/")) {
+				nested = append(nested, other)
+			}
+		}
+		imported, err := importedModules(root, dir, nested, required, own)
+		if err != nil {
+			return nil, nil, err
+		}
+		for m, file := range imported {
+			if _, seen := deps[m]; !seen {
+				deps[m] = "imported by " + file
+			}
+		}
+		for _, e := range entries {
+			if _, seen := deps[e.Path]; !seen && !e.Indirect {
+				deps[e.Path] = "required without // indirect in " + rel
 			}
 		}
 	}
@@ -1062,13 +1177,49 @@ func TestEgressDirectRequires_ParsesBlocksAndSingleLines(t *testing.T) {
 	assert.Equal(t, []string{"a.test/one", "c.test/three/v3", "d.test/four"}, directRequires(mod))
 }
 
+// A module that go.mod marks "// indirect" but that a file imports is direct: the
+// marker is only as fresh as the last go mod tidy (a Dependabot PR runs it and
+// flips the marker, which is how this guard used to pass on main and fail there).
+func TestEgressGoModDeps_ImportBeatsTheIndirectMarker(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+	}
+	write("go.mod", "module example.test/m\n\nrequire (\n\ta.test/shipped v1.0.0 // indirect\n\ta.test/testonly v1.0.0 // indirect\n\ta.test/transitive v1.0.0 // indirect\n\ta.test/unmarked v1.0.0\n\ta.test/shipped/v2 v2.0.0 // indirect\n)\n")
+	write("srv/s.go", "package srv\nimport _ \"a.test/shipped/sub\"\nimport _ \"a.test/shipped/v2/x\"\nimport _ \"net/http\"\nimport _ \"example.test/m/internal/x\"\n")
+	write("srv/s_test.go", "package srv\nimport _ \"a.test/testonly\"\n")
+	write("srv/testdata/ignored.go", "package ignored\nimport _ \"a.test/transitive\"\n")
+	write("cli/go.mod", "module example.test/m/cli\n\nrequire b.test/clidep v1.0.0 // indirect\n")
+	write("cli/c.go", "package cli\nimport _ \"b.test/clidep\"\n")
+	deps, own, err := goModDeps(root)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"example.test/m", "example.test/m/cli"}, own)
+	assert.Equal(t, map[string]string{
+		"a.test/shipped":    "imported by srv/s.go",
+		"a.test/shipped/v2": "imported by srv/s.go", // longest prefix wins: v2/x is not a.test/shipped
+		"a.test/testonly":   "imported by srv/s_test.go",
+		"a.test/unmarked":   "required without // indirect in go.mod",
+		"b.test/clidep":     "imported by cli/c.go",
+	}, deps, "imported or unmarked is direct; a requirement nothing imports and tidy marks indirect is not")
+
+	// An import that the importing module's own go.mod does not provide fails closed.
+	write("cli/d.go", "package cli\nimport _ \"a.test/shipped\"\n")
+	_, _, err = goModDeps(root)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cli/d.go imports a.test/shipped")
+}
+
 func TestEgressCheckDependencies_RedForUnclassifiedGreenWhenClassified(t *testing.T) {
-	deps := map[string]string{"x.test/newclient": "go.mod", "x.test/leaf": "go.mod", "self.test/m/cli": "cli/go.mod"}
+	deps := map[string]string{"x.test/newclient": "imported by srv/a.go", "x.test/leaf": "imported by srv/b_test.go", "self.test/m/cli": "imported by cli/c.go"}
 	own := []string{"self.test/m"}
-	// Red: neither dependency is classified.
+	// Red: neither dependency is classified. The message names the dependency, the
+	// importing file and where to add the row.
 	msgs := checkDependencies(deps, map[string]string{}, own)
 	require.Len(t, msgs, 2, "%v", msgs)
-	assert.Contains(t, msgs[0], "x.test/leaf (direct dependency in go.mod) is not classified")
+	assert.Contains(t, msgs[0], "x.test/leaf is a direct dependency (imported by srv/b_test.go) and has no row in dependencyKinds")
+	assert.Contains(t, msgs[0], inventoryRel)
 	assert.Contains(t, msgs[1], "x.test/newclient")
 	// Red: "client" that the scanner would not recognise, and a "local" with no reason.
 	msgs = checkDependencies(deps, map[string]string{"x.test/newclient": "client", "x.test/leaf": "local: "}, own)
