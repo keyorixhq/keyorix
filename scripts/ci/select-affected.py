@@ -105,7 +105,7 @@ GUARD_INPUTS_FRAGMENT = re.compile(r"^scripts/ci/guard-inputs\.d/[^/]+\.tsv$")
 GUARDINPUTS_PKG = MODULE + "/scripts/ci/guardinputs"
 GENERATOR_DIR = re.compile(r"(^|/)[a-z0-9_-]*gen/")
 # Separate Go modules: their files never belong to a root-module package.
-OTHER_MODULES = ("cli/", "operator/", "migrate/", "devtools/vacuum/")
+OTHER_MODULES = ("cli/", "operator/", "migrate/")
 GLOB_CHARS = set("*?[")
 
 

@@ -61,29 +61,12 @@ updates:
         update-types:
           - "minor"
           - "patch"
-  # devtools/vacuum: the OpenAPI linter used by ci.yml's openapi-lint job (own
-  # module, not in go.work). A bump changes which findings the lint reports,
-  # so it needs the job's red/green canary to pass, same as any ruleset edit.
-  - package-ecosystem: gomod
-    directory: /devtools/vacuum
-    allow:
-      - dependency-type: all
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    groups:
-      go-patch-minor:
-        update-types:
-          - "minor"
-          - "patch"
   # Nested modules that pin the same libraries as the root module (aws-sdk-go-v2,
   # smithy-go, x/*, cbor, ...) but had no Dependabot entry, so their pins froze
   # while root moved on. The corobix drift-guard (check-shared-pins.sh) reported
   # ~35 such mismatches in migrate/ and operator/ on 2026-11-20. Weekly, unlike
-  # /operator and /devtools/vacuum: the nested pins must follow root, and a
-  # monthly cadence let them lag it by up to a month, which is the drift these
-  # entries exist to remove.
+  # /operator: the nested pins must follow root, and a monthly cadence let them
+  # lag it by up to a month, which is the drift these entries exist to remove.
   - package-ecosystem: gomod
     directory: /migrate
     allow:

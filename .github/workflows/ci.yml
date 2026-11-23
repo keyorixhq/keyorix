@@ -4736,11 +4736,14 @@ jobs:
   # blocking. vacuum replaced @stoplight/spectral-cli, whose dependency tree
   # carries braces GHSA-vfj7-8cjw-p6xm with no patched release.
   #
-  # vacuum is built from source at the exact version in devtools/vacuum/go.mod;
-  # every module it needs is verified against devtools/vacuum/go.sum (and
-  # GOFLAGS=-mod=readonly forbids any drift), the Scorecard-friendly
-  # equivalent of npm ci against a lockfile. The canary step proves the
-  # ruleset is loaded and error rules fire.
+  # vacuum is the upstream release binary at the version pinned in
+  # devtools/vacuum/VACUUM.pin (VACUUM-BIN-1; it used to be built from source
+  # in its own Go module, whose Dependabot-bumped dependency tree broke this
+  # job on #4649). devtools/vacuum/install.sh downloads the archive for the
+  # runner's OS/arch and refuses it unless its SHA-256 equals the value pinned
+  # in that file; nothing fetched at run time is trusted on its own. The
+  # canary step proves the ruleset is loaded and error rules fire. Bump
+  # procedure: devtools/vacuum/README.md.
   #
   # FULL profile (merge_group, push to main not already queue-verified, ...),
   # and on pull_request only when the PR touches what it reads
@@ -4758,27 +4761,31 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Go toolchain + module/build cache keyed on devtools/vacuum/go.sum, so a
-      # warm run only relinks vacuum.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      # Caches the release archive, not the extracted binary, keyed on the pin
+      # file. devtools/vacuum/install.sh re-hashes the archive against the pin
+      # on every run, cache hit or not, and re-extracts the binary from it, so
+      # a cache entry is never trusted on its own.
+      - name: Cache vacuum release archive
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          go-version-file: go.mod
-          cache-dependency-path: devtools/vacuum/go.sum
+          path: .cache/vacuum/*.tar.gz
+          key: vacuum-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('devtools/vacuum/VACUUM.pin') }}
+
+      # Fails closed on a SHA-256 mismatch, an OS/arch with no pin line or a
+      # download that still fails after curl's retries (30 s connect, 300 s
+      # total per attempt, 3 retries). The step timeout only catches a hang.
+      - name: Install vacuum (pinned release, SHA-256 checked)
+        timeout-minutes: 10
+        run: devtools/vacuum/install.sh
 
       - name: Lint OpenAPI spec
-        env:
-          GOWORK: 'off'
-          GOFLAGS: -mod=readonly
-        run: go tool -modfile=devtools/vacuum/go.mod vacuum lint -r .vacuum.yaml --no-update-check -b -q server/http/handlers/openapi.yaml
+        run: .cache/vacuum/vacuum lint -r .vacuum.yaml --no-update-check -b -q server/http/handlers/openapi.yaml
 
       # A guard nobody has watched fail is not a guard: the canary is a
       # deliberately broken spec, and this step fails if vacuum accepts it.
       - name: Ruleset canary (a broken spec must fail)
-        env:
-          GOWORK: 'off'
-          GOFLAGS: -mod=readonly
         run: |
-          if go tool -modfile=devtools/vacuum/go.mod vacuum lint -r .vacuum.yaml --no-update-check -b -q -x devtools/vacuum/canary-bad.yaml; then
+          if .cache/vacuum/vacuum lint -r .vacuum.yaml --no-update-check -b -q -x devtools/vacuum/canary-bad.yaml; then
             echo "::error::vacuum accepted devtools/vacuum/canary-bad.yaml; .vacuum.yaml is not enforcing its error rules"
             exit 1
           fi
