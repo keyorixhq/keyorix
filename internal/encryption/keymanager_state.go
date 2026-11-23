@@ -8,7 +8,11 @@
 //	mu → <dek_path>.lock (flock)         RotateDEKWithSweep
 //
 // No code takes mu while holding the flock, and no code takes rotateMu while
-// holding mu or the flock, so the three cannot deadlock. A rotation that keeps
+// holding mu or the flock, so the three cannot deadlock. Service.mu, when held,
+// is always outside all three (Service.RotateDEKWithSweep holds it for writing
+// across km.RotateDEKWithSweep and the Service swap, #4654); the key manager
+// never calls back into the Service, so no lock here is held while Service.mu
+// is taken. A rotation that keeps
 // mu off its disk I/O (RotateKEKPassphraseWithPrepare, RewrapDEKWithPrepare) builds the whole next
 // keyState in locals and publishes it with one state.Store after its rename and
 // directory fsync are durable; readers take mu.RLock only for the Load and the
