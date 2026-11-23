@@ -101,7 +101,7 @@ from collections import deque
 
 MODULE = "github.com/keyorixhq/keyorix"
 SCHEMA = 1
-OTHER_MODULES = ("cli/", "operator/", "migrate/", "devtools/vacuum/")
+OTHER_MODULES = ("cli/", "operator/", "migrate/")
 
 PROFILE_LINE = re.compile(r"^(.+):(\d+)\.(\d+),(\d+)\.(\d+) (\d+) (\d+)$")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
