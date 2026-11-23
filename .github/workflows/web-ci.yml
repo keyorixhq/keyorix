@@ -162,11 +162,13 @@ jobs:
       # Chromium-only (playwright.config.ts) to keep this job fast.
       - name: Install Playwright browser
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium
+        timeout-minutes: 10
+        run: timeout -k 10 300 pnpm exec playwright install --with-deps chromium || timeout -k 10 300 pnpm exec playwright install --with-deps chromium
 
       - name: Install Playwright OS dependencies (cache hit -- browser binary already present)
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: pnpm exec playwright install-deps chromium
+        timeout-minutes: 10
+        run: timeout -k 10 300 pnpm exec playwright install-deps chromium || timeout -k 10 300 pnpm exec playwright install-deps chromium
 
       - name: E2E tests
         run: pnpm test:e2e
