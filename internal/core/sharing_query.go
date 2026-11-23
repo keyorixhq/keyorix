@@ -141,13 +141,22 @@ func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, s
 	if err != nil {
 		return nil, err
 	}
+	// A read FAULT in the membership lookup or the share read is a retry answer (503),
+	// not an internal error (#4653); the owner verdict is unchanged, and a fault still
+	// refuses the list (fail closed).
 	if isLiveOwner, err := c.requireLiveOwnerAuthority(ctx, secret, userID); err != nil {
+		if fault := ReadFault(err); fault != nil {
+			return nil, fault
+		}
 		return nil, err
 	} else if !isLiveOwner {
 		return nil, permissionDeniedf("not authorized to view shares for this secret")
 	}
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())
 	if err != nil {
+		if fault := ReadFault(err); fault != nil {
+			return nil, fault
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	// Drop expired time-bound shares — see ListSecretShares.

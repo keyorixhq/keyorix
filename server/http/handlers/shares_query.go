@@ -8,6 +8,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -42,18 +44,22 @@ func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) 
 	// secrets.read can't enumerate another owner's share graph.
 	shares, err := h.coreService.ListSecretSharesWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
-		log.Printf("Error listing secret shares: %v", err)
-		if sendStorageUnavailable(w, err) {
+		// An expired secret is answered 404, like an absent one: core reads the secret
+		// before it judges ownership, so a 409 "expired" would tell a non-owner which
+		// secret ids are expired, and 404 adds nothing 404-vs-403 does not already say.
+		// It was a 500 (#4653): ErrSecretExpired is in no errclass class.
+		if errors.Is(err, core.ErrSecretExpired) {
+			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 			return
 		}
-		switch {
-		case strings.Contains(err.Error(), errNotFound):
-			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
-			h.sendError(w, "Forbidden", "Not authorized to view this secret's shares", http.StatusForbidden, nil)
-		default:
-			h.sendError(w, "InternalError", "Failed to list secret shares", http.StatusInternalServerError, nil)
-		}
+		answerCoreError(w, r, err, coreErrorAnswer{
+			op: fmt.Sprintf("listing shares of secret %d", id),
+			texts: coreErrorTexts{
+				errclass.NotFound:         "Secret not found",
+				errclass.PermissionDenied: "Not authorized to view this secret's shares",
+				errclass.Internal:         "Failed to list secret shares",
+			},
+		})
 		return
 	}
 
