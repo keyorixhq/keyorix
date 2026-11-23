@@ -18,7 +18,6 @@ func TestAdminDSNHost_DoubleBracketIPv6_Blocked(t *testing.T) {
 		{"double-bracket IPv6 loopback multi-host", "host=[[::1]],203.0.113.5"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.desc, func(t *testing.T) {
 			t.Parallel()
 			if err := validateAdminDSNHost(tc.dsn); err == nil {
