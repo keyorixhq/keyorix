@@ -90,7 +90,7 @@ func createShareRecordTx(tx *gorm.DB, share *models.ShareRecord) (*models.ShareR
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 		}
 		if count == 0 {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorGroupNotFound", nil))
+			return nil, storage.NotFound(storage.ErrGroupNotFound, i18n.T("ErrorGroupNotFound", nil), nil)
 		}
 	} else {
 		var count int64
@@ -98,7 +98,7 @@ func createShareRecordTx(tx *gorm.DB, share *models.ShareRecord) (*models.ShareR
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 		}
 		if count == 0 {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+			return nil, storage.NotFound(storage.ErrUserNotFound, i18n.T("ErrorUserNotFound", nil), nil)
 		}
 	}
 
