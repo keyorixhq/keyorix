@@ -167,19 +167,39 @@ func ssoFuzzForm(id string) []byte {
 	return []byte("access_token=at&token_type=Bearer&expires_in=3600&id_token=" + url.QueryEscape(id))
 }
 
+// ssoSameToken reports whether got is the signed token: the same string, or the
+// same header, payload and signature bytes. A base64url signature has unused
+// trailing bits (86 characters for a 64-byte ES256 signature carry 4 spare bits),
+// which a non-strict decoder ignores, so another spelling of the same signature
+// verifies. That is no forgery: the signature bytes and every claim are unchanged.
+func ssoSameToken(got, token string) bool {
+	if got == token {
+		return true
+	}
+	g, w := strings.Split(got, "."), strings.Split(token, ".")
+	if len(g) != 3 || len(w) != 3 || g[0] != w[0] || g[1] != w[1] {
+		return false
+	}
+	gs, err1 := base64.RawURLEncoding.DecodeString(g[2])
+	ws, err2 := base64.RawURLEncoding.DecodeString(w[2])
+	return err1 == nil && err2 == nil && bytes.Equal(gs, ws)
+}
+
 // ssoBodyCarries reports whether body carries token: as raw bytes, as a
 // form-encoded id_token value (%2E for "."), or as a top-level JSON id_token
 // string (\u002e for "."), the encodings oauth2 decodes a token response from.
+// The form and JSON values are compared with ssoSameToken, so a non-canonical
+// spelling of the signature does not read as a foreign token.
 func ssoBodyCarries(body []byte, token string) bool {
 	if bytes.Contains(body, []byte(token)) {
 		return true
 	}
-	if q, _ := url.ParseQuery(string(body)); slices.Contains(q["id_token"], token) {
+	if q, _ := url.ParseQuery(string(body)); slices.ContainsFunc(q["id_token"], func(v string) bool { return ssoSameToken(v, token) }) {
 		return true
 	}
 	var m map[string]json.RawMessage
 	var s string
-	return json.Unmarshal(body, &m) == nil && json.Unmarshal(m["id_token"], &s) == nil && s == token
+	return json.Unmarshal(body, &m) == nil && json.Unmarshal(m["id_token"], &s) == nil && ssoSameToken(s, token)
 }
 
 type ssoFuzzIdP struct {
@@ -407,6 +427,38 @@ func TestSSOTokenEndpointSeed_Replayable(t *testing.T) {
 	} {
 		if got, want := ssoFuzzProbe(key, idp, srv.URL, c.ctype, c.body), "sso:okta:"+ssoFuzzSubject; got != want {
 			t.Errorf("%s: the literal valid token reached subject lookup %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestSSOBodyCarries_NonCanonicalSignature pins the oracle decision behind the
+// finding on a saved crasher: the valid token with the spare trailing bits of its
+// signature set differently is still the valid token, while any change to the
+// header, the payload or the signature bytes is a foreign one.
+func TestSSOBodyCarries_NonCanonicalSignature(t *testing.T) {
+	valid := ssoFuzzValidToken
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := strings.IndexByte(alphabet, valid[len(valid)-1])
+	respell := valid[:len(valid)-1] + string(alphabet[last^1]) // flips the lowest of the 4 spare bits
+	if respell == valid {
+		t.Fatal("test setup: respelled token equals the original")
+	}
+	flipSig := valid[:len(valid)-6] + string(alphabet[strings.IndexByte(alphabet, valid[len(valid)-6])^32]) + valid[len(valid)-5:]
+	parts := strings.Split(valid, ".")
+	flipPayload := parts[0] + "." + string(alphabet[strings.IndexByte(alphabet, parts[1][0])^1]) + parts[1][1:] + "." + parts[2]
+	for name, c := range map[string]struct {
+		body []byte
+		want bool
+	}{
+		"form, respelled signature": {ssoFuzzForm(respell), true},
+		"json, respelled signature": {ssoFuzzJSON(respell), true},
+		"form, one signature bit":   {ssoFuzzForm(flipSig), false},
+		"form, payload changed":     {ssoFuzzForm(flipPayload), false},
+		"json, payload changed":     {ssoFuzzJSON(flipPayload), false},
+		"form, token cut short":     {ssoFuzzForm(valid[:len(valid)-2]), false},
+	} {
+		if got := ssoBodyCarries(c.body, valid); got != c.want {
+			t.Errorf("%s: ssoBodyCarries = %v, want %v", name, got, c.want)
 		}
 	}
 }
