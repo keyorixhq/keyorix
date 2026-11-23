@@ -1,0 +1,1 @@
+TestEgressEveryDirectDependencyIsClassified	internal/egressguard	#4661	widened guard: direct dependencies are now derived from .go imports (test files included) plus unmarked go.mod requires, not from go.mod // indirect markers; green on main because every module is classified in dependencyKinds

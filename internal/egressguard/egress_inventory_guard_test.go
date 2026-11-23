@@ -878,7 +878,7 @@ var dependencyKinds = map[string]string{
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager":               "client",
 	"github.com/aws/aws-sdk-go-v2/service/sts":                          "client",
 	"github.com/beevik/etree":                                           "local: XML tree",
-	"github.com/boombuler/barcode":                                      "local: QR code image encoding, used by the library conformance tests; no network code",
+	"github.com/boombuler/barcode":                                      "local: QR/barcode image encoder, imported only by tests (libconformance); pquerna/otp uses it in memory; no net, net/http or os/exec import",
 	"github.com/crewjam/saml":                                           "client",
 	"github.com/digitorus/pkcs7":                                        "local: parses and verifies PKCS#7",
 	"github.com/digitorus/timestamp":                                    "local: builds and parses RFC 3161 messages; the request is sent by internal/notary with an http.Client",
@@ -892,11 +892,11 @@ var dependencyKinds = map[string]string{
 	"github.com/golang-jwt/jwt/v5":                                      "local: parses and verifies JWTs, keys are supplied by the caller",
 	"github.com/google/go-tpm":                                          "local: talks to the host TPM device",
 	"github.com/google/go-tpm-tools":                                    "local: TPM 2.0 helpers",
-	"github.com/google/uuid":                                            "local: UUID generation and parsing, used by the third-party fuzz targets; no network code",
+	"github.com/google/uuid":                                            "local: UUID generation and parsing from crypto/rand, imported only by tests; its only net use is net.Interfaces (local NIC list for v1 node ids), no dial",
 	"github.com/googleapis/gax-go/v2":                                   "local: retry and call options for the GCP clients",
 	"github.com/jackc/pgx/v5":                                           "client",
 	"github.com/keyorixhq/keyorix-sdks/go":                              "client",
-	"github.com/klauspost/compress":                                     "local: compression codecs, used by the third-party fuzz targets; no network code",
+	"github.com/klauspost/compress":                                     "local: in-memory snappy/zstd/zlib codecs, imported only by tests (fuzz/thirdparty/compress); its net/http use is confined to the gzhttp middleware and s2 cmd tools, which no repository package imports",
 	"github.com/mattermost/xml-roundtrip-validator":                     "local: XML validation",
 	"github.com/nicksnyder/go-i18n/v2":                                  "local: message catalogs",
 	"github.com/oapi-codegen/runtime":                                   "local: request-building helpers of a generated client; the client's http.Client is a flagged site",
@@ -1020,8 +1020,10 @@ func requiredModule(mods []string, imp string) string {
 // dir (test files included, build tags ignored, nested modules left to their own
 // go.mod) and returns required module -> the first file that imports it. The
 // import is what makes a module direct; the go.mod marker is only go mod tidy's
-// record of that fact and is stale until someone runs it.
-func importedModules(root, dir string, nested []string, required []string) (map[string]string, error) {
+// record of that fact and is stale until someone runs it. A third-party import
+// (dotted first element, not below a module in own) that no require line provides
+// is an error, so a multi-module go.work cannot hide a dependency.
+func importedModules(root, dir string, nested, required, own []string) (map[string]string, error) {
 	out := map[string]string{}
 	fset := token.NewFileSet()
 	start := filepath.Join(root, filepath.FromSlash(dir))
@@ -1052,10 +1054,18 @@ func importedModules(root, dir string, nested []string, required []string) (map[
 			if err != nil {
 				continue
 			}
-			if m := requiredModule(required, ip); m != "" {
-				if _, seen := out[m]; !seen {
-					out[m] = filepath.ToSlash(rel)
+			m := requiredModule(required, ip)
+			if m == "" {
+				// A dotted path that no require line and no module of this
+				// repository provides would hide a dependency: fail closed.
+				if first, _, _ := strings.Cut(ip, "/"); strings.Contains(first, ".") &&
+					!slices.ContainsFunc(own, func(o string) bool { return ip == o || strings.HasPrefix(ip, o+"/") }) {
+					return fmt.Errorf("%s imports %s, which no require line of %s/go.mod provides", filepath.ToSlash(rel), ip, dir)
 				}
+				continue
+			}
+			if _, seen := out[m]; !seen {
+				out[m] = filepath.ToSlash(rel)
 			}
 		}
 		return nil
@@ -1128,7 +1138,7 @@ func goModDeps(root string) (map[string]string, []string, error) {
 				nested = append(nested, other)
 			}
 		}
-		imported, err := importedModules(root, dir, nested, required)
+		imported, err := importedModules(root, dir, nested, required, own)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1178,20 +1188,27 @@ func TestEgressGoModDeps_ImportBeatsTheIndirectMarker(t *testing.T) {
 		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
 	}
 	write("go.mod", "module example.test/m\n\nrequire (\n\ta.test/shipped v1.0.0 // indirect\n\ta.test/testonly v1.0.0 // indirect\n\ta.test/transitive v1.0.0 // indirect\n\ta.test/unmarked v1.0.0\n\ta.test/shipped/v2 v2.0.0 // indirect\n)\n")
-	write("srv/s.go", "package srv\nimport _ \"a.test/shipped/sub\"\nimport _ \"net/http\"\nimport _ \"example.test/m/internal/x\"\n")
+	write("srv/s.go", "package srv\nimport _ \"a.test/shipped/sub\"\nimport _ \"a.test/shipped/v2/x\"\nimport _ \"net/http\"\nimport _ \"example.test/m/internal/x\"\n")
 	write("srv/s_test.go", "package srv\nimport _ \"a.test/testonly\"\n")
 	write("srv/testdata/ignored.go", "package ignored\nimport _ \"a.test/transitive\"\n")
 	write("cli/go.mod", "module example.test/m/cli\n\nrequire b.test/clidep v1.0.0 // indirect\n")
-	write("cli/c.go", "package cli\nimport _ \"b.test/clidep\"\nimport _ \"a.test/shipped\"\n") // not required by cli/go.mod: not resolved
+	write("cli/c.go", "package cli\nimport _ \"b.test/clidep\"\n")
 	deps, own, err := goModDeps(root)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"example.test/m", "example.test/m/cli"}, own)
 	assert.Equal(t, map[string]string{
-		"a.test/shipped":  "imported by srv/s.go",
-		"a.test/testonly": "imported by srv/s_test.go",
-		"a.test/unmarked": "required without // indirect in go.mod",
-		"b.test/clidep":   "imported by cli/c.go",
+		"a.test/shipped":    "imported by srv/s.go",
+		"a.test/shipped/v2": "imported by srv/s.go", // longest prefix wins: v2/x is not a.test/shipped
+		"a.test/testonly":   "imported by srv/s_test.go",
+		"a.test/unmarked":   "required without // indirect in go.mod",
+		"b.test/clidep":     "imported by cli/c.go",
 	}, deps, "imported or unmarked is direct; a requirement nothing imports and tidy marks indirect is not")
+
+	// An import that the importing module's own go.mod does not provide fails closed.
+	write("cli/d.go", "package cli\nimport _ \"a.test/shipped\"\n")
+	_, _, err = goModDeps(root)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cli/d.go imports a.test/shipped")
 }
 
 func TestEgressCheckDependencies_RedForUnclassifiedGreenWhenClassified(t *testing.T) {
