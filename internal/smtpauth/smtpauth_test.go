@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	mail "github.com/wneessen/go-mail"
 	"github.com/wneessen/go-mail/smtp"
@@ -74,23 +73,54 @@ func serverFirst(t *testing.T, a smtp.Auth, iter string) []byte {
 	return []byte(fmt.Sprintf("r=%ssrv,s=c2FsdA==,i=%s", nonce, iter))
 }
 
+// derivationCounter stands in for go-mail's SCRAM once the client-first message is out:
+// the server-first message is where go-mail runs PBKDF2, so every Next call that reaches
+// it is a key derivation. It counts the calls and derives nothing, so a refusal that
+// regressed would fail the test at once instead of burning CPU for the announced count.
+type derivationCounter struct {
+	smtp.Auth
+	calls int
+}
+
+func (d *derivationCounter) Next([]byte, bool) ([]byte, error) {
+	d.calls++
+	return nil, errors.New("derivation reached")
+}
+
 // A relay that announces the largest count costs the client nothing: the message is
-// refused before any key derivation.
+// refused before any key derivation. The property is counted, not timed: the number of
+// calls that reach the key derivation is 0 for a refused count and 1 for an accepted one.
 func TestSCRAMRefusesHugeIterationCountBeforeDeriving(t *testing.T) {
-	for _, iter := range []string{"2147483647", "1000001", "9223372036854775807"} {
+	for _, tc := range []struct {
+		iter    string
+		refused bool
+	}{
+		{"2147483647", true},
+		{"1000001", true},
+		{"9223372036854775807", true},
+		{"4096", false}, // control: the counter does see a derivation that is allowed
+	} {
 		a, _, err := start(t, true, "SCRAM-SHA-256")
 		if err != nil {
 			t.Fatal(err)
 		}
-		msg := serverFirst(t, a, iter)
-		t0 := time.Now()
+		msg := serverFirst(t, a, tc.iter)
+		bounded := a.(*auth).inner.(*boundedSCRAM)
+		counter := &derivationCounter{Auth: bounded.Auth}
+		bounded.Auth = counter
+
 		_, err = a.Next(msg, true)
-		took := time.Since(t0)
-		if !errors.Is(err, ErrSCRAMIterations) {
-			t.Fatalf("i=%s: want ErrSCRAMIterations, got %v", iter, err)
+		if tc.refused {
+			if !errors.Is(err, ErrSCRAMIterations) {
+				t.Errorf("i=%s: want ErrSCRAMIterations, got %v", tc.iter, err)
+			}
+			if counter.calls != 0 {
+				t.Errorf("i=%s: %d call(s) reached the key derivation, want 0", tc.iter, counter.calls)
+			}
+			continue
 		}
-		if took > 100*time.Millisecond {
-			t.Errorf("i=%s: refusal took %v, want under 100ms", iter, took)
+		if errors.Is(err, ErrSCRAMIterations) || counter.calls != 1 {
+			t.Errorf("i=%s: want one call to the key derivation and no refusal, got %d call(s), err=%v", tc.iter, counter.calls, err)
 		}
 	}
 }
