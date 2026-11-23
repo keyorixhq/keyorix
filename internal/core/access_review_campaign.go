@@ -497,6 +497,9 @@ func (c *KeyorixCore) checkForceCloseIndependence(ctx context.Context, actorID u
 // while items remain pending unless force is set (so an auditor sees either a fully
 // decided cycle or an explicit early close). actorID is the closer.
 func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, actorMachineID, projectID, campaignID uint, force bool) (*CampaignWithProgress, error) {
+	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
+		return nil, err
+	}
 	campaign, err := c.loadScopedCampaign(ctx, projectID, campaignID)
 	if err != nil {
 		return nil, err

@@ -96,10 +96,16 @@ func (h *DashboardHandler) ApproveRiskException(w http.ResponseWriter, r *http.R
 		if sendAuditUnavailable(w, err) {
 			return
 		}
+		// #4546: a failed read of the acting account is a storage fault (503).
+		if sendStorageUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, "dual control"):
+			status = http.StatusForbidden
+		case errors.Is(err, core.ErrPermissionDenied): // #4546: an inactive acting account
 			status = http.StatusForbidden
 		case strings.Contains(msg, "concurrently"):
 			status = http.StatusConflict

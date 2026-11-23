@@ -24,6 +24,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -159,8 +160,37 @@ func TestRevokeBreakGlass_RefusalStatusesAreLocaleIndependent(t *testing.T) {
 // FAILURE must not be laundered into a 404. Core wraps whatever the lookup
 // returned behind the i18n "Resource not found" prefix, and the old text match
 // turned the prefix into a 404 for every error -- including a dead database.
-// Red in English, so it also proves the sentinel is what decides.
+// Red in English, so it also proves the sentinel is what decides. Only the
+// activation table is broken: the acting account is read first (#4546) and must
+// still resolve, or the request stops at that read (503, below).
 func TestRevokeBreakGlass_StorageFailureIs500NotNotFound(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	id := fmt.Sprint(seedBreakGlassActivationS13(t, db, 2, "active"))
+	require.NoError(t, db.Migrator().DropTable(&models.BreakGlassActivation{}))
+
+	w := doRevokeBreakGlass(t, NewCatalogHandler(cs), "1", id)
+	assert.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+}
+
+// TestRevokeBreakGlass_InactiveActorIsForbidden: core refuses an acting account
+// that is not active (#4546) with a typed permission refusal, answered 403, not
+// 500, and the activation stays active.
+func TestRevokeBreakGlass_InactiveActorIsForbidden(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	actID := seedBreakGlassActivationS13(t, db, 2, "active")
+	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("is_active", false).Error)
+
+	w := doRevokeBreakGlass(t, NewCatalogHandler(cs), "1", fmt.Sprint(actID))
+	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	var act models.BreakGlassActivation
+	require.NoError(t, db.First(&act, actID).Error)
+	assert.Equal(t, "active", act.State, "a refused revoke must leave the activation active")
+}
+
+// TestRevokeBreakGlass_ActorReadFaultIs503: a failed read of the acting account is
+// a storage fault (#4546, STORAGE-ERR-CLASS-4), answered 503 storage_unavailable
+// with Retry-After, not a refusal and not a 500.
+func TestRevokeBreakGlass_ActorReadFaultIs503(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
 	id := fmt.Sprint(seedBreakGlassActivationS13(t, db, 2, "active"))
 	sqlDB, err := db.DB()
@@ -168,5 +198,7 @@ func TestRevokeBreakGlass_StorageFailureIs500NotNotFound(t *testing.T) {
 	require.NoError(t, sqlDB.Close())
 
 	w := doRevokeBreakGlass(t, NewCatalogHandler(cs), "1", id)
-	assert.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), storageUnavailableCode)
+	assert.NotEmpty(t, w.Header().Get("Retry-After"))
 }
