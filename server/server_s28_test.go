@@ -64,13 +64,15 @@ func TestStopGRPCServerWithTimeout_S28_CompletesWithinTimeout(t *testing.T) {
 	fake := newFakeGracefulStopper(5 * time.Millisecond)
 
 	start := time.Now()
-	stopGRPCServerWithTimeout(fake, 2*time.Second)
+	stopGRPCServerWithTimeout(fake, 30*time.Second)
 	elapsed := time.Since(start)
 
 	if fake.stopCalled.Load() {
 		t.Fatal("Stop() (forceful fallback) must not be called when GracefulStop() completes before the timeout")
 	}
-	if elapsed > 500*time.Millisecond {
+	// A 5ms GracefulStop against a 30s timeout: waiting out the timeout would take
+	// 30s, so 10s separates "prompt" from "waited" without a tight wall-clock limit.
+	if elapsed > 10*time.Second {
 		t.Fatalf("stopGRPCServerWithTimeout took %v to return after a fast GracefulStop(); expected it to return promptly", elapsed)
 	}
 }
