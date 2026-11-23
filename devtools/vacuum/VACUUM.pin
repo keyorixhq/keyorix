@@ -1,0 +1,18 @@
+# devtools/vacuum/VACUUM.pin -- the vacuum release the openapi-lint CI job
+# (.github/workflows/ci.yml) and `make openapi-lint` run, and the SHA-256 of
+# each release archive they may download. devtools/vacuum/install.sh reads
+# it, downloads vacuum_<version>_<os>_<arch>.tar.gz from the GitHub release
+# and refuses to install unless the archive's SHA-256 equals the value here.
+# These values are the trust anchor: they were checked against the release's
+# checksums.txt and the GitHub release asset digests when the pin was taken.
+# Bump procedure: devtools/vacuum/README.md.
+#
+# Format: KEY=value, one per line, no quotes, no spaces; '#' starts a comment
+# line. sha256_<os>_<arch> uses the release's own asset names (linux_x86_64,
+# linux_arm64, darwin_x86_64, darwin_arm64). An OS/arch with no line here is
+# refused, not downloaded unverified.
+version=0.42.3
+sha256_linux_x86_64=31d647c75daa4924f5d5b2fe48b3be8e54a910494d5f278039899a36653037f7
+sha256_linux_arm64=597c2b74e4f19a7ee1aead1c968a2bf2a6b409581721bef9c298b5c660af6860
+sha256_darwin_x86_64=775cb522b2d2c3d6b1ee380f10dfecba9660fbd8b5d01e625fb709b2d067a127
+sha256_darwin_arm64=c851191eaa0e9464be97d9f0a2a7c4a4904f834a3a9c420f604e2f1e339275e6

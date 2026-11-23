@@ -427,10 +427,11 @@ vet:
 	go vet ./...
 lint:
 	golangci-lint run ./...
-# Same command as ci.yml's openapi-lint job (vacuum, version pinned in devtools/vacuum/go.mod).
+# Same command as ci.yml's openapi-lint job (vacuum release pinned and SHA-256 checked via devtools/vacuum/VACUUM.pin).
 .PHONY: openapi-lint
 openapi-lint:
-	GOWORK=off GOFLAGS=-mod=readonly go tool -modfile=devtools/vacuum/go.mod vacuum lint -r .vacuum.yaml --no-update-check server/http/handlers/openapi.yaml
+	devtools/vacuum/install.sh
+	.cache/vacuum/vacuum lint -r .vacuum.yaml --no-update-check server/http/handlers/openapi.yaml
 # Architecture-growth guard: files-per-package and dependents-per-package ceilings
 # (scripts/ci/check-growth-guards.sh, baseline in docs/design/architecture-growth-baseline.md).
 .PHONY: check-growth check-growth-selftest
