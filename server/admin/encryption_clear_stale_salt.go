@@ -22,6 +22,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryptionops"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/restorejournal"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
 )
 
@@ -172,19 +173,9 @@ func removeStaleSaltPending(path string) error {
 		}
 		return fmt.Errorf("%s: remove %s: %w", clearStaleSaltCmdName, path, err)
 	}
-	if err := syncDir(filepath.Dir(path)); err != nil {
+	if err := securefiles.SyncDir(filepath.Dir(path)); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: removed %s, but could not fsync %s: %v; the removal may not survive a power loss\n",
 			path, filepath.Dir(path), err)
 	}
 	return nil
-}
-
-// syncDir fsyncs a directory, so a removal in it is durable.
-func syncDir(dir string) error {
-	d, err := os.Open(dir) // #nosec G304 -- the key directory this command was configured with
-	if err != nil {
-		return err
-	}
-	defer func() { _ = d.Close() }()
-	return d.Sync()
 }
