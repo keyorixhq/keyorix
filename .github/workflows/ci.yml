@@ -2843,11 +2843,13 @@ jobs:
       - name: Install Playwright browser
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: web
-        run: pnpm exec playwright install --with-deps chromium
+        timeout-minutes: 10
+        run: timeout -k 10 300 pnpm exec playwright install --with-deps chromium || timeout -k 10 300 pnpm exec playwright install --with-deps chromium
       - name: Install Playwright OS dependencies (cache hit -- browser binary already present)
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         working-directory: web
-        run: pnpm exec playwright install-deps chromium
+        timeout-minutes: 10
+        run: timeout -k 10 300 pnpm exec playwright install-deps chromium || timeout -k 10 300 pnpm exec playwright install-deps chromium
       - name: Real-backend web UI smoke
         env:
           KEYORIX_E2E_SHARD: ${{ matrix.shard }}/2
@@ -2924,7 +2926,8 @@ jobs:
       - name: Install Playwright browser
         if: steps.specs.outputs.specs != ''
         working-directory: web
-        run: pnpm exec playwright install --with-deps chromium
+        timeout-minutes: 10
+        run: timeout -k 10 300 pnpm exec playwright install --with-deps chromium || timeout -k 10 300 pnpm exec playwright install --with-deps chromium
       - name: Run the changed specs against a real backend
         if: steps.specs.outputs.specs != ''
         env:
