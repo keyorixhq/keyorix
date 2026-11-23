@@ -9,9 +9,9 @@ import "testing"
 // CI. reassign-owner, the earlier V5 area, is left out to keep the check fast;
 // it runs in the opt-in full sweep and TestAuthzDiffSmoke. Since #4161 those
 // FAIL when only reassign-owner's own core gate is removed: REST still gates
-// that route, but a core-only over-allow is no longer absorbed by the (now
-// narrowed) known-04 waiver (partition_test.go), so it is "unexplained". Its
-// plant asserts exactly that.
+// that route, but a core-only over-allow is no longer absorbed by a waiver
+// (known-04 is gone, partition_test.go), so it is "unexplained". Its plant
+// asserts exactly that.
 //
 // Coverage: every NAMED principal (admin, viewer, project-admin, no-role,
 // actor-0, expired, suspended, restricted-PAT) plus a small CURATED set of
