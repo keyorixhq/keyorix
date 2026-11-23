@@ -21,6 +21,10 @@ import (
 // Resume.all requires pp.suspendedSecretID (pre-suspended in the V5EXT3 seed)
 // for the positive-control admin to get n ≥ 1 from ResumeProjectSecrets.
 //
+// The sweep also runs secret.extend.expiring (bound in ops_phase5_test.go): it
+// is the fifth project-wide secrets.write@project op whose route gate core
+// decides itself (#4657), and no other always-on strict check covers it.
+//
 // Strict rule: zero uncalibrated cases and zero "unexplained" cases.
 func TestV5ext3StrictSweep(t *testing.T) {
 	if testing.Short() {
@@ -28,7 +32,7 @@ func TestV5ext3StrictSweep(t *testing.T) {
 	}
 	tally := &sweepTally{disBuckets: map[string]int{}, gapBuckets: map[string]int{}}
 	for _, spec := range withDerived(t, ops()) {
-		if !isV5ext3Op(spec.name) {
+		if !isV5ext3SweptOp(spec.name) {
 			continue
 		}
 		spec := spec
@@ -66,6 +70,12 @@ func TestV5ext3StrictSweep(t *testing.T) {
 	if tally.n < 10 {
 		t.Errorf("only %d cases ran — the curated case space did not run", tally.n)
 	}
+}
+
+// isV5ext3SweptOp reports whether TestV5ext3StrictSweep runs name: the V5EXT3
+// bindings plus secret.extend.expiring, which shares their route gate.
+func isV5ext3SweptOp(name string) bool {
+	return isV5ext3Op(name) || name == "secret.extend.expiring"
 }
 
 // curatedV5ext3Variations: gate-boundary cases for a V5EXT3 op at target t.
