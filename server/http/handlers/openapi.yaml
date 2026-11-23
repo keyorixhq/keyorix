@@ -4753,9 +4753,11 @@ paths:
                     type: object
                     properties:
                       shares: {type: array, items: {$ref: '#/components/schemas/Share'}}
+        '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
   /api/v1/secrets/{id}/share:
     post:
       tags: [Shares]

@@ -22581,9 +22581,11 @@ type ListSecretSharesResponse struct {
 			Shares *[]Share `json:"shares,omitempty"`
 		} `json:"data,omitempty"`
 	}
+	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON503 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -36302,6 +36304,13 @@ func ParseListSecretSharesResponse(rsp *http.Response) (*ListSecretSharesRespons
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -36322,6 +36331,13 @@ func ParseListSecretSharesResponse(rsp *http.Response) (*ListSecretSharesRespons
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
