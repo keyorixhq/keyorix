@@ -178,6 +178,11 @@ func sanitizeServerString(s string) string {
 // assume one page holds every secret (#Bug2).
 const maxServerPageSize = 100
 
+// maxSecretListPages bounds how many pages resolveID reads for one environment (100,000
+// secrets at the page size above). The page count comes from the server, which is not
+// trusted to stop on its own.
+const maxSecretListPages = 1000
+
 // maxResponseBodyBytes caps how much of a Keyorix server response this fetcher will
 // buffer during json.Decode, so a compromised/misbehaving server (or a DNS-rebound
 // response) can't exhaust process memory with an oversized reply.
@@ -330,7 +335,14 @@ func (f *KeyorixFetcher) resolveID(ctx context.Context, env, name string) (id, e
 		return 0, 0, fmt.Errorf("environment %q: server returned an invalid id", env)
 	}
 
+	var found uint
 	for page := 1; ; page++ {
+		if page > maxSecretListPages {
+			// total_pages is the server's own claim; without a bound a server that keeps
+			// raising it makes this loop, and the requests it sends, unbounded. Not
+			// ErrUpstreamGone: the list is broken, not proof the secret was removed.
+			return 0, 0, fmt.Errorf("list secrets in project %d environment %q: more than %d pages", f.projectID, env, maxSecretListPages)
+		}
 		q := url.Values{}
 		q.Set("project_id", strconv.FormatUint(uint64(f.projectID), 10))
 		q.Set("environment_id", strconv.FormatUint(uint64(envID), 10))
@@ -350,22 +362,33 @@ func (f *KeyorixFetcher) resolveID(ctx context.Context, env, name string) (id, e
 			return 0, 0, fmt.Errorf("list secrets in project %d environment %q (page %d): %w", f.projectID, env, page, err)
 		}
 		for _, s := range body.Secrets {
-			if s.Name == name {
-				if s.ID == 0 {
-					return 0, 0, fmt.Errorf("secret %q in environment %q: server returned an invalid id", name, env)
-				}
-				// Not ErrUpstreamGone: a scope the server contradicts is a broken answer,
-				// not proof the secret was removed, so the synced copy must not be wiped.
-				if s.ProjectID != f.projectID || s.EnvironmentID != envID {
-					return 0, 0, fmt.Errorf("secret %q in environment %q: server listed it under project %d environment %d, expected project %d environment %d",
-						name, env, s.ProjectID, s.EnvironmentID, f.projectID, envID)
-				}
-				return s.ID, envID, nil
+			if s.Name != name {
+				continue
 			}
+			if s.ID == 0 {
+				return 0, 0, fmt.Errorf("secret %q in environment %q: server returned an invalid id", name, env)
+			}
+			// Not ErrUpstreamGone: a scope the server contradicts is a broken answer,
+			// not proof the secret was removed, so the synced copy must not be wiped.
+			if s.ProjectID != f.projectID || s.EnvironmentID != envID {
+				return 0, 0, fmt.Errorf("secret %q in environment %q: server listed it under project %d environment %d, expected project %d environment %d",
+					name, env, s.ProjectID, s.EnvironmentID, f.projectID, envID)
+			}
+			// The server keeps (project, environment, name) unique among active secrets,
+			// so a name listed twice, on this page or another, is not an honest answer.
+			// Taking the first would read a secret the operator may not have meant;
+			// refuse instead, which means every page is read before a match is used.
+			if found != 0 {
+				return 0, 0, fmt.Errorf("secret %q in environment %q: listed more than once", name, env)
+			}
+			found = s.ID
 		}
 		if page >= body.TotalPages {
 			break
 		}
+	}
+	if found != 0 {
+		return found, envID, nil
 	}
 	return 0, 0, fmt.Errorf("secret %q not found in environment %q: %w", name, env, ErrUpstreamGone)
 }
