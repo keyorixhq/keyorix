@@ -198,6 +198,9 @@ type pgHooks struct {
 	afterMigrate  func(db *sql.DB) error
 	beforeRerun   func(db *sql.DB) error
 	bareInterrupt bool // stop through migrateDatabase directly, without the transaction
+	// swallowMigrationError makes the interrupted migration return nil whatever
+	// failed: the shape of a step that ignores its error and commits.
+	swallowMigrationError bool
 }
 
 // pgRun is one exec. stopAfter == 0 runs the real startup path once; stopAfter > 0
@@ -255,7 +258,7 @@ func pgRun(t testing.TB, tag string, chainVerifiable bool, data []byte, stopAfte
 
 	var findings []ugFinding
 	if stopAfter > 0 {
-		reached, err := pgInterruptedMigrate(t, dsn, stopAfter, hooks.bareInterrupt)
+		reached, err := pgInterruptedMigrate(t, dsn, stopAfter, hooks)
 		if err != nil {
 			t.Fatalf("interrupted run: %v", err)
 		}
@@ -463,7 +466,7 @@ var errPGInterrupted = errors.New("upgrade-pg-fuzz: simulated crash")
 // with no outer transaction: the shape of the SQLite leg's ugInterruptedMigrate bare option,
 // kept to compare the two legs. That shape is not reachable in production: every
 // real caller of migrateDatabase on Postgres goes through the lock.
-func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, bare bool) (bool, error) {
+func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, hooks pgHooks) (bool, error) {
 	t.Helper()
 	gdb, err := openPostgresGorm(&config.DatabaseConfig{DSN: dsn}, gormConfig())
 	if err != nil {
@@ -481,11 +484,21 @@ func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, bare bool) (b
 	// injected error can land on a statement whose result production ignores (the
 	// deferred pg_advisory_unlock in withMigrationLockPooled), and then the
 	// migration returns nil and commits, a completed upgrade rather than a crash.
+	bare := hooks.bareInterrupt
+	migrate := f.migratePostgres
+	if bare {
+		migrate = f.migrateDatabase
+	}
+	if hooks.swallowMigrationError {
+		// Inside the transaction, so the partial migration commits.
+		inner := migrate
+		migrate = func(db *gorm.DB) error { _ = inner(db); return nil }
+	}
 	var merr error
 	if bare {
-		merr = f.migrateDatabase(gdb)
+		merr = migrate(gdb)
 	} else {
-		merr = withMigrationLockPooled(gdb, true, false, "", f.migratePostgres)
+		merr = withMigrationLockPooled(gdb, true, false, "", migrate)
 	}
 	return seen.Load() >= int64(stopAfter) && merr != nil, nil
 }
