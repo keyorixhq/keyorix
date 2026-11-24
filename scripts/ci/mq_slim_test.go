@@ -468,6 +468,15 @@ func TestMQSlim_TestreachCheckParsing(t *testing.T) {
 		{"test-suite/root 1", []string{}, true, [3]bool{false, false, false}},
 		{"test-suite/root-1,*", []string{}, true, [3]bool{false, false, false}},
 		{",", []string{}, true, [3]bool{false, false, false}},
+		// REVIEW-4693-DEEP-1 M1: a sharded leg in the list (alone, or beside an
+		// unsharded one) is refused whole; red on a020259f, which allowed it and
+		// let "http-2": "-" skip tests that http-1's weight partition never runs.
+		{"test-suite/http-2", []string{}, true, [3]bool{false, false, false}},
+		{"test-suite/root-1,test-suite/server-3", []string{}, true, [3]bool{false, false, false}},
+		{"test-suite/storage-store-1", []string{}, true, [3]bool{false, false, false}},
+		{"test-suite/handlers-2,test-suite/root-2", []string{}, true, [3]bool{false, false, false}},
+		// not a shard name: stays allowed
+		{"test-suite/http-x,test-suite/root-1", []string{"test-suite/http-x", "test-suite/root-1"}, false, [3]bool{true, false, false}},
 	} {
 		cmd := exec.Command("python3", "-I", "-c", prog)
 		cmd.Dir = root
@@ -491,6 +500,27 @@ func TestMQSlim_TestreachCheckParsing(t *testing.T) {
 		if !slices.Equal(got.Names, tc.names) || got.Bad != tc.bad || got.Allow != tc.allow {
 			t.Errorf("MQ_SLIM_TESTREACH_CHECKS=%q: names=%v bad=%v allow=%v, want %v %v %v", tc.val, got.Names, got.Bad, got.Allow, tc.names, tc.bad, tc.allow)
 		}
+	}
+}
+
+// mq_slim.SHARDED_LEG must stay the same pattern as select-affected.py's
+// SHARDED_SINGLE_PACKAGE, or a new sharded package could be listed again.
+func TestMQSlim_ShardedLegPatternMatchesSelectAffected(t *testing.T) {
+	pat := func(file, name string) string {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(l, name+" = re.compile(") {
+				return strings.TrimSpace(strings.TrimPrefix(l, name+" = re.compile("))
+			}
+		}
+		t.Fatalf("%s: no %s", file, name)
+		return ""
+	}
+	if a, b := pat("mq_slim.py", "SHARDED_LEG"), pat("select-affected.py", "SHARDED_SINGLE_PACKAGE"); a != b {
+		t.Errorf("SHARDED_LEG %s differs from SHARDED_SINGLE_PACKAGE %s", a, b)
 	}
 }
 

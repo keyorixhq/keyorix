@@ -38,7 +38,10 @@ list is still computed and logged ("mode": "shadow") but its leg writes no
 leg_tests entry, so ci.yml runs it unchanged. A listed name no decision uses is
 harmless. A list that does not parse (a token with characters a check name
 cannot have, or only commas) enforces nothing for testreach, logs an "error"
-record, and so does not sample either.
+record, and so does not sample either. So does a list naming a sharded leg
+(handlers-N, http-N, encryption-N, faultops-N, storage-store-N, server-N): the
+narrowed tests of a sharded package run only on its first shard, so enforcing
+a later shard alone would skip tests. Only unsharded checks can be listed.
 """
 import json
 import os
@@ -55,6 +58,8 @@ READER_IMPORTS = {"go/parser", "golang.org/x/tools/go/packages", "os/exec"}
 MAX_LOGGED_TESTS = int(os.environ.get("MQ_SLIM_MAX_LOGGED", "40") or "40")
 SAMPLE_EVERY = 10
 CHECK_NAME = re.compile(r"[A-Za-z0-9._/-]+")
+# Keep equal to select-affected.py SHARDED_SINGLE_PACKAGE (guarded by a test).
+SHARDED_LEG = re.compile(r"^(handlers|http|encryption|faultops|storage-store|server)-\d+$")
 
 
 def mode():
@@ -93,6 +98,13 @@ def testreach_checks():
     bad = [t for t in toks if not CHECK_NAME.fullmatch(t)]
     if not toks or bad:
         return set(), f"MQ_SLIM_TESTREACH_CHECKS={raw!r} does not parse (want check names like test-suite/root-1, comma separated); testreach enforces nothing"
+    # A sharded package's narrowed tests all sit on its first shard and the other
+    # shards get "-", so allowing one shard alone could skip tests no leg runs
+    # (REVIEW-4693-DEEP-1 M1). Refuse the whole list rather than guess which
+    # shards belong together.
+    sharded = [t for t in toks if t.startswith("test-suite/") and SHARDED_LEG.match(t[len("test-suite/"):])]
+    if sharded:
+        return set(), f"MQ_SLIM_TESTREACH_CHECKS={raw!r} names sharded leg(s) {','.join(sorted(sharded))}; only unsharded checks (like test-suite/root-1) can be listed, so testreach enforces nothing"
     return set(toks), None
 
 
@@ -377,7 +389,8 @@ def run(ctx, legs, leg_pkgs, gates, touched, log):
         r, leg_tests = testreach_lever(ctx, legs, leg_pkgs, log)
         recs += r
         if enforces("testreach"):
-            out["leg_tests"] = {leg: v for leg, v in leg_tests.items() if testreach_allows("test-suite/" + leg)}
+            # names and bad_list were parsed once above; do not re-read the env.
+            out["leg_tests"] = {leg: v for leg, v in leg_tests.items() if not bad_list and (names is None or "test-suite/" + leg in names)}
     except Exception as exc:  # shadow must never change the decision
         recs.append(record(log, "testreach", "test-suite", "error", f"{type(exc).__name__}: {exc}"))
     try:
