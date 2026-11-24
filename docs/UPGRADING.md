@@ -70,6 +70,15 @@ without Secret mode, and rejects `postgresql.settings.session_replication_role`
 Scale to one replica, or stop the release, before the upgrade for the floor reason
 in step 3. **UNVERIFIED** until the kind leg of release QA records it.
 
+**keyorix-operator chart: apply the CRD yourself.** The `KeyorixSecret` CRD changed
+since v0.96.3 (the new `spec.onSuspend` field, and `secretKey` must be unique within a
+CR). Helm installs `crds/` on the first install only and never upgrades it, so with a
+plain `helm upgrade` the cluster keeps the old schema: the API server drops `onSuspend`
+from every CR you apply, without an error, and does not enforce the uniqueness. Apply the
+new CRD from the chart at the release tag before upgrading the operator release:
+`kubectl apply --server-side -f deploy/helm/keyorix-operator/crds/` (from a checkout of
+`v0.97.0`). **UNVERIFIED.**
+
 **Air-gapped.** Image `ghcr.io/keyorixhq/keyorix-server:0.97.0-airgap` (§6) or the
 `keyorix-server-airgap_linux_<arch>` binaries, built with `-tags noaws,noazure,nogcp`:
 the `aws-kms`, `gcp-kms` and `azure-kms` key providers and the cloud connectors are not in
