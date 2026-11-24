@@ -9,6 +9,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/server/errclass"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
 )
@@ -316,22 +317,23 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 		if sendAuditUnavailable(w, err) {
 			return
 		}
-		log.Printf("Error setting roles for user %d: %v", userID, err)
 		if sendPartialMutation(w, err) {
 			return // the removals applied, the additions did not (#3488)
 		}
 		if sendRoleScopeError(w, err) {
 			return
 		}
-		switch {
-		case errors.Is(err, core.ErrPermissionDenied):
-			// The grant ceiling (a role the actor cannot grant): a refusal, not a fault.
-			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
-		case errors.Is(err, storage.ErrUserNotFound):
-			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
-		default:
-			sendError(w, "InternalError", "Failed to update user roles", http.StatusInternalServerError, nil)
+		// The grant ceiling (a role the actor cannot grant) is a refusal, not a fault.
+		if sendGrantCeilingRefusal(w, err) {
+			return
 		}
+		// The last-install-administrator guard is a 409 Precondition (#4672); a storage
+		// outage is a 503; only an unclassified error is a logged 500.
+		answerCoreError(w, r, err, coreErrorAnswer{op: fmt.Sprintf("setting roles for user %d", userID), texts: coreErrorTexts{
+			errclass.Precondition: err.Error(),
+			errclass.NotFound:     errUserNotFound,
+			errclass.Internal:     "Failed to update user roles",
+		}})
 		return
 	}
 

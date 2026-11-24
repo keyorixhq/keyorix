@@ -123,5 +123,6 @@ func TestUpdateUserRoles_DBError_S31(t *testing.T) {
 	r := withChiParamS7(withUserCtxS7(httptest.NewRequest(http.MethodPut, "/api/v1/users/1/roles", body)), "id", "1")
 	w := httptest.NewRecorder()
 	h.UpdateUserRoles(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// A storage fault is the declared 503 storage-unavailable answer, not an undeclared 500 (#4672).
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
