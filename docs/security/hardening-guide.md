@@ -436,6 +436,15 @@ option there, but it does not bundle the key-material files.
 - **Set per-connector `allowed_refs`** — an operator-configured allowlist is
   the outer boundary regardless of any caller's RBAC grant; don't rely on RBAC
   alone to bound which external paths a connector can reach.
+- **Keep dynamic-secret targets on verified TLS** — with
+  `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport` off (the default), every
+  dynamic-secret `admin_dsn` must verify the target's certificate: MongoDB and Redis TLS without
+  `tlsInsecure` / `skip_verify`, PostgreSQL `sslmode=verify-full` or `verify-ca`, MySQL
+  `tls=true`. A project admin cannot turn verification off in the DSN; the decision is read from
+  the parsed driver settings. Turning the flag on applies to every backend at once and is logged
+  (WARNING per connection) and audited (`dynamic_secret.config_insecure_transport`,
+  `dynamic_lease.insecure_transport`). Upgrade window for PostgreSQL/MySQL configs stored before
+  #4374: [upgrade note](../upgrading.d/sql-admin-dsn-transport-policy.md).
 - **Do not weaken the SSRF/link-local guard** — there is no supported
   configuration key to disable `internal/netutil`'s SSRF checks on connector/
   dynamic-secret/DSN-driven calls; if a legitimate target trips it (e.g. a
