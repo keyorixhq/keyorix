@@ -27,6 +27,8 @@ type PostgresEngine struct {
 	// (see New). When false, every connection re-validates the resolved
 	// target address and refuses a private/link-local one (G48).
 	allowPrivateNetwork bool
+	// transport is the operator's transport policy (#4374, see sqlTransportPolicy).
+	transport sqlTransportPolicy
 }
 
 // dialPostgres connects to adminDSN, pinning the dial to a re-validated
@@ -51,9 +53,16 @@ type PostgresEngine struct {
 // through dialResolve makes the whole resolve-then-dial sequence consistent,
 // and DialFunc's own re-validation of whatever literal IP it receives is
 // defense-in-depth regardless of which step did the resolving.
-func dialPostgres(ctx context.Context, adminDSN string, allowPrivateNetwork bool) (*pgx.Conn, error) {
+//
+// The transport policy is checked on the parsed config before any dial: a
+// connection that does not verify the server certificate is refused unless the
+// operator allowed insecure transport (sqlTransportPolicy).
+func dialPostgres(ctx context.Context, adminDSN string, allowPrivateNetwork bool, transport sqlTransportPolicy) (*pgx.Conn, error) {
 	cfg, err := parsePostgresAdminDSN(adminDSN)
 	if err != nil {
+		return nil, err
+	}
+	if err := transport.check(postgresTransportWeakness(&cfg.Config)); err != nil {
 		return nil, err
 	}
 	return connectPostgres(ctx, cfg, allowPrivateNetwork)
@@ -61,14 +70,23 @@ func dialPostgres(ctx context.Context, adminDSN string, allowPrivateNetwork bool
 
 // dialPostgresForRevoke is dialPostgres for Revoke only: the options that make
 // pgx read a server file are removed first (parsePostgresRevokeDSN, #3980), so a
-// config stored before #3952 can still drop the roles it issued.
-func dialPostgresForRevoke(ctx context.Context, adminDSN string, allowPrivateNetwork bool) (*pgx.Conn, error) {
+// config stored before #3952 can still drop the roles it issued. For the same
+// reason a connection the transport policy refuses is not refused here: it is
+// upgraded to sslmode=verify-full (#4374), so verification stays on.
+func dialPostgresForRevoke(ctx context.Context, adminDSN string, allowPrivateNetwork bool, transport sqlTransportPolicy) (*pgx.Conn, error) {
 	cfg, removed, err := parsePostgresRevokeDSN(adminDSN)
 	if err != nil {
 		return nil, err
 	}
+	var upgraded *dsn.TransportWeakness
+	if w := postgresTransportWeakness(&cfg.Config); w != nil && transport.refuses() {
+		upgradePostgresToVerifyFull(&cfg.Config)
+		upgraded = w
+	} else if err := transport.check(w); err != nil {
+		return nil, err
+	}
 	conn, err := connectPostgres(ctx, cfg, allowPrivateNetwork)
-	return conn, revokeStrippedError(removed, slices.Contains(removed, "sslrootcert"), err)
+	return conn, revokeTransportUpgradedError(upgraded, revokeStrippedError(removed, slices.Contains(removed, "sslrootcert"), err))
 }
 
 func connectPostgres(ctx context.Context, cfg *pgx.ConnConfig, allowPrivateNetwork bool) (*pgx.Conn, error) {
@@ -228,7 +246,7 @@ func (e *PostgresEngine) SupportsNativeExpiry() bool { return true }
 // quoted via pgx.Identifier. The template is operator-authored (trusted) and is
 // the documented SQL-injection trust boundary.
 func (e *PostgresEngine) Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (Credential, string, error) {
-	conn, err := dialPostgres(ctx, adminDSN, e.allowPrivateNetwork)
+	conn, err := dialPostgres(ctx, adminDSN, e.allowPrivateNetwork, e.transport)
 	if err != nil {
 		return Credential{}, "", err
 	}
@@ -269,9 +287,10 @@ func (e *PostgresEngine) Issue(ctx context.Context, adminDSN, creationTemplate s
 // left active.
 //
 // It connects through dialPostgresForRevoke: an admin_dsn option Issue refuses
-// for reading a server file is removed instead of refused (#3980).
+// for reading a server file is removed instead of refused (#3980), and an sslmode
+// the transport policy refuses is replaced by verify-full (#4374).
 func (e *PostgresEngine) Revoke(ctx context.Context, adminDSN, roleName string) error {
-	conn, err := dialPostgresForRevoke(ctx, adminDSN, e.allowPrivateNetwork)
+	conn, err := dialPostgresForRevoke(ctx, adminDSN, e.allowPrivateNetwork, e.transport)
 	if err != nil {
 		return err
 	}
@@ -290,7 +309,7 @@ func (e *PostgresEngine) Revoke(ctx context.Context, adminDSN, roleName string) 
 // Renew extends the role's VALID UNTIL to expiresAt, so the credential stays
 // usable for the renewed window without re-issuing.
 func (e *PostgresEngine) Renew(ctx context.Context, adminDSN, roleName string, expiresAt time.Time) error {
-	conn, err := dialPostgres(ctx, adminDSN, e.allowPrivateNetwork)
+	conn, err := dialPostgres(ctx, adminDSN, e.allowPrivateNetwork, e.transport)
 	if err != nil {
 		return err
 	}

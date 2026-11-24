@@ -120,7 +120,7 @@ func TestPostgresEngineBoundsServerClaimedMessageLength(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dsn := startHostileLengthServer(t, tc.afterHandshake)
-			e := &PostgresEngine{allowPrivateNetwork: true} // loopback rogue server
+			e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer} // loopback rogue server
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 

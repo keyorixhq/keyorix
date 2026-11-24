@@ -210,6 +210,13 @@ type Config struct {
 	Retries bool
 	// Credentials the connector sends; they must not leak (O7).
 	Credentials []string
+	// AllocPerRequest widens O4's allocation limit by this many bytes for every
+	// request the backend received. Zero keeps the flat limit. A connector that
+	// legitimately reads up to a per-response cap (e.g. 10 MiB) and makes many
+	// requests allocates cap x a small copy factor per request, which the flat
+	// 256 MiB + 16 x wrote limit does not allow for. The allowance is linear in
+	// the request count, so an unbounded read still exceeds it.
+	AllocPerRequest uint64
 }
 
 // Harness is one hostile backend plus the oracles' bookkeeping for one input.

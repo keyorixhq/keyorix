@@ -3,4 +3,5 @@
 dynamic_secrets.go
 dynamic_secrets_refused_dsn.go
 dynamic_secrets_admin_dsn_update.go
+dynamic_secrets_transport.go
 dynamic_secrets_issue_abort.go

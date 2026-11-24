@@ -28,7 +28,11 @@ const rotationProtocolKey = "dek.rotation_protocol"
 
 func readRotationProtocol(t *testing.T, dbPath string) (string, bool) {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	// The server is writing to this file while the test polls it (startup
+	// migrations on a loaded CI runner), so a read can meet SQLITE_BUSY: wait
+	// for the lock, and treat a read that still hits it as "not recorded yet"
+	// so the caller's polling loop tries again instead of failing the test.
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("open %s read-only: %v", dbPath, err)
 	}
@@ -36,6 +40,8 @@ func readRotationProtocol(t *testing.T, dbPath string) (string, bool) {
 	var v string
 	switch err := db.QueryRow("SELECT value FROM system_metadata WHERE key = ?", rotationProtocolKey).Scan(&v); {
 	case err == sql.ErrNoRows:
+		return "", false
+	case err != nil && strings.Contains(err.Error(), "database is locked"):
 		return "", false
 	case err != nil:
 		t.Fatalf("read %s: %v", rotationProtocolKey, err)

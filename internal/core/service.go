@@ -102,6 +102,10 @@ type KeyorixCore struct {
 	// dynamic_secrets.allow_insecure_transport (see
 	// SetDynamicAllowInsecureTransport).
 	dynamicAllowInsecureTransport bool
+	// dynamicSQLTransportGraceEnded ends the dsn.StoredSQLTransportGrace soft
+	// period for this core (tests of the next release's hard refusal). Zero value:
+	// the constant decides.
+	dynamicSQLTransportGraceEnded bool
 	// dynamicAllowPrivateTargets mirrors config
 	// dynamic_secrets.allow_private_network_targets. When false (the default), the
 	// SSRF guard in CreateDynamicSecretConfig rejects admin DSNs whose host resolves
@@ -1131,9 +1135,12 @@ func (c *KeyorixCore) SetDynamicAllowPrivateTargets(allow bool) {
 	c.dynamicAllowPrivateTargets = allow
 }
 
-// SetDynamicAllowInsecureTransport controls whether the mongodb/redis
+// SetDynamicAllowInsecureTransport controls whether the dynamic-secret
 // backends' TLS-required-by-default guard is bypassed. When false (the
-// default), connecting to either backend without TLS is refused. Set to true
+// default), connecting to mongodb/redis without TLS is refused, and a
+// postgres/mysql admin_dsn that does not verify the server certificate is
+// refused when saved (and, once dsn.StoredSQLTransportGrace ends, when issued,
+// #4374). Set to true
 // only when the dynamic-secret backend legitimately cannot use TLS (e.g. a
 // legacy/internal deployment) — every connection made under this opt-out is
 // logged (2d).

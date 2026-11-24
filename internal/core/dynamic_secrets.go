@@ -289,6 +289,12 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	if err := dsn.CheckLocalFileOptions(req.BackendType, req.AdminDSN); err != nil {
 		return nil, err
 	}
+	// #4374: a postgres/mysql admin_dsn whose connection does not verify the server
+	// certificate is refused unless the operator allowed insecure transport.
+	transportWeakness, err := c.checkAdminDSNTransportOnSave(req.BackendType, req.AdminDSN)
+	if err != nil {
+		return nil, err
+	}
 	// #94: the admin DSN is encrypted bound to DynamicSecretConfigAAD(cfg.ID, ...), so
 	// it must be encrypted AFTER the row exists (cfg.ID is an auto-increment PK, not
 	// known beforehand) — insert first with the DSN columns empty, then encrypt and
@@ -335,6 +341,7 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	pid := cfg.ProjectID
 	c.writeAuditEventFull(ctx, "dynamic_secret.config_created", nil, nil, &pid, "",
 		fmt.Sprintf("dynamic-secret config %q (%s) created in project %d", cfg.Name, cfg.BackendType, cfg.ProjectID))
+	c.auditAdminDSNTransportAllowedOnSave(ctx, req.ActorID, cfg, transportWeakness)
 	return cfg, nil
 }
 
@@ -641,6 +648,9 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	}
 	ttl, err := c.dynamicTTL(cfg, ttlSeconds)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.checkAdminDSNTransportOnIssue(ctx, engine, cfg, adminDSN, userID); err != nil {
 		return nil, err
 	}
 

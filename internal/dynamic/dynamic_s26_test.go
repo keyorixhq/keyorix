@@ -376,7 +376,7 @@ func (c *fakeQueryErrConnector) Driver() driver.Driver { return &fakeQueryErrDri
 // ─────────────────────────── postgres.go: dialPostgres ParseConfig error ──────
 
 func TestDialPostgres_InvalidDSN(t *testing.T) {
-	_, err := dialPostgres(context.Background(), "not a valid dsn at all ::: %zz", true)
+	_, err := dialPostgres(context.Background(), "not a valid dsn at all ::: %zz", true, newSQLTransportPolicy(false))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "connect to target")
 }

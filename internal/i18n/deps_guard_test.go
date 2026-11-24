@@ -39,14 +39,17 @@ func TestI18nAndConfigStayLight(t *testing.T) {
 		}
 		for dep := range strings.FieldsSeq(string(out)) {
 			for _, bad := range forbiddenDepPrefixes {
-				// connecttypes and core/ports are each independently guarded
-				// to stay stdlib-only/integration-free (see
+				// connecttypes, core/ports and core/dsn are each independently
+				// guarded to stay stdlib-only/integration-free (see
 				// internal/core/ports/ports_deps_test.go's own
-				// TestPortsStaysFree for the latter), so neither can be the
-				// source of a heavy transitive dependency here -- exempting
-				// them doesn't weaken what this test actually checks for.
+				// TestPortsStaysFree, and TestDSNStaysALeaf for dsn, which
+				// ports imports for DynamicAdminDSNTransportInspector), so
+				// none can be the source of a heavy transitive dependency
+				// here -- exempting them doesn't weaken what this test
+				// actually checks for.
 				if dep == "github.com/keyorixhq/keyorix/internal/connect/connecttypes" ||
-					dep == "github.com/keyorixhq/keyorix/internal/core/ports" {
+					dep == "github.com/keyorixhq/keyorix/internal/core/ports" ||
+					dep == "github.com/keyorixhq/keyorix/internal/core/dsn" {
 					continue
 				}
 				if dep == bad || strings.HasPrefix(dep, bad+"/") || (strings.HasSuffix(bad, "/") && strings.HasPrefix(dep, bad)) {

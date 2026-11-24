@@ -117,7 +117,7 @@ func seedDynConfigS11(t *testing.T, cs *core.KeyorixCore, suffix string) (projID
 		ProjectID:     proj.ID,
 		EnvironmentID: envs[0].ID,
 		BackendType:   "postgres",
-		AdminDSN:      "postgres://fake:fake@localhost/fakedb",
+		AdminDSN:      "postgres://fake:fake@localhost/fakedb?sslmode=verify-full",
 		CreatedBy:     "s11" + suffix,
 		ActorID:       1,
 	})

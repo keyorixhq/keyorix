@@ -137,7 +137,7 @@ func groupDynamicSecrets(ctx *smokeCtx) {
 	c := ctx.c
 	created := c.callExpect("POST", "POST /api/v1/dynamic-secrets/configs", "/api/v1/dynamic-secrets/configs", map[string]interface{}{
 		"name": "e2e-smoke-dynamic-config", "project_id": ctx.projectID, "environment_id": ctx.environmentID,
-		"backend_type": "postgres", "admin_dsn": "postgres://user:pass@e2e-smoke-unreachable.invalid:5432/db",
+		"backend_type": "postgres", "admin_dsn": "postgres://user:pass@e2e-smoke-unreachable.invalid:5432/db?sslmode=verify-full",
 		"default_ttl_seconds": 300, "max_ttl_seconds": 3600, "max_active_leases": 5,
 	}, 200, 201)
 	var cfg idOnly
@@ -152,7 +152,7 @@ func groupDynamicSecrets(ctx *smokeCtx) {
 		map[string]bool{"enabled": false}, 200)
 	// DYNAMIC-ADMIN-DSN-1: replace the stored admin DSN in place (same checks as create).
 	c.callExpect("PATCH", "PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn", dc+"/admin-dsn",
-		map[string]string{"admin_dsn": "postgres://user:pass2@e2e-smoke-unreachable.invalid:5432/db"}, 200)
+		map[string]string{"admin_dsn": "postgres://user:pass2@e2e-smoke-unreachable.invalid:5432/db?sslmode=verify-full"}, 200)
 	c.callExpect("GET", "GET /api/v1/dynamic-secrets/configs/refused-admin-dsn",
 		fmt.Sprintf("/api/v1/dynamic-secrets/configs/refused-admin-dsn?project_id=%d", ctx.projectID), nil, 200)
 	c.callExpect("GET", "GET /api/v1/dynamic-secrets/configs/{id}/leases", dc+"/leases", nil, 200)

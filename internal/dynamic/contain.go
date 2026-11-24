@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 )
 
@@ -125,6 +126,25 @@ func (c *containedEngine) Renew(ctx context.Context, adminDSN, roleName string, 
 func (c *containedEngine) SupportsNativeExpiry() bool { return c.inner.SupportsNativeExpiry() }
 func (c *containedEngine) BackendType() string        { return c.inner.BackendType() }
 func (c *containedEngine) IsEphemeralBackend() bool   { return c.inner.IsEphemeralBackend() }
+
+// AdminDSNTransportWeakness forwards to an engine that inspects its admin_dsn
+// transport (ports.DynamicAdminDSNTransportInspector); other engines have none to
+// report. A panic while the driver parses the DSN answers a weakness, so a save
+// is refused rather than let through unchecked.
+func (c *containedEngine) AdminDSNTransportWeakness(adminDSN string) (w *dsn.TransportWeakness) {
+	inspector, ok := c.inner.(ports.DynamicAdminDSNTransportInspector)
+	if !ok {
+		return nil
+	}
+	var err error
+	defer func() {
+		if err != nil {
+			w = &dsn.TransportWeakness{Backend: c.inner.BackendType(), Option: "admin_dsn (the driver failed to parse it)"}
+		}
+	}()
+	defer RecoverClientPanic(engineComponent, c.inner.BackendType(), "AdminDSNTransportWeakness", &err)()
+	return inspector.AdminDSNTransportWeakness(adminDSN)
+}
 
 // RevokeInvalidatesCredential parses the DSN in some engines; a panic there answers
 // false (the conservative audit wording: do not claim the provider credential died).

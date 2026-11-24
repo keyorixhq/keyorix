@@ -35,7 +35,18 @@ keyorix dynamic-secret create \
 rest and never returns it. `--max-ttl` is a hard ceiling and `--max-active-leases` limits how
 many credentials can exist at once.
 
-The server refuses connection-string options that read a file on the Keyorix server (such as
+The connection must verify the database server's certificate: use `sslmode=verify-full`
+(`verify-ca` only when a root certificate is installed on the Keyorix server, see below). `sslmode=disable`, `allow`, `prefer` and `require`, and a DSN without `sslmode`
+(the driver then uses `prefer`), are refused when the config is saved; for MySQL the same rule
+accepts only `tls=true`. The certificate must be trusted by the Keyorix server's system trust
+store (or its `PGSSLROOTCERT` / `~/.postgresql/root.crt`), since the DSN cannot name a CA file.
+Only the operator can allow an unverified connection, for every dynamic-secret backend at once,
+with `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport: true`; every such save,
+issue and connection is then audited or logged with a WARNING. A config stored before this rule
+keeps issuing for one release with a WARNING and an audit event on every issue
+([upgrade note](upgrading.d/sql-admin-dsn-transport-policy.md)).
+
+The server also refuses connection-string options that read a file on the Keyorix server (such as
 `sslrootcert` or `tlsCAFile`) or that use the server's own ambient credentials. If a config stops
 issuing because of this, list the affected configs with
 `keyorix dynamic-secret refused-dsn --project-id 12` and fix each with

@@ -56,6 +56,11 @@ func (c *KeyorixCore) UpdateDynamicSecretConfigAdminDSN(ctx context.Context, req
 	if err := dsn.CheckLocalFileOptions(cfg.BackendType, req.AdminDSN); err != nil {
 		return nil, err
 	}
+	// #4374: an edited admin_dsn gets no soft period (dsn.StoredSQLTransportGrace).
+	transportWeakness, err := c.checkAdminDSNTransportOnSave(cfg.BackendType, req.AdminDSN)
+	if err != nil {
+		return nil, err
+	}
 	if err := c.requireSameTargetWhileLeasesLive(ctx, cfg, req.AdminDSN); err != nil {
 		return nil, err
 	}
@@ -81,6 +86,7 @@ func (c *KeyorixCore) UpdateDynamicSecretConfigAdminDSN(ctx context.Context, req
 		return nil, err
 	}
 	cfg.AdminDSNEnc, cfg.AdminDSNMeta = dsnEnc, dsnMeta
+	c.auditAdminDSNTransportAllowedOnSave(ctx, req.ActorID, cfg, transportWeakness)
 	return cfg, nil
 }
 

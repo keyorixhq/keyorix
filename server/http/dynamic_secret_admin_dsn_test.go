@@ -104,8 +104,15 @@ func TestDynamicSecretUpdateAdminDSN_REST(t *testing.T) {
 		check(t, http.StatusForbidden, status, body)
 		assert.Equal(t, before, f.storedAdminDSNEnc(t))
 	})
-	t.Run("accepted", func(t *testing.T) {
+	t.Run("certificate not verified (#4374)", func(t *testing.T) {
 		status, body := f.patchAdminDSN(t, f.adminToken, "postgres://admin:"+httpADSNSecret+"@203.0.113.10/app")
+		check(t, http.StatusBadRequest, status, body)
+		assert.Contains(t, body, "sslmode=prefer", "name the setting the driver resolved")
+		assert.Contains(t, body, "dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport")
+		assert.Equal(t, before, f.storedAdminDSNEnc(t))
+	})
+	t.Run("accepted", func(t *testing.T) {
+		status, body := f.patchAdminDSN(t, f.adminToken, "postgres://admin:"+httpADSNSecret+"@203.0.113.10/app?sslmode=verify-full")
 		check(t, http.StatusOK, status, body)
 		assert.NotContains(t, body, "admin_dsn", "the DSN is never returned")
 		// This fixture runs with encryption off (passthrough); encryption at rest is
@@ -167,7 +174,7 @@ func TestDynamicSecretRefusedAdminDSNList_REST(t *testing.T) {
 	status, _ = f.getRefused(t, f.adminToken, 0)
 	require.Equal(t, http.StatusBadRequest, status)
 
-	status, body = f.patchAdminDSN(t, f.adminToken, "postgres://admin:"+httpADSNSecret+"@203.0.113.10/app")
+	status, body = f.patchAdminDSN(t, f.adminToken, "postgres://admin:"+httpADSNSecret+"@203.0.113.10/app?sslmode=verify-full")
 	require.Equal(t, http.StatusOK, status, body)
 	status, body = f.getRefused(t, f.adminToken, cfg.ProjectID)
 	require.Equal(t, http.StatusOK, status, body)
