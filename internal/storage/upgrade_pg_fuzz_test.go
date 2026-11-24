@@ -9,7 +9,10 @@
 //
 //	6 an interrupted migration leaves the database exactly as it found it. The
 //	  whole migration runs in one transaction (withMigrationLockPooled), so a
-//	  statement failing part way must roll everything back, including the DDL;
+//	  statement failing part way must roll everything back, including the DDL.
+//	  One stop is not an interruption: failing only the deferred
+//	  pg_advisory_unlock, whose error production ignores, commits a finished
+//	  upgrade (keyorixhq/fuzz-corpus#182);
 //	7 column types, nullability and defaults equal those of a fresh install of
 //	  this tree (information_schema), apart from pgSchemaIgnored;
 //	8 the constraint and index sets equal those of a fresh install, apart from
@@ -458,8 +461,9 @@ func pgCheckOracles(t testing.TB, tag string, chainVerifiable bool, raw *sql.DB,
 var errPGInterrupted = errors.New("upgrade-pg-fuzz: simulated crash")
 
 // pgInterruptedMigrate fail-stops a migration at the stopAfter'th write-class
-// gorm statement and every later one. It reports whether the stop was reached:
-// a migration with fewer statements completes, and is not interrupted at all.
+// gorm statement and every later one. It reports whether that interrupted the
+// upgrade: a migration with fewer statements completes and is not interrupted at
+// all, and neither is one whose only failed statement was the ignored final unlock.
 //
 // bare=false is the path a real boot takes (withMigrationLockPooled's one
 // transaction around migratePostgres). bare=true calls migrateDatabase directly,
@@ -480,10 +484,6 @@ func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, hooks pgHooks
 	seen := pgRegisterStop(t, gdb, stopAfter)
 	f := &DefaultStorageFactory{}
 	// The migration's own error return is expected; what matters is the state left.
-	// A stop only counts as an interruption when the migration actually failed: the
-	// injected error can land on a statement whose result production ignores (the
-	// deferred pg_advisory_unlock in withMigrationLockPooled), and then the
-	// migration returns nil and commits, a completed upgrade rather than a crash.
 	bare := hooks.bareInterrupt
 	migrate := f.migratePostgres
 	if bare {
@@ -500,7 +500,13 @@ func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, hooks pgHooks
 	} else {
 		merr = withMigrationLockPooled(gdb, true, false, "", migrate)
 	}
-	return seen.Load() >= int64(stopAfter) && merr != nil, nil
+	// A nil return counts as a completed upgrade only when the stop hit nothing but
+	// the final statement, the deferred pg_advisory_unlock that
+	// withMigrationLockPooled ignores (the bare path has no unlock). Any earlier
+	// failure the migration swallowed and then committed is still an interruption,
+	// and oracle 6 must compare it.
+	n := seen.Load()
+	return n >= int64(stopAfter) && (bare || merr != nil || n != int64(stopAfter)), nil
 }
 
 // pgRegisterStop arms gdb to fail the stopAfter'th write-class statement and every
