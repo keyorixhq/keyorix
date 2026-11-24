@@ -83,6 +83,14 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 	if len(renames) > maxBulkRenameBatchSize {
 		return nil, fmt.Errorf("renames exceeds the maximum batch size of %d", maxBulkRenameBatchSize)
 	}
+	// The route gate, decided in core (#4657, as SuspendProjectSecretsWithOptions):
+	// secrets.write at the project, after the request-shape checks and before any
+	// secret is read or renamed, dry run included. A per-secret grant does not stand
+	// in for it; the per-entry checks below still run on top. A refusal renames
+	// nothing and reports no outcomes.
+	if err := c.requireScopedGate(ctx, actorID, permSecretsWrite, Scope{ProjectID: projectID}); err != nil {
+		return nil, err
+	}
 
 	report := &BulkRenameReport{DryRun: dryRun, Outcomes: make([]SecretRenameOutcome, 0, len(renames))}
 

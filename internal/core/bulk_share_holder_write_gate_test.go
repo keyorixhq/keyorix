@@ -56,25 +56,24 @@ func TestWriteShareHolderWithoutSecretsWrite_BulkOpsSkip(t *testing.T) {
 	suspended := mk("shared-suspended", SecretStatusSuspended, nil)
 	expiring := mk("shared-expiring", SecretStatusActive, &soon)
 
+	// Every op now refuses the whole request at core's project gate (#4161 row 25
+	// for suspend, #4657 for rename, resume and extend) before the per-secret
+	// re-check is reached.
 	report, err := c.BulkRenameSecrets(ctx, proj.ID, []SecretRename{{ID: active.ID, NewName: "shared-renamed"}}, false, "holder", holder.ID, "", "")
-	require.NoError(t, err)
-	// Suspend now refuses the whole request at core's project gate (#4161 row 25)
-	// before the per-secret re-check is reached.
+	require.ErrorIs(t, err, ErrPermissionDenied, "rename")
 	suspendedN, err := c.SuspendProjectSecrets(ctx, proj.ID, holder.ID, "share holder gate")
-	require.ErrorIs(t, err, ErrPermissionDenied)
+	require.ErrorIs(t, err, ErrPermissionDenied, "suspend")
 	resumedN, err := c.ResumeProjectSecrets(ctx, proj.ID, holder.ID)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrPermissionDenied, "resume")
 	extendedN, _, err := c.ExtendExpiringSecrets(ctx, proj.ID, 7, 30, "holder", holder.ID)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrPermissionDenied, "extend")
 
 	after := func(id uint) *models.SecretNode {
 		s, err := st.GetSecret(ctx, id)
 		require.NoError(t, err)
 		return s
 	}
-	require.Equal(t, 0, report.Renamed, "rename: %+v", report)
-	require.Equal(t, 1, report.Skipped, "rename: %+v", report)
-	require.Equal(t, "secret not found", report.Outcomes[0].Reason, "the skip keeps the uniform #G14 reason")
+	require.Nil(t, report, "rename: a refused request reports no outcomes")
 	require.Equal(t, "shared-active", after(active.ID).Name, "the name is unchanged")
 	require.Equal(t, 0, suspendedN, "suspend")
 	require.Equal(t, SecretStatusActive, after(active.ID).Status, "the active secret stays active")

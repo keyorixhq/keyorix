@@ -720,11 +720,20 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	// SuspendSecret (single-secret) is used here instead of SuspendProjectSecrets so
 	// that only this dedicated secret is suspended; the main fixture secrets (secretID,
 	// secrets[0..3]) remain ACTIVE and other ops are unaffected.
+	//
+	// In A the viewer also holds a per-secret ACL secrets.write on it (#4657): the
+	// per-item re-check alone would let the viewer resume it, so the sweep sees a
+	// core-only over-allow unless core decides secrets.write@project first.
 	for _, pp := range []*perProject{&fx.A, &fx.B} {
 		suspSec := must(c.CreateSecret(ctx, &core.CreateSecretRequest{
 			Name: "s-resume-fixture", Value: []byte("synthetic-suspend"), ProjectID: pp.projectID,
 			EnvironmentID: pp.envID, Type: "password", CreatedBy: "kxadmin", OwnerID: admin.ID,
 		}))
+		if pp.projectID == fx.A.projectID {
+			if e := c.GrantSecretACL(ctx, admin.ID, suspSec.ID, fx.principals[pkViewer].userID, []string{"secrets.write"}); e != nil {
+				return nil, fmt.Errorf("seed: viewer ACL on resume-all fixture secret: %w", e)
+			}
+		}
 		if _, err := c.SuspendSecret(ctx, suspSec.ID, admin.ID, "fixture-suspend-for-resume-all"); err != nil {
 			return nil, fmt.Errorf("seed: suspend resume-all fixture secret: %w", err)
 		}

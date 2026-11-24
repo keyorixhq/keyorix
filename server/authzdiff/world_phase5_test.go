@@ -118,6 +118,14 @@ func seedSecretFixtures(ctx context.Context, c *core.KeyorixCore, fx *fixtures) 
 		if sx.expiringID, err = mk("expiring", "password", fmt.Appendf(nil, "synthetic-exp-%d", i), &soon); err != nil {
 			return err
 		}
+		// In A the viewer holds a per-secret ACL secrets.write on the expiring
+		// secret (#4657): extend-expiring must still refuse them, because the
+		// route gate is secrets.write@project, not a per-secret grant.
+		if pp.projectID == fx.A.projectID {
+			if err := c.GrantSecretACL(ctx, fx.adminID, sx.expiringID, fx.principals[pkViewer].userID, []string{"secrets.write"}); err != nil {
+				return fmt.Errorf("viewer ACL on expiring fixture: %w", err)
+			}
+		}
 		f, err := c.CreateFolder(ctx, fx.adminID, "folder", pp.projectID, pp.envID, nil)
 		if err != nil {
 			return fmt.Errorf("folder fixture: %w", err)
