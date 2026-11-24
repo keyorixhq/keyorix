@@ -956,9 +956,16 @@ func TestExtendExpiringSecrets_BadID_S11(t *testing.T) {
 // TestExtendExpiringSecrets_HappyPath_S11 — valid request with an empty body → 200.
 func TestExtendExpiringSecrets_HappyPath_S11(t *testing.T) {
 	t.Parallel()
-	h := newSecretHandlerS4(t)
+	// A fresh core: the project grant below must not leak into the shared S4 core.
+	cs := freshCoreS12(t)
+	ensureActiveActorUser(t, cs.Storage(), 1) // the withUserCtx user acts through core (#4159)
+	proj, err := cs.CreateProject(context.Background(), "s11extend", "")
+	require.NoError(t, err)
+	grantProjectPermissions(t, cs, 1, proj.ID, "secrets.write") // the route gate, which core decides too (#4657)
+	h, err := NewSecretHandler(cs)
+	require.NoError(t, err)
 	r := withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil))
-	r = withChiParam(r, "id", "1")
+	r = withChiParam(r, "id", fmt.Sprintf("%d", proj.ID))
 	w := httptest.NewRecorder()
 	h.ExtendExpiringSecrets(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)

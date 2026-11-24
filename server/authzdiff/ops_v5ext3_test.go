@@ -31,14 +31,13 @@ import (
 // All four ops use the caller's userID (not machineID) in core:
 //   - BulkRenameSecrets, SuspendProjectSecretsWithOptions, ResumeProjectSecrets:
 //     return error immediately for actorID==0 ("project ID and actor ID are required").
-//   - BulkDeleteSecrets: actorID==0 triggers the CLI bypass — the code calls
-//     GetSecret (no permission check) and DeleteSecret (no permission check) directly.
-//     A machine holding secrets.delete passes the router gate and the CLI bypass
-//     deletes the secret; Deleted=[id], so REST=allowed and model=allowed agree.
+//   - BulkDeleteSecrets: a machine (actorID 0, machine tagged on ctx) is decided
+//     on its machine roles: secrets.delete at the project (requireScopedGate,
+//     #4666), then secrets.delete at each secret's own scope (#4546). The core leg
+//     takes part for machines too.
 //
-// In all cases the core leg returns errNotAuthzLayer for machine actors: the
-// per-item checks are not authoritative for machines (the router gate is the
-// authoritative check). BulkRenameSecrets / Suspend / Resume refuse a machine
+// For the other three the core leg returns errNotAuthzLayer for machine actors.
+// BulkRenameSecrets / Suspend / Resume refuse a machine
 // actor with ErrPermissionDenied and REST answers 403 (#4514), so the model
 // marks them human-only (humanOnlyOps); the former waiver known-10 is gone.
 //
@@ -64,20 +63,26 @@ func v5ext3Ops() []opSpec {
 // POST /api/v1/projects/{id}/secrets/bulk-delete:
 //
 //	Router gate: RequireScopedPermission(permSecretsDelete, projectScope)
-//	Core gate: BulkDeleteSecrets → bulkDeleteOneSecret → DeleteSecretWithPermissionCheck
-//	  → EnforceSecretOwnerPermission → CheckSecretPermission(PermissionOwner) with
-//	  RBAC fallback for secrets.delete.
+//	Core gate: BulkDeleteSecrets → secrets.delete @ project (requireScopedGate,
+//	  before any secret is read; #4666), then bulkDeleteOneSecret →
+//	  DeleteSecretWithPermissionCheck → EnforceSecretOwnerPermission →
+//	  CheckSecretPermission(PermissionOwner) with RBAC fallback for secrets.delete
+//	  at the secret's {project, environment}. The curated "A@prod" variations
+//	  (secrets.delete held only in the secret's environment) pass the per-item
+//	  check but not the route gate: red on main before #4666 (core allowed, REST 403).
 //	Model: secrets.delete @ project, plus secrets.read @ project for a user actor:
 //	  each item is first read through GetSecretWithPermissionCheck (#4515). A
-//	  machine actor takes the actorID=0 path, which reads without a check.
+//	  machine is authorized per secret on its machine roles (#4546).
 //	restOK: the fixture secretID must appear in the "deleted" list.
-//	core: machine → errNotAuthzLayer; user → check Deleted list.
+//	core: every principal, machines included → check Deleted list.
 //
 // POST /api/v1/projects/{id}/secrets/bulk-rename:
 //
 //	Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
-//	Core gate: BulkRenameSecrets → EnforceSecretWritePermission → CheckSecretPermission
-//	  with RBAC fallback for secrets.write.
+//	Core gate: BulkRenameSecrets → secrets.write @ project (requireScopedGate,
+//	  before any entry is read; #4657), then the per-entry EnforceSecretWritePermission
+//	  re-check with RBAC fallback. The batch carries s3 (viewer ACL write in A) so a
+//	  per-entry-only core shows as a core-only over-allow (bulkRenameRequest).
 //	Model: secrets.write @ project.
 //	restOK: jsonNumberPositive(b, "renamed") — renamed > 0.
 //	core: machine → errNotAuthzLayer; user → check Renamed > 0.
@@ -92,9 +97,6 @@ func bulkSecretDeleteRenameOps() []opSpec {
 				return jsonListHas(b, "deleted", fx.proj(byte(t)).secretID)
 			},
 			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
-				if p.isMachine() {
-					return errNotAuthzLayer
-				}
 				pp := lg.fx.proj(byte(t))
 				result, err := lg.c.BulkDeleteSecrets(ctx, core.BulkDeleteRequest{SecretIDs: []uint{pp.secretID}},
 					pp.projectID, p.username, p.userID, "127.0.0.1", "authzdiff-test")
@@ -124,8 +126,7 @@ func bulkSecretDeleteRenameOps() []opSpec {
 					return errNotAuthzLayer
 				}
 				pp := lg.fx.proj(byte(t))
-				report, err := lg.c.BulkRenameSecrets(ctx, pp.projectID,
-					[]core.SecretRename{{ID: pp.secretID, NewName: "s-renamed-by-authzdiff"}},
+				report, err := lg.c.BulkRenameSecrets(ctx, pp.projectID, bulkRenameRequest(pp),
 					false, p.username, p.userID, "127.0.0.1", "authzdiff-test")
 				if err != nil {
 					return err
@@ -137,13 +138,27 @@ func bulkSecretDeleteRenameOps() []opSpec {
 			},
 			rest: func(fx *fixtures, t tgt, _ byte) restReq {
 				pp := fx.proj(byte(t))
+				renames := make([]map[string]any, 0, 2)
+				for _, rn := range bulkRenameRequest(pp) {
+					renames = append(renames, map[string]any{"id": rn.ID, "new_name": rn.NewName})
+				}
 				return restReq{http.MethodPost,
 					fmt.Sprintf("/api/v1/projects/%d/secrets/bulk-rename", pp.projectID),
-					map[string]any{"renames": []map[string]any{
-						{"id": pp.secretID, "new_name": "s-renamed-by-authzdiff"},
-					}}}
+					map[string]any{"renames": renames}}
 			},
 		},
+	}
+}
+
+// bulkRenameRequest is the rename batch both legs send: the main fixture secret
+// (admin-owned, no grant for a probed principal) and s3, on which the viewer holds
+// a per-secret ACL secrets.write in A (world_test.go). s3 is what exposes a core
+// that decides the batch per secret only (#4657): REST refuses the viewer at the
+// route gate, so core must refuse them too, not rename s3.
+func bulkRenameRequest(pp *perProject) []core.SecretRename {
+	return []core.SecretRename{
+		{ID: pp.secretID, NewName: "s-renamed-by-authzdiff"},
+		{ID: pp.secrets[3].id, NewName: "s3-renamed-by-authzdiff"},
 	}
 }
 
@@ -164,8 +179,10 @@ func bulkSecretDeleteRenameOps() []opSpec {
 // POST /api/v1/projects/{id}/secrets/resume-all:
 //
 //	Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
-//	Core gate: ResumeProjectSecrets → per-item EnforceSecretWritePermission with
-//	  RBAC fallback for secrets.write.
+//	Core gate: ResumeProjectSecrets → secrets.write @ project (requireScopedGate,
+//	  before any secret is read; #4657), then the per-item EnforceSecretWritePermission
+//	  re-check with RBAC fallback. In A the viewer holds a per-secret ACL write on
+//	  s-resume-fixture, so a per-item-only core shows as a core-only over-allow.
 //	Model: secrets.write @ project.
 //	restOK: jsonNumberPositive(b, "resumed") — at least one secret was resumed.
 //	Positive control calibration: pp.suspendedSecretID is pre-suspended in the

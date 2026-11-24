@@ -147,15 +147,26 @@ guard `FuzzDigitorusPKCS7BoundedWork`).
 
 **In place.**
 
-- **Dependabot** (`.github/dependabot.yml`): monthly, with a 7-day
-  cooldown, across four ecosystems (`github-actions`, `gomod` root,
-  `gomod` operator, `npm` web, `npm` root). Patch/minor bumps are grouped
-  per ecosystem to avoid one-PR-per-bump CI cost; majors are left
-  individual since they can be breaking. GitHub Actions are pinned to full
-  commit SHAs specifically so Dependabot's SHA-bump support (not tag
-  tracking) is what keeps them current — see the file's own header comment
-  for why an ungrouped `codeql-action` bump broke CI twice (#1257, #1260)
-  before the grouping was added.
+- **Dependabot** (`.github/dependabot.yml`): every entry runs monthly with
+  a 7-day cooldown. Three ecosystems are covered: `github-actions` (`/`),
+  `gomod` (one entry over `/`, `/operator`, `/migrate`, `/cli` and
+  `/fuzzkit`, indirect dependencies included) and `npm` (`/web` and `/`).
+  For `gomod` and `npm`, patch and minor updates are separate groups
+  (`go-patch`, `go-minor`, `npm-patch`, `npm-minor`), each yielding one PR
+  across all of the ecosystem's directories, to avoid paying the fixed CI
+  cost once per bump. Major updates are not grouped: each is an individual
+  PR, since it can be breaking. Security updates also stay individual PRs
+  and are not delayed by the monthly schedule or the cooldown. GitHub
+  Actions are pinned to full commit SHAs specifically so Dependabot's
+  SHA-bump support (not tag tracking) is what keeps them current; the only
+  group there is `codeql-action`, which bumps its sub-actions together —
+  see the file's own header comment for why an ungrouped `codeql-action`
+  bump broke CI twice (#1257, #1260) before the grouping was added.
+  Known trade-off: one failing update holds its whole group; the remedy is
+  `@dependabot ignore` on that dependency, which lets the rest of the group
+  proceed. Editing `dependabot.yml` makes Dependabot recreate every update
+  at once (bursts of 19 and 10 PRs on 21 and 23 Nov 2026), so the file is
+  not edited casually: change it rarely and in one commit.
 - **`govulncheck`** runs on every PR/push touching Go code (`static-analysis`
   job) *and* on a standalone schedule every 3 hours
   (`.github/workflows/govulncheck-scheduled.yml`; OSV-Scanner keeps its own

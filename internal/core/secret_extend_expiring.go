@@ -42,6 +42,13 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 	if err := c.requireActorActive(ctx, actorID); err != nil { // #4159
 		return 0, false, err
 	}
+	// The route gate, decided in core (#4657, as SuspendProjectSecretsWithOptions):
+	// secrets.write at the project, before any secret is read or extended. A
+	// per-secret grant does not stand in for it; the per-secret re-check below
+	// still runs on top. A refusal extends nothing and writes no audit row.
+	if err := c.requireScopedGate(ctx, actorID, permSecretsWrite, Scope{ProjectID: projectID}); err != nil {
+		return 0, false, err
+	}
 	newExpiry := c.now().Add(time.Duration(newWindowDays) * 24 * time.Hour).UTC()
 
 	secrets, truncated, err := c.ListExpiringSecrets(ctx, projectID, withinDays)

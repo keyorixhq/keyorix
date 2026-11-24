@@ -337,9 +337,10 @@ that applies. Stop the server and copy the key directory aside before you change
 `admin backup` is refused while `<dek_path>.pending` or `<salt_path>.pending` exists, because
 `admin restore` would refuse that archive on any other host. Start the server once, then back
 up again. A `<salt_path>.pending` still there after a successful start was never used: the
-start's log says so. Check that no `rotate-kek` is running, move it out of the key directory,
-back up, and delete the moved copy once that backup and a server start have succeeded; until
-then `admin validate --posture` reports `backups are refused: key-rotation staging file
+start's log says so. With the server stopped, run `keyorix-server admin encryption
+clear-stale-salt-pending` (`--dry-run` first): it removes the file only after proving the active
+key set opens with the current passphrase without it, with no DEK staging file present and no
+`rotate-kek` running, and refuses otherwise; then back up. Until then `admin validate --posture` reports `backups are refused: key-rotation staging file
 present`. Never delete `<dek_path>.pending` by hand. On PostgreSQL with several key directories
 the backup is also refused from a directory whose DEK is not the database's (`dek.epoch`), for
 example after another directory's rotation committed its sweep: finish the rotation there and

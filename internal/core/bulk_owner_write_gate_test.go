@@ -19,8 +19,10 @@ import (
 // owner pass. A project viewer who owns every secret in the project could rename,
 // suspend, resume or extend them all through a direct core call; now each bulk op
 // skips a secret its OWNER cannot write by the route's gate (enforceSecretWriteGate),
-// so the viewer-owner changes nothing. The project-developer owner is the positive
-// control: the same calls act on every secret.
+// so the viewer-owner changes nothing. Since #4161 row 25 (suspend) and #4657
+// (rename, resume, extend) core refuses the viewer-owner's whole request at the
+// project gate before that per-secret skip is reached. The project-developer owner
+// is the positive control: the same calls act on every secret.
 func TestOwnerWithoutSecretsWrite_BulkOpsSkipTheirSecrets(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -58,19 +60,24 @@ func TestOwnerWithoutSecretsWrite_BulkOpsSkipTheirSecrets(t *testing.T) {
 			suspended := mk("owned-suspended", SecretStatusSuspended, nil)
 			expiring := mk("owned-expiring", SecretStatusActive, &soon)
 
-			report, err := c.BulkRenameSecrets(ctx, proj.ID, []SecretRename{{ID: active.ID, NewName: "owned-renamed"}}, false, "owner", owner.ID, "", "")
-			require.NoError(t, err)
-			suspendedN, err := c.SuspendProjectSecrets(ctx, proj.ID, owner.ID, "owner gate")
-			if tc.allowed {
-				require.NoError(t, err)
-			} else {
-				// The viewer-owner is refused at core's project gate (#4161 row 25).
-				require.ErrorIs(t, err, ErrPermissionDenied)
+			// The viewer-owner is refused at core's project gate on every op (#4161
+			// row 25 for suspend, #4657 for rename, resume and extend).
+			gateErr := func(err error, op string) {
+				t.Helper()
+				if tc.allowed {
+					require.NoError(t, err, op)
+				} else {
+					require.ErrorIs(t, err, ErrPermissionDenied, op)
+				}
 			}
+			report, err := c.BulkRenameSecrets(ctx, proj.ID, []SecretRename{{ID: active.ID, NewName: "owned-renamed"}}, false, "owner", owner.ID, "", "")
+			gateErr(err, "rename")
+			suspendedN, err := c.SuspendProjectSecrets(ctx, proj.ID, owner.ID, "owner gate")
+			gateErr(err, "suspend")
 			resumedN, err := c.ResumeProjectSecrets(ctx, proj.ID, owner.ID)
-			require.NoError(t, err)
+			gateErr(err, "resume")
 			extendedN, _, err := c.ExtendExpiringSecrets(ctx, proj.ID, 7, 30, "owner", owner.ID)
-			require.NoError(t, err)
+			gateErr(err, "extend")
 
 			after := func(id uint) *models.SecretNode {
 				s, err := st.GetSecret(ctx, id)
@@ -88,8 +95,7 @@ func TestOwnerWithoutSecretsWrite_BulkOpsSkipTheirSecrets(t *testing.T) {
 				require.True(t, after(expiring.ID).Expiration.After(soon), "the expiry moved out")
 				return
 			}
-			require.Equal(t, 0, report.Renamed, "rename: %+v", report)
-			require.Equal(t, 1, report.Skipped, "rename: %+v", report)
+			require.Nil(t, report, "rename: a refused request reports no outcomes")
 			require.Equal(t, "owned-active", after(active.ID).Name, "the name is unchanged")
 			require.Equal(t, 0, suspendedN, "suspend")
 			require.Equal(t, SecretStatusActive, after(active.ID).Status, "the active secret stays active")

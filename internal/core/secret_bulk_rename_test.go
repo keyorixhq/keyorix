@@ -76,20 +76,19 @@ func TestBulkRenameSecrets(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("a non-owner is skipped (per-secret write ACL)", func(t *testing.T) {
+	t.Run("a caller without secrets.write at the project is refused", func(t *testing.T) {
 		mine := mk("non-conf-x", p.ID, true) // owned by user 1
-		// User 2 holds no ownership/share on it — even with project secrets.write it must
-		// not be renamable via the bulk op (parity with the single-secret PUT gate).
-		// #G14: the denial is the SAME generic "secret not found" a nonexistent ID gets —
-		// a distinct "not authorized" message would let a caller confirm the secret
-		// exists (and that they lack access to it) purely from the response shape.
+		// User 2 is an active account with no project secrets.write, ownership or share.
+		// #4657: core decides the route gate (secrets.write@project) before any entry is
+		// read, so the whole request is refused with no outcomes: nothing about the
+		// secret (its existence, its real name) reaches the caller. The per-entry #G14
+		// uniform "secret not found" denial is covered by the cross-project case below.
 		rep, err := c.BulkRenameSecrets(ctx, p.ID, []SecretRename{{ID: mine, NewName: "MINE_X"}}, false, "intruder", 2, "", "")
+		require.ErrorIs(t, err, ErrPermissionDenied)
+		assert.Nil(t, rep)
+		s, err := c.storage.GetSecret(ctx, mine)
 		require.NoError(t, err)
-		assert.Equal(t, 0, rep.Renamed)
-		require.Len(t, rep.Outcomes, 1)
-		assert.Equal(t, renameStatusSkipped, rep.Outcomes[0].Status)
-		assert.Contains(t, rep.Outcomes[0].Reason, "not found")
-		assert.Empty(t, rep.Outcomes[0].OldName, "the secret's real name must not leak to an unauthorized caller")
+		assert.Equal(t, "non-conf-x", s.Name)
 	})
 
 	t.Run("dry run validates but changes nothing", func(t *testing.T) {

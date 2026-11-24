@@ -80,23 +80,20 @@ func (w bulkDeleteMachineWorld) secretExists(t *testing.T, id uint) bool {
 // REVIEW-4522-DEEP-1): a machine token reaches BulkDeleteSecrets with actorID 0. It
 // used to take the bare local-caller branch, so any secret of the project was
 // deleted whatever the machine held. It now gets the rule the singular DELETE route
-// applies to a machine: secrets.delete at the secret's own scope. A machine holding
-// project_developer in dev only deletes the dev secret; the prod secret is refused
-// as "secret not found" (no name) and survives.
+// applies to a machine: secrets.delete at the secret's own scope. Since #4666 core
+// also decides the route gate first (secrets.delete at the project), as REST does: a
+// machine holding project_developer in dev only is refused the whole request, and
+// neither secret is deleted (it used to delete the dev secret, where REST refused).
 func TestBulkDeleteSecrets_MachineRefusedPerSecretOutsideItsScope(t *testing.T) {
 	t.Parallel()
 	w := newBulkDeleteMachineWorld(t, func(dev, _ uint) uint { return dev })
 
 	res, err := w.c.BulkDeleteSecrets(w.machineCtx, BulkDeleteRequest{SecretIDs: []uint{w.devSecret, w.prodSecret}},
 		w.projectID, fmt.Sprintf("machine:%d", w.machineID), 0, "127.0.0.1", "test")
-	require.NoError(t, err)
-	assert.Equal(t, []uint{w.devSecret}, res.Deleted)
-	require.Len(t, res.Failed, 1)
-	assert.Equal(t, w.prodSecret, res.Failed[0].SecretID)
-	assert.Equal(t, "secret not found", res.Failed[0].Error)
-	assert.Empty(t, res.Failed[0].Name, "a refused secret's name is not disclosed")
-	assert.False(t, w.secretExists(t, w.devSecret), "the in-scope secret is deleted")
-	assert.True(t, w.secretExists(t, w.prodSecret), "the out-of-scope secret must survive")
+	require.ErrorIs(t, err, ErrPermissionDenied, "an environment-scoped secrets.delete is not secrets.delete@project")
+	assert.Nil(t, res)
+	assert.True(t, w.secretExists(t, w.devSecret), "nothing is deleted")
+	assert.True(t, w.secretExists(t, w.prodSecret), "nothing is deleted")
 }
 
 // TestBulkDeleteSecrets_MachineWithProjectRoleDeletesAll is the positive control: a
@@ -114,17 +111,16 @@ func TestBulkDeleteSecrets_MachineWithProjectRoleDeletesAll(t *testing.T) {
 }
 
 // TestBulkDeleteSecrets_MachineTagWithoutIdentityFailsClosed: a context tagged as a
-// machine but naming no machine identity has no principal to authorize, so every
-// item is refused and nothing is deleted.
+// machine but naming no machine identity has no principal to authorize, so the
+// request is refused at the project gate (#4666) and nothing is deleted.
 func TestBulkDeleteSecrets_MachineTagWithoutIdentityFailsClosed(t *testing.T) {
 	t.Parallel()
 	w := newBulkDeleteMachineWorld(t, func(_, _ uint) uint { return 0 })
 
 	res, err := w.c.BulkDeleteSecrets(w.ctxWithoutTarget, BulkDeleteRequest{SecretIDs: []uint{w.devSecret, w.prodSecret}},
 		w.projectID, "machine:?", 0, "127.0.0.1", "test")
-	require.NoError(t, err)
-	assert.Empty(t, res.Deleted)
-	require.Len(t, res.Failed, 2)
+	require.ErrorIs(t, err, ErrPermissionDenied)
+	assert.Nil(t, res)
 	assert.True(t, w.secretExists(t, w.devSecret))
 	assert.True(t, w.secretExists(t, w.prodSecret))
 }
@@ -148,12 +144,14 @@ func TestBulkDeleteSecrets_LocalCallerStillDeletes(t *testing.T) {
 // refused and survives; the second item, whose lookup succeeds, is deleted. The
 // refused item is reported as the retryable storage outage, not as "secret not
 // found", so a client does not read the outage as "already gone" (L-1 of
-// REVIEW-4613-DEEP-1).
+// REVIEW-4613-DEEP-1). The first lookup is core's project gate (#4666), so the
+// fault is put on the second, the first item's; a fault on the gate itself refuses
+// the whole request (TestBulkDeleteSecrets_MachineProjectGateFaultFailsClosed).
 func TestBulkDeleteSecrets_MachineAuthorizationFaultFailsClosed(t *testing.T) {
 	t.Parallel()
 	w := newBulkDeleteMachineWorld(t, func(_, _ uint) uint { return 0 })
 	faulty := faultstorage.NewFaultyStorage(w.st, &faultstorage.FaultSpec{
-		Method: "ResolveMachinePermissionAt", NthCall: 1, Kind: faultstorage.KindError, Err: errors.New("connection reset"),
+		Method: "ResolveMachinePermissionAt", NthCall: 2, Kind: faultstorage.KindError, Err: errors.New("connection reset"),
 	})
 	c := NewKeyorixCore(faulty)
 
@@ -168,4 +166,23 @@ func TestBulkDeleteSecrets_MachineAuthorizationFaultFailsClosed(t *testing.T) {
 	assert.True(t, res.Failed[0].Retryable)
 	assert.Empty(t, res.Failed[0].Name, "a refused secret's name is not disclosed")
 	assert.True(t, w.secretExists(t, w.prodSecret), "a secret whose authorization could not be read must survive")
+}
+
+// TestBulkDeleteSecrets_MachineProjectGateFaultFailsClosed: a failed read of the
+// machine's roles at core's project gate (#4666) refuses the whole request as a
+// retryable storage outage before any item is read; nothing is deleted.
+func TestBulkDeleteSecrets_MachineProjectGateFaultFailsClosed(t *testing.T) {
+	t.Parallel()
+	w := newBulkDeleteMachineWorld(t, func(_, _ uint) uint { return 0 })
+	faulty := faultstorage.NewFaultyStorage(w.st, &faultstorage.FaultSpec{
+		Method: "ResolveMachinePermissionAt", NthCall: 1, Kind: faultstorage.KindError, Err: errors.New("connection reset"),
+	})
+	c := NewKeyorixCore(faulty)
+
+	res, err := c.BulkDeleteSecrets(w.machineCtx, BulkDeleteRequest{SecretIDs: []uint{w.prodSecret, w.devSecret}},
+		w.projectID, fmt.Sprintf("machine:%d", w.machineID), 0, "127.0.0.1", "test")
+	require.ErrorIs(t, err, ErrStorageReadUnavailable)
+	assert.Nil(t, res)
+	assert.True(t, w.secretExists(t, w.prodSecret))
+	assert.True(t, w.secretExists(t, w.devSecret))
 }

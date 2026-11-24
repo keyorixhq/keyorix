@@ -76,11 +76,13 @@ const maxBulkRotateBatchSize = 500
 // BulkRotateResult.Failed with reason "no rotation config" — it is never treated
 // as a fatal error. Otherwise, rotation is triggered via RotateSecretOnDemand.
 //
-// actorID is the authenticated caller. Authorization (secrets.write at project
-// scope) stays at the transport; core only refuses an actor whose account is no
-// longer active (requireActorActive), and treats actorID 0 and machine actors as
-// not checked. req.RotatedBy remains an audit label and is never trusted as an
-// identity.
+// actorID is the authenticated caller. Core decides the route gate itself (#4666):
+// secrets.write at req.ProjectID (requireScopedGate), after the request-shape
+// checks and before any secret is read. A per-secret grant (ACL, share) does not
+// stand in for it. A machine actor tagged on ctx is decided on its own machine
+// roles, as the route gate decides it; actorID 0 with no machine tag is the exempt
+// internal pseudo-actor. An inactive account is refused first (requireActorActive).
+// req.RotatedBy remains an audit label and is never trusted as an identity.
 //
 // Returns partial results; individual secret failures do not abort the run.
 // Returns an error only if the request is structurally invalid or the initial
@@ -97,6 +99,12 @@ func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, actorID uint, req B
 	}
 	if len(req.SecretIDs) > maxBulkRotateBatchSize {
 		return nil, fmt.Errorf("secret_ids exceeds the maximum batch size of %d", maxBulkRotateBatchSize)
+	}
+	// The route gate, decided in core (#4666, as BulkRenameSecrets): secrets.write at
+	// the project, before any secret is listed or loaded. A refusal rotates nothing
+	// and writes no bulk_rotate_attempted row.
+	if err := c.requireScopedGate(ctx, actorID, permSecretsWrite, Scope{ProjectID: req.ProjectID}); err != nil {
+		return nil, err
 	}
 
 	result := &BulkRotateResult{

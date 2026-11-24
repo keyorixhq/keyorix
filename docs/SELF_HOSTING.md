@@ -344,10 +344,17 @@ refused with a non-zero exit, no archive written and no key file changed:
   it, then back up. Never delete a DEK's `.pending` file: it can be the only copy
   of the new DEK. A `kek.salt.pending` that is still there after a server start
   succeeded is unused (the start proved the active key set opens without it, and
-  its log says the file can be deleted): check that no `admin encryption rotate-kek`
-  is running, move the file out of the key directory, back up, and delete the moved
-  copy once that backup and a server start have succeeded. Until then
-  `admin validate --posture` reports `backups are refused: key-rotation staging
+  its log says the file can be deleted): with the server stopped, run
+  `keyorix-server admin encryption clear-stale-salt-pending` (`--dry-run` first to
+  see its decision). It removes the file only when no DEK staging file is present,
+  no `rotate-kek` is running and the active key set opens with the current
+  passphrase without it, records the removal as an
+  `admin.encryption.clear_stale_salt_pending` audit event, and refuses otherwise
+  with nothing changed; then back up. Each refused backup is also recorded as an
+  `admin.backup_refused` audit event when the database can be opened without
+  changing anything (with the server stopped on SQLite, and only when the database
+  is already at this binary's schema, so a refused backup never migrates it).
+  Until then `admin validate --posture` reports `backups are refused: key-rotation staging
   file present` and exits non-zero, so a cron'd backup that stops is visible there.
   The refused backup itself exits with status **4** (every other failure exits 1)
   and prints one stderr line a cron wrapper can match:
