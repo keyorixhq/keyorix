@@ -58,6 +58,7 @@ To install a server with an AI assistant, without the assistant seeing a secret,
 git clone --branch v0.97.0 https://github.com/keyorixhq/keyorix.git && cd keyorix   # the compose file, .env.example and scripts/selfhost/ live in the repo; use a release tag, main can be ahead of the published images
 cp .env.example .env
 ./scripts/selfhost/init-secrets.sh   # generates ./secrets/* (Docker secrets files); admin password is in ./secrets/admin_password
+sudo chown root:"$(id -g)" secrets/* # the server trusts only secret files owned by root (docs/SELF_HOSTING.md §3)
 docker compose up -d                 # open http://localhost:8088
 ```
 

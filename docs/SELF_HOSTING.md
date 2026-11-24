@@ -30,11 +30,13 @@ git clone --branch v0.97.0 https://github.com/keyorixhq/keyorix.git   # a releas
 cd keyorix
 cp .env.example .env
 ./scripts/selfhost/init-secrets.sh     # generates ./secrets/* and records KEYORIX_SECRETS_GID in .env
+sudo chown root:"$(id -g)" secrets/*   # the server trusts only secret files owned by root (§3); the script prints this line
 docker compose up -d
 ```
 
 Open **http://localhost:8088** and log in as `admin` with the password in
-`./secrets/admin_password`. That's it.
+`./secrets/admin_password`. That's it. Without the `chown` the backend restarts in a
+loop and its log names each file and its owner uid (see "Why a group id" in §3).
 
 > Building from source instead of pulling published images: edit
 > `docker-compose.yml` and swap the `backend` service's `image:` for the
