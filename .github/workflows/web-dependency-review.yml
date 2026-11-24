@@ -45,6 +45,7 @@ jobs:
           # Mirror the same suppression as web/scripts/audit-check.mjs:
           # react-router RSC-mode CSRF — not reachable in a SPA build.
           allow-ghsas: GHSA-qwww-vcr4-c8h2
-          # Post a PR comment summarising what changed so reviewers have context
-          # even when the check passes.
-          comment-summary-in-pr: always
+          # Comment on the PR only when the check finds something. "always" posted
+          # a "no issues" comment (plus a snapshot warning while GitHub's dependency
+          # graph for the new head was not ready yet) on every push and mailed it.
+          comment-summary-in-pr: on-failure
