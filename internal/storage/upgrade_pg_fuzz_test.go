@@ -477,12 +477,17 @@ func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, bare bool) (b
 	seen := pgRegisterStop(t, gdb, stopAfter)
 	f := &DefaultStorageFactory{}
 	// The migration's own error return is expected; what matters is the state left.
+	// A stop only counts as an interruption when the migration actually failed: the
+	// injected error can land on a statement whose result production ignores (the
+	// deferred pg_advisory_unlock in withMigrationLockPooled), and then the
+	// migration returns nil and commits, a completed upgrade rather than a crash.
+	var merr error
 	if bare {
-		_ = f.migrateDatabase(gdb)
+		merr = f.migrateDatabase(gdb)
 	} else {
-		_ = withMigrationLockPooled(gdb, true, false, "", f.migratePostgres)
+		merr = withMigrationLockPooled(gdb, true, false, "", f.migratePostgres)
 	}
-	return seen.Load() >= int64(stopAfter), nil
+	return seen.Load() >= int64(stopAfter) && merr != nil, nil
 }
 
 // pgRegisterStop arms gdb to fail the stopAfter'th write-class statement and every
