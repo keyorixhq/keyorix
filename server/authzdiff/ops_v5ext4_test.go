@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -17,17 +18,20 @@ import (
 // POST /api/v1/projects/{id}/secrets/bulk-rotate:
 //
 //	Router gate: RequireScopedPermission(permSecretsWrite, projectScope)
-//	Core gate:   requireActorActive only — BulkRotateSecrets takes the acting
-//	             user ID and refuses a suspended or deactivated account, but
-//	             does not check secrets.write (the router does). After that it
-//	             checks s.AutoRotate and calls RotateSecretOnDemand per secret.
+//	Core gate:   requireActorActive, then secrets.write @ project
+//	             (requireScopedGate, before any secret is read; #4666). A machine
+//	             is decided on its machine roles, as the router decides it. After
+//	             that it checks s.AutoRotate and calls RotateSecretOnDemand per
+//	             secret.
 //	Model:       secrets.write @ project.
-//	core:        errNotAuthzLayer for every active principal and for machines
-//	             (core is not the permission layer); for a suspended principal
-//	             the call must be refused (ErrPermissionDenied) — if core lets
-//	             it through the leg reports Allowed, which the suspended-actor
-//	             guard (TestCoreRefusesSuspendedActor) fails.
-//	restOK:      pp.secretID appears in the "triggered" list.
+//	core:        every principal, machines included: allowed when at least one
+//	             secret of the batch is triggered, else errItemRefused or the
+//	             refusal error. The batch (bulkRotateIDs) carries s3, on which the
+//	             viewer holds a per-secret ACL write in A, so a core that decided
+//	             per secret only shows as a core-only over-allow (red on main
+//	             before #4666: core had no permission check, every unpermitted
+//	             principal was `unexplained`).
+//	restOK:      a batch secret appears in the "triggered" list.
 //
 // What this oracle does NOT verify:
 //   - Per-item business rejections (AutoRotate=false → "no rotation config").
@@ -70,27 +74,26 @@ func bulkRotateOps() []opSpec {
 			name: "bulk.rotate", row: "BulkRotateSecrets", targets: projTargets,
 			req: atP("secrets.write"),
 			restOK: func(b []byte, fx *fixtures, t tgt) bool {
-				return jsonListHas(b, "triggered", fx.proj(byte(t)).secretID)
+				return slices.ContainsFunc(bulkRotateIDs(fx.proj(byte(t))), func(id uint) bool {
+					return jsonListHas(b, "triggered", id)
+				})
 			},
-			// Core checks only that the actor is active; secrets.write is enforced at
-			// the router. So the leg is a participant only for a principal core must
-			// refuse (a suspended account): refused -> Denied, let through -> Allowed.
-			// An active principal, permitted or not, is errNotAuthzLayer.
+			// Core decides the route gate itself (#4666): secrets.write at the project,
+			// before any secret is read. Any triggered rotation counts as allowed, so
+			// a core that let the viewer rotate s3 on its per-secret ACL alone shows
+			// as a core-only over-allow.
 			core: func(ctx context.Context, lg *leg, p *principal, t tgt, _ byte) error {
-				if p.isMachine() {
-					return errNotAuthzLayer
-				}
 				pp := lg.fx.proj(byte(t))
-				_, err := lg.c.BulkRotateSecrets(ctx, p.userID, core.BulkRotateRequest{
+				res, err := lg.c.BulkRotateSecrets(ctx, p.userID, core.BulkRotateRequest{
 					ProjectID: pp.projectID,
-					SecretIDs: []uint{pp.secretID},
+					SecretIDs: bulkRotateIDs(pp),
 					RotatedBy: p.username,
 				})
 				if err != nil {
 					return err
 				}
-				if !p.suspended {
-					return errNotAuthzLayer
+				if len(res.Triggered) == 0 {
+					return errItemRefused
 				}
 				return nil
 			},
@@ -98,10 +101,21 @@ func bulkRotateOps() []opSpec {
 				pp := fx.proj(byte(t))
 				return restReq{http.MethodPost,
 					fmt.Sprintf("/api/v1/projects/%d/secrets/bulk-rotate", pp.projectID),
-					map[string]any{"secret_ids": []uint{pp.secretID}}}
+					map[string]any{"secret_ids": bulkRotateIDs(pp)}}
 			},
 		},
 	}
+}
+
+// bulkRotateIDs is the rotation batch both legs send: the main fixture secret
+// (admin-owned, no grant for a probed principal) and s3, on which the viewer holds
+// a per-secret ACL secrets.write in A (world_test.go). Both have auto-rotation on.
+// On main before #4666 the main secret alone showed the over-allow (core had no
+// permission check and rotated as actor 0); s3 guards against a later per-item-only
+// fix that passes the real actor to each rotation: REST refuses the viewer at the
+// route gate, so core must refuse them too, not rotate s3.
+func bulkRotateIDs(pp *perProject) []uint {
+	return []uint{pp.secretID, pp.secrets[3].id}
 }
 
 // ---- mfa.stepup ----

@@ -20,7 +20,10 @@
   `SuspendProjectSecretsWithOptions`, and since #4657 `ResumeProjectSecrets`,
   `ExtendExpiringSecrets` and `BulkRenameSecrets` (secrets.write at the project, before
   any secret is read; a per-secret ACL write or share does not stand in for it, and the
-  per-secret re-check still runs on top);
+  per-secret re-check still runs on top), and since #4666 `BulkRotateSecrets`
+  (secrets.write at the project) and `BulkDeleteSecrets` (secrets.delete at the project;
+  an environment-scoped grant that passes the per-secret check at the secret's own scope
+  does not stand in for it), both before any secret is read;
   `RequestProjectAccess` (no route permission) shares the transports' account-state
   refusal (`requireActorActive`). Why: core allowed where every transport denied on about
   4,500 differential cases over these ops, so the transport was the only gate; a core entry
@@ -34,7 +37,9 @@
   for a viewer holding a per-secret ACL write, closed by the project gate above:
   `TestSuspendProjectSecrets_ProjectGate`; its siblings resume.all, bulk.rename and
   secret.extend.expiring are exposed by the same viewer ACL write in the fixture and closed
-  by `Test{ResumeProjectSecrets,ExtendExpiringSecrets,BulkRenameSecrets}_ProjectGate`), so a core-only over-allow on any bound op is
+  by `Test{ResumeProjectSecrets,ExtendExpiringSecrets,BulkRenameSecrets}_ProjectGate`; bulk.rotate
+  by the same ACL write on s3 and bulk.delete by an environment-scoped secrets.delete
+  variation, closed by `Test{BulkRotateSecrets,BulkDeleteSecrets}_ProjectGate`), so a core-only over-allow on any bound op is
   `unexplained` and fails the sweep (the reassign-owner plant proves it). Where an older core ceiling
   already refuses the usual denied principal, the parity case uses a gate-isolating
   principal and a `grantGate` step (the same principal succeeds once it holds the

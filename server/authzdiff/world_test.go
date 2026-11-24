@@ -748,9 +748,15 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	// Triggered=[] (zero rotated), which the restOK check reads as "denied" —
 	// miscalibrated. Backend="" (Keyorix-only rotation, no external executor
 	// required) keeps the fixture self-contained.
+	//
+	// s3 gets it too (#4666): in A the viewer holds a per-secret ACL secrets.write
+	// on it, and the bulk.rotate batch carries it next to secretID, so a core that
+	// decided per secret only would rotate it for the viewer where REST refuses.
 	for _, pp := range []*perProject{&fx.A, &fx.B} {
-		if err := c.SetSecretAutoRotate(ctx, pp.secretID, core.AutoRotateSpec{Enabled: true, Length: 20}, admin.ID); err != nil {
-			return nil, fmt.Errorf("seed: SetSecretAutoRotate project %d: %w", pp.projectID, err)
+		for _, id := range []uint{pp.secretID, pp.secrets[3].id} {
+			if err := c.SetSecretAutoRotate(ctx, id, core.AutoRotateSpec{Enabled: true, Length: 20}, admin.ID); err != nil {
+				return nil, fmt.Errorf("seed: SetSecretAutoRotate secret %d project %d: %w", id, pp.projectID, err)
+			}
 		}
 	}
 

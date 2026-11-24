@@ -611,8 +611,9 @@ func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValu
 		return nil, fmt.Errorf("secret not found: %w", err)
 	}
 	// #4161: the route gate (secrets.write with SecretActionRotate on this secret)
-	// is decided here as well. actorID 0 (BulkRotateSecrets, which the transport
-	// gated at project scope) is the exempt internal pseudo-actor, as elsewhere.
+	// is decided here as well. actorID 0 (BulkRotateSecrets, which decided
+	// secrets.write at project scope first, #4666) is the exempt internal
+	// pseudo-actor, as elsewhere.
 	if err := c.requireSecretActionGate(ctx, actorID, secret, permSecretsWrite, SecretActionRotate); err != nil {
 		return nil, err
 	}
