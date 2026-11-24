@@ -29,9 +29,16 @@ import (
 type erroringGetUserGroupRoleIDsAtStorage struct {
 	inner storage.Storage
 	calls *int
+	// envScopedOnly faults only the reads at an environment scope (a per-item
+	// check at the secret's {project, environment}) and passes the project-wide
+	// read of core's project gate (#4666), so the per-item fault path is reached.
+	envScopedOnly bool
 }
 
-func (s *erroringGetUserGroupRoleIDsAtStorage) getUserGroupRoleIDsAt(_ storage.Storage, ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
+func (s *erroringGetUserGroupRoleIDsAtStorage) getUserGroupRoleIDsAt(inner storage.Storage, ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
+	if s.envScopedOnly && scope.EnvironmentID == 0 {
+		return inner.GetUserGroupRoleIDsAt(ctx, userID, scope)
+	}
 	*s.calls++
 	return nil, assert.AnError
 }
@@ -97,11 +104,13 @@ func TestBulkDeleteSecrets_GetUserGroupRoleIDsAtFault_NeverWronglyDeletes(t *tes
 	calls := 0
 	c.storage = (&erroringGetUserGroupRoleIDsAtStorage{inner: st, calls: &calls}).store()
 
+	// Since #4666 the first read of the group-derived role is core's project gate
+	// (secrets.delete@project), before any item: the fault refuses the whole request
+	// as a retryable storage outage, never as a pass.
 	result, err := c.BulkDeleteSecrets(ctx, BulkDeleteRequest{SecretIDs: []uint{secret2.ID}}, projectID, "member", member.ID, "", "")
-	require.NoError(t, err, "BulkDeleteSecrets itself must not error even when every item fails — partial-success is its documented contract")
+	require.ErrorIs(t, err, ErrStorageReadUnavailable, "a fault resolving the project gate fails closed as a retryable outage")
 	require.Greater(t, calls, 0, "the fault must actually have been exercised")
-	assert.Empty(t, result.Deleted, "a storage error resolving the user's ONLY source of delete permission must never result in a wrongful delete")
-	assert.Len(t, result.Failed, 1, "the item must be reported as failed, not silently dropped")
+	assert.Nil(t, result, "a storage error resolving the user's ONLY source of delete permission must never result in a wrongful delete")
 
 	// The secret must still exist, untouched, proving this isn't just a
 	// reporting discrepancy (deleted for real but the response said
@@ -109,4 +118,17 @@ func TestBulkDeleteSecrets_GetUserGroupRoleIDsAtFault_NeverWronglyDeletes(t *tes
 	reloaded, rerr := st.GetSecret(ctx, secret2.ID)
 	require.NoError(t, rerr, "the secret must still exist")
 	assert.Equal(t, secret2.ID, reloaded.ID)
+
+	// The per-item path (the fuzz report's GetUserGroupRoleIDsAt#2): the project gate
+	// reads the group role cleanly and admits the member, the item's own read at the
+	// secret's environment faults. The item must be reported failed, never deleted.
+	itemCalls := 0
+	c.storage = (&erroringGetUserGroupRoleIDsAtStorage{inner: st, calls: &itemCalls, envScopedOnly: true}).store()
+	result, err = c.BulkDeleteSecrets(ctx, BulkDeleteRequest{SecretIDs: []uint{secret2.ID}}, projectID, "member", member.ID, "", "")
+	require.NoError(t, err, "the project gate passes; per-item failures are partial-success results")
+	require.Greater(t, itemCalls, 0, "the per-item fault must actually have been exercised")
+	assert.Empty(t, result.Deleted, "a fault on the item's role read must never result in a wrongful delete")
+	assert.Len(t, result.Failed, 1, "the item must be reported as failed, not silently dropped")
+	_, rerr = st.GetSecret(ctx, secret2.ID)
+	require.NoError(t, rerr, "the secret must still exist")
 }

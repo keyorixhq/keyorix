@@ -75,6 +75,8 @@ func TestBulkRotateSecrets_BatchTooLarge(t *testing.T) {
 func TestBulkRotateSecrets_Success(t *testing.T) {
 	h, db := newProjectHealthHandler(t)
 	seedBulkRotateActor(t, db)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "bulk-rotate-p1"}).Error)
+	grantProjectPermissions(t, h.coreService, 1, 1, "secrets.write") // the route gate, which core decides too (#4666)
 	body, _ := json.Marshal(map[string]any{})
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/secrets/bulk-rotate",
 		bytes.NewReader(body)), "id", "1")
@@ -137,4 +139,20 @@ func TestBulkRotateSecrets_ActorReadFaultIs503(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), storageUnavailableCode)
 	assert.NotEmpty(t, w.Header().Get("Retry-After"))
+}
+
+// TestBulkRotateSecrets_CoreProjectGateRefuses403: an active actor without
+// secrets.write at the project is refused by core's own gate (#4666): 403.
+func TestBulkRotateSecrets_CoreProjectGateRefuses403(t *testing.T) {
+	h, db := newProjectHealthHandler(t)
+	seedBulkRotateActor(t, db)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "bulk-rotate-p1"}).Error)
+	grantProjectPermissions(t, h.coreService, 1, 1, "secrets.read") // no secrets.write
+	body, _ := json.Marshal(map[string]any{})
+	req := withChiParam(httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/secrets/bulk-rotate",
+		bytes.NewReader(body)), "id", "1")
+	req = withUserCtx(req)
+	w := httptest.NewRecorder()
+	h.BulkRotateSecrets(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 }

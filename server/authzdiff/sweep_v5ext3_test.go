@@ -17,7 +17,8 @@ import (
 // excluded from both oracles for machines.
 //
 // Curated variations cover the router gate boundary: a custom principal with
-// / without the required permission, via group, and via a machine token.
+// / without the required permission, via group, and via a machine token; for
+// bulk.delete also the permission held only in the secret's environment (#4666).
 // Resume.all requires pp.suspendedSecretID (pre-suspended in the V5EXT3 seed)
 // for the positive-control admin to get n ≥ 1 from ResumeProjectSecrets.
 //
@@ -102,10 +103,11 @@ func isV5ext3SweptOp(name string) bool {
 //     REST answers 403 (#4514); the model marks them human-only, so machine+holds
 //     is denied everywhere and is swept. The machine+lacks variation (machine
 //     without secrets.write → router 403) exercises the router gate as before.
-//     For bulk.delete, the machine+holds variation is kept: BulkDeleteSecrets treats
-//     actorID=0 as the CLI caller (skipping permission checks), so a machine that passes
-//     the router gate CAN delete the secret — restOK returns true, core n/a, model
-//     allowed → all agree.
+//     For bulk.delete, the machine+holds variation is kept: a machine holding
+//     secrets.delete at the project passes core's project gate and the per-secret
+//     machine check (#4546) — allowed everywhere. bulk.delete also gets the
+//     environment-scoped variations (user and machine, "<proj>@prod"): denied
+//     everywhere since core decides the project gate (#4666).
 func curatedV5ext3Variations(spec opSpec, t tgt) []struct {
 	pk principalKind
 	v  variation
@@ -143,9 +145,19 @@ func curatedV5ext3Variations(spec opSpec, t tgt) []struct {
 		{pkCustom, variation{Mask: have, Route: "group", Scope: here}},                    // via live group → allowed
 		{pkMachine, variation{Mask: allPerms &^ gatePerm, Route: "machine", Scope: here}}, // machine lacks perm → denied (router 403)
 	}
-	// Machine+holds: bulk.delete takes the CLI bypass (allowed everywhere); the
+	// Machine+holds: bulk.delete authorizes the machine per secret (#4546) and the
 	// other three refuse a machine actor (403, human-only in the model, #4514).
 	cvs = append(cvs, pv{pkMachine, variation{Mask: have, Route: "machine", Scope: here}})
+	if spec.name == "bulk.delete" {
+		// Held only in the fixture secret's environment (#4666): the per-item check
+		// (role at {project, secret.env}) passes, the route gate (secrets.delete at
+		// the project, environment 0) does not, so a core that decided per item only
+		// would delete where REST refuses.
+		cvs = append(cvs,
+			pv{pkCustom, variation{Mask: have, Route: "user", Scope: here + "@prod"}},
+			pv{pkMachine, variation{Mask: have, Route: "machine", Scope: here + "@prod"}},
+		)
+	}
 	return cvs
 }
 

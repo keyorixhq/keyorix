@@ -51,9 +51,27 @@ func setupBulkDeleteHandler(t *testing.T) (*SecretHandler, uint) {
 	}).Error)
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	// The route gate, which core decides too (#4666): secrets.delete at the project.
+	grantProjectPermissions(t, c, 1, 1, "secrets.read", "secrets.delete")
 	h, err := NewSecretHandler(c)
 	require.NoError(t, err)
 	return h, secretID
+}
+
+// TestBulkDeleteSecretsHandler_CoreProjectGateRefuses403: an actor without
+// secrets.delete at the project is refused by core's own gate (#4666), answered
+// 403, not 500, and nothing is deleted.
+func TestBulkDeleteSecretsHandler_CoreProjectGateRefuses403(t *testing.T) {
+	h, secretID := setupBulkDeleteHandler(t)
+	grantProjectPermissions(t, h.coreService, 2, 1, "secrets.read") // no secrets.delete
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/1/secrets/bulk-delete", strings.NewReader(`{"secret_ids":[10]}`))
+	req = withChiParam(withUserCtxSAR(req, 2), "id", "1")
+	w := httptest.NewRecorder()
+	h.BulkDeleteSecrets(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	_, err := h.coreService.Storage().GetSecret(req.Context(), secretID)
+	require.NoError(t, err, "nothing is deleted")
 }
 
 // bulkDeleteRequest constructs an httptest.Request for BulkDeleteSecrets, wiring
