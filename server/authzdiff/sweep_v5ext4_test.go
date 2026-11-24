@@ -25,9 +25,10 @@ import (
 //
 // bulk.rotate:
 //
-//	Router gate: secrets.write @ project. Core: no permission check; it refuses
-//	only an inactive acting account (requireActorActive, #4159), so the core leg
-//	is errNotAuthzLayer for every active principal. No gRPC surface.
+//	Router gate: secrets.write @ project. Core decides the same gate itself
+//	(requireScopedGate, #4666) after refusing an inactive acting account
+//	(requireActorActive, #4159), so the core leg takes part for every principal.
+//	No gRPC surface.
 //	Positive control: admin → 200+triggered=[secretID] (AutoRotate=true in fixture).
 //
 // mfa.stepup:
@@ -88,7 +89,7 @@ func TestV5ext4StrictSweep(t *testing.T) {
 // bulk.rotate: secrets.write @ project; same curated shapes as V5EXT3 write ops
 // (holds/lacks via user; holds only at other; via group; machine holds/lacks).
 // Machine+holds is kept (no machine-specific rejection in BulkRotateSecrets, unlike
-// bulk.rename/suspend/resume; core returns errNotAuthzLayer for all actors).
+// bulk.rename/suspend/resume; core decides the machine on its machine roles).
 //
 // mfa.stepup: no RBAC permission; no curated variations (the only boundary is
 // MFA enrolment, which is a fixture property of pkMFAUser — a named principal).
@@ -122,11 +123,12 @@ func curatedV5ext4Variations(spec opSpec, t tgt) []struct {
 // TestBulkRotateRouterGatePresent verifies the bulk-rotate router gate is
 // registered in server/http/router.go exactly as the authzdiff harness expects.
 //
-// Differential plants cannot reliably detect gate removal for bulk-rotate: the
-// core function has no permission check (it refuses only an inactive acting
-// account), so an active but unauthorized caller reaching core directly would
-// succeed. The router gate is the ONLY permission layer. This structural check ensures it cannot be removed
-// without an immediate test failure.
+// Differential plants cannot detect router gate removal for bulk-rotate: since
+// #4666 core decides the same secrets.write@project gate, so a request past a
+// removed router gate is still refused (403 from the handler) and no case crosses
+// the allowed/denied boundary. The router gate stays as the transport's own early
+// refusal; this structural check ensures it cannot be removed without an
+// immediate test failure.
 //
 // Red/green proof:
 //   - RED: remove the anchor from router.go → this test fails.

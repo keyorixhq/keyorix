@@ -336,8 +336,9 @@ type requirement struct {
 	// userPerms are additionally required, at the same scope, when the actor
 	// is a user: a per-item data-access check core makes for a user only.
 	// bulk.delete reads each item through GetSecretWithPermissionCheck
-	// (secrets.read) before deleting it; a machine actor takes the actorID=0
-	// path, which reads without a check (#4515, formerly waiver known-11).
+	// (secrets.read) before deleting it; a machine actor is checked for
+	// secrets.delete only (#4546), never secrets.read (#4515, formerly waiver
+	// known-11).
 	userPerms []string
 	scope     uint     // project id the perms are checked at, 0 = global
 	env       uint     // environment id the perms are checked at, 0 = project-wide (all environments)
