@@ -17,8 +17,8 @@ import (
 // first, so the account state is checked in one place
 // (INV-CORE-mutation-refuses-inactive-actor). It is not universal: CreateSecret
 // (no acting-user ID) does not call it, and a new mutating entry point must call
-// it itself. BulkRotateSecrets and GrantSecretACL, which leave authorization to
-// the transport, still call it: an inactive account is refused there too.
+// it itself. GrantSecretACL, which leaves authorization to the transport, still
+// calls it: an inactive account is refused there too.
 //
 // Not checked: actorID 0 (the local/system pseudo-actor, and every machine token,
 // whose UserID is 0) and a machine actor tagged on ctx (WithActorType), whose own

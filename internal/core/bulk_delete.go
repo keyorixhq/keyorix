@@ -72,7 +72,9 @@ func (r *BulkDeleteResult) addFailure(e BulkOpError) {
 // DeleteSecretWithPermissionCheck) — not a raw, unauthorized GetSecret/DeleteSecret
 // loop over caller-supplied IDs — so audit logging, dependency-invalidation events,
 // and per-secret authorization (ACL/ownership, not just the coarse project check
-// below) are all applied consistently with the single-secret path (#G31).
+// below) are all applied consistently with the single-secret path (#G31). Before
+// any item, core decides the route gate itself: secrets.delete at projectID
+// (requireScopedGate, #4666); the per-item checks run on top of it.
 //
 // projectID gates a mandatory cross-project guard: a secret belonging to a
 // different project is rejected even if the caller holds a token with broad
@@ -91,6 +93,15 @@ func (c *KeyorixCore) BulkDeleteSecrets(ctx context.Context, req BulkDeleteReque
 	}
 	if projectID == 0 {
 		return nil, fmt.Errorf("project ID is required")
+	}
+	// The route gate, decided in core (#4666, as the other project-wide bulk ops):
+	// secrets.delete at the project, before any secret is read. The per-item checks
+	// below decide at each secret's own scope, so a role held only in one
+	// environment passed them while the route gate refused it. A machine is decided
+	// on its machine roles; actorID 0 with no machine tag stays exempt (gateActor).
+	// A refusal deletes nothing.
+	if err := c.requireScopedGate(ctx, actorID, permSecretsDelete, Scope{ProjectID: projectID}); err != nil {
+		return nil, err
 	}
 
 	result := &BulkDeleteResult{

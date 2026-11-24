@@ -1,11 +1,13 @@
 // secrets_bulk_delete.go — BulkDeleteSecrets handler: delete multiple secrets in
-// one call. Scoped secrets.delete (project) is enforced by the router.
+// one call. Scoped secrets.delete (project) is enforced by the router and again
+// by core (#4666).
 // Each deletion calls the same DeleteSecret logic as the single-delete path
 // (audit log, dependency events, etc.) so no cleanup is bypassed.
 package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -45,6 +47,15 @@ func (h *SecretHandler) BulkDeleteSecrets(w http.ResponseWriter, r *http.Request
 	// (retryable) instead of the delete committing with a best-effort row.
 	result, err := h.coreService.BulkDeleteSecrets(secretMutationAuditContext(r, userCtx), req, uint(projectID), userCtx.Username, userCtx.UserID, ip, ua)
 	if err != nil {
+		// Core's own project gate (#4666): a refusal is a 403 and a failed read of
+		// the actor's roles a 503, as for bulk-rotate, never a server error.
+		if sendStorageUnavailable(w, err) {
+			return
+		}
+		if errors.Is(err, core.ErrPermissionDenied) {
+			h.sendError(w, "Forbidden", errorMessageFor(http.StatusForbidden, err), http.StatusForbidden, nil)
+			return
+		}
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "exceeds the maximum batch size") {
 			status = http.StatusBadRequest
