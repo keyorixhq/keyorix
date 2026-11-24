@@ -26,7 +26,9 @@ binaries (SQLite or PostgreSQL), run `scripts/drills/upgrade.sh`; see
 ## 1a. Upgrading to v0.97.0: the path
 
 Commands marked **UNVERIFIED** were not run in the v0.97.0 release QA; the others were
-(release QA log: REL-V097-1). The checklist form of this section is
+(release QA REL-V097-2, 2026-11-24: the locally built `make release` binaries and images of
+the release commit, on a Linux VM, SQLite and PostgreSQL, from the published v0.96.3
+assets). The checklist form of this section is
 [operator/upgrade-checklist-v0.97.md](operator/upgrade-checklist-v0.97.md).
 
 **From v0.96.x (v0.96.0 to v0.96.3): one hop.**
@@ -37,7 +39,8 @@ Commands marked **UNVERIFIED** were not run in the v0.97.0 release QA; the other
    `session_replication_role` other than `origin` (§6n), a `*` inside a CORS origin
    (§6ze), `ssl_mode: verify-full`/`verify-ca` without `ssl_root_cert` (§2), two live
    projects whose names fold to the same value (§6zk), and a Shamir share file with the
-   wrong owner or mode (§6zo).
+   wrong owner or mode (§6zo). **UNVERIFIED** in release QA (no refused configuration was
+   planted; each refusal has its own tests).
 2. Back up **with the v0.96.x binary**, database and key files together (§1, §4). The
    archive is format v2 and carries its own wrapped DEK. A later `admin encryption
    rotate` (DEK) does not affect it. After `admin encryption rotate-kek` it still
@@ -68,7 +71,10 @@ without Secret mode, and rejects `postgresql.settings.session_replication_role`
 (`docs/releases/v0.97.0.md`, "Helm"). With an external PostgreSQL on `verify-full`, set
 `externalDatabase.sslRootCert` (or `externalDatabase.caSecret`) before the upgrade.
 Scale to one replica, or stop the release, before the upgrade for the floor reason
-in step 3. **UNVERIFIED** until the kind leg of release QA records it.
+in step 3. Release QA ran `helm upgrade --reset-then-reuse-values` from chart 0.96.3 (one
+replica, bundled PostgreSQL, `auth.existingSecret`) on kind: the data read back and
+`keyorix audit verify --full` printed `Audit chain: VALID`. The `externalDatabase` and
+multi-replica sentences are **UNVERIFIED**.
 
 **keyorix-operator chart: apply the CRD yourself.** The `KeyorixSecret` CRD changed
 since v0.96.3 (the new `spec.onSuspend` field, and `secretKey` must be unique within a
@@ -76,15 +82,21 @@ CR). Helm installs `crds/` on the first install only and never upgrades it, so w
 plain `helm upgrade` the cluster keeps the old schema: the API server drops `onSuspend`
 from every CR you apply, without an error, and does not enforce the uniqueness. Apply the
 new CRD from the chart at the release tag before upgrading the operator release:
-`kubectl apply --server-side -f deploy/helm/keyorix-operator/crds/` (from a checkout of
-`v0.97.0`). **UNVERIFIED.**
+`kubectl apply --server-side --force-conflicts -f deploy/helm/keyorix-operator/crds/`
+(from a checkout of `v0.97.0`). `--force-conflicts` is needed because Helm's field manager
+owns the CRD it installed; without it the apply fails with `conflict with "helm" ...:
+.spec.versions` and changes nothing. Release QA ran this on kind after a `helm upgrade` from
+chart 0.96.3: the CRD had no `onSuspend` before the apply and had it after.
 
 **Air-gapped.** Image `ghcr.io/keyorixhq/keyorix-server:0.97.0-airgap` (§6) or the
 `keyorix-server-airgap_linux_<arch>` binaries, built with `-tags noaws,noazure,nogcp`:
 the `aws-kms`, `gcp-kms` and `azure-kms` key providers and the cloud connectors are not in
 them. Check the downloaded assets offline with `scripts/release/verify-release.sh
 --offline` ([operator/verifying-releases.md](operator/verifying-releases.md)); backup and
-restore are as above ([AIRGAP_RUNBOOK.md](AIRGAP_RUNBOOK.md)).
+restore are as above ([AIRGAP_RUNBOOK.md](AIRGAP_RUNBOOK.md)). Release QA ran
+`scripts/airgap-e2e.sh` (`--network none`) against the image built with `BUILD_TAGS=noaws,noazure,nogcp`
+and checked that the air-gapped binary's SBOM and build info list no cloud SDK;
+`verify-release.sh --offline` needs the tag-time signatures and is **UNVERIFIED** for this release.
 
 ## 2. Upgrading from v0.95.x → v0.95.2
 
