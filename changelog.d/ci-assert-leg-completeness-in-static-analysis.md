@@ -1,2 +1,0 @@
-### Changed
-- **CI: `assert-leg-completeness` runs as steps of `static-analysis`.** The five assertions moved into the existing job (same needs, same condition), so a round has one runner, one checkout and one Go setup fewer. The required context name stays: the old job is kept as a job that never runs and reports `skipped`, which satisfies it. A red assertion now turns `static-analysis` red, which build-and-test already requires.

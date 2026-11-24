@@ -1,2 +1,0 @@
-### Security
-- **`boombuler/barcode` is updated to v1.1.1, which fixes the QR numeric-mode sign defect.** The older pin accepted a leading `+` or `-` in a numeric group and dropped it from the symbol (`+12` scanned as `012`). Keyorix never renders QR codes itself and the `otpauth://` URLs that `pquerna/otp` encodes never take that path, so no live path was affected. The conformance oracle no longer carries a special case for the defect, and `TestQRFindingNumericSign` now asserts the fixed behaviour.

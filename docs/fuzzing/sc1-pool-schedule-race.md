@@ -222,6 +222,6 @@ lost-update check, red-proven by stripping the `FOR UPDATE` off the exact
 - Targets: `fuzz/thirdparty/pools/{sqlitepool,pgxpool,gormtx}_fuzz_test.go`
 - Oracle red/green proofs: `fuzz/thirdparty/pools/oracles_test.go`
 - targets.d confs: `scripts/fuzzing/targets.d/fuzz-thirdparty-pools__Fuzz{SQLitePool,PgxPool,GormTxn}Linearizable.conf` (+ regenerated `targets.conf`)
-- Changelog: `changelog.d/fuzz-pool-schedule-race.md`
+- Changelog: `CHANGELOG.md` v0.97.0 (was the fragment `fuzz-pool-schedule-race.md`, assembled at release)
 - Invariant: `internal/storage/store/INVARIANTS.d/INV-STORE-gorm-txn-rmw-no-lost-update.md`
 - This report (committed copy): `docs/fuzzing/sc1-pool-schedule-race.md`

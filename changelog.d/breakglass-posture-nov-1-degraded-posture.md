@@ -1,2 +1,0 @@
-### Fixed
-- **A degraded break-glass activation now shows in the compliance posture at once.** The posture's `emergency_access.unreviewed_activations` (and the oldest-unreviewed age, and with them the `emergency-access` control) skipped an activation made while the audit log was refusing writes until it was older than the review window, although its review is mandatory from the moment it exists and the review reminder and `security.break_glass_degraded` already listed it. The posture, the reminder and the status now agree on the same set; a test pins that with one fixture.

@@ -1,3 +1,0 @@
-### Documentation
-
-- The pilot runbooks in `docs/operator/` (lost admin, lost TOTP, key rotation, break-glass, audit-chain break) now show real output captured from a native run (SQLite, and PostgreSQL for the key rotations) instead of output derived from the code. Each runbook states the commit and date it was captured on. Corrections made along the way: the audit log table layout, the extra closing line of `recovery-key rotate`, the position of the PostgreSQL write-fence line, `--force` on a PostgreSQL DEK rotation being refused only while the presence lock is held, and a new section on the SEALED verdict after `accept-loss`.

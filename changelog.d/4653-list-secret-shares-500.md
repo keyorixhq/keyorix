@@ -1,2 +1,0 @@
-### Fixed
-- **`GET /api/v1/secrets/{id}/shares` no longer answers an undeclared 500.** The handler classified errors by message text and ended in `default: 500`; it now goes through the shared error mapper. An expired secret is answered 404 `Secret not found` (it was a 500, found by the strict OpenAPI fuzz, #4653), a storage read fault in the membership or share lookup is the shared 503 `storage_unavailable` with `Retry-After`, and an id of 0 is a 400. The spec now declares 400 and 503 for the operation. Who may list a secret's shares is unchanged.

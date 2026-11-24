@@ -1,2 +1,0 @@
-### Testing
-- **`scripts/k8s-e2e/run.sh` passes again on a real cluster (#3451).** Three checks had gone stale: J6 looked for the chart's Postgres as a StatefulSet (it is a Deployment), J6 compared the whole chart error text where it now carries a trailing "See deploy/helm/keyorix/README.md" sentence, and J1 looked for `POST http://localhost:8080/system/init` in the server log, which is now `https://` since the secure baseline. The bootstrap itself worked. The script is still manual (no CI job runs it).
