@@ -31,7 +31,11 @@ func newStrippedRevokeCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamictest.F
 	t.Helper()
 	c, db, _, _ := newDynamicTestCore(t)
 	c.SetDynamicAllowPrivateTargets(true)
-	c.SetDynamicEngineFactory(func(bt string) (dynamic.CredentialEngine, error) { return dynamic.New(bt, true, false) })
+	// The fake target speaks plaintext on loopback: the operator's insecure-transport
+	// flag, as a real operator would set it for such a target (#4374). These tests are
+	// about file options, not transport.
+	c.SetDynamicAllowInsecureTransport(true)
+	c.SetDynamicEngineFactory(func(bt string) (dynamic.CredentialEngine, error) { return dynamic.New(bt, true, true) })
 	pg := dynamictest.StartFakePostgres(t)
 	return c, db, pg, fmt.Sprintf("host=%s port=%s user=admin password=pw dbname=d sslmode=disable connect_timeout=5", pg.Host, pg.Port)
 }

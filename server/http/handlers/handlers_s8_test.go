@@ -308,7 +308,7 @@ func TestDynamicSecrets_ClassifyConfig_BadJSON_S8(t *testing.T) {
 		ProjectID:     proj.ID,
 		EnvironmentID: envID,
 		BackendType:   "postgres",
-		AdminDSN:      "postgres://fake:fake@localhost/fake",
+		AdminDSN:      "postgres://fake:fake@localhost/fake?sslmode=verify-full",
 		CreatedBy:     "s8classifyjson",
 		ActorID:       1,
 	})
@@ -386,7 +386,7 @@ func TestDynamicSecrets_SetConfigEnabled_BadJSON_S8(t *testing.T) {
 		ProjectID:     proj.ID,
 		EnvironmentID: envs[0].ID,
 		BackendType:   "postgres",
-		AdminDSN:      "postgres://fake:fake@localhost/fake",
+		AdminDSN:      "postgres://fake:fake@localhost/fake?sslmode=verify-full",
 		CreatedBy:     "s8setenabledjson",
 		ActorID:       1,
 	})
@@ -428,7 +428,7 @@ func TestDynamicSecrets_SetConfigEnabled_HappyPath_S8(t *testing.T) {
 		ProjectID:     proj.ID,
 		EnvironmentID: envs[0].ID,
 		BackendType:   "postgres",
-		AdminDSN:      "postgres://fake:fake@localhost/fake",
+		AdminDSN:      "postgres://fake:fake@localhost/fake?sslmode=verify-full",
 		CreatedBy:     "s8setenabledhappy",
 		ActorID:       1,
 	})

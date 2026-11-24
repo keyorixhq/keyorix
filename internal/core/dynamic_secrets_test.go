@@ -1075,7 +1075,7 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 
 	for _, backend := range []string{"postgres", "mysql", "mongodb", "redis"} {
 		_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
-			Name: backend + "-cfg", ProjectID: 1, EnvironmentID: 2, BackendType: backend, AdminDSN: "admin:p@tcp(h:3306)/",
+			Name: backend + "-cfg", ProjectID: 1, EnvironmentID: 2, BackendType: backend, AdminDSN: "admin:p@tcp(h:3306)/?tls=true",
 			ActorID: testAdminActorID,
 		})
 		require.NoError(t, err, "backend %s must be accepted", backend)
