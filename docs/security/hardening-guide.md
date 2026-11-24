@@ -444,7 +444,7 @@ option there, but it does not bundle the key-material files.
   the parsed driver settings. Turning the flag on applies to every backend at once and is logged
   (WARNING per connection) and audited (`dynamic_secret.config_insecure_transport`,
   `dynamic_lease.insecure_transport`). Upgrade window for PostgreSQL/MySQL configs stored before
-  #4374: [upgrade note](../upgrading.d/sql-admin-dsn-transport-policy.md).
+  #4374: [UPGRADING.md §6zt](../UPGRADING.md#6zt-postgresql-and-mysql-dynamic-secret-admin_dsns-must-verify-the-server-certificate).
 - **Do not weaken the SSRF/link-local guard** — there is no supported
   configuration key to disable `internal/netutil`'s SSRF checks on connector/
   dynamic-secret/DSN-driven calls; if a legitimate target trips it (e.g. a

@@ -44,7 +44,7 @@ Only the operator can allow an unverified connection, for every dynamic-secret b
 with `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport: true`; every such save,
 issue and connection is then audited or logged with a WARNING. A config stored before this rule
 keeps issuing for one release with a WARNING and an audit event on every issue
-([upgrade note](upgrading.d/sql-admin-dsn-transport-policy.md)).
+([UPGRADING.md §6zt](UPGRADING.md#6zt-postgresql-and-mysql-dynamic-secret-admin_dsns-must-verify-the-server-certificate)).
 
 The server also refuses connection-string options that read a file on the Keyorix server (such as
 `sslrootcert` or `tlsCAFile`) or that use the server's own ambient credentials. If a config stops

@@ -948,6 +948,7 @@ code. The checklist to follow is
 | Boot failures exit 78 or 75; the shipped systemd unit stops restarting on 78 | §6zd |
 | A `*` inside a CORS origin refuses to start (#4382) | §6ze |
 | Dynamic-secret `admin_dsn` options naming a server file; MongoDB `tlsInsecure`, Redis `skip_verify`, MySQL `compress=true` | §6zf, §6zi, §6zl, §6zj |
+| PostgreSQL and MySQL dynamic-secret `admin_dsn`s must verify the server certificate (`sslmode=verify-full`, `tls=true`); stored configs keep issuing with a WARNING for this release (#4374) | §6zt |
 | Config keys that are ignored today and rejected after the next minor release | §6zg |
 | The legacy roles can no longer be granted on a project (#3605) | §6zh |
 | Project names are unique ignoring case and Unicode normalization (schema epoch 10) | §6zk |
@@ -2013,6 +2014,63 @@ Changes that came with the changelog only, collected here so a script owner find
   upgrading the agent. The agent also checks the scope of what the server returns and
   needs a server that sends snake_case wire keys, i.e. v0.95.0 or newer: upgrade the
   server first.
+
+## 6zt. PostgreSQL and MySQL dynamic-secret `admin_dsn`s must verify the server certificate
+
+Until this release the operator's transport policy,
+`dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport`, applied only to MongoDB
+and Redis targets. From this release (#4374) it applies to PostgreSQL and MySQL targets too:
+with the setting off (the default) an `admin_dsn` is accepted only if its connection verifies
+the server certificate.
+
+| Backend | Accepted | Refused |
+|---|---|---|
+| `postgres` | `sslmode=verify-full`; `sslmode=verify-ca` only with a root certificate installed on the Keyorix server (`PGSSLROOTCERT` or `~/.postgresql/root.crt`), since without one the driver checks the chain against the system trust store and no host name, so any public certificate passes | `sslmode=disable`, `allow`, `prefer`, `require`, and no `sslmode` at all (the driver's default is `prefer`). A `PGSSLMODE` environment value of the Keyorix server counts as if it were in the DSN. |
+| `mysql` | `tls=true` | `tls=false`, no `tls` at all (the driver's default is plaintext), `tls=skip-verify`, `tls=preferred`, `allowFallbackToPlaintext=true` |
+
+The check reads the connection settings the database driver builds from the DSN, not the DSN
+text, so every spelling of these settings is covered.
+
+**Who is affected:** project admins whose PostgreSQL or MySQL dynamic-secret configs use one of
+the refused settings, which includes every PostgreSQL `admin_dsn` without `sslmode` and every
+MySQL `admin_dsn` without `tls=true`.
+
+What changes:
+
+- **Creating a config or replacing its `admin_dsn` with a refused setting fails at once**, with
+  an error that names the setting (for example `admin_dsn option "sslmode=prefer" is not
+  allowed for postgres backends`), never the DSN.
+- **A config stored before the upgrade keeps issuing for this release.** Every issue from it
+  writes a `dynamic_lease.insecure_transport` audit event naming the config and the setting,
+  and the server logs `WARNING: postgres admin_dsn has sslmode=prefer: ... accepted only during
+  the upgrade grace period and will be refused in the next release`. In the next release issue
+  from such a config is refused (`dsn.StoredSQLTransportGrace` is set to false).
+- **Revoke and the expiry sweep keep working during this release** exactly as issue does. From
+  the next release, with the setting off, revoke replaces the refused setting by a verified TLS
+  connection instead of refusing; a target whose certificate the Keyorix server does not trust
+  then fails the handshake and the lease stays `revoke_failed` with an error that names the
+  setting.
+- **With `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport: true`** every
+  setting is accepted, as before; each save writes a `dynamic_secret.config_insecure_transport`
+  audit event, each issue a `dynamic_lease.insecure_transport` audit event, and each connection
+  logs a WARNING that names the backend and the setting.
+
+What to do, during this release:
+
+1. Give the database server a certificate that the Keyorix server's system trust store
+   accepts (an `admin_dsn` cannot name a CA file: `sslrootcert` is refused). For PostgreSQL
+   a root certificate in the Keyorix server's `PGSSLROOTCERT` or `~/.postgresql/root.crt` also
+   works.
+   The decision is made on the server that saves or issues, with its environment: a DSN
+   without `sslmode` saved while `PGSSLMODE=verify-full` was set, or one saved while the
+   operator flag was on, counts as a stored one (soft period) once that changes.
+2. Replace each affected `admin_dsn` with `sslmode=verify-full` (PostgreSQL) or `tls=true`
+   (MySQL): `keyorix dynamic-secret set-admin-dsn <config-id>` (the DSN is read from
+   `KEYORIX_DYNAMIC_ADMIN_DSN` or stdin, never the command line). Find the affected configs in
+   the audit log (`dynamic_lease.insecure_transport`) or in the server log (the WARNING above).
+3. Only if a target truly cannot use verified TLS (a legacy database on a trusted network),
+   the operator can set `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport:
+   true` instead. It applies to every dynamic-secret backend, MongoDB and Redis included.
 
 ## 7. Rollback
 
