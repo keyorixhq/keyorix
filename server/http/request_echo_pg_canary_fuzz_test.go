@@ -49,26 +49,13 @@ type requestEchoPGFixture struct {
 	world *pgcanary.World
 }
 
-// requestEchoPGRules is requestEchoRules plus the echoes the PostgreSQL-specific
-// shapes provoke that the SQLite corpus never reached. Both are request echoes of the
-// caller's OWN non-secret secret-name (metadata), the same informational class as
-// issue #4059 — not a disclosure of a stored value or of another principal's data.
-//
-// pgShape case 0 puts a real NUL byte in the secret name. core rejects the name in
-// validation, BEFORE any database call, and the rejected name is quoted back to the
-// caller who sent it:
-//   - in the 400 response body ("invalid name \"<name>\""), and
-//   - in the server's validation log line.
-//
-// Only the name (label m-body, class Metadata) is echoed; the secret VALUE (s-body,
-// class Secret) never appears, so these stay MetadataOnly and are scoped to the one
-// origin. Names are non-secret by design (see the meta-db rule). See the W7 report for
-// the full classification.
+// requestEchoPGRules is requestEchoRules. The PostgreSQL-specific shapes once added
+// two allowlist rows for a secret name rejected in validation (a NUL byte quoted back
+// in the 400 body and the validation log line); identity.NewAddressName and
+// NewFoldedName no longer quote the rejected name, so those rows are gone and any
+// return of the echo fails here (fuzz-corpus#186).
 func requestEchoPGRules() *canary.Allowlist {
-	return requestEchoRules().With(
-		canary.Rule{ID: "echo-pg-invalid-secret-name-body", Channel: echoChanBody, Origin: "POST /api/v1/secrets/", Label: "m-body", MetadataOnly: true, DenyLabelPrefix: "stored-", Why: "a secret name rejected in validation (e.g. a NUL byte) is quoted in the 400 body: a request echo of the caller's own non-secret name, same class as #4059"},
-		canary.Rule{ID: "echo-pg-invalid-secret-name-log", Channel: canary.ChannelLog, Origin: "POST /api/v1/secrets/", Label: "m-body", MetadataOnly: true, DenyLabelPrefix: "stored-", Why: "the same rejected secret name is written to the validation log line; names are non-secret metadata (stored in plaintext by design)"},
-	)
+	return requestEchoRules()
 }
 
 func newRequestEchoPGFixture(tb testing.TB) *requestEchoPGFixture {

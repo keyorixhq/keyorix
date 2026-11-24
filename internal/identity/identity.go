@@ -83,7 +83,7 @@ type FoldedName struct {
 func NewFoldedName(raw string) (FoldedName, error) {
 	folded, err := foldedProfile.String(raw)
 	if err != nil {
-		return FoldedName{}, fmt.Errorf("invalid name %q: %w", raw, err)
+		return FoldedName{}, invalidNameError(foldedProfile, raw, err)
 	}
 	if folded == "" {
 		return FoldedName{}, ErrEmpty
@@ -122,7 +122,7 @@ type AddressName struct {
 func NewAddressName(raw string) (AddressName, error) {
 	v, err := addressProfile.String(raw)
 	if err != nil {
-		return AddressName{}, fmt.Errorf("invalid name %q: %w", raw, err)
+		return AddressName{}, invalidNameError(addressProfile, raw, err)
 	}
 	return AddressName{value: v}, nil
 }
@@ -130,3 +130,26 @@ func NewAddressName(raw string) (AddressName, error) {
 // String returns the NFC-normalized value — the single form to store and
 // compare, since this profile does not fold case.
 func (n AddressName) String() string { return n.value }
+
+// maxPositionScan bounds the per-rune scan invalidNameError does to locate the
+// first rejected rune, so an enormous rejected input costs a bounded amount.
+const maxPositionScan = 256
+
+// invalidNameError wraps err without quoting raw. The rejected name is caller
+// input: quoting it puts it into the 400 body and into the validation log line,
+// and callers sometimes paste a credential into a name field. The error says
+// where the first rejected rune is (a rune offset, no value) when it can be
+// found, so the caller can still fix the input.
+func invalidNameError(p *precis.Profile, raw string, err error) error {
+	i := 0
+	for _, r := range raw {
+		if i >= maxPositionScan {
+			break
+		}
+		if _, e := p.String(string(r)); e != nil {
+			return fmt.Errorf("invalid name: disallowed character at position %d: %w", i, err)
+		}
+		i++
+	}
+	return fmt.Errorf("invalid name: %w", err)
+}
