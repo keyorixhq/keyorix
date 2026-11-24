@@ -150,9 +150,10 @@ func (e *MySQLEngine) AdminDSNTransportWeakness(adminDSN string) *dsn.TransportW
 // hostname verification for host. Other settings of c are kept: ALPN for
 // sslnegotiation=direct, a RootCAs pool the operator's environment put there.
 func verifiedTLS(c *tls.Config, host string) *tls.Config {
-	out := &tls.Config{}
+	out := &tls.Config{MinVersion: tls.VersionTLS12}
 	if c != nil {
 		out = c.Clone()
+		out.MinVersion = max(out.MinVersion, tls.VersionTLS12)
 	}
 	out.InsecureSkipVerify = false
 	out.VerifyPeerCertificate = nil
