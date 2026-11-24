@@ -65,7 +65,7 @@ func findToolModuleRequires(root string) ([]string, error) {
 			if c := strings.Index(line, "//"); c >= 0 {
 				line = line[:c]
 			}
-			for _, field := range strings.Fields(line) {
+			for field := range strings.FieldsSeq(line) {
 				field = strings.Trim(field, "\"`")
 				for _, prefix := range toolModulePrefixes {
 					if strings.HasPrefix(field, prefix) {
