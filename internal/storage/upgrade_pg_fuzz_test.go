@@ -9,7 +9,10 @@
 //
 //	6 an interrupted migration leaves the database exactly as it found it. The
 //	  whole migration runs in one transaction (withMigrationLockPooled), so a
-//	  statement failing part way must roll everything back, including the DDL;
+//	  statement failing part way must roll everything back, including the DDL.
+//	  One stop is not an interruption: failing only the deferred
+//	  pg_advisory_unlock, whose error production ignores, commits a finished
+//	  upgrade (keyorixhq/fuzz-corpus#182);
 //	7 column types, nullability and defaults equal those of a fresh install of
 //	  this tree (information_schema), apart from pgSchemaIgnored;
 //	8 the constraint and index sets equal those of a fresh install, apart from
@@ -198,6 +201,9 @@ type pgHooks struct {
 	afterMigrate  func(db *sql.DB) error
 	beforeRerun   func(db *sql.DB) error
 	bareInterrupt bool // stop through migrateDatabase directly, without the transaction
+	// swallowMigrationError makes the interrupted migration return nil whatever
+	// failed: the shape of a step that ignores its error and commits.
+	swallowMigrationError bool
 }
 
 // pgRun is one exec. stopAfter == 0 runs the real startup path once; stopAfter > 0
@@ -255,7 +261,7 @@ func pgRun(t testing.TB, tag string, chainVerifiable bool, data []byte, stopAfte
 
 	var findings []ugFinding
 	if stopAfter > 0 {
-		reached, err := pgInterruptedMigrate(t, dsn, stopAfter, hooks.bareInterrupt)
+		reached, err := pgInterruptedMigrate(t, dsn, stopAfter, hooks)
 		if err != nil {
 			t.Fatalf("interrupted run: %v", err)
 		}
@@ -455,15 +461,16 @@ func pgCheckOracles(t testing.TB, tag string, chainVerifiable bool, raw *sql.DB,
 var errPGInterrupted = errors.New("upgrade-pg-fuzz: simulated crash")
 
 // pgInterruptedMigrate fail-stops a migration at the stopAfter'th write-class
-// gorm statement and every later one. It reports whether the stop was reached:
-// a migration with fewer statements completes, and is not interrupted at all.
+// gorm statement and every later one. It reports whether that interrupted the
+// upgrade: a migration with fewer statements completes and is not interrupted at
+// all, and neither is one whose only failed statement was the ignored final unlock.
 //
 // bare=false is the path a real boot takes (withMigrationLockPooled's one
 // transaction around migratePostgres). bare=true calls migrateDatabase directly,
 // with no outer transaction: the shape of the SQLite leg's ugInterruptedMigrate bare option,
 // kept to compare the two legs. That shape is not reachable in production: every
 // real caller of migrateDatabase on Postgres goes through the lock.
-func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, bare bool) (bool, error) {
+func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, hooks pgHooks) (bool, error) {
 	t.Helper()
 	gdb, err := openPostgresGorm(&config.DatabaseConfig{DSN: dsn}, gormConfig())
 	if err != nil {
@@ -477,12 +484,29 @@ func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, bare bool) (b
 	seen := pgRegisterStop(t, gdb, stopAfter)
 	f := &DefaultStorageFactory{}
 	// The migration's own error return is expected; what matters is the state left.
+	bare := hooks.bareInterrupt
+	migrate := f.migratePostgres
 	if bare {
-		_ = f.migrateDatabase(gdb)
-	} else {
-		_ = withMigrationLockPooled(gdb, true, false, "", f.migratePostgres)
+		migrate = f.migrateDatabase
 	}
-	return seen.Load() >= int64(stopAfter), nil
+	if hooks.swallowMigrationError {
+		// Inside the transaction, so the partial migration commits.
+		inner := migrate
+		migrate = func(db *gorm.DB) error { _ = inner(db); return nil }
+	}
+	var merr error
+	if bare {
+		merr = migrate(gdb)
+	} else {
+		merr = withMigrationLockPooled(gdb, true, false, "", migrate)
+	}
+	// A nil return counts as a completed upgrade only when the stop hit nothing but
+	// the final statement, the deferred pg_advisory_unlock that
+	// withMigrationLockPooled ignores (the bare path has no unlock). Any earlier
+	// failure the migration swallowed and then committed is still an interruption,
+	// and oracle 6 must compare it.
+	n := seen.Load()
+	return n >= int64(stopAfter) && (bare || merr != nil || n != int64(stopAfter)), nil
 }
 
 // pgRegisterStop arms gdb to fail the stopAfter'th write-class statement and every
