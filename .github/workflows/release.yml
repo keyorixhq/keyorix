@@ -151,9 +151,20 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
+            # --generate-notes over ~1000 PRs exceeded GitHub's 125000-character
+            # body limit (HTTP 422, v0.97.0-rc.1): the body now comes from
+            # release-notes.sh, which keeps it bounded. An rc is a pre-release.
+            git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/||' > "$RUNNER_TEMP/tags.txt"
+            PREV_TAG="$(scripts/release/release-notes.sh --previous-tag "$GITHUB_REF_NAME" < "$RUNNER_TEMP/tags.txt")"
+            scripts/release/release-notes.sh "$GITHUB_REF_NAME" "$PREV_TAG" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/release-notes.md"
+            case "$GITHUB_REF_NAME" in
+              *-rc.*) KIND_FLAGS=(--prerelease --latest=false) ;;
+              *) KIND_FLAGS=() ;;
+            esac
             gh release create "$GITHUB_REF_NAME" dist/* \
               --title "Keyorix $GITHUB_REF_NAME" \
-              --generate-notes
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              "${KIND_FLAGS[@]}"
           fi
 
   publish-chart:
