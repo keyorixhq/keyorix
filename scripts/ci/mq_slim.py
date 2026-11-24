@@ -29,6 +29,16 @@ or empty means gate,testreach, i.e. enforce behaves exactly as before the
 variable existed. A lever that is not enforced is still computed and logged
 (its records say "mode": "shadow") and writes no output. A value naming no
 known lever enforces nothing (fail safe), and so does not sample either.
+
+MQ_SLIM_TESTREACH_CHECKS (MQ-TESTREACH-ROOT12-1) narrows an enforced testreach
+lever to the named checks: a comma-separated list of check names exactly as the
+decision records name them (test-suite/root-1,test-suite/root-2). Unset or
+blank: every testreach check, as before. Set: a decision for a check outside the
+list is still computed and logged ("mode": "shadow") but its leg writes no
+leg_tests entry, so ci.yml runs it unchanged. A listed name no decision uses is
+harmless. A list that does not parse (a token with characters a check name
+cannot have, or only commas) enforces nothing for testreach, logs an "error"
+record, and so does not sample either.
 """
 import json
 import os
@@ -44,6 +54,7 @@ READER_SRC = re.compile(r"\bruntime\.Callers?\(|\bos\.Getwd\(")
 READER_IMPORTS = {"go/parser", "golang.org/x/tools/go/packages", "os/exec"}
 MAX_LOGGED_TESTS = int(os.environ.get("MQ_SLIM_MAX_LOGGED", "40") or "40")
 SAMPLE_EVERY = 10
+CHECK_NAME = re.compile(r"[A-Za-z0-9._/-]+")
 
 
 def mode():
@@ -63,8 +74,32 @@ def enforced_levers():
     """The levers MQ_SLIM_MODE=enforce acts on. Meaningless unless mode() is
     enforce. MQ_SLIM_LEVERS unset or blank: all of them (the behaviour before
     the variable existed). Anything else: only the known ones it names, so a
-    typo, or a value like ",", enforces nothing."""
-    return _lever_tokens() & set(LEVERS) if _levers_set() else set(LEVERS)
+    typo, or a value like ",", enforces nothing. A testreach check list that
+    does not parse drops testreach (fail safe)."""
+    out = _lever_tokens() & set(LEVERS) if _levers_set() else set(LEVERS)
+    if testreach_checks()[1]:
+        out.discard("testreach")
+    return out
+
+
+def testreach_checks():
+    """(names, error) for MQ_SLIM_TESTREACH_CHECKS. (None, None): unset or
+    blank, every testreach check. (set, None): only those checks. (set(), why):
+    the value does not parse, so no check."""
+    raw = os.environ.get("MQ_SLIM_TESTREACH_CHECKS", "")
+    if not raw.strip():
+        return None, None
+    toks = [t.strip() for t in raw.split(",") if t.strip()]
+    bad = [t for t in toks if not CHECK_NAME.fullmatch(t)]
+    if not toks or bad:
+        return set(), f"MQ_SLIM_TESTREACH_CHECKS={raw!r} does not parse (want check names like test-suite/root-1, comma separated); testreach enforces nothing"
+    return set(toks), None
+
+
+def testreach_allows(check):
+    """Whether an enforced testreach lever acts on this check."""
+    names, err = testreach_checks()
+    return not err and (names is None or check in names)
 
 
 def unknown_levers():
@@ -102,8 +137,15 @@ def _context():
     return {"run_id": os.environ.get("GITHUB_RUN_ID"), "ref": ref, "pr": int(m.group(1)) if m else None}
 
 
+def check_mode(lever, check):
+    """lever_mode, except a testreach check outside MQ_SLIM_TESTREACH_CHECKS is
+    shadow."""
+    m = lever_mode(lever)
+    return "shadow" if m == "enforce" and lever == "testreach" and not testreach_allows(check) else m
+
+
 def record(log, lever, check, decision, why, **extra):
-    rec = {"v": 1, "lever": lever, **_context(), "check": check, "decision": decision, "why": why, "mode": lever_mode(lever), **extra}
+    rec = {"v": 1, "lever": lever, **_context(), "check": check, "decision": decision, "why": why, "mode": check_mode(lever, check), **extra}
     log(f"MQ-SHADOW {json.dumps(rec, sort_keys=True)}")
     return rec
 
@@ -325,11 +367,17 @@ def run(ctx, legs, leg_pkgs, gates, touched, log):
             log(f"MQ-SLIM: MQ_SLIM_LEVERS names unknown lever(s) {','.join(bad)} (known: {','.join(LEVERS + CI_ONLY_LEVERS)}); they enforce nothing")
         log(f"MQ-SLIM: enforcing {','.join(sorted(enforced_levers())) or '(no lever)'}; every other lever stays shadow")
     recs, out = [], {}
+    names, bad_list = testreach_checks()
+    if mode() == "enforce" and bad_list and (not _levers_set() or "testreach" in _lever_tokens()):
+        log(f"MQ-SLIM: {bad_list}")
+        recs.append(record(log, "testreach", "test-suite", "error", bad_list))
+    elif mode() == "enforce" and names is not None and enforces("testreach"):
+        log(f"MQ-SLIM: testreach enforced only for {','.join(sorted(names))}; its other checks stay shadow")
     try:
         r, leg_tests = testreach_lever(ctx, legs, leg_pkgs, log)
         recs += r
         if enforces("testreach"):
-            out["leg_tests"] = leg_tests
+            out["leg_tests"] = {leg: v for leg, v in leg_tests.items() if testreach_allows("test-suite/" + leg)}
     except Exception as exc:  # shadow must never change the decision
         recs.append(record(log, "testreach", "test-suite", "error", f"{type(exc).__name__}: {exc}"))
     try:
