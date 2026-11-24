@@ -3,7 +3,6 @@ package libconformance
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -159,36 +158,12 @@ func qrIsAlnum(s string) bool {
 	return !strings.ContainsFunc(s, func(r rune) bool { return !strings.ContainsRune(qrAlnumCharset, r) })
 }
 
-// qrAtoiNumeric models finding LF1-QR-numeric-sign: the library's numeric encoder
-// splits the content into 3-byte groups and accepts any group strconv.Atoi parses to a
-// non-negative value, so a sign survives the check ("+12", "-0", "123+45") and is dropped
-// from the symbol ("+12" encodes as "012"). It returns the content the library actually
-// encodes, and whether the content takes that path without being all digits. The
-// oracle then demands exactly this content, so every other defect on these inputs
-// still fails; TestQRFindingNumericSign goes red when the library is fixed.
-func qrAtoiNumeric(content string) (string, bool) {
-	if content == "" || qrIsNumeric(content) {
-		return "", false
-	}
-	var sb strings.Builder
-	for pos := 0; pos < len(content); pos += 3 {
-		g := content[pos:min(pos+3, len(content))]
-		v, err := strconv.Atoi(g)
-		if err != nil || v < 0 {
-			return "", false
-		}
-		fmt.Fprintf(&sb, "%0*d", len(g), v)
-	}
-	return sb.String(), true
-}
-
 // qrExpectedMode returns the mode index (0 numeric, 1 alnum, 2 byte) the content must be
 // encoded in, or -1 when the requested mode cannot represent it.
 func qrExpectedMode(content string, mode qr.Encoding) int {
-	_, signed := qrAtoiNumeric(content)
 	switch mode {
 	case qr.Numeric:
-		if qrIsNumeric(content) || signed {
+		if qrIsNumeric(content) {
 			return 0
 		}
 	case qr.AlphaNumeric:
@@ -199,7 +174,7 @@ func qrExpectedMode(content string, mode qr.Encoding) int {
 		return 2
 	case qr.Auto:
 		switch {
-		case qrIsNumeric(content) || signed:
+		case qrIsNumeric(content):
 			return 0
 		case qrIsAlnum(content):
 			return 1
@@ -261,12 +236,8 @@ func checkQRRoundTrip(t *testing.T, content string, lvl qr.ErrorCorrectionLevel,
 	if dec.level != li {
 		t.Fatalf("O2 STRUCTURE: format info names level %d, requested %d (content %q)", dec.level, li, content)
 	}
-	wantContent := content
-	if norm, signed := qrAtoiNumeric(content); signed && wantMode == 0 {
-		wantContent = norm // known finding LF1-QR-numeric-sign, see qrAtoiNumeric
-	}
-	if dec.content != wantContent || dec.mode != wantMode {
-		t.Fatalf("O1 ROUND-TRIP: Encode(%q, %v, %v) decodes to %q in mode %d (want %q in mode %d)", content, lvl, mode, dec.content, dec.mode, wantContent, wantMode)
+	if dec.content != content || dec.mode != wantMode {
+		t.Fatalf("O1 ROUND-TRIP: Encode(%q, %v, %v) decodes to %q in mode %d (want %q in mode %d)", content, lvl, mode, dec.content, dec.mode, content, wantMode)
 	}
 	if dec.version != wantVer {
 		t.Fatalf("O3 MINIMAL-VERSION: Encode(%q, %v, %v) chose version %d, smallest that fits is %d", content, lvl, mode, dec.version, wantVer)
