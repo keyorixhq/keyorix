@@ -334,7 +334,7 @@ func TestMySQLEngine_Issue_Success_NoTemplate(t *testing.T) {
 	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
 	// intentional loopback target, mirroring the allow_private_network_targets
 	// opt-in a real operator would set to target a local/private database.
-	e := &MySQLEngine{allowPrivateNetwork: true}
+	e := &MySQLEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cred, role, err := e.Issue(ctx, dsn, "", time.Minute)
@@ -349,7 +349,7 @@ func TestMySQLEngine_Issue_Success_WithTemplate(t *testing.T) {
 	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
 	// intentional loopback target, mirroring the allow_private_network_targets
 	// opt-in a real operator would set to target a local/private database.
-	e := &MySQLEngine{allowPrivateNetwork: true}
+	e := &MySQLEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cred, role, err := e.Issue(ctx, dsn, "GRANT SELECT ON app.* TO {{name}}", time.Minute)
@@ -363,7 +363,7 @@ func TestMySQLEngine_Issue_WhitespaceTemplate_Success(t *testing.T) {
 	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
 	// intentional loopback target, mirroring the allow_private_network_targets
 	// opt-in a real operator would set to target a local/private database.
-	e := &MySQLEngine{allowPrivateNetwork: true}
+	e := &MySQLEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	// Whitespace-only template is treated as empty → no GRANT executed.
@@ -381,7 +381,7 @@ func TestMySQLEngine_Issue_CreateUserFails(t *testing.T) {
 	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
 	// intentional loopback target, mirroring the allow_private_network_targets
 	// opt-in a real operator would set to target a local/private database.
-	e := &MySQLEngine{allowPrivateNetwork: true}
+	e := &MySQLEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, dsn, "", time.Minute)
@@ -397,7 +397,7 @@ func TestMySQLEngine_Issue_TemplateFails(t *testing.T) {
 	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
 	// intentional loopback target, mirroring the allow_private_network_targets
 	// opt-in a real operator would set to target a local/private database.
-	e := &MySQLEngine{allowPrivateNetwork: true}
+	e := &MySQLEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, dsn, "GRANT SELECT ON app.* TO {{name}}", time.Minute)
@@ -412,7 +412,7 @@ func TestMySQLEngine_Revoke_Success(t *testing.T) {
 	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
 	// intentional loopback target, mirroring the allow_private_network_targets
 	// opt-in a real operator would set to target a local/private database.
-	e := &MySQLEngine{allowPrivateNetwork: true}
+	e := &MySQLEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, dsn, "kx_dyn_abc123xyz")
@@ -429,7 +429,7 @@ func TestMySQLEngine_Revoke_DropUserFails(t *testing.T) {
 	// G48: these tests dial a fake MySQL server on 127.0.0.1 — an explicit,
 	// intentional loopback target, mirroring the allow_private_network_targets
 	// opt-in a real operator would set to target a local/private database.
-	e := &MySQLEngine{allowPrivateNetwork: true}
+	e := &MySQLEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, dsn, "kx_dyn_abc123xyz")
@@ -705,7 +705,7 @@ func TestPostgresEngine_Issue_CreateRoleFails(t *testing.T) {
 	host, port := startFakePGServerFailOnNthQuery(t, 0)
 	// G48: dials a fake PostgreSQL server on 127.0.0.1 — an explicit,
 	// intentional loopback target.
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, fakePGDSN(host, port), "", time.Minute)

@@ -68,10 +68,10 @@ func registerCloudEngine(backendType string, ctor cloudEngineCtor) {
 // (G48). allowInsecureTransport mirrors
 // KeyorixCore.dynamicAllowInsecureTransport
 // (dynamic_secrets.allow_insecure_transport): when false (the default),
-// mongodb/redis (the two backends here whose wire protocol has no
-// bolted-on-elsewhere TLS enforcement of its own — Postgres/MySQL are
-// pre-existing, verified-correct call sites out of this change's scope)
-// refuse a connection that isn't using TLS. The cloud-IAM engines and
+// mongodb/redis refuse a connection that isn't using TLS, and postgres/mysql
+// refuse one that does not verify the server certificate (#4374; a stored
+// admin_dsn is accepted with a WARNING while dsn.StoredSQLTransportGrace holds).
+// The cloud-IAM engines and
 // Kubernetes (in-cluster/explicit api_server) don't dial an admin_dsn host
 // the same way and ignore both parameters.
 //
@@ -90,9 +90,9 @@ func New(backendType string, allowPrivateNetwork, allowInsecureTransport bool) (
 func newEngine(backendType string, allowPrivateNetwork, allowInsecureTransport bool) (CredentialEngine, error) {
 	switch backendType {
 	case "postgres":
-		return &PostgresEngine{allowPrivateNetwork: allowPrivateNetwork}, nil
+		return &PostgresEngine{allowPrivateNetwork: allowPrivateNetwork, transport: newSQLTransportPolicy(allowInsecureTransport)}, nil
 	case "mysql":
-		return &MySQLEngine{allowPrivateNetwork: allowPrivateNetwork}, nil
+		return &MySQLEngine{allowPrivateNetwork: allowPrivateNetwork, transport: newSQLTransportPolicy(allowInsecureTransport)}, nil
 	case "mongodb":
 		return &MongoEngine{allowPrivateNetwork: allowPrivateNetwork, allowInsecureTransport: allowInsecureTransport}, nil
 	case "redis":

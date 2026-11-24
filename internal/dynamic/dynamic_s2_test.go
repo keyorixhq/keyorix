@@ -62,7 +62,7 @@ func TestPostgresEngine_Issue_DialTimeRefusesDNSRebind(t *testing.T) {
 	}
 
 	e := &PostgresEngine{} // allowPrivateNetwork: false (default / secure)
-	_, _, err := e.Issue(context.Background(), "postgres://admin:pass@rebind.postgres.example:5432/app?sslmode=disable", "", time.Minute)
+	_, _, err := e.Issue(context.Background(), "postgres://admin:pass@rebind.postgres.example:5432/app?sslmode=verify-full", "", time.Minute)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disallowed address")
 }
@@ -95,7 +95,7 @@ func TestPostgresEngine_Issue_AllowPrivateNetworkOptsOut(t *testing.T) {
 	}
 
 	e := &PostgresEngine{allowPrivateNetwork: true}
-	_, _, err := e.Issue(context.Background(), "postgres://admin:pass@rebind.postgres.example:5432/app?sslmode=disable&connect_timeout=1", "", time.Minute)
+	_, _, err := e.Issue(context.Background(), "postgres://admin:pass@rebind.postgres.example:5432/app?sslmode=verify-full&connect_timeout=1", "", time.Minute)
 	require.Error(t, err, "still fails — nothing is listening — but NOT via the SSRF guard")
 	assert.NotContains(t, err.Error(), "disallowed address")
 }
@@ -145,7 +145,7 @@ func TestMySQLEngine_Issue_DialTimeRefusesDNSRebind(t *testing.T) {
 	}
 
 	e := &MySQLEngine{} // allowPrivateNetwork: false (default / secure)
-	_, _, err := e.Issue(context.Background(), "admin:pass@tcp(rebind.mysql.example:3306)/app", "", time.Minute)
+	_, _, err := e.Issue(context.Background(), "admin:pass@tcp(rebind.mysql.example:3306)/app?tls=true", "", time.Minute)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "disallowed address")
 }
@@ -161,7 +161,7 @@ func TestMySQLEngine_Issue_AllowPrivateNetworkOptsOut(t *testing.T) {
 	}
 
 	e := &MySQLEngine{allowPrivateNetwork: true}
-	_, _, err := e.Issue(context.Background(), "admin:pass@tcp(rebind.mysql.example:3306)/app?timeout=1s", "", time.Minute)
+	_, _, err := e.Issue(context.Background(), "admin:pass@tcp(rebind.mysql.example:3306)/app?timeout=1s&tls=true", "", time.Minute)
 	require.Error(t, err, "still fails — nothing is listening — but NOT via the SSRF guard")
 	assert.NotContains(t, err.Error(), "disallowed address")
 }
@@ -341,7 +341,7 @@ func TestConnectMongo_UnreachableHost(t *testing.T) {
 
 func TestOpenMySQL_ValidDSNButUnreachable(t *testing.T) {
 	// A valid DSN format but non-existent host → PingContext fails.
-	_, err := openMySQL(context.Background(), "user:pass@tcp(localhost:13306)/db", false)
+	_, err := openMySQL(context.Background(), "user:pass@tcp(localhost:13306)/db?tls=true", false, newSQLTransportPolicy(false))
 	require.Error(t, err)
 }
 

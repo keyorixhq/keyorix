@@ -31,6 +31,8 @@ type MySQLEngine struct {
 	// (see New). When false, every connection re-validates the resolved
 	// target address and refuses a private/link-local one (G48).
 	allowPrivateNetwork bool
+	// transport is the operator's transport policy (#4374, see sqlTransportPolicy).
+	transport sqlTransportPolicy
 }
 
 func (e *MySQLEngine) BackendType() string      { return "mysql" }
@@ -81,7 +83,7 @@ func assertSafeUsername(user string) error {
 var openMySQLAdmin = openMySQL
 
 func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (Credential, string, error) {
-	db, err := openMySQLAdmin(ctx, adminDSN, e.allowPrivateNetwork)
+	db, err := openMySQLAdmin(ctx, adminDSN, e.allowPrivateNetwork, e.transport)
 	if err != nil {
 		return Credential{}, "", err
 	}
@@ -150,14 +152,23 @@ func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	if err := assertSafeUsername(roleName); err != nil {
 		return err
 	}
-	// allowAllFiles, which Issue refuses, is removed instead (#3980).
+	// allowAllFiles, which Issue refuses, is removed instead (#3980). A tls setting
+	// the transport policy refuses is replaced by verified TLS, not refused (#4374):
+	// MySQL accounts have no native expiry, so a refused revoke leaves them live.
 	cfg, removed, err := parseMySQLRevokeDSN(adminDSN)
 	if err != nil {
 		return err
 	}
+	var upgraded *dsn.TransportWeakness
+	if w := mysqlTransportWeakness(cfg); w != nil && e.transport.refuses() {
+		upgradeMySQLToVerified(cfg)
+		upgraded = w
+	} else if err := e.transport.check(w); err != nil {
+		return err
+	}
 	db, err := openMySQLConfig(ctx, cfg, e.allowPrivateNetwork)
 	if err != nil {
-		return revokeStrippedError(removed, false, err)
+		return revokeTransportUpgradedError(upgraded, revokeStrippedError(removed, false, err))
 	}
 	defer func() { _ = db.Close() }()
 
@@ -186,13 +197,20 @@ func (e *MySQLEngine) Renew(_ context.Context, _, _ string, _ time.Time) error {
 // configured via the DSN's tls= param, verifies against the original
 // hostname — DialFunc only controls the raw TCP dial beneath it) while
 // pinning the raw connection to the specific address just validated.
-func openMySQL(ctx context.Context, adminDSN string, allowPrivateNetwork bool) (*sql.DB, error) {
+//
+// The transport policy is checked on the parsed config before any dial: a
+// connection that does not verify the server certificate is refused unless the
+// operator allowed insecure transport (sqlTransportPolicy).
+func openMySQL(ctx context.Context, adminDSN string, allowPrivateNetwork bool, transport sqlTransportPolicy) (*sql.DB, error) {
 	if err := dsn.CheckLocalFileOptions("mysql", adminDSN); err != nil {
 		return nil, err
 	}
 	cfg, err := mysql.ParseDSN(adminDSN)
 	if err != nil {
 		return nil, fmt.Errorf("invalid mysql admin DSN: %w", err)
+	}
+	if err := transport.check(mysqlTransportWeakness(cfg)); err != nil {
+		return nil, err
 	}
 	return openMySQLConfig(ctx, cfg, allowPrivateNetwork)
 }

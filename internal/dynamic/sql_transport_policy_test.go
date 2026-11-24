@@ -1,92 +1,145 @@
 package dynamic
 
 import (
-	"crypto/tls"
+	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 )
 
-// #4374 audit of the postgres and mysql admin_dsn options that weaken transport
-// security. Unlike mongodb and redis, these two engines are not subject to
-// dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport at all: New hands
-// that flag only to MongoEngine and RedisEngine ("Postgres/MySQL are pre-existing ...
-// out of this change's scope", engine.go), and neither connect path asks
-// netutil.Guard.RequireTLS for anything. So there is no operator policy for an
-// admin_dsn option to undo; sslmode=disable and tls=false connect in clear today
-// whatever the flag says.
+// #4374: the operator's transport policy (dynamic_secrets.insecure_allow_plaintext_
+// dynamic_secret_transport) covers postgres and mysql admin_dsns. Without the flag
+// only a connection that verifies the server certificate is accepted: sslmode
+// verify-ca/verify-full for postgres, tls=true for mysql. The decision reads the
+// parsed driver config, so every spelling that reaches the same config is caught.
 //
-// Putting the Redis precedent (refuse what undoes the policy unless the flag is set)
-// on these two engines would first need the policy itself (TLS required unless the
-// flag is set), which changes every existing plaintext postgres/mysql config. That is
-// a policy decision, not an audit fix; it is filed as a question (ask id
-// dynamic-sql-transport-policy-4374) and these tests pin what is true today, so the
-// change cannot happen unnoticed in either direction.
+// These tests use only what main already had (an engine value, Issue, Revoke,
+// dsn.ForbiddenOptionError), so they are the red/green proof: on main nothing is
+// refused and Revoke names no dropped option. An engine built as a literal has
+// the zero transport policy, which is the next release's hard refusal (no flag, no
+// soft period); the soft period and the flag are in sql_transport_grace_test.go.
+// Nothing listens on 127.0.0.1:1, so a DSN the policy accepts fails to connect.
 
-func TestPostgresAdminDSN_SSLModeTransportToday(t *testing.T) {
-	const base = "postgres://admin:s3cret@db.example.net:5432/app?sslmode="
-	for _, tc := range []struct {
-		mode string
-		// plaintext: the first connection attempt is without TLS.
-		plaintext bool
-		// verifies: every TLS attempt checks the server certificate.
-		verifies bool
-	}{
-		{"disable", true, false},
-		{"allow", true, false}, // plaintext first, TLS only if the server insists
-		{"prefer", false, false},
-		{"require", false, false}, // TLS, no certificate or hostname check
-		{"verify-ca", false, true},
-		{"verify-full", false, true},
+const pgClosed = "postgres://admin:s3cret@127.0.0.1:1/app?connect_timeout=1"
+
+func requireTransportRefusal(t *testing.T, err error, backend, option, what string) {
+	t.Helper()
+	fe, ok := errors.AsType[*dsn.ForbiddenOptionError](err)
+	require.True(t, ok, "%s: want a transport refusal, got %v", what, err)
+	assert.Equal(t, backend, fe.Backend, what)
+	assert.Equal(t, option, fe.Option, what)
+	assert.Contains(t, err.Error(), "insecure_allow_plaintext_dynamic_secret_transport", what)
+	assert.NotContains(t, err.Error(), "s3cret", "%s: the error must not quote the DSN", what)
+}
+
+func requireNotTransportRefusal(t *testing.T, err error, what string) {
+	t.Helper()
+	require.Error(t, err, what) // nothing listens
+	_, refused := errors.AsType[*dsn.ForbiddenOptionError](err)
+	assert.False(t, refused, "%s: a verifying admin_dsn must not be refused: %v", what, err)
+}
+
+func TestPostgresEngine_RefusesSSLModesThatDoNotVerify(t *testing.T) {
+	isolatePGEnv(t)
+	for _, tc := range []struct{ name, dsn, option string }{
+		{"disable", pgClosed + "&sslmode=disable", "sslmode=disable"},
+		{"allow", pgClosed + "&sslmode=allow", "sslmode=allow"},
+		{"prefer", pgClosed + "&sslmode=prefer", "sslmode=prefer"},
+		{"require", pgClosed + "&sslmode=require", "sslmode=require"},
+		{"sslmode not set (pgx default prefer)", pgClosed, "sslmode=prefer"},
+		{"keyword form", "host=127.0.0.1 port=1 user=admin password=s3cret dbname=app connect_timeout=1 sslmode=require", "sslmode=require"},
+		{"keyword form after vertical tab", "host=127.0.0.1 port=1 user=admin password=s3cret dbname=app\vsslmode=disable", "sslmode=disable"},
+		{"last value wins", pgClosed + "&sslmode=verify-full&sslmode=disable", "sslmode=disable"},
+		{"multi-host", "postgres://admin:s3cret@127.0.0.1:1,127.0.0.2:1/app?connect_timeout=1&sslmode=require", "sslmode=require"},
 	} {
-		cfg, err := parsePostgresAdminDSN(base + tc.mode)
-		require.NoError(t, err, tc.mode)
-		attempts := []tlsAttempt{attemptOf(cfg.TLSConfig)}
-		for _, fb := range cfg.Fallbacks {
-			attempts = append(attempts, attemptOf(fb.TLSConfig))
-		}
-		assert.Equal(t, tc.plaintext, !attempts[0].tls, "sslmode=%s: first attempt is plaintext", tc.mode)
-		verifies := true
-		for _, a := range attempts {
-			if !a.tls || a.skipVerify {
-				verifies = false
-			}
-		}
-		assert.Equal(t, tc.verifies, verifies, "sslmode=%s: every attempt verifies the certificate", tc.mode)
+		e := &PostgresEngine{allowPrivateNetwork: true}
+		_, _, err := e.Issue(context.Background(), tc.dsn, "", time.Minute)
+		requireTransportRefusal(t, err, "postgres", tc.option, tc.name)
+		requireTransportRefusal(t, e.Renew(context.Background(), tc.dsn, "kx_dyn_test", time.Now()), "postgres", tc.option, tc.name+" (renew)")
 	}
 }
 
-type tlsAttempt struct{ tls, skipVerify bool }
+// PGSSLMODE fills sslmode when the DSN has none; the parsed config carries it.
+func TestPostgresEngine_RefusesPGSSLModeEnvironmentThatDoesNotVerify(t *testing.T) {
+	isolatePGEnv(t)
+	t.Setenv("PGSSLMODE", "disable")
+	e := &PostgresEngine{allowPrivateNetwork: true}
+	_, _, err := e.Issue(context.Background(), pgClosed, "", time.Minute)
+	requireTransportRefusal(t, err, "postgres", "sslmode=disable", "PGSSLMODE=disable")
 
-// attemptOf reads one connection attempt's TLS settings. pgx checks the certificate
-// chain itself for sslmode=verify-ca (InsecureSkipVerify with VerifyPeerCertificate
-// set), so that is verification; InsecureSkipVerify alone is none.
-func attemptOf(c *tls.Config) tlsAttempt {
-	return tlsAttempt{tls: c != nil, skipVerify: c != nil && c.InsecureSkipVerify && c.VerifyPeerCertificate == nil}
+	t.Setenv("PGSSLMODE", "verify-full")
+	_, _, err = e.Issue(context.Background(), pgClosed, "", time.Minute)
+	requireNotTransportRefusal(t, err, "PGSSLMODE=verify-full")
 }
 
-func TestMySQLAdminDSN_TLSParamTransportToday(t *testing.T) {
-	const base = "admin:s3cret@tcp(db.example.net:3306)/app?tls="
-	for _, tc := range []struct {
-		value     string
-		plaintext bool // no TLS at all
-		verifies  bool // TLS with certificate and hostname checks
-	}{
-		{"false", true, false},
-		{"preferred", false, false}, // TLS if offered, certificate not checked, falls back to plaintext
-		{"skip-verify", false, false},
-		{"true", false, true},
-	} {
-		cfg, err := mysql.ParseDSN(base + tc.value)
-		require.NoError(t, err, tc.value)
-		assert.Equal(t, tc.plaintext, cfg.TLS == nil, "tls=%s: plaintext", tc.value)
-		verifies := cfg.TLS != nil && !cfg.TLS.InsecureSkipVerify
-		assert.Equal(t, tc.verifies, verifies, "tls=%s: verifies the certificate", tc.value)
+func TestPostgresEngine_VerifyingSSLModesAreNotRefused(t *testing.T) {
+	isolatePGEnv(t)
+	for _, mode := range []string{"verify-ca", "verify-full"} {
+		e := &PostgresEngine{allowPrivateNetwork: true}
+		_, _, err := e.Issue(context.Background(), pgClosed+"&sslmode="+mode, "", time.Minute)
+		requireNotTransportRefusal(t, err, mode)
 	}
-	// The default (no tls= at all) is plaintext too.
-	cfg, err := mysql.ParseDSN("admin:s3cret@tcp(db.example.net:3306)/app")
-	require.NoError(t, err)
-	assert.Nil(t, cfg.TLS)
+}
+
+const mysqlClosed = "admin:s3cret@tcp(127.0.0.1:1)/app?timeout=1s"
+
+func TestMySQLEngine_RefusesTLSSettingsThatDoNotVerify(t *testing.T) {
+	for _, tc := range []struct{ name, dsn, option string }{
+		{"tls=false", mysqlClosed + "&tls=false", "tls=false"},
+		{"tls=0", mysqlClosed + "&tls=0", "tls=false"},
+		{"tls not set (driver default plaintext)", mysqlClosed, "tls=false"},
+		{"TLS is not the tls parameter", mysqlClosed + "&TLS=true", "tls=false"},
+		{"skip-verify", mysqlClosed + "&tls=skip-verify", "tls=skip-verify"},
+		{"SKIP-VERIFY", mysqlClosed + "&tls=SKIP-VERIFY", "tls=skip-verify"},
+		{"preferred", mysqlClosed + "&tls=preferred", "tls=preferred"},
+		{"tls=true with plaintext fallback", mysqlClosed + "&tls=true&allowFallbackToPlaintext=true", "allowFallbackToPlaintext=true"},
+		{"last value wins", mysqlClosed + "&tls=true&tls=skip-verify", "tls=skip-verify"},
+	} {
+		e := &MySQLEngine{allowPrivateNetwork: true}
+		_, _, err := e.Issue(context.Background(), tc.dsn, "", time.Minute)
+		requireTransportRefusal(t, err, "mysql", tc.option, tc.name)
+	}
+}
+
+func TestMySQLEngine_VerifyingTLSIsNotRefused(t *testing.T) {
+	for _, v := range []string{"true", "1", "TRUE"} {
+		e := &MySQLEngine{allowPrivateNetwork: true}
+		_, _, err := e.Issue(context.Background(), mysqlClosed+"&tls="+v, "", time.Minute)
+		requireNotTransportRefusal(t, err, "tls="+v)
+	}
+}
+
+// Revoke does not refuse (a refused revoke leaves the account live, #3980): it
+// drops the setting, connects with the certificate verified, and says so when the
+// connection then fails.
+func TestPostgresEngine_Revoke_UnverifiedSSLModeUpgradedNotRefused(t *testing.T) {
+	isolatePGEnv(t)
+	for _, mode := range []string{"disable", "allow", "prefer", "require"} {
+		e := &PostgresEngine{allowPrivateNetwork: true}
+		err := e.Revoke(context.Background(), pgClosed+"&sslmode="+mode, "kx_dyn_test")
+		require.Error(t, err, mode) // nothing listens
+		_, refused := errors.AsType[*dsn.ForbiddenOptionError](err)
+		assert.False(t, refused, "%s: revoke must not refuse: %v", mode, err)
+		assert.Contains(t, err.Error(), "revoke ran without admin_dsn option sslmode="+mode, mode)
+		assert.Contains(t, err.Error(), "server certificate verified", mode)
+		assert.NotContains(t, err.Error(), "s3cret", mode)
+	}
+}
+
+func TestMySQLEngine_Revoke_UnverifiedTLSUpgradedNotRefused(t *testing.T) {
+	for _, v := range []string{"false", "skip-verify", "preferred"} {
+		e := &MySQLEngine{allowPrivateNetwork: true}
+		err := e.Revoke(context.Background(), mysqlClosed+"&tls="+v, "kx_dyn_test")
+		require.Error(t, err, v) // nothing listens
+		_, refused := errors.AsType[*dsn.ForbiddenOptionError](err)
+		assert.False(t, refused, "tls=%s: revoke must not refuse: %v", v, err)
+		assert.True(t, strings.Contains(err.Error(), "revoke ran without admin_dsn option tls="+v), "tls=%s: %v", v, err)
+		assert.NotContains(t, err.Error(), "s3cret", v)
+	}
 }
