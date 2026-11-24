@@ -203,7 +203,7 @@ func TestDefaultIntegrations_WiresDynamicSecretsFactoryUnconditionally(t *testin
 
 	_, err = svc.CreateDynamicSecretConfig(context.Background(), &core.CreateDynamicSecretConfigRequest{
 		Name: "pg-cfg", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres",
-		AdminDSN: "postgres://admin:s3cr3t@127.0.0.1:5432/app", ActorID: actorID,
+		AdminDSN: "postgres://admin:s3cr3t@127.0.0.1:5432/app?sslmode=verify-full", ActorID: actorID,
 	})
 	if err != nil {
 		t.Errorf("expected DefaultIntegrations to wire a working dynamic-secrets factory (ports.DynamicBackendFactory) unconditionally, got: %v", err)

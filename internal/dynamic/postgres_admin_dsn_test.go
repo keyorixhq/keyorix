@@ -130,7 +130,9 @@ func dialRogue(t *testing.T, adminDSN string) error {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, err := dialPostgres(ctx, adminDSN, true) // private only so the rogue server can sit on loopback
+	// private only so the rogue server can sit on loopback; insecure transport so the
+	// plaintext rogue server is reached (these tests are about what pgx would send).
+	conn, err := dialPostgres(ctx, adminDSN, true, sqlTransportPolicy{allowInsecure: true})
 	if conn != nil {
 		_ = conn.Close(ctx)
 	}

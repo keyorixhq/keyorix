@@ -29,6 +29,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/core/dsn"
 )
 
 // Connector reads a secret value from one external store. A type alias of
@@ -168,6 +170,18 @@ type DynamicBackendEngine interface {
 	// message. See internal/dynamic.CredentialEngine's doc comment on this
 	// method for the full per-backend breakdown.
 	RevokeInvalidatesCredential(adminDSN string) bool
+}
+
+// DynamicAdminDSNTransportInspector is the optional half of DynamicBackendEngine
+// for an engine whose admin_dsn may connect without verifying the server
+// certificate (postgres, mysql; #4374). AdminDSNTransportWeakness parses adminDSN
+// as the engine will connect with it and returns nil when every connection
+// attempt verifies the server certificate (or the backend has no such setting).
+// Core asks it when an admin_dsn is saved (and refuses a weak one unless the
+// operator allowed insecure transport) and before each issue (audit event).
+// internal/dynamic's Contain wrapper implements it for every engine New returns.
+type DynamicAdminDSNTransportInspector interface {
+	AdminDSNTransportWeakness(adminDSN string) *dsn.TransportWeakness
 }
 
 // issuedRoleReporterKey carries the callback IssueLease hands an engine through the

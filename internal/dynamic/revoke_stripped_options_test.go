@@ -143,7 +143,7 @@ func TestPostgresRevokeStripsLocalFileOptions(t *testing.T) {
 	rec := serve(t, ln, handleFakePGConn)
 	host, port, _ := net.SplitHostPort(ln.Addr().String())
 	base := fakePGDSN(host, port)
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 
 	for _, d := range []string{
 		base + " sslcert=" + f.garbage + " sslkey=" + f.garbage,
@@ -172,7 +172,7 @@ func TestPostgresRevokeWithSSLRootCertFailsClosed(t *testing.T) {
 	f := newServerFiles(t)
 	tlsHost, tlsPort, tlsGot := startPGCaptureServer(t, f.tls)
 	plainHost, plainPort, plainGot := startPGCaptureServer(t, nil)
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 
 	for _, tc := range []struct {
 		dsn string
@@ -207,7 +207,7 @@ func TestPostgresRevokeStillRefusesServiceOptions(t *testing.T) {
 	ln := listenLoopback(t)
 	rec := serve(t, ln, handleFakePGConn)
 	host, port, _ := net.SplitHostPort(ln.Addr().String())
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	for _, d := range []string{
 		fakePGDSN(host, port) + " service=prod",
 		fakePGDSN(host, port) + " servicefile=" + f.garbage,
@@ -230,7 +230,7 @@ func TestPostgresIssueAndRenewStillRefuseStrippableOptions(t *testing.T) {
 	ln := listenLoopback(t)
 	rec := serve(t, ln, handleFakePGConn)
 	host, port, _ := net.SplitHostPort(ln.Addr().String())
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	for _, d := range []string{
 		fakePGDSN(host, port) + " sslcert=" + f.garbage + " sslkey=" + f.garbage,
 		fakePGDSN(host, port) + " passfile=" + f.garbage,
@@ -265,7 +265,7 @@ func startRecordingMySQL(t *testing.T) (addr string, rec *clientBytes) {
 
 func TestMySQLRevokeStripsAllowAllFiles(t *testing.T) {
 	addr, rec := startRecordingMySQL(t)
-	e := &MySQLEngine{allowPrivateNetwork: true}
+	e := &MySQLEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	for i, d := range []string{
 		"admin:pass@tcp(" + addr + ")/testdb?allowAllFiles=true",
 		"admin:pass@tcp(" + addr + ")/testdb?timeout=5s&allowAllFiles=true&parseTime=true",

@@ -80,7 +80,7 @@ func useRecorder(t *testing.T, rec *execRecorder) {
 	t.Helper()
 	orig := openMySQLAdmin
 	t.Cleanup(func() { openMySQLAdmin = orig })
-	openMySQLAdmin = func(context.Context, string, bool) (*sql.DB, error) {
+	openMySQLAdmin = func(context.Context, string, bool, sqlTransportPolicy) (*sql.DB, error) {
 		return sql.OpenDB(rec), nil
 	}
 }

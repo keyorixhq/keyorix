@@ -94,7 +94,7 @@ func FuzzTaintMySQLServerInfile(f *testing.F) {
 		}
 		defer func() { _ = l.Close() }()
 		go taintRogueMySQL(l, taint.Marker())
-		e := &MySQLEngine{allowPrivateNetwork: true}
+		e := &MySQLEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		d := fmt.Sprintf("root:x@tcp(%s)/db?timeout=2s&%s=true", l.Addr(), keys[int(keyIdx)%len(keys)])

@@ -331,7 +331,7 @@ func TestPostgresEngine_Issue_Success(t *testing.T) {
 	// allow_private_network_targets opt-in a real operator would set to
 	// target a local/private database. The default (false) is exercised by
 	// the connect-error tests in dynamic_s2_test.go instead.
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cred, role, err := e.Issue(ctx, fakePGDSN(host, port), "", time.Minute)
@@ -351,7 +351,7 @@ func TestPostgresEngine_Issue_WithTemplate(t *testing.T) {
 	// allow_private_network_targets opt-in a real operator would set to
 	// target a local/private database. The default (false) is exercised by
 	// the connect-error tests in dynamic_s2_test.go instead.
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cred, role, err := e.Issue(ctx, fakePGDSN(host, port), "GRANT CONNECT ON DATABASE app TO {{name}}", time.Minute)
@@ -489,7 +489,7 @@ func TestPostgresEngine_Issue_TemplateFails(t *testing.T) {
 	// allow_private_network_targets opt-in a real operator would set to
 	// target a local/private database. The default (false) is exercised by
 	// the connect-error tests in dynamic_s2_test.go instead.
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, fakePGDSN(host, port), "GRANT CONNECT ON DATABASE app TO {{name}}", time.Minute)
@@ -506,7 +506,7 @@ func TestPostgresEngine_Revoke_Success(t *testing.T) {
 	// allow_private_network_targets opt-in a real operator would set to
 	// target a local/private database. The default (false) is exercised by
 	// the connect-error tests in dynamic_s2_test.go instead.
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, fakePGDSN(host, port), "kx_dyn_abc123def456ghi4")
@@ -535,7 +535,7 @@ func TestPostgresEngine_Revoke_DropRoleFails(t *testing.T) {
 	// allow_private_network_targets opt-in a real operator would set to
 	// target a local/private database. The default (false) is exercised by
 	// the connect-error tests in dynamic_s2_test.go instead.
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, fakePGDSN(host, port), "kx_dyn_abc123def456ghi4")
@@ -552,7 +552,7 @@ func TestPostgresEngine_Renew_Success(t *testing.T) {
 	// allow_private_network_targets opt-in a real operator would set to
 	// target a local/private database. The default (false) is exercised by
 	// the connect-error tests in dynamic_s2_test.go instead.
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := e.Renew(ctx, fakePGDSN(host, port), "kx_dyn_abc123def456ghi4", time.Now().Add(time.Hour))
@@ -568,7 +568,7 @@ func TestPostgresEngine_Renew_AlterRoleFails(t *testing.T) {
 	// allow_private_network_targets opt-in a real operator would set to
 	// target a local/private database. The default (false) is exercised by
 	// the connect-error tests in dynamic_s2_test.go instead.
-	e := &PostgresEngine{allowPrivateNetwork: true}
+	e := &PostgresEngine{allowPrivateNetwork: true, transport: plaintextFakeServer}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := e.Renew(ctx, fakePGDSN(host, port), "kx_dyn_abc123def456ghi4", time.Now().Add(time.Hour))

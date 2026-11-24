@@ -2,8 +2,10 @@
   config's `admin_dsn` from caller input (`CreateDynamicSecretConfig`,
   `UpdateDynamicSecretConfigAdminDSN`) checks, before anything is stored: dynamic-secret admin
   authority of the actor at the config's scope (`requireDynamicSecretAdminAuthority`), the
-  SSRF host guard (`enforceDynamicSecretSSRFGuard`) and the refused local-file options
-  (`dsn.CheckLocalFileOptions`); it stores the DSN only encrypted, bound to the config's
+  SSRF host guard (`enforceDynamicSecretSSRFGuard`), the refused local-file options
+  (`dsn.CheckLocalFileOptions`) and the transport policy (`checkAdminDSNTransportOnSave`: a
+  postgres/mysql DSN whose parsed driver config does not verify the server certificate is
+  refused unless the operator allowed insecure transport, #4374; no soft period on save); it stores the DSN only encrypted, bound to the config's
   (id, project, environment), through the column-scoped `SetDynamicSecretConfigAdminDSN`; and
   no audit row, log line or error it produces carries the DSN. The replace commits in one
   transaction with its audit row, and while the config has an active or revoke_failed lease it
@@ -19,6 +21,11 @@
   `_AuditFailureChangesNothing`, `_DSNNeverLeaves`, `_LiveLeasesPinTheHost`,
   `_LiveLeasesPinKubernetesTarget`, `internal/core/dsn` `TestRevokeTarget_*`,
   `TestDynamicSecrets_ListProjectRefusedAdminDSN_Gate` (SQLite, PostgreSQL pg-gated);
-  `TestDynamicSecrets_CreateConfig_RefusesLocalFileOptions` for create.
+  `TestDynamicSecrets_CreateConfig_RefusesLocalFileOptions` for create;
+  `TestDynamicSecrets_CreateConfig_RefusesSQLTransportThatDoesNotVerify`,
+  `TestDynamicSecrets_UpdateAdminDSN_RefusesSQLTransportThatDoesNotVerify` for the transport
+  policy. The transport check asks the engine (`ports.DynamicAdminDSNTransportInspector`); an
+  engine that does not implement it is not checked (`TestNew_SQLEnginesCarryTheTransportPolicy`
+  in internal/dynamic pins that the real postgres/mysql engines do).
   **Not covered**: a lease issued between the target check and the write; a third writer of
   `admin_dsn` added later is not detected by a static guard.

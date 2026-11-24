@@ -180,7 +180,7 @@ func TestMySQLEngineNeverSendsLocalFilesToTheServer(t *testing.T) {
 	got := make(chan string, 1)
 	go rogueMySQL(l, secret, got)
 
-	e := &MySQLEngine{allowPrivateNetwork: true} // private only so the rogue server can sit on loopback
+	e := &MySQLEngine{allowPrivateNetwork: true, transport: plaintextFakeServer} // private only so the rogue server can sit on loopback
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	d := fmt.Sprintf("root:x@tcp(%s)/db?timeout=3s&allowAllFiles=true", l.Addr())
