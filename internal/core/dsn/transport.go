@@ -48,7 +48,7 @@ func (w *TransportWeakness) fix() string {
 	if w.Plaintext {
 		what = "it can connect without TLS"
 	}
-	use := "sslmode=verify-full (or verify-ca)"
+	use := "sslmode=verify-full (verify-ca only with a root certificate installed on the Keyorix server)"
 	if w.Backend == "mysql" {
 		use = "tls=true"
 	}

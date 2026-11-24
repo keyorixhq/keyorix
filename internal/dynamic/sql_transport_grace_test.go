@@ -133,6 +133,22 @@ func TestRevokeUpgrade_LeavesOnlyVerifiedAttempts(t *testing.T) {
 		assert.Equal(t, "db1.example.net", cfg.TLSConfig.ServerName, mode)
 		assert.Equal(t, "db2.example.net", cfg.Fallbacks[0].TLSConfig.ServerName, mode)
 	}
+	// A plaintext first attempt takes the host's TLS settings (the operator's root,
+	// the ALPN of direct negotiation), not a bare config.
+	t.Setenv("PGSSLROOTCERT", newServerFiles(t).caFile)
+	t.Setenv("PGSSLNEGOTIATION", "direct")
+	for _, mode := range []string{"allow", "require"} {
+		cfg, err := parsePostgresAdminDSN("postgres://admin:s3cret@db1.example.net:5432/app?sslmode=" + mode)
+		require.NoError(t, err)
+		upgradePostgresToVerifyFull(&cfg.Config)
+		assert.NotNil(t, cfg.TLSConfig.RootCAs, "%s: the operator's root is kept", mode)
+		assert.Equal(t, []string{"postgresql"}, cfg.TLSConfig.NextProtos, mode)
+		assert.Nil(t, postgresTransportWeakness(&cfg.Config), mode)
+	}
+	cfg, err := mysql.ParseDSN("admin:s3cret@unix(/run/mysqld/mysqld.sock)/app")
+	require.NoError(t, err)
+	upgradeMySQLToVerified(cfg)
+	assert.Nil(t, cfg.TLS, "a Unix socket stays as it is, as for postgres")
 	for _, v := range []string{"false", "skip-verify", "preferred", "true&allowFallbackToPlaintext=true"} {
 		cfg, err := mysql.ParseDSN("admin:s3cret@tcp(db.example.net:3306)/app?tls=" + v)
 		require.NoError(t, err)
@@ -176,7 +192,7 @@ func TestSQLTransport_NoSpellingConnectsUnverifiedUnrefused(t *testing.T) {
 	// The oracle is written out here, not taken from postgresVerifies, so a change
 	// to the production helper shows up as a disagreement.
 	pgAttemptVerifies := func(c *tls.Config) bool {
-		return c != nil && (!c.InsecureSkipVerify || c.VerifyPeerCertificate != nil)
+		return c != nil && (!c.InsecureSkipVerify || (c.VerifyPeerCertificate != nil && c.RootCAs != nil))
 	}
 	pg := &PostgresEngine{}
 	checked := 0

@@ -35,8 +35,8 @@ keyorix dynamic-secret create \
 rest and never returns it. `--max-ttl` is a hard ceiling and `--max-active-leases` limits how
 many credentials can exist at once.
 
-The connection must verify the database server's certificate: use `sslmode=verify-full` (or
-`verify-ca`). `sslmode=disable`, `allow`, `prefer` and `require`, and a DSN without `sslmode`
+The connection must verify the database server's certificate: use `sslmode=verify-full`
+(`verify-ca` only when a root certificate is installed on the Keyorix server, see below). `sslmode=disable`, `allow`, `prefer` and `require`, and a DSN without `sslmode`
 (the driver then uses `prefer`), are refused when the config is saved; for MySQL the same rule
 accepts only `tls=true`. The certificate must be trusted by the Keyorix server's system trust
 store (or its `PGSSLROOTCERT` / `~/.postgresql/root.crt`), since the DSN cannot name a CA file.

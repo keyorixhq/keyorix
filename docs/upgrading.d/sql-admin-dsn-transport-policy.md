@@ -8,7 +8,7 @@ the server certificate.
 
 | Backend | Accepted | Refused |
 |---|---|---|
-| `postgres` | `sslmode=verify-full`, `sslmode=verify-ca` | `sslmode=disable`, `allow`, `prefer`, `require`, and no `sslmode` at all (the driver's default is `prefer`). A `PGSSLMODE` environment value of the Keyorix server counts as if it were in the DSN. |
+| `postgres` | `sslmode=verify-full`; `sslmode=verify-ca` only with a root certificate installed on the Keyorix server (`PGSSLROOTCERT` or `~/.postgresql/root.crt`), since without one the driver checks the chain against the system trust store and no host name, so any public certificate passes | `sslmode=disable`, `allow`, `prefer`, `require`, and no `sslmode` at all (the driver's default is `prefer`). A `PGSSLMODE` environment value of the Keyorix server counts as if it were in the DSN. |
 | `mysql` | `tls=true` | `tls=false`, no `tls` at all (the driver's default is plaintext), `tls=skip-verify`, `tls=preferred`, `allowFallbackToPlaintext=true` |
 
 The check reads the connection settings the database driver builds from the DSN, not the DSN
@@ -44,6 +44,9 @@ What to do, during this release:
    accepts (an `admin_dsn` cannot name a CA file: `sslrootcert` is refused). For PostgreSQL
    a root certificate in the Keyorix server's `PGSSLROOTCERT` or `~/.postgresql/root.crt` also
    works.
+   The decision is made on the server that saves or issues, with its environment: a DSN
+   without `sslmode` saved while `PGSSLMODE=verify-full` was set, or one saved while the
+   operator flag was on, counts as a stored one (soft period) once that changes.
 2. Replace each affected `admin_dsn` with `sslmode=verify-full` (PostgreSQL) or `tls=true`
    (MySQL): `keyorix dynamic-secret set-admin-dsn <config-id>` (the DSN is read from
    `KEYORIX_DYNAMIC_ADMIN_DSN` or stdin, never the command line). Find the affected configs in

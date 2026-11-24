@@ -439,7 +439,7 @@ option there, but it does not bundle the key-material files.
 - **Keep dynamic-secret targets on verified TLS** — with
   `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport` off (the default), every
   dynamic-secret `admin_dsn` must verify the target's certificate: MongoDB and Redis TLS without
-  `tlsInsecure` / `skip_verify`, PostgreSQL `sslmode=verify-full` or `verify-ca`, MySQL
+  `tlsInsecure` / `skip_verify`, PostgreSQL `sslmode=verify-full` (`verify-ca` only with an installed root certificate), MySQL
   `tls=true`. A project admin cannot turn verification off in the DSN; the decision is read from
   the parsed driver settings. Turning the flag on applies to every backend at once and is logged
   (WARNING per connection) and audited (`dynamic_secret.config_insecure_transport`,

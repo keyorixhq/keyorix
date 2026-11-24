@@ -79,7 +79,6 @@ func TestDynamicSecrets_CreateConfig_VerifyingSQLTransportAccepted(t *testing.T)
 	c, _ := newSQLTransportCore(t, false)
 	for i, d := range []struct{ backend, dsn string }{
 		{"postgres", "postgres://admin:s3cret@127.0.0.1:5432/app?sslmode=verify-full"},
-		{"postgres", "postgres://admin:s3cret@127.0.0.1:5432/app?sslmode=verify-ca"},
 		{"mysql", "admin:s3cret@tcp(127.0.0.1:3306)/app?tls=true"},
 	} {
 		_, err := createSQLConfig(c, fmt.Sprintf("good-%d", i), d.backend, d.dsn)

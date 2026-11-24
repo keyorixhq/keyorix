@@ -50,10 +50,15 @@ func (p sqlTransportPolicy) check(w *dsn.TransportWeakness) error {
 }
 
 // postgresVerifies reports whether one pgx connection attempt checks the server
-// certificate: TLS with the standard verification, or (sslmode=verify-ca, and
-// require with a root certificate) pgx's own chain check in VerifyPeerCertificate.
+// certificate: TLS with the standard verification (verify-full), or pgx's own
+// chain check in VerifyPeerCertificate (verify-ca, and require with a root
+// certificate) against a root the operator installed (PGSSLROOTCERT or
+// ~/.postgresql/root.crt; an admin_dsn cannot name one). verify-ca without such a
+// root is not verification: pgx then checks the chain against the system pool and
+// no host name, so any publicly trusted certificate for any name passes (libpq
+// refuses verify-ca without a root certificate).
 func postgresVerifies(c *tls.Config) bool {
-	return c != nil && (!c.InsecureSkipVerify || c.VerifyPeerCertificate != nil)
+	return c != nil && (!c.InsecureSkipVerify || (c.VerifyPeerCertificate != nil && c.RootCAs != nil))
 }
 
 // postgresTransportWeakness decides from a parsed pgx config, so every spelling
@@ -86,6 +91,8 @@ func postgresTransportWeakness(cfg *pgconn.Config) *dsn.TransportWeakness {
 		mode = "sslmode=allow"
 	case first[0] == nil:
 		mode = "sslmode=disable"
+	case first[0].VerifyPeerCertificate != nil:
+		mode = "sslmode=verify-ca (no root certificate installed: any public certificate is accepted)"
 	case !postgresVerifies(first[0]) && len(first) > 1 && first[1] == nil:
 		mode = "sslmode=prefer"
 	case !postgresVerifies(first[0]):
@@ -160,13 +167,29 @@ func verifiedTLS(c *tls.Config, host string) *tls.Config {
 // refused revoke leaves the account live). A Unix-socket attempt has no TLS in
 // pgx and stays as it is: it does not leave the host.
 func upgradePostgresToVerifyFull(cfg *pgconn.Config) {
-	upgrade := func(host string, c *tls.Config) *tls.Config {
-		if network, _ := pgconn.NetworkAddress(host, 0); network == "unix" {
+	// A plaintext attempt (disable, allow) takes the settings of the host's TLS
+	// attempt when it has one: the operator's RootCAs and the ALPN of
+	// sslnegotiation=direct live there.
+	tlsOf := map[string]*tls.Config{}
+	note := func(host string, port uint16, c *tls.Config) {
+		if key := net.JoinHostPort(host, fmt.Sprint(port)); c != nil && tlsOf[key] == nil {
+			tlsOf[key] = c
+		}
+	}
+	note(cfg.Host, cfg.Port, cfg.TLSConfig)
+	for _, fb := range cfg.Fallbacks {
+		note(fb.Host, fb.Port, fb.TLSConfig)
+	}
+	upgrade := func(host string, port uint16, c *tls.Config) *tls.Config {
+		if network, _ := pgconn.NetworkAddress(host, port); network == "unix" {
 			return c
+		}
+		if c == nil {
+			c = tlsOf[net.JoinHostPort(host, fmt.Sprint(port))]
 		}
 		return verifiedTLS(c, host)
 	}
-	cfg.TLSConfig = upgrade(cfg.Host, cfg.TLSConfig)
+	cfg.TLSConfig = upgrade(cfg.Host, cfg.Port, cfg.TLSConfig)
 	seen := map[string]bool{net.JoinHostPort(cfg.Host, fmt.Sprint(cfg.Port)): true}
 	kept := cfg.Fallbacks[:0]
 	for _, fb := range cfg.Fallbacks {
@@ -175,15 +198,20 @@ func upgradePostgresToVerifyFull(cfg *pgconn.Config) {
 			continue
 		}
 		seen[key] = true
-		fb.TLSConfig = upgrade(fb.Host, fb.TLSConfig)
+		fb.TLSConfig = upgrade(fb.Host, fb.Port, fb.TLSConfig)
 		kept = append(kept, fb)
 	}
 	cfg.Fallbacks = kept
 }
 
 // upgradeMySQLToVerified makes cfg use TLS with certificate and hostname
-// verification and no plaintext fallback, as tls=true would. Used by Revoke.
+// verification and no plaintext fallback, as tls=true would. Used by Revoke. A
+// Unix-socket connection stays as it is (it does not leave the host), as for
+// postgres.
 func upgradeMySQLToVerified(cfg *mysql.Config) {
+	if cfg.Net == "unix" {
+		return
+	}
 	host := cfg.Addr
 	if h, _, err := net.SplitHostPort(cfg.Addr); err == nil {
 		host = h

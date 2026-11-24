@@ -80,11 +80,27 @@ func TestPostgresEngine_RefusesPGSSLModeEnvironmentThatDoesNotVerify(t *testing.
 
 func TestPostgresEngine_VerifyingSSLModesAreNotRefused(t *testing.T) {
 	isolatePGEnv(t)
-	for _, mode := range []string{"verify-ca", "verify-full"} {
-		e := &PostgresEngine{allowPrivateNetwork: true}
-		_, _, err := e.Issue(context.Background(), pgClosed+"&sslmode="+mode, "", time.Minute)
-		requireNotTransportRefusal(t, err, mode)
+	e := &PostgresEngine{allowPrivateNetwork: true}
+	_, _, err := e.Issue(context.Background(), pgClosed+"&sslmode=verify-full", "", time.Minute)
+	requireNotTransportRefusal(t, err, "verify-full")
+
+	// verify-ca checks the chain and no host name. Against a root the operator
+	// installed (PGSSLROOTCERT, ~/.postgresql/root.crt) that is verification.
+	t.Setenv("PGSSLROOTCERT", newServerFiles(t).caFile)
+	for _, mode := range []string{"verify-ca", "require"} { // require with a root certificate is verify-ca
+		_, _, err = e.Issue(context.Background(), pgClosed+"&sslmode="+mode, "", time.Minute)
+		requireNotTransportRefusal(t, err, mode+" with PGSSLROOTCERT")
 	}
+}
+
+// Without an operator root pgx's verify-ca checks the chain against the system
+// pool and no host name: any publicly trusted certificate for any name passes.
+// libpq refuses verify-ca without a root certificate; so does the policy.
+func TestPostgresEngine_RefusesVerifyCAWithoutRootCertificate(t *testing.T) {
+	isolatePGEnv(t)
+	e := &PostgresEngine{allowPrivateNetwork: true}
+	_, _, err := e.Issue(context.Background(), pgClosed+"&sslmode=verify-ca", "", time.Minute)
+	requireTransportRefusal(t, err, "postgres", "sslmode=verify-ca (no root certificate installed: any public certificate is accepted)", "verify-ca without a root")
 }
 
 const mysqlClosed = "admin:s3cret@tcp(127.0.0.1:1)/app?timeout=1s"
