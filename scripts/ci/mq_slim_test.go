@@ -511,9 +511,9 @@ func TestMQSlim_ShardedLegPatternMatchesSelectAffected(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, l := range strings.Split(string(b), "\n") {
-			if strings.HasPrefix(l, name+" = re.compile(") {
-				return strings.TrimSpace(strings.TrimPrefix(l, name+" = re.compile("))
+		for l := range strings.SplitSeq(string(b), "\n") {
+			if rest, ok := strings.CutPrefix(l, name+" = re.compile("); ok {
+				return strings.TrimSpace(rest)
 			}
 		}
 		t.Fatalf("%s: no %s", file, name)
