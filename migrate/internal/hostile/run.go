@@ -194,7 +194,7 @@ func (h *Harness) Run(label string, fn func(ctx context.Context) error) error {
 	}
 
 	runtime.ReadMemStats(&m1)
-	limit := uint64(256<<20) + 16*uint64(h.wrote.Load()) // #nosec G115 -- wrote only ever accumulates non-negative byte counts
+	limit := h.allocLimit()
 	if d := m1.TotalAlloc - m0.TotalAlloc; d > limit {
 		h.Violate("O4 BOUNDED-WORK: %s allocated %d bytes (limit %d, server wrote %d)", label, d, limit, h.wrote.Load())
 	}
@@ -322,4 +322,11 @@ func (h *Harness) Unmatched() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]string(nil), h.unmatch...)
+}
+
+// allocLimit is O4's allocation budget for one call: a flat 256 MiB, 16 bytes
+// per byte the server wrote, and Config.AllocPerRequest per backend request.
+func (h *Harness) allocLimit() uint64 {
+	return uint64(256<<20) + 16*uint64(h.wrote.Load()) + // #nosec G115 -- wrote only ever accumulates non-negative byte counts
+		uint64(h.Requests())*h.cfg.AllocPerRequest // #nosec G115 -- Requests is a non-negative count
 }
