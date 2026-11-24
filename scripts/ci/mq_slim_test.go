@@ -39,7 +39,7 @@ func runSelectWith(t *testing.T, env []string, files ...string) (map[string]stri
 	args := append([]string{"scripts/ci/select-affected.py", "--github-output", out, "--changed"}, files...)
 	cmd := exec.Command("python3", args...)
 	cmd.Dir = root
-	cmd.Env = append(append(os.Environ(), "MQ_SLIM_LEVERS=", "GITHUB_EVENT_NAME=merge_group", "GITHUB_RUN_NUMBER=7"), env...)
+	cmd.Env = append(append(os.Environ(), "MQ_SLIM_LEVERS=", "MQ_SLIM_TESTREACH_CHECKS=", "GITHUB_EVENT_NAME=merge_group", "GITHUB_RUN_NUMBER=7"), env...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -300,6 +300,227 @@ func TestMQSlim_SampledFullRun(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// recordFor returns the record of one check of one lever.
+func recordFor(t *testing.T, log, lever, check string) map[string]any {
+	t.Helper()
+	for _, r := range shadowRecords(t, log) {
+		if r["lever"] == lever && r["check"] == check {
+			return r
+		}
+	}
+	t.Fatalf("no %s record for %s in:\n%s", lever, check, log)
+	return nil
+}
+
+// MQ_SLIM_TESTREACH_CHECKS: with testreach enforced, only the listed checks
+// get a leg_tests entry. slimCase narrows exactly one check, test-suite/root-1
+// (server/webui); the other selected legs are kept whole.
+func TestMQSlim_TestreachCheckList(t *testing.T) {
+	const narrowed = "test-suite/root-1"
+	shadow, _ := runSelectEnv(t, "shadow", slimCase...)
+	base, baseLog := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach"}, slimCase...)
+	if base["leg_tests"] == "" || base["leg_tests"] == "{}" || recordFor(t, baseLog, "testreach", narrowed)["decision"] != "would-narrow" {
+		t.Fatalf("fixture no longer narrows %s: leg_tests=%q", narrowed, base["leg_tests"])
+	}
+
+	t.Run("listed check enforces as before", func(t *testing.T) {
+		for _, val := range []string{" test-suite/root-2 , test-suite/root-1, ", "test-suite/root-1,test-suite/nope"} {
+			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach", "MQ_SLIM_TESTREACH_CHECKS=" + val}, slimCase...)
+			if !maps.Equal(got, base) {
+				t.Errorf("list %q: outputs differ from the unlisted run:\n got:  %v\n base: %v", val, got, base)
+			}
+			if r := recordFor(t, log, "testreach", narrowed); r["mode"] != "enforce" {
+				t.Errorf("list %q: %s mode %v, want enforce", val, narrowed, r["mode"])
+			}
+		}
+	})
+
+	t.Run("unlisted check is computed and logged but not enforced", func(t *testing.T) {
+		// A valid name no decision uses (typo, or another check) is harmless.
+		for _, val := range []string{"test-suite/root-2", "TEST-SUITE/ROOT-1"} {
+			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach", "MQ_SLIM_TESTREACH_CHECKS=" + val}, slimCase...)
+			if got["leg_tests"] != "{}" {
+				t.Errorf("list %q: leg_tests=%q, want {} (root-1 must run unchanged)", val, got["leg_tests"])
+			}
+			delete(got, "leg_tests")
+			if !maps.Equal(got, shadow) {
+				t.Errorf("list %q: outputs beyond shadow's: %v", val, got)
+			}
+			r := recordFor(t, log, "testreach", narrowed)
+			if r["decision"] != "would-narrow" || r["mode"] != "shadow" {
+				t.Errorf("list %q: %s decision=%v mode=%v, want would-narrow shadow", val, narrowed, r["decision"], r["mode"])
+			}
+			if g, b := decisions(t, log), decisions(t, baseLog); !slices.Equal(g, b) {
+				t.Errorf("list %q: decisions changed:\n got:  %v\n base: %v", val, g, b)
+			}
+			if !strings.Contains(log, "MQ-SLIM: testreach enforced only for") {
+				t.Errorf("list %q: no line saying which checks are enforced:\n%s", val, log)
+			}
+		}
+	})
+
+	t.Run("unset or blank is every check", func(t *testing.T) {
+		for _, val := range []string{"   "} {
+			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach", "MQ_SLIM_TESTREACH_CHECKS=" + val}, slimCase...)
+			if !maps.Equal(got, base) {
+				t.Errorf("list %q: outputs differ from unset", val)
+			}
+			if strings.Contains(log, "MQ-SLIM: testreach enforced only") {
+				t.Errorf("list %q: blank list reported as a restriction:\n%s", val, log)
+			}
+		}
+	})
+
+	t.Run("unparseable list enforces nothing for testreach", func(t *testing.T) {
+		for _, val := range []string{"test-suite/root-1;test-suite/root-2", " , ,"} {
+			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach", "MQ_SLIM_TESTREACH_CHECKS=" + val}, slimCase...)
+			if !maps.Equal(got, shadow) {
+				t.Errorf("list %q wrote outputs beyond shadow's: %v", val, got)
+			}
+			var errs int
+			for _, r := range shadowRecords(t, log) {
+				if r["mode"] != "shadow" {
+					t.Errorf("list %q: record not shadow: %v", val, r)
+				}
+				if r["decision"] == "error" && r["lever"] == "testreach" {
+					errs++
+				}
+			}
+			if errs != 1 {
+				t.Errorf("list %q: %d testreach error records, want 1:\n%s", val, errs, log)
+			}
+			if r := recordFor(t, log, "testreach", narrowed); r["decision"] != "would-narrow" {
+				t.Errorf("list %q: decision no longer computed: %v", val, r)
+			}
+		}
+	})
+
+	t.Run("gate and guards are unaffected", func(t *testing.T) {
+		all, _ := runSelectEnv(t, "enforce", slimCase...)
+		for _, list := range []string{"test-suite/root 1"} {
+			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=gate,testreach,guards", "MQ_SLIM_TESTREACH_CHECKS=" + list}, slimCase...)
+			for _, k := range gateKeys {
+				if got[k] != all[k] || got[k] == "" {
+					t.Errorf("list %q: %s=%q, want %q", list, k, got[k], all[k])
+				}
+			}
+			if strings.Contains(log, "unknown lever") {
+				t.Errorf("list %q: levers misread:\n%s", list, log)
+			}
+			for _, r := range shadowRecords(t, log) {
+				if r["lever"] == "gate" && r["mode"] != "enforce" {
+					t.Errorf("list %q: gate record mode %v, want enforce: %v", list, r["mode"], r)
+				}
+			}
+		}
+		// MQ_SLIM_LEVERS=gate: the list is irrelevant, testreach stays shadow.
+		got, _ := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=gate", "MQ_SLIM_TESTREACH_CHECKS=" + narrowed}, slimCase...)
+		if v, ok := got["leg_tests"]; ok {
+			t.Errorf("levers=gate with a list wrote leg_tests=%q", v)
+		}
+	})
+
+	t.Run("sampled full run still happens", func(t *testing.T) {
+		for _, tc := range []struct{ list, want string }{
+			{"test-suite/root-1", "full"},
+			{"test-suite/root-2", "full"},
+			{"test-suite/root 1", "selected"}, // unparseable: nothing enforced, nothing to net
+		} {
+			got, _ := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach", "MQ_SLIM_TESTREACH_CHECKS=" + tc.list, "GITHUB_RUN_NUMBER=10"}, slimCase...)
+			if got["mode"] != tc.want {
+				t.Errorf("list %q: mode=%q, want %q", tc.list, got["mode"], tc.want)
+			}
+			if tc.want == "full" {
+				if _, ok := got["leg_tests"]; ok {
+					t.Errorf("list %q: full run wrote leg_tests", tc.list)
+				}
+			}
+		}
+	})
+}
+
+// MQ_SLIM_TESTREACH_CHECKS parsing, called directly.
+func TestMQSlim_TestreachCheckParsing(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const prog = "import sys, json; sys.path.insert(0, 'scripts/ci'); import mq_slim as m; n, e = m.testreach_checks(); print(json.dumps([None if n is None else sorted(n), bool(e), [m.testreach_allows(c) for c in ('test-suite/root-1', 'test-suite/root-2', 'test-suite/root-4')]]))"
+	for _, tc := range []struct {
+		val   string
+		names []string // nil: no list
+		bad   bool
+		allow [3]bool
+	}{
+		{"", nil, false, [3]bool{true, true, true}},
+		{"   ", nil, false, [3]bool{true, true, true}},
+		{"test-suite/root-1", []string{"test-suite/root-1"}, false, [3]bool{true, false, false}},
+		{"test-suite/root-1,test-suite/root-2", []string{"test-suite/root-1", "test-suite/root-2"}, false, [3]bool{true, true, false}},
+		{" test-suite/root-2 ,, test-suite/root-2,", []string{"test-suite/root-2"}, false, [3]bool{false, true, false}},
+		{"test-suite/root-9", []string{"test-suite/root-9"}, false, [3]bool{false, false, false}},
+		{"test-suite/Root-1", []string{"test-suite/Root-1"}, false, [3]bool{false, false, false}},
+		{"test-suite/root 1", []string{}, true, [3]bool{false, false, false}},
+		{"test-suite/root-1,*", []string{}, true, [3]bool{false, false, false}},
+		{",", []string{}, true, [3]bool{false, false, false}},
+		// REVIEW-4693-DEEP-1 M1: a sharded leg in the list (alone, or beside an
+		// unsharded one) is refused whole; red on a020259f, which allowed it and
+		// let "http-2": "-" skip tests that http-1's weight partition never runs.
+		{"test-suite/http-2", []string{}, true, [3]bool{false, false, false}},
+		{"test-suite/root-1,test-suite/server-3", []string{}, true, [3]bool{false, false, false}},
+		{"test-suite/storage-store-1", []string{}, true, [3]bool{false, false, false}},
+		{"test-suite/handlers-2,test-suite/root-2", []string{}, true, [3]bool{false, false, false}},
+		// not a shard name: stays allowed
+		{"test-suite/http-x,test-suite/root-1", []string{"test-suite/http-x", "test-suite/root-1"}, false, [3]bool{true, false, false}},
+	} {
+		cmd := exec.Command("python3", "-I", "-c", prog)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "MQ_SLIM_TESTREACH_CHECKS="+tc.val)
+		raw, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%q: %v", tc.val, err)
+		}
+		var got struct {
+			Names []string
+			Bad   bool
+			Allow [3]bool
+		}
+		var arr []json.RawMessage
+		if err := json.Unmarshal(raw, &arr); err != nil || len(arr) != 3 {
+			t.Fatalf("%q: %v: %s", tc.val, err, raw)
+		}
+		_ = json.Unmarshal(arr[0], &got.Names)
+		_ = json.Unmarshal(arr[1], &got.Bad)
+		_ = json.Unmarshal(arr[2], &got.Allow)
+		if !slices.Equal(got.Names, tc.names) || got.Bad != tc.bad || got.Allow != tc.allow {
+			t.Errorf("MQ_SLIM_TESTREACH_CHECKS=%q: names=%v bad=%v allow=%v, want %v %v %v", tc.val, got.Names, got.Bad, got.Allow, tc.names, tc.bad, tc.allow)
+		}
+	}
+}
+
+// mq_slim.SHARDED_LEG must stay the same pattern as select-affected.py's
+// SHARDED_SINGLE_PACKAGE, or a new sharded package could be listed again.
+func TestMQSlim_ShardedLegPatternMatchesSelectAffected(t *testing.T) {
+	pat := func(file, name string) string {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for l := range strings.SplitSeq(string(b), "\n") {
+			if rest, ok := strings.CutPrefix(l, name+" = re.compile("); ok {
+				return strings.TrimSpace(rest)
+			}
+		}
+		t.Fatalf("%s: no %s", file, name)
+		return ""
+	}
+	if a, b := pat("mq_slim.py", "SHARDED_LEG"), pat("select-affected.py", "SHARDED_SINGLE_PACKAGE"); a != b {
+		t.Errorf("SHARDED_LEG %s differs from SHARDED_SINGLE_PACKAGE %s", a, b)
 	}
 }
 
