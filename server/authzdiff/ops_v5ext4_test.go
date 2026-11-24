@@ -110,8 +110,10 @@ func bulkRotateOps() []opSpec {
 // bulkRotateIDs is the rotation batch both legs send: the main fixture secret
 // (admin-owned, no grant for a probed principal) and s3, on which the viewer holds
 // a per-secret ACL secrets.write in A (world_test.go). Both have auto-rotation on.
-// s3 is what exposes a core that decides per secret only: REST refuses the viewer
-// at the route gate, so core must refuse them too, not rotate s3.
+// On main before #4666 the main secret alone showed the over-allow (core had no
+// permission check and rotated as actor 0); s3 guards against a later per-item-only
+// fix that passes the real actor to each rotation: REST refuses the viewer at the
+// route gate, so core must refuse them too, not rotate s3.
 func bulkRotateIDs(pp *perProject) []uint {
 	return []uint{pp.secretID, pp.secrets[3].id}
 }
