@@ -7,33 +7,36 @@ import (
 	"github.com/pquerna/otp/totp"
 )
 
-// TestQRFindingNumericSign pins finding LF1-QR-numeric-sign in boombuler/barcode
-// v1.0.1-0.20190219062509-6c824513bacc: Numeric (and therefore Auto) mode accepts a
-// leading '+' or '-' in a 3-digit group because it validates groups with strconv.Atoi,
-// then drops the sign, so the symbol carries different content from the one requested
-// ("+12" scans as "012", "-0" as "00"). Encode also returns the requested string from
-// Content(), so the caller cannot see the change. This test goes red when the library
-// is fixed; then delete qrAtoiNumeric's special case together with this test.
+// TestQRFindingNumericSign is the regression test for finding LF1-QR-numeric-sign in
+// boombuler/barcode (KFZ-2026-150, upstream issue #112, fixed by #113 and released in
+// v1.1.1). Before the fix the numeric encoder validated each 3-byte group with
+// strconv.Atoi, so a leading '+' or '-' passed the check and was dropped from the
+// symbol: Numeric (and therefore Auto) encoded "+12" as "012", "-0" as "00" and "123+45"
+// as "123045", while Content() still returned the requested string. The library now
+// treats signed input as non-numeric data: Numeric refuses it, and Auto falls through to
+// AlphaNumeric, whose charset includes '+' and '-', so the symbol carries the requested
+// content.
 //
 // What this does NOT verify: keyorix reachability. keyorix never renders a QR code, and
 // pquerna/otp's Key.Image always encodes a full otpauth:// URL, whose lowercase scheme
 // makes Auto choose byte mode, so the numeric path is not reachable through either
-// (TestQRFindingNumericSignNotReachableViaOTP).
+// (TestQRFindingNumericSignNotReachableViaOTP). FuzzQRCodeRoundTrip covers the wider
+// input space.
 func TestQRFindingNumericSign(t *testing.T) {
-	for in, want := range map[string]string{"+12": "012", "-0": "00", "123+45": "123045"} {
+	for _, in := range []string{"+12", "-0", "123+45"} {
+		if _, err := qr.Encode(in, qr.M, qr.Numeric); err == nil {
+			t.Fatalf("Encode(%q, Numeric) succeeded: a sign is not numeric data and must be refused", in)
+		}
 		bc, err := qr.Encode(in, qr.M, qr.Auto)
 		if err != nil {
-			t.Fatalf("Encode(%q) now fails (%v): finding fixed, remove the special case", in, err)
+			t.Fatalf("Encode(%q, Auto): %v", in, err)
 		}
 		dec, err := decodeQR(bc)
 		if err != nil {
-			t.Fatalf("Encode(%q): %v", in, err)
+			t.Fatalf("Encode(%q, Auto): %v", in, err)
 		}
-		if dec.content == in || dec.mode != 0 {
-			t.Fatalf("Encode(%q) now decodes to %q in mode %d: finding fixed, remove the special case", in, dec.content, dec.mode)
-		}
-		if dec.content != want {
-			t.Fatalf("Encode(%q) decodes to %q, the finding predicted %q", in, dec.content, want)
+		if dec.content != in || dec.mode != 1 {
+			t.Fatalf("Encode(%q, Auto) decodes to %q in mode %d, want %q in alphanumeric mode", in, dec.content, dec.mode, in)
 		}
 		if bc.Content() != in {
 			t.Fatalf("Content() = %q, want the requested %q", bc.Content(), in)
