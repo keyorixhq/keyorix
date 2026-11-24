@@ -1,2 +1,0 @@
-### Documentation
-- **Guides for Kubernetes ServiceAccount authentication and PostgreSQL dynamic secrets.** `docs/k8s-serviceaccount-auth.md` walks through trusting a cluster, creating a machine identity, binding a ServiceAccount and mounting the token; `docs/dynamic-secrets-postgresql.md` covers registering a target, issuing, renewing and revoking leases. The README no longer lists Kubernetes ServiceAccount authentication as roadmap, since machine-identity OIDC federation (ADR-031) already provides it.

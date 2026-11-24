@@ -1,2 +1,0 @@
-### Internal
-- **Merge-queue legs rerun a known flaky test once.** A failed test that is on `scripts/ci/known-flakes.txt` is rerun once inside the same job (`scripts/ci/rerun-known-flakes.py`, merge_group only), so a timing flake no longer ejects the queue entry. Every rerun prints `FLAKE-RERUN <test> passed on retry`, an annotation, a job-summary line and a `FLAKE-RERUN-COUNT` line; a test that fails twice, or is not listed, fails the leg as before. Pull requests, push and the nightly never rerun.

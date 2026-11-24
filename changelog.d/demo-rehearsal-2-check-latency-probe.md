@@ -1,2 +1,0 @@
-### Fixed
-- **`scripts/demo/check.sh` no longer leaves anomaly alerts of its own on the demo.** The latency step read the seeded `stripe-api-key` 50 times in a burst, which raised `frequency_spike` and `cumulative_rate` alerts that the "no open anomalies" step (even with `--used`) reported as a failure on a native demo. It now reads the verify-write scratch secret, which that step already ignores. Guarded by `TestCheck_LatencyProbeReadsTheScratchSecretNotASeededOne`.

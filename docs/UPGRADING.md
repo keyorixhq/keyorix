@@ -23,6 +23,81 @@ To rehearse an upgrade first, on a throwaway instance with your old and new
 binaries (SQLite or PostgreSQL), run `scripts/drills/upgrade.sh`; see
 [operator/drill-upgrade.md](operator/drill-upgrade.md).
 
+## 1a. Upgrading to v0.97.0: the path
+
+Commands marked **UNVERIFIED** were not run in the v0.97.0 release QA; the others were
+(release QA REL-V097-2, 2026-11-24: the locally built `make release` binaries and images of
+the release commit, on a Linux VM, SQLite and PostgreSQL, from the published v0.96.3
+assets). The checklist form of this section is
+[operator/upgrade-checklist-v0.97.md](operator/upgrade-checklist-v0.97.md).
+
+**From v0.96.x (v0.96.0 to v0.96.3): one hop.**
+
+1. Read the table in §6k and fix the configuration first. These stop the new server
+   from starting: a bootstrap token under 32 characters (§6g), `server.grpc.tls.auto_cert:
+   true` (§6t), a weak SCIM token or an unneeded KMS context fallback (§6i),
+   `session_replication_role` other than `origin` (§6n), a `*` inside a CORS origin
+   (§6ze), `ssl_mode: verify-full`/`verify-ca` without `ssl_root_cert` (§2), two live
+   projects whose names fold to the same value (§6zk), and a Shamir share file with the
+   wrong owner or mode (§6zo). **UNVERIFIED** in release QA (no refused configuration was
+   planted; each refusal has its own tests).
+2. Back up **with the v0.96.x binary**, database and key files together (§1, §4). The
+   archive is format v2 and carries its own wrapped DEK. A later `admin encryption
+   rotate` (DEK) does not affect it. After `admin encryption rotate-kek` it still
+   restores, **with the passphrase that was current when it was taken**: keep each old
+   passphrase as long as you keep the archives that need it
+   ([operator/j6-key-rotation.md](operator/j6-key-rotation.md#back-up-around-a-rotation)).
+3. Stop **every** server and replica. v0.97.0 raises the compatibility floor to 3
+   (§6q): once a v0.97.0 server has started on the database, no v0.96.x server starts on
+   it again, so a mixed-version rolling upgrade is not possible.
+4. Put the v0.97.0 binaries or images in place and start one server. Read the start log
+   for refusals (`docs/operator/startup-refusals.md`) and warnings (§6zg).
+5. Check the result: `keyorix audit verify --full` must print `Audit chain: VALID`
+   (§6zc explains a plain `audit verify` that reads `NOT PROVEN` right after the
+   upgrade), and your secrets must read back. Then start the other replicas.
+6. Rollback is a restore of the step-2 backup with the v0.96.x binary (§7).
+
+**From v0.95.x: two hops.** A skip over a minor is not supported before 1.0
+([VERSIONING.md](VERSIONING.md)). Upgrade to v0.96.3 first with the steps in §2
+(including "Upgrading Docker Compose or Helm from v0.95.x to v0.96.0"), start it once,
+check `keyorix audit verify --full`, take a new backup with v0.96.3, then follow the
+v0.96.x path above. A v0.95.x backup restores directly into v0.97.0 (§4), but that is a
+restore, not an upgrade of a running install. **UNVERIFIED** for the two-hop path as a
+whole; the v0.96.3 → v0.97.0 hop is the one release QA ran.
+
+**Helm.** Chart `keyorix` 0.97.0 (`appVersion` 0.97.0). Use `helm upgrade
+--reset-then-reuse-values` (§5). The chart refuses to render `server.replicas` above 1
+without Secret mode, and rejects `postgresql.settings.session_replication_role`
+(`docs/releases/v0.97.0.md`, "Helm"). With an external PostgreSQL on `verify-full`, set
+`externalDatabase.sslRootCert` (or `externalDatabase.caSecret`) before the upgrade.
+Scale to one replica, or stop the release, before the upgrade for the floor reason
+in step 3. Release QA ran `helm upgrade --reset-then-reuse-values` from chart 0.96.3 (one
+replica, bundled PostgreSQL, `auth.existingSecret`) on kind: the data read back and
+`keyorix audit verify --full` printed `Audit chain: VALID`. The `externalDatabase` and
+multi-replica sentences are **UNVERIFIED**.
+
+**keyorix-operator chart: apply the CRD yourself.** The `KeyorixSecret` CRD changed
+since v0.96.3 (the new `spec.onSuspend` field, and `secretKey` must be unique within a
+CR). Helm installs `crds/` on the first install only and never upgrades it, so with a
+plain `helm upgrade` the cluster keeps the old schema: the API server drops `onSuspend`
+from every CR you apply, without an error, and does not enforce the uniqueness. Apply the
+new CRD from the chart at the release tag before upgrading the operator release:
+`kubectl apply --server-side --force-conflicts -f deploy/helm/keyorix-operator/crds/`
+(from a checkout of `v0.97.0`). `--force-conflicts` is needed because Helm's field manager
+owns the CRD it installed; without it the apply fails with `conflict with "helm" ...:
+.spec.versions` and changes nothing. Release QA ran this on kind after a `helm upgrade` from
+chart 0.96.3: the CRD had no `onSuspend` before the apply and had it after.
+
+**Air-gapped.** Image `ghcr.io/keyorixhq/keyorix-server:0.97.0-airgap` (§6) or the
+`keyorix-server-airgap_linux_<arch>` binaries, built with `-tags noaws,noazure,nogcp`:
+the `aws-kms`, `gcp-kms` and `azure-kms` key providers and the cloud connectors are not in
+them. Check the downloaded assets offline with `scripts/release/verify-release.sh
+--offline` ([operator/verifying-releases.md](operator/verifying-releases.md)); backup and
+restore are as above ([AIRGAP_RUNBOOK.md](AIRGAP_RUNBOOK.md)). Release QA ran
+`scripts/airgap-e2e.sh` (`--network none`) against the image built with `BUILD_TAGS=noaws,noazure,nogcp`
+and checked that the air-gapped binary's SBOM and build info list no cloud SDK;
+`verify-release.sh --offline` needs the tag-time signatures and is **UNVERIFIED** for this release.
+
 ## 2. Upgrading from v0.95.x → v0.95.2
 
 (The steps are the same for every v0.95.x → v0.95.y upgrade, and for the Compose
@@ -879,6 +954,22 @@ code. The checklist to follow is
 | PostgreSQL: the server checks it holds the database's DEK; upgrade every replica before the next DEK rotation (#3344) | §6s |
 | SCIM no longer creates or manages `sso:` accounts (#3493) | §6v |
 | "Last used" in access recertification means "within the review period" (`recertification.cadence_days`) | §6w |
+| The key-set manifest: the first start adopts your key files (#2900) | §6za |
+| `admin backup` refuses after an interrupted or unfinished key rotation (#4104, #4105) | §6zb, §6zr |
+| `audit verify` reads `NOT PROVEN` right after a v0.96.x upgrade until the first re-walk | §6zc |
+| Boot failures exit 78 or 75; the shipped systemd unit stops restarting on 78 | §6zd |
+| A `*` inside a CORS origin refuses to start (#4382) | §6ze |
+| Dynamic-secret `admin_dsn` options naming a server file; MongoDB `tlsInsecure`, Redis `skip_verify`, MySQL `compress=true` | §6zf, §6zi, §6zl, §6zj |
+| PostgreSQL and MySQL dynamic-secret `admin_dsn`s must verify the server certificate (`sslmode=verify-full`, `tls=true`); stored configs keep issuing with a WARNING for this release (#4374) | §6zt |
+| Config keys that are ignored today and rejected after the next minor release | §6zg |
+| The legacy roles can no longer be granted on a project (#3605) | §6zh |
+| Project names are unique ignoring case and Unicode normalization (schema epoch 10) | §6zk |
+| Relative key paths are resolved from the config file's directory (#4249) | §6zm |
+| Setting a member's roles needs authority over every requested role | §6zn |
+| A Shamir share file with the wrong owner or mode stops the server | §6zo |
+| SQLite accepts `audit_durability: standard` (read audits only) | §6zp |
+| Outbound webhooks to 100.64.0.0/10 (CGNAT) are refused | §6zq |
+| Restore over a populated database needs `--replace-existing-data`; `total_reads` is opt-in on the versions listing; `::ffff:` proxy and allowlist entries; restricted PATs cannot mint machine tokens; k8s-sync rejects unknown config keys | §6zs |
 
 Each heading number in this document is unique. The sections are not in alphabetical
 order because they were added by different pull requests; look a section up by its
@@ -1899,6 +1990,100 @@ Now:
 Nothing to do on upgrade. A wrapper that moved `kek.salt.pending` aside by hand keeps working;
 switch it to the command to get the checks and the audit record.
 
+## 6zs. Scripted restores, API callers and the Kubernetes sync agent
+
+Changes that came with the changelog only, collected here so a script owner finds them.
+
+- **`admin restore --overwrite-existing` no longer replaces a database that holds data
+  (#4311).** A target with rows outside `system_metadata` (and audit rows other than the
+  `admin_cli` bookkeeping) is refused with `the restore target database holds data (tables
+  with rows: ...)` before anything is extracted or staged. To replace a deployment's data,
+  add `--replace-existing-data`; on PostgreSQL those rows are deleted inside the load
+  transaction, so back the target up first. `--overwrite-existing` alone is for re-running
+  a restore into an empty, migrated database. SELF_HOSTING.md §5 has the full procedure.
+- **`admin restore` refuses a target whose servers use a newer DEK rotation protocol
+  (#4334)**, even with `--overwrite-existing --replace-existing-data --allow-rollback`.
+  Every start with encryption on a local database now records `dek.rotation_protocol`
+  (SQLite included). Restore with a binary at least as new as the target's servers, or
+  into an empty data directory.
+- **`total_reads` is opt-in on the secret versions listing (#3444).**
+  `GET /api/v1/secrets/{id}/versions` returns `data.total_reads` only with
+  `?include=total_reads`; gRPC `GetSecretVersions` only with `include_total_reads`.
+  `keyorix secret versions` asks for it, so its output is unchanged.
+- **Trusted proxies and token network allowlists written as `::ffff:a.b.c.d` (#4520).**
+  A bare `::ffff:1.2.3.4` used to be parsed as the IPv6 network `::/32`; it now means that
+  IPv4 host, and `::ffff:10.0.0.0/8` means the IPv4 network. A mapped prefix from /33 to
+  /95 trusts and matches nothing. Stored PAT or machine-token allowlist entries of exactly
+  `::ffff:a.b.c.d/32` are read as the host; re-issue any other `::ffff:` entry with a
+  prefix below 96 using plain IPv4 CIDRs.
+- **A user cannot mint a machine token with permissions they lack, and a restricted PAT
+  cannot mint one at all.** Automation that mints machine tokens with a scoped PAT needs an
+  unrestricted credential of a user who holds the permissions.
+- **`POST /system/init` answers 400 for rejected admin details** (was 403); a wrong or
+  missing bootstrap token stays 403 `InvalidBootstrapToken`.
+- **Kubernetes sync agent.** Its config refuses unknown keys, naming the key and line
+  (the keys it reads are listed in `docs/k8s-sync.md`); remove any extra key before
+  upgrading the agent. The agent also checks the scope of what the server returns and
+  needs a server that sends snake_case wire keys, i.e. v0.95.0 or newer: upgrade the
+  server first.
+
+## 6zt. PostgreSQL and MySQL dynamic-secret `admin_dsn`s must verify the server certificate
+
+Until this release the operator's transport policy,
+`dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport`, applied only to MongoDB
+and Redis targets. From this release (#4374) it applies to PostgreSQL and MySQL targets too:
+with the setting off (the default) an `admin_dsn` is accepted only if its connection verifies
+the server certificate.
+
+| Backend | Accepted | Refused |
+|---|---|---|
+| `postgres` | `sslmode=verify-full`; `sslmode=verify-ca` only with a root certificate installed on the Keyorix server (`PGSSLROOTCERT` or `~/.postgresql/root.crt`), since without one the driver checks the chain against the system trust store and no host name, so any public certificate passes | `sslmode=disable`, `allow`, `prefer`, `require`, and no `sslmode` at all (the driver's default is `prefer`). A `PGSSLMODE` environment value of the Keyorix server counts as if it were in the DSN. |
+| `mysql` | `tls=true` | `tls=false`, no `tls` at all (the driver's default is plaintext), `tls=skip-verify`, `tls=preferred`, `allowFallbackToPlaintext=true` |
+
+The check reads the connection settings the database driver builds from the DSN, not the DSN
+text, so every spelling of these settings is covered.
+
+**Who is affected:** project admins whose PostgreSQL or MySQL dynamic-secret configs use one of
+the refused settings, which includes every PostgreSQL `admin_dsn` without `sslmode` and every
+MySQL `admin_dsn` without `tls=true`.
+
+What changes:
+
+- **Creating a config or replacing its `admin_dsn` with a refused setting fails at once**, with
+  an error that names the setting (for example `admin_dsn option "sslmode=prefer" is not
+  allowed for postgres backends`), never the DSN.
+- **A config stored before the upgrade keeps issuing for this release.** Every issue from it
+  writes a `dynamic_lease.insecure_transport` audit event naming the config and the setting,
+  and the server logs `WARNING: postgres admin_dsn has sslmode=prefer: ... accepted only during
+  the upgrade grace period and will be refused in the next release`. In the next release issue
+  from such a config is refused (`dsn.StoredSQLTransportGrace` is set to false).
+- **Revoke and the expiry sweep keep working during this release** exactly as issue does. From
+  the next release, with the setting off, revoke replaces the refused setting by a verified TLS
+  connection instead of refusing; a target whose certificate the Keyorix server does not trust
+  then fails the handshake and the lease stays `revoke_failed` with an error that names the
+  setting.
+- **With `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport: true`** every
+  setting is accepted, as before; each save writes a `dynamic_secret.config_insecure_transport`
+  audit event, each issue a `dynamic_lease.insecure_transport` audit event, and each connection
+  logs a WARNING that names the backend and the setting.
+
+What to do, during this release:
+
+1. Give the database server a certificate that the Keyorix server's system trust store
+   accepts (an `admin_dsn` cannot name a CA file: `sslrootcert` is refused). For PostgreSQL
+   a root certificate in the Keyorix server's `PGSSLROOTCERT` or `~/.postgresql/root.crt` also
+   works.
+   The decision is made on the server that saves or issues, with its environment: a DSN
+   without `sslmode` saved while `PGSSLMODE=verify-full` was set, or one saved while the
+   operator flag was on, counts as a stored one (soft period) once that changes.
+2. Replace each affected `admin_dsn` with `sslmode=verify-full` (PostgreSQL) or `tls=true`
+   (MySQL): `keyorix dynamic-secret set-admin-dsn <config-id>` (the DSN is read from
+   `KEYORIX_DYNAMIC_ADMIN_DSN` or stdin, never the command line). Find the affected configs in
+   the audit log (`dynamic_lease.insecure_transport`) or in the server log (the WARNING above).
+3. Only if a target truly cannot use verified TLS (a legacy database on a trusted network),
+   the operator can set `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport:
+   true` instead. It applies to every dynamic-secret backend, MongoDB and Redis included.
+
 ## 7. Rollback
 
 The step-by-step version, with the commands verified on v0.96.1 → v0.96.3 (Docker
@@ -1935,7 +2120,10 @@ Restoring the backup you took in step 1:
    recreate the database), then restore with the same two flags.
    `--overwrite-existing` does not empty a PostgreSQL database: over existing rows the
    restore fails on a duplicate key *after* it has already replaced the key files
-   (SELF_HOSTING.md §5).
+   (SELF_HOSTING.md §5). These are the v0.96.x binary's flags. With a v0.97.0 binary,
+   a restore over a database that holds data needs `--replace-existing-data` as well,
+   and is refused outright when the target's servers recorded a newer DEK rotation
+   protocol than that binary's (§6zs).
 4. Run `admin verify-audit` after the restore, with the binary you rolled back to, and
    check that the chain is intact.
 5. Do not run key operations (`rotate`, `rotate-kek`, `migrate-provider`) on the

@@ -1,2 +1,0 @@
-### Internal
-- **Merge-queue test legs start Postgres in the background, only when the leg runs (ci.yml).** The `test-suite` job no longer declares a job-level `postgres` service, which started serially before the first step in about 22 s on every leg, including legs the merge-queue selection skips. A new step starts the same image, credentials, port and database detached while checkout, setup-go and the cache restore run, and a "Wait for Postgres" step gates `go test`. A skipped leg now ends in a few seconds instead of about 26 s.

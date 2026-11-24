@@ -1,6 +1,0 @@
-### Fixed
-- **`offline-install.sh` prints commands that run, and `stop` no longer lies (#4281).** The recovery-key step printed `KEYORIX_RECOVERY_KEY_DONE=1 $0 finish --dir <dir>`, which only worked from the directory the script was started in; the script now resolves its own absolute path once and prints `sh <absolute path> finish --dir <absolute dir>` (the install directory is also made absolute, so a relative `--dir` no longer yields relative paths in the printed steps). `stop`/`finish` now stop with `could not stop server (pid N)` when `kill` fails and the process is still alive, keeping `server.pid`, instead of printing "server stopped". Guarded by `internal/docsdrift/offline_install_finish_test.go`.
-- **The disaster drill no longer uses a deprecated flag.** `scripts/drills/disaster.sh` listed secrets with `secret list --format json` (one deprecation line per call); it now uses `--output json`.
-
-### Documentation
-- **`docs/AIRGAP_RUNBOOK.md` matches a native SQLite walk.** `admin audit export-checkpoint` is refused while the server runs (let it write a checkpoint, stop it, then export); `admin restore` and `admin diagnose` need the master passphrase, and the runbook now shows it and lists `KEYORIX_MASTER_PASSWORD_FILE`.

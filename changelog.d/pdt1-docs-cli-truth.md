@@ -1,3 +1,0 @@
-### Fixed
-
-- Docs: `docs/CONFIGURATION.md` quoted an old `require_existing_path` start-up message that named a `keyorix system init --database` command the CLI does not have; it now quotes the current message (`keyorix-server admin init`). `docs/cli-migration.md` listed `keyorix auth login|logout|status`, `keyorix auth mfa stepup` and `keyorix migrate user-to-machine` as the new commands; they are `keyorix login`, `logout`, `status`, `mfa stepup` and `keyorix machine migrate-from-user`. Found by checking every `keyorix` command and flag in the install and operator pages against `--help` of a fresh build.

@@ -8,7 +8,7 @@ All notable changes to Keyorix are documented here. This project follows
 `scripts/changelog-assemble.sh`. Do not add new entries to "Unreleased" below;
 that section is the text written before the switch.
 
-## v0.97.0 — 2026-11-14
+## v0.97.0 — 2026-11-24
 
 ### Security
 - **PostgreSQL `verify-full` now needs a named CA: `storage.database.ssl_root_cert`.** The server
@@ -255,7 +255,7 @@ that section is the text written before the switch.
   decrypt path (`internal/notary` only parses and verifies), so this is not reachable from the
   server; the update keeps scanners quiet and the dependency current. The earlier BER fixes
   (GHSA-3xqc-rpq8-wgp9, GHSA-73j8-gqc5-c98v) were already in the previous pin.
-- **Leases of a dynamic-secret config stored before #3952 can be revoked again (#3980).** #3952 refuses `admin_dsn` options that make the driver read a server file on every connection, and that also blocked `Revoke` and the expiry sweep: such leases ended `revoke_failed` and their database users stayed live on the target (MongoDB and MySQL users never expire on their own). Issue and renew from such a config still fail. `Revoke` now removes the option and connects with the rest, without reading the named file: PostgreSQL `sslcert`/`sslkey`/`sslpassword`/`passfile` and MySQL `allowAllFiles` are dropped; PostgreSQL `sslrootcert` becomes `sslrootcert=system` (system trust store, `verify-full`, no plaintext fallback) and MongoDB `tls*File`/`ssl*File` are dropped with `tls=true` kept, so a target signed by a private CA fails the handshake and the lease stays `revoke_failed` with the option named. PostgreSQL `service`/`servicefile` and MongoDB `authMechanism=MONGODB-AWS`/`MONGODB-OIDC`/`GSSAPI` stay refused, now with the option in the lease's `revoke_error`. Upgrade: the server logs `WARNING: dynamic secrets:` at startup with the number of such configs and their live leases; see `docs/upgrading.d/dynamic-admin-dsn-revoke-strips-file-options.md` and the table in `docs/CONFIGURATION.md`. Guarded by `TestPostgresRevokeStripsLocalFileOptions`, `TestPostgresRevokeWithSSLRootCertFailsClosed`, `TestMySQLRevokeStripsAllowAllFiles`, `TestMongoRevokeStripsTLSFileOptions`, `TestMongoRevokeWithTLSCAFileFailsClosed` and `TestDynamicSecrets_RevokeLease_StoredConfigWithRefusedFileOption`.
+- **Leases of a dynamic-secret config stored before #3952 can be revoked again (#3980).** #3952 refuses `admin_dsn` options that make the driver read a server file on every connection, and that also blocked `Revoke` and the expiry sweep: such leases ended `revoke_failed` and their database users stayed live on the target (MongoDB and MySQL users never expire on their own). Issue and renew from such a config still fail. `Revoke` now removes the option and connects with the rest, without reading the named file: PostgreSQL `sslcert`/`sslkey`/`sslpassword`/`passfile` and MySQL `allowAllFiles` are dropped; PostgreSQL `sslrootcert` becomes `sslrootcert=system` (system trust store, `verify-full`, no plaintext fallback) and MongoDB `tls*File`/`ssl*File` are dropped with `tls=true` kept, so a target signed by a private CA fails the handshake and the lease stays `revoke_failed` with the option named. PostgreSQL `service`/`servicefile` and MongoDB `authMechanism=MONGODB-AWS`/`MONGODB-OIDC`/`GSSAPI` stay refused, now with the option in the lease's `revoke_error`. Upgrade: the server logs `WARNING: dynamic secrets:` at startup with the number of such configs and their live leases; see `docs/UPGRADING.md` §6zf and the table in `docs/CONFIGURATION.md`. Guarded by `TestPostgresRevokeStripsLocalFileOptions`, `TestPostgresRevokeWithSSLRootCertFailsClosed`, `TestMySQLRevokeStripsAllowAllFiles`, `TestMongoRevokeStripsTLSFileOptions`, `TestMongoRevokeWithTLSCAFileFailsClosed` and `TestDynamicSecrets_RevokeLease_StoredConfigWithRefusedFileOption`.
 - **`digitorus/pkcs7` advisory GHSA-3xqc-rpq8-wgp9 is public** (2026-09-14): the BER-length memory-amplification DoS in `pkcs7.Parse` is fixed in the pinned version. The security docs no longer describe the pkcs7 finding as embargoed, and the closure ledger records it with `FuzzDigitorusPKCS7BoundedWork` as the regression guard. Documentation only; no behaviour change.
 - **Per-project MFA gate no longer fails open on a "not found" error text.** The HTTP (`ProjectMFABlocked`) and gRPC (`enforceProjectMFA`) per-project MFA checks let an interactive session without a second factor through whenever the project lookup failed with an error whose text contained "not found". They now pass only a genuinely missing project (the new `storage.ErrProjectNotFound` sentinel, so the endpoint's own 404/NotFound still answers) and deny on every other lookup error, in every locale. `GetProject`, `GetProjectByName` and `GetEnvironment` wrap `ErrProjectNotFound` / `ErrEnvironmentNotFound` for a missing row only; the error text is unchanged.
 - **A failed session listing no longer silently skips auth-cache eviction on revocation.** Password change, MFA/WebAuthn enrolment, setup-token consume, suspend, deactivate, delete, SCIM deprovision and the admin session purge listed the user's session-token hashes with the error discarded, so a read failure evicted nothing and logged nothing while the code promised "immediately". The listing is now retried once; if it still fails the revocation still succeeds, a `SECURITY:` line is logged, an `auth.session_revocation_failed` audit event is written, and every auth-cache entry of the user, including impersonation sessions the user started, is evicted (new `middleware.InvalidateUserTokenCache`; a validation in flight at the eviction, including one on the same clock tick, cannot re-cache). Guarded by `TestSessionListFailure_*` (internal/core) and `TestInvalidateUserTokenCache_*` (server/middleware).
@@ -269,7 +269,7 @@ that section is the text written before the switch.
 - **A panic in a login's storage write no longer reveals that the credential was correct (#3277).** After the credential has matched, a login writes the TOTP anti-replay mark (`/auth/mfa/verify`) and the session (`/auth/login`, `/auth/mfa/verify`, WebAuthn login). A panic in either write used to reach the recovery middleware, which answered HTTP 500, a status a wrong credential never gets. It also skipped the lockout count and the audit event. The panic is now handled exactly like the same write failing with an error: the wrong-credential 401, the attempt counted toward the lockout and the per-IP limit, the same audit event (`auth.login_error`, or `mfa.error` for the TOTP mark), and no session. A session row written before the panic is deleted and its token is never returned, and a TOTP code accepted before the panic stays used. Guarded by `server/faultops` `TestPostVerdictWritePanic_AnsweredLikeItsError` and by panic subtests that run through the production recovery middleware.
 - **A panic in a login's identity read no longer reveals that the credential was correct (#3267).** On `/auth/mfa/verify`, `/auth/login` and WebAuthn login (second factor and passwordless), the user's roles and permissions are read after the credential has matched. A panic in that read used to reach the recovery middleware, which answered HTTP 500, a status a wrong credential never gets. It also skipped the lockout count and the `auth.login_error` audit event. The panic is now handled exactly like the same read failing with an error: the wrong-credential 401, the attempt counted toward the lockout and the per-IP limit, `auth.login_error` audited, and no session. A TOTP code accepted before the panic stays used. Guarded by `server/faultops` `TestPostVerdictIdentityReadPanic_AnsweredLikeItsError` and by panic subtests that run through the production recovery middleware.
 - **Setting a member's roles is judged on every requested role.** `PUT /api/v1/projects/{id}/members/{userId}` and `PUT /api/v1/users/{id}/roles` used to check the granter ceiling only on roles the request added, so a caller who may not grant a role got 200 when the target already held it and 403 otherwise, which revealed the target's roles. Now a caller who may not grant a requested role gets 403 whatever the target holds, including for a request that changes nothing or only removes other roles. See `docs/UPGRADING.md`.
-- **A loose Shamir share file is refused when it is read.** A `shamir_share_files` file that fails the secretenv owner + mode rule now refuses the unseal unconditionally, like `shamir_share_env` + `_FILE` and the file KEK provider, judged on the descriptor that is read. **Upgrade note:** a loose share file that only warned in the warn or ADR-112 grace modes now stops the server from booting; fix it with `chmod`/`chown` before upgrading (docs/upgrading.d/shamir-share-file-refused.md). Guarded by `TestShamirKeyProvider_ShareFileRefusedAtRead`.
+- **A loose Shamir share file is refused when it is read.** A `shamir_share_files` file that fails the secretenv owner + mode rule now refuses the unseal unconditionally, like `shamir_share_env` + `_FILE` and the file KEK provider, judged on the descriptor that is read. **Upgrade note:** a loose share file that only warned in the warn or ADR-112 grace modes now stops the server from booting; fix it with `chmod`/`chown` before upgrading (docs/UPGRADING.md §6zo). Guarded by `TestShamirKeyProvider_ShareFileRefusedAtRead`.
 - **Server, operator, MCP and k8s-sync images now build with Go 1.27.3, and the web image upgrades `libx11`.** The four Go Dockerfiles still pinned `golang:1.27.2-alpine` after `go.mod` moved to `toolchain go1.27.3`; the official golang images set `GOTOOLCHAIN=local`, so the binaries were compiled with 1.27.2 and the docker-publish Trivy gate failed them on HIGH CVE-2026-111943. The `keyorix-web` image pins `libx11>=1.8.14-r0` (CVE-2026-88806, HIGH) on top of the pinned nginx base. A new deploy test fails when a Dockerfile's golang tag differs from the `go.mod` toolchain.
 - **Go toolchain bumped from 1.27.3 to 1.27.4 (GO-2026-6859).** The stdlib `net/http` HTTP/1 server race in `MaxBytesReader` (it sets `Connection: close` without synchronization, racing with a handler writing headers; CVE-2026-97054) is reachable from our SAML ACS path (`CompleteSAML` -> `PostFormValue`) and is fixed in go1.27.4. `go.mod`, `operator/go.mod`, the devtools modules, every CI workflow `go-version` and the fuzzing CT script now pin 1.27.4. No `docs/govulncheck-exceptions.d/` row was added: the bump is the fix.
 - **`govulncheck` can now carry a documented, ID-scoped exception for a reachable finding with
@@ -438,6 +438,232 @@ that section is the text written before the switch.
   `keyorix-server admin clear-login-lockout` already did. The error contract is unchanged.
 - **Web: bump transitive `follow-redirects` to 1.16.1.** Clears GHSA-q3jh-wrc6-jgq8 and GHSA-8r9p-f939-6h3c (reached through axios) that failed the Web CI `pnpm audit` step.
 - **Web: bump transitive `follow-redirects` to 1.16.2.** Clears GHSA-mrwp-f3q8-3g9p (reached through axios) that failed the Web CI `pnpm audit` step.
+- **The AWS Secrets Manager connector accepts only HTTP 200 as success.** The AWS SDK treats every
+  2xx status as success, so a 201, 202, 204 or 206 from the endpoint (a broken proxy or a
+  hostile backend) with a well-formed body was returned as the secret value. `GetSecret` now
+  refuses any 2xx other than 200 with an error that names only the status code. The Vault and
+  Azure Key Vault connectors already required exactly 200.
+- **Evidence-webhook SSRF guard now decodes embedded-IPv4 encodings (F1).**
+  `internal/evidencesink`'s dial-time classifier used a hand-rolled stdlib check
+  that, unlike its siblings, did not decode NAT64 / IPv4-compatible / 6to4 /
+  Teredo encodings of an IPv4 address, so those encodings of a private,
+  link-local or cloud-IMDS target were accepted at dial time. It now delegates to
+  the shared `netutil.IsPrivateOrLinkLocalExceptLoopback` predicate, which decodes
+  every embedded form, so the evidence pack and its bearer token can no longer be
+  POSTed to an internal host reached through such an encoding.
+- **Webhook-tier egress guards now refuse RFC-6598 CGNAT (100.64.0.0/10) (F2).**
+  The `internal/evidencesink`, `internal/audit/siem`, `internal/notifychan` and
+  `internal/core` notification-channel guards classified with stdlib
+  `ip.IsPrivate()`, which excludes shared carrier-grade NAT space, leaving Alibaba
+  Cloud's instance-metadata endpoint (100.100.100.200) reachable. All four now
+  route through the shared `netutil` predicates, whose canonical CIDR set already
+  includes 100.64/10. The `IsLinkLocal` tier (connect/OIDC) is intentionally left
+  permitting CGNAT, where on-prem/carrier deployments legitimately use it
+  internally.
+- **Egress inventory now covers subprocesses.** `TestEgressSubprocessSitesAreInventoried`
+  (report-only for now) fails when shipped Go code starts a process (`os/exec`, `syscall.Exec`,
+  `os.StartProcess`) at a place that has no row in the new "Subprocess call sites" table of
+  `docs/security/egress-inventory.md`. Each row records the class, what runs, who sets the
+  command line and whether it can reach the network.
+- **A stale write can no longer re-activate a lifted legal hold (#4210).** The legal-hold storage write was an unconditional full-row `Save`: a struct read before another replica lifted the hold, still saying `released=false`, would make the hold active again. It is replaced by `ReleaseLegalHold`, one conditional UPDATE of the four release columns `WHERE id = ? AND released = false`. Of two concurrent lifts the second now matches no row and is refused ("the legal hold was already released", HTTP 400 like "no legal hold is active") instead of overwriting the first lifter's reason and attribution and writing a second lift audit row. Guarded by `TestReleaseLegalHold_StaleUnreleasedWriteCannotReactivate` (formerly the known-open pin) and `TestCTAReview_LegalHoldLift_SecondLifterRefused_CrossReplicaPostgres` / its SQLite twin. No schema change.
+- **Redis dynamic secrets refuse `skip_verify=true` in the `admin_dsn`.** go-redis turns
+  certificate verification off for `rediss://...?skip_verify=true` (or `=1`), which still
+  passed the TLS requirement, so a project admin who sets the `admin_dsn` could undo the
+  operator's transport policy without a log line. Issue now fails with a
+  forbidden-option error naming `skip_verify` (the DSN is not quoted), unless
+  `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport` is enabled; then the
+  connection is made and a WARNING is logged, like a plaintext one. The check runs on the
+  parsed options, so every spelling go-redis accepts is covered. Revoke drops `skip_verify`
+  and keeps verification on, so leases issued from such a config can still be revoked; a
+  failed revoke names the dropped option. Upgrade note:
+  `docs/UPGRADING.md` §6zl (#4372).
+- **A suspended inviter's pending invitation no longer grants on accept (#4507).** Accepting a
+  project-scoped invitation, or a global invite's project assignments, used the inviter's
+  authority without checking that the inviter's account was still active. The accept is now
+  refused before the account is created, so the same link works again once the inviter is
+  reactivated.
+- **Re-authentication re-reads the account lockout after the credential matched (#2888).** A
+  correct code or password could pass re-auth (MFA disable, recovery-code regeneration, email
+  change) and clear the failed-login counter on an account a concurrent burst had just locked.
+  It now answers like a wrong code, as login, MFA verify, step-up and WebAuthn already did.
+- **Trusted-proxy parsing (#4520).** A bare IPv4-mapped trusted proxy (`::ffff:1.2.3.4`) was
+  parsed as the IPv6 network `::/32`, trusting `::1` and every other `::/32` peer to set
+  forwarding headers; it now covers exactly that host. The same holds for an explicit prefix:
+  `::ffff:1.2.3.4/32` and `::ffff:10.0.0.0/8` (once `::/32` and `::/8`) now mean the IPv4 host
+  and network, and a mapped prefix from /33 to /95, which has no IPv4 meaning, trusts nothing.
+  With `X-Forwarded-For` absent, an
+  `X-Real-IP` value that is itself a trusted proxy is no longer taken as the client IP. The same
+  `::ffff:a.b.c.d` parsing bug made a PAT or machine-token network allowlist entry mean `::/32`
+  (admitting `::1`, refusing the intended host); new entries are stored as the IPv4 host, and
+  entries already stored in that exact shape (`::ffff:a.b.c.d/32`) are read as that host. Any
+  other stored `::ffff:` entry with a prefix below 96 no longer matches anything (it matched no
+  IPv4 client before); re-issue such a token with plain IPv4 CIDRs.
+- **Core refuses an owner without `secrets.write` on tags, description and move (#4508).** Defence
+  in depth: REST already refused these.
+- **Redis replies can no longer announce unbounded allocations.** The Redis clients built for operator-supplied endpoints (dynamic Redis credentials and Redis rotation) now dial through a RESP guard that rejects, before go-redis parses it, any reply whose announced bulk/array/map sizes exceed 64 MiB per command, any non-length line over 1 MiB, any length header longer than 19 digits, and any malformed header. A hostile or intercepted server could previously make the client allocate gigabytes or panic with a reply of a few bytes. Guarded by `INV-NETUTIL-resp-declared-length` (`internal/netutil` scanner tests and `FuzzRESPScannerChunking`).
+- **MySQL servers can no longer make the client allocate from an unbounded column count.** The MySQL clients built for operator-supplied endpoints (dynamic MySQL credentials and MySQL rotation) now dial through a guard that refuses, before go-sql-driver/mysql parses it, a result set header announcing more than 65536 columns, both as the first packet of a response and after empty results whose OK packet says more results follow, and every response head the driver would panic on (a truncated length-encoded count, OK, ERR or prepare response, or a MariaDB column count without its metadata byte). A hostile or intercepted plaintext server could previously make the client allocate hundreds of megabytes or panic with a reply of a few bytes. TLS connections are not covered; they rely on the upstream driver fix. A DSN with `compress=true` now fails to connect (fail-closed; see the upgrade note). Guarded by `INV-NETUTIL-mysql-column-count` (`internal/netutil` `TestMySQLGuardAgreesWithDriver` against the pinned driver, scanner tests and `FuzzMySQLScannerChunking`).
+- **Bulk rotate and bulk delete decide their project gate in core.** `BulkRotateSecrets` (POST `/api/v1/projects/{id}/secrets/bulk-rotate`) now refuses, in core, an actor without `secrets.write` on the project, and `BulkDeleteSecrets` (POST `/api/v1/projects/{id}/secrets/bulk-delete`) an actor without `secrets.delete` on the project, both before any secret is read, as the REST route gates do and as the other project-wide bulk operations already did (#4655, #4657). Before, core performed no permission check at all on bulk rotate, and decided bulk delete only per secret, at each secret's own environment, so a user or machine holding `secrets.delete` in one environment only could delete that environment's secrets through a direct core call while REST refused it. No client could reach either: REST always refused, and there is no gRPC method. A refused request changes nothing and writes no audit row. Callers that hold the permission on the project, and the local/embedded pseudo-actor, see no change. A core refusal of bulk delete now answers 403 (or 503 when the role read fails) instead of 500. Guarded by `Test{BulkRotateSecrets,BulkDeleteSecrets}_ProjectGate` and the strict differential sweeps (`TestV5ext3StrictSweep`, `TestV5ext4StrictSweep`), whose fixtures now give the viewer a per-secret ACL write on a rotation target and add environment-scoped `secrets.delete` variations (#4666).
+- **Project-wide suspend decides its project gate in core.** `SuspendProjectSecretsWithOptions` (POST `/api/v1/projects/{id}/secrets/suspend-all`, `keyorix project freeze`) now refuses, in core, an actor without `secrets.write` on the project, before any secret is read or written, exactly like the REST route gate. Before, core decided the bulk suspend only per secret, so a project viewer holding a per-secret ACL write (or another per-secret grant) passed a direct core call on those secrets while every transport refused it. No client could reach it: REST always refused, and there is no gRPC method. A refused request suspends and marks nothing and writes no `secret.bulk_suspend_attempted` row; the per-secret re-check still runs for an admitted actor. This closes the last row of authzdiff waiver known-04 (#4161), and the waiver is removed. Guarded by `TestSuspendProjectSecrets_ProjectGate` and the strict differential sweep (`TestV5ext3StrictSweep`).
+- **Core decides the route gate itself on 19 operations that relied on the transport
+  alone (defence in depth, #4161).** The cross-layer authorization differential had core
+  allowing, and every transport refusing, about 4,500 cases over secret auto-rotate,
+  rotate, rollback and copy, environment clone and copy-secrets, per-secret ACL grant and
+  revoke, role update, delete and permission add, user create (with and without
+  assignments), group restore, role assign and member add, global invitation, project
+  restore and share revoke. Each of these core entry points now makes the same permission
+  decision the REST route gate and the gRPC interceptor make, for human and machine actors
+  alike, with a typed refusal; an access request from a suspended account is refused in
+  core as it is at authentication. No client-visible change: every request a client could
+  make was already refused at the transport. The differential's known-04 waiver is narrowed
+  to the one owner-pass case still open (bulk suspend), so a dropped core check anywhere else
+  now fails the strict sweep.
+- **Core refuses a secret owner who lacks the write/delete permission (#4160).** `UpdateSecretWithPermissionCheck` and `DeleteSecretWithPermissionCheck` no longer let ownership alone authorize the mutation: an owner whose roles grant neither `secrets.write` (update) nor `secrets.delete` (delete), and who holds no ACL or allowlisted share covering it, is refused with `ErrPermissionDenied`, the same decision the per-secret REST route and gRPC RPC gates already made. Defence in depth: no client could reach this, every transport refused it first. Guarded by `TestCoreOwnerWithoutPermissionIsRefused` (server/authzdiff); authzdiff waiver known-03 removed.
+- **Core refuses mutations by a suspended or deprovisioned account (#4159).** Every mutating core entry point the authzdiff harness binds that takes the acting user's ID (role grants, role permission and group-role assignment, role set replacement, role update and delete, user creation, group member add, project member add/role change, invitations, global invitations and member invites, access-request approval, machine token issue and role assignment, OIDC subject binding, break-glass activation, membership transitions, project/environment/group restore, environment clone/copy, secret shares and share updates, and the secret mutations: update, delete, rotate, rollback, auto-rotate, copy, move, tags, description, dependencies, extend-expiring, owner reassignment, share revoke, certificate inspection) now refuses a human actor whose account is not active with `ErrPermissionDenied`, through one helper (`requireActorActive`). The transports already refused such an account at authentication, so no client could reach this; it is defence in depth. Consequence: a pending invitation from an inviter who has since been suspended no longer grants on acceptance (the accept re-checks the inviter's authority). Not covered: secret creation (it takes no acting-user ID) and ACL grants (core makes no authorization decision there; the transports authorize them). Guarded by `TestCoreRefusesSuspendedActor` (server/authzdiff, which now fails an op it has no checked case for) and `TestSuspendedActorRefusedAtEntryPoints` (internal/core); per-secret reads (`GetSecretForRead`, and so the value reads) refuse such an actor too, unless the transport gate already allowed that read in the same request; authzdiff waiver known-02 removed.
+- **Typed core refusals for machine actors and membership/share/copy/break-glass refusals (#4162, #4163).** A machine actor on a human-only core operation (secret share, ACL grant, tags, description, move, copy, certificate inspection, expiry extension, access request, share update, break-glass) is now refused with `ErrPermissionDenied` instead of an "actor ID is required" validation error, so REST answers 403 (was 400 or 500) and gRPC PermissionDenied (was InvalidArgument or Internal). `ErrMembershipAuthorityRequired` and `ErrRestrictedPATCannotBreakGlass` now match `ErrPermissionDenied`; a refused `CopySecret` source is both not-found and a refusal (unchanged 404 on REST, still no existence oracle). The REST share, share-update, access-request and ACL-grant handlers map the sentinel to 403. No access changes: every refused case stays refused. Guarded by `TestCoreRefusalsAreTyped` (server/authzdiff); authzdiff waivers known-08 and known-09 removed.
+- **Project-wide resume, extend-expiring and bulk rename decide their project gate in core.** `ResumeProjectSecrets` (POST `/api/v1/projects/{id}/secrets/resume-all`), `ExtendExpiringSecrets` (POST `/api/v1/projects/{id}/secrets/extend-expiring`) and `BulkRenameSecrets` (POST `/api/v1/projects/{id}/secrets/bulk-rename`) now refuse, in core, an actor without `secrets.write` on the project before any secret is read or written, as the REST route gate does and as project-wide suspend already did (#4655). Before, core decided these only per secret, so a project viewer holding a per-secret ACL write (or another per-secret grant) passed a direct core call on those secrets while every transport refused it. No client could reach it: REST always refused, and there is no gRPC method. A refused request changes nothing and writes no audit row; the per-secret re-check still runs for an admitted actor. Callers that hold `secrets.write` on the project see no change. Guarded by `Test{ResumeProjectSecrets,ExtendExpiringSecrets,BulkRenameSecrets}_ProjectGate` and the strict differential sweep (`TestV5ext3StrictSweep`), whose fixture now gives the viewer a per-secret ACL write on each op's target secret (#4657).
+- **`boombuler/barcode` is updated to v1.1.1, which fixes the QR numeric-mode sign defect.** The older pin accepted a leading `+` or `-` in a numeric group and dropped it from the symbol (`+12` scanned as `012`). Keyorix never renders QR codes itself and the `otpauth://` URLs that `pquerna/otp` encodes never take that path, so no live path was affected. The conformance oracle no longer carries a special case for the defect, and `TestQRFindingNumericSign` now asserts the fixed behaviour.
+- Core now refuses a suspended or otherwise inactive acting account when approving a risk exception, revoking a break-glass activation early or closing an access-review campaign, as it already did for the other mutating entry points. REST answers this refusal 403 for approve and revoke (400 for campaign close, as for its other refusals), and a failed read of the account 503 (#4546). The transports already refused such an account at authentication; this is defence in depth.
+- Bulk secret deletion by a machine identity now checks, for each secret, that the machine holds `secrets.delete` at that secret's own scope, the same rule a single delete applies. It used to rely only on the route's project-wide gate (#4546).
+- **Owning a secret no longer lets a user without `secrets.write` rename, suspend, resume or
+  extend it through the project-wide bulk operations in core (defence in depth, the #4508
+  sibling).** Bulk rename, suspend-all, resume-all and extend-expiring re-checked each secret with
+  the owner pass alone, while the REST routes gate all four on project-scope `secrets.write`. Each
+  now skips a secret whose owner does not hold that permission, exactly as the route refuses them;
+  no client-visible change. A write share alone does not let a user without `secrets.write`
+  rename a secret through bulk rename either. Guards: `TestOwnerWithoutSecretsWrite_BulkOpsSkipTheirSecrets`,
+  `TestWriteShareHolderWithoutSecretsWrite_BulkOpsSkip`.
+- **A per-secret ACL grant can no longer survive the grantee's removal from the project when
+  the two race across replicas (#4533).** `GrantSecretACL` checked membership before writing the
+  grant; a `RemoveProjectMember` committing in between had already run its ACL clean-up without
+  seeing the grant, which then committed for a removed member: it still listed the secret's
+  metadata to them and became live again when an admin re-added them. The storage upsert now
+  locks the grantee's live direct project grants `FOR SHARE` on PostgreSQL before the write
+  (the same lock order as the removal, so a concurrent re-grant cannot deadlock and abort the
+  removal), re-checks membership after the write in the same transaction, and rolls the grant
+  back with the same "not a member" refusal a serial remove-then-grant gets. No client-visible change for a
+  member grantee. Guards: `TestCTAReview_GrantSecretACL_vs_RemoveProjectMember_CrossReplicaPostgres`
+  and the race loop (PostgreSQL), `TestGrantSecretACL_MembershipRemovedBeforeUpsert_RefusedWithoutARow`
+  (SQLite, every CI run).
+- **Postgres dynamic-secret backends bound the message length a target server may claim.**
+  The `admin_dsn` host is project-admin input, and pgx sizes its read buffer from the length a
+  server announces in a message header before any body byte arrives (its own ceiling is ~1 GiB).
+  A rogue or compromised target could therefore make the Keyorix server allocate ~775 MB with a
+  5-byte header, ~1.5 GB peak RSS over repeated connections, and OOM-kill a 512 MiB container
+  within three `issue`, `renew` or `revoke` calls. `internal/dynamic` now caps a single protocol
+  message body at 1 MiB (`internal/pgxlimits`); an over-long claim fails the connection instead
+  of allocating (pgx's `ExceededMaxBodyLenErr` while connecting, a closed-connection error after). Guarded by
+  `TestPostgresEngineBoundsServerClaimedMessageLength` (asserts the allocation, not only the
+  error) and `TestEveryPgxConnectInDynamicUsesTheBoundedConfig`. The MySQL backends were measured
+  and are not affected the same way (peak RSS stays flat); they are unchanged.
+- **`keyorix run`, `keyorix rbac` and `keyorix secret create` no longer pick the wrong environment when two names differ only in case.** Environment names are unique per project case-sensitively, so `prod` and `Prod` can coexist; the CLI matched them case-insensitively and took the first listed, so `keyorix run --env Prod` could inject the secrets of `prod`, an `rbac` command could grant a role on the wrong environment, and `secret create` without `--environment` could write into `Development` instead of `development`. An exact name now wins; a name that matches only case-insensitively is accepted only if exactly one environment matches, otherwise the command refuses and names the candidates.
+- **The Kubernetes sync agent now checks the scope of what the server returns.** The matching entry of the secret list must name the agent's project and the resolved environment, and the value response must carry the requested secret id, project and environment. A mismatch fails closed without removing the synced copy (it is not treated as "secret gone"). Previously the agent relied on the server having filtered the list correctly. This guards against a server-side filter or lookup bug; it is not a defence against a server that is fully attacker-controlled.
+- **The secret list no longer shows ACL-granted or shared secrets to a user who has left the project.** A per-secret or per-folder ACL grant, and a secret shared with the user, is listed only while its grantee is still a member of the secret's project, the rule authorization already applied. Before, a user whose only project role was revoked (or who lost a group-only membership) could still list the secret's name, description, metadata, classification and owner, and with a folder grant every descendant secret; a share outlived even `RemoveProjectMember`. Secret values were never readable. Guarded by `INV-CORE-acl-listing-honours-live-membership` (#4623).
+- **A user can no longer mint a machine token that carries permissions they lack, and a restricted
+  PAT can no longer mint one at all.** `IssueMachineToken` for a user caller required only
+  `roles.assign` at the project, so a user with that one permission could issue a token for a
+  peer machine whose roles bundle other permissions (for example secrets read and write) and
+  act as that peer. A PAT restricted by project, environment, permission or CIDR allowlist
+  that still allowed `roles.assign` could mint an unrestricted, non-expiring `kx_machine_`
+  token and use it from anywhere. The user path now requires the caller to hold every
+  permission the target holds, at each scope the target holds it (the rule machine callers
+  already follow), and refuses restricted PATs. Both need a caller that already holds
+  `roles.assign` at the project. Found by review of keyorixhq/keyorix#3993 (fuzz-corpus#91).
+- **Admin DSN host validation handles repeated bracket layers.** `SplitDSNHostList` now strips every outer bracket pair, not just one, so a host written with more than one layer reaches `validateAdminDSNHost` in the same normalised form as the driver sees it. `TestAdminDSNHost_DoubleBracketIPv6_Blocked` is the red/green guard; the `FuzzDSNHostsCoverDriverHosts` oracle strips brackets the same way. Closure: `dsn-double-bracket-ipv6-001`.
+- **`keyorix-migrate` Vault import now fails closed on a non-success read.** The hand-rolled
+  Vault client (`migrate/internal/vaultsource`) accepted only `status >= 400` as a failure, so a
+  3xx redirect — which the client already refuses to *follow* — had its un-followed body parsed
+  as the secret/list/mount response. It now treats any status other than 200 (and the
+  deliberately-handled 404) as an error and never reads the body, so a proxy/LB redirect or a
+  compromised Vault can no longer have a redirect body imported as a secret value. AppRole login
+  likewise succeeds only on 200: a 3xx or other 2xx login response no longer has its
+  `client_token` adopted as the session token. Guarded by
+  `INV-VAULTSOURCE-non-2xx-read-is-an-error` and new regression tests.
+- `server/authzdiff`: bind four bulk-secret operations into the authorization
+  differential — `bulk.delete` (secrets.delete@project), `bulk.rename`,
+  `bulk.suspend`, and `resume.all` (secrets.write@project). Each op is validated
+  by `TestV5ext3StrictSweep` (curated-variation strict sweep, 0 unexplained)
+  and `TestBulkSecretRouterGatesPresent` (structural gate-presence check, red
+  on gate removal). The per-item RBAC fallback (#r124) is confirmed to agree
+  with the router gate for all standard-sweep principals. Two waivers added:
+  `known-10` (machine actors get 400/500 from actorID=0 business rule) and
+  `known-11` (bulk.delete per-item read prerequisite not in router gate model).
+  Differential plants are not applicable for ops where the per-item RBAC
+  mirrors the router gate (gate removal changes HTTP status 403→200+empty, not
+  the allowed/denied classification). REST coverage: 101 → 105 of 212.
+  Deferred: `bulk.rotate` (fixture-blocked), SCIM, MFA step-up.
+- **Core refuses a suspended acting account at 8 more entry points.**
+  Access-review decide/revoke/attest, break-glass review, risk-exception
+  revoke, bulk rename, and suspend/resume of all project secrets now call
+  `requireActorActive` first (INV-CORE-mutation-refuses-inactive-actor),
+  guarded by `TestSuspendedActorRefusedAtEntryPoints` and
+  `TestCoreRefusesSuspendedActor`. The bulk-rename, suspend-all and
+  resume-all handlers answer that refusal 403 and a fault reading the account
+  503 `storage_unavailable` (was 500).
+- **The Kubernetes sync fetcher refuses an environment list that names one environment twice.**
+  The server keeps environment names unique within a project, so a list that repeats a name is
+  not an honest answer (a hostile or broken server). The fetcher used to resolve the name to the
+  last id listed and read the secret from that environment; it now fails the lookup without
+  listing or reading any secret.
+- **The Kubernetes sync fetcher refuses a secret list that names one secret twice.**
+  The server keeps secret names unique within a project environment, so a list that repeats a
+  name, on one page or across pages, is not an honest answer (a hostile or broken server). The
+  fetcher used to take the first listed id and stop; it now reads the whole list and fails the
+  lookup if the name appears more than once, without treating that as a removed secret. Because
+  a match no longer ends the walk, the number of list pages it will read per environment is
+  bounded (1000 pages of 100), where before only a missing secret walked to the last page the
+  server claimed.
+- **DEK rotation: a write that arrives during the re-encryption sweep is no longer sealed under the superseded DEK (#4654).** `Service.RotateDEKWithSweep` now holds the Service's write lock across the whole sweep and the switch to the new DEK, so an in-process `EncryptSecret*` call waits and then uses the new key; before, it could resume on the old DEK with the new key-version label and the value never decrypted again. Reads of swept rows during that window now wait instead of failing closed. Not reachable in shipped deployments (a running server holds `dek.lock`, so no server runs during `admin encryption rotate`); it affected in-process users of the package. Guarded by `TestRotateDEKWithSweep_WriteDuringSweepOpensAfterRotation` (INV-ENCRYPTION-dek-sweep-holds-service-write-lock).
+- **Two servers on one config can no longer both hold "the" DEK lock (#4249).** A relative `storage.encryption.dek_path` put `dek.lock` in each process's working directory, so a server started from another directory took another lock, did not exclude the first, and served the same database. Relative key paths are now defined against the config file's directory (like `storage.database.path`), and the server and `admin encryption` commands refuse to start from any other directory, naming the key and the fix (use absolute paths, or start from the config's directory). The configured values are not rewritten, so backup archives are unaffected. Upgrade note: `docs/UPGRADING.md` §6zm.
+- **A pre-manifest install with an interrupted `rotate-kek` is no longer adopted before it is opened (#2424, #2900).** On the first start after the upgrade that introduced `keyset.manifest.json`, a key set with a rotation staging file (`kek.salt.pending`, `dek.key.pending`) was recorded as generation 1 as it was, even when the rotation had stopped between its DEK and salt renames (old salt, new DEK). The runbook's fix for that state (the staged salt renamed into place) was then refused at the next start as a file from another generation. Boot now records such a set only after it has unwrapped the DEK, in the same start, and its warning names the staging files, the runbook section and, for `kek.salt.pending`, that `admin backup` refuses while it exists (#4105).
+- **An encoded KEK file no longer leaves its text in process memory (#4498).** With the `file` key provider and a hex or base64 KEK file, the encoded KEK stayed in memory after `Shutdown`: in the file read buffer and in a string copy made while decoding. The read buffer is now wiped, the KEK is decoded without a string copy, and failed decode attempts are wiped too. Accepted file formats are unchanged. Raw KEK files were already wiped.
+- **A failed webhook or Slack delivery no longer logs the channel's secret path token.** Slack-style webhook URLs carry their token in the path. Delivery failures from alert escalation and from the recover-admin alert used to write the full URL to the server log and into the returned error; they now name the destination by scheme and host only. If a channel's delivery failed on an earlier version, its token may be in old logs: rotate that channel's URL (#3426).
+- **The notification-channel SSRF guards now have tests that fail when a guard is removed.** Covered: the alert-escalation client refusing a redirect to a second host, create and update refusing a hostname that resolves to a private address or does not resolve, and re-checking a stored channel URL when it is read back. No behaviour change (#3427, #3625).
+- **A notification channel URL is re-checked every time it is read back from storage.** Create and update already refused private, link-local, loopback and non-https destinations, but a row rewritten afterwards (a restored backup, a direct database write, a row from before the guard) was trusted once it decrypted. Reading a webhook, Slack or Teams channel now re-runs the URL check on the decrypted value and refuses the row if it fails: `GET /notification-channels` and the list return an error naming the channel id, and alert escalation does not deliver to it. The error never contains the URL. Delete the channel and create it again with a valid URL. Hostnames are still resolved and checked when the connection is made, not on every read. Closes CodeQL alert #1209 (#3625).
+- The pgx claimed-length bound is now pinned end to end: the behavioural test asserts the
+  effective `MaxExpectedBodyLen`, the committed pgx and MySQL fuzz budgets are checked against
+  the product bound they were calibrated with, and the connect-site guard in `internal/dynamic`
+  also flags non-call references to `sql.Open`, `sql.OpenDB` in files that import pgx, methods named
+  `connectPostgres` and a mere mention of `pgxlimits.Apply`.
+- **A MongoDB dynamic-secret `admin_dsn` can no longer turn certificate verification off past the operator's transport policy (#4374).** `tls=true&tlsInsecure=true` (or `sslInsecure=true`) passed the TLS requirement while accepting any server certificate. It is now refused with a clear message unless `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport` is set, in which case it is allowed and logged as a warning. Revoking a lease that was issued with the option drops it and verifies the certificate, so against a target whose certificate the server does not trust the revoke fails and the lease stays `revoke_failed` with its MongoDB user still live: see `docs/UPGRADING.md` §6zi for what to do before and after upgrading. The same change closes a downgrade: a `mongodb+srv://` admin_dsn that wrote `TLS=false` or `SSL=false` (any option-name case) connected without TLS because the requirement was read case-sensitively while the driver is not.
+- PostgreSQL and MySQL admin_dsn transport options (`sslmode`, `tls`) are unchanged: those two backends are not covered by the transport flag today, which is documented here and pinned by tests until the question of extending it is decided.
+- **A hostile SMTP relay can no longer burn CPU inside the create-user request through SCRAM (#4383).** Setup-link email and the email notification channel let the mail library choose the AUTH mechanism, and it picked SCRAM with whatever PBKDF2 iteration count the relay announced, over a connection with or without TLS; a count of 2147483647 held the request for minutes. Mechanism choice now lives in `internal/smtpauth`: SCRAM, PLAIN and LOGIN are used only over TLS, SCRAM refuses a count above 1,000,000 before computing anything, and without TLS only CRAM-MD5 and NTLM remain (they never send the password). With `smtp.tls=none` and a relay that offers only PLAIN, LOGIN or SCRAM, authentication now fails with a message that says so and the setup link is handed to the admin for manual relay, as before for PLAIN and LOGIN. SCRAM-*-PLUS (channel binding) is no longer offered; plain SCRAM over verified TLS is used instead.
+- **The startup RBAC catalog top-up no longer re-grants a permission an operator removed.** A newly added canonical permission whose first grants had not all landed stayed pending as a whole, so while one baseline role's grant kept failing, every restart granted it again to the other baseline roles, including one the operator had just removed it from. The pending list is now kept per (permission, role) in system_metadata `rbac_reconcile_pending_grants_v2`: only roles whose grant has not landed are retried. Entries in the old per-permission format (`rbac_reconcile_pending_grants_v1`) cannot say which roles were still owed, so they are dropped on upgrade and logged by name, not granted; grant a missed baseline permission by hand if the log names one. An unreadable pending-grants row no longer stops the top-up on every startup: it is dropped the same way (logged by size, nothing granted from it) and the rest of the reconcile runs. The reconcile now runs under the `rbac-permission-reconcile` named lock, so two replicas starting together cannot save a stale pending list over one the other cleared. Each (permission, role) pair now leaves the pending list before its grant is attempted and returns only if the grant fails, so a failed save of the list after the grants can no longer leave a granted pair listed for the next restart to re-grant; if a failed grant cannot be put back on the list, it is logged by name ("grant ... by hand") instead of retried. Pending entries that are not a baseline (permission, role) pair are dropped. The startup reconcile is bounded by a 2-minute timeout, so a replica no longer waits without limit behind another replica's run. Guarded by `TestReconcileRBAC_PendingRemovalFromGrantedRoleKept`, `TestReconcileRBAC_LegacyPendingEntryGrantsNothing`, `TestReconcileRBAC_CorruptPendingRowDroppedTopUpContinues` `TestReconcileRBAC_ConcurrentRunsSerialised`, `TestReconcileRBAC_FinalSaveFailureThenRemoval` and `TestReconcileRBAC_PreGrantSaveFailureGrantsNothing`. Fixes-defect: REVIEW-4542-M1
+- **Verified the SSO/SCIM identity boundary against confusable account takeover.** Swept
+  every place a SAML/OIDC/SCIM identifier becomes a principal, group key, or
+  account-link and confirmed each folds or rejects confusables with the same NFC fold
+  storage uses (keyorix#4335, fuzz-corpus#112). The account-linking-by-email path links
+  an existing account only on an explicitly verified email (OIDC `email_verified`, or a
+  SAML provider's `TrustAssertedEmail` opt-in), so an unverified or confusable
+  (fullwidth/Cyrillic) email cannot take over a local account. No runtime change: a
+  table-driven probe and an INVARIANTS entry pin the behaviour.
+- **SSO login audit events name the client.** The `auth.sso_login` event of a SAML or OIDC login now records the same client IP as its session (the forwarded client behind a configured trusted proxy); it used to record none. Guarded by `server/http/handlers/sso_login_audit_client_ip_test.go`. (#2934)
+- **An SSO login whose session cannot be created is audited.** When a SAML or OIDC login has provisioned or reconciled the account and the session insert then fails, a failed `auth.sso_login_session_failed` event names the account and the client. The account and its grants are kept, and the next login reuses them without duplicating either. Guarded by `internal/core/sso_login_session_failed_test.go`. (#2839)
+- **Upgrade note for #3493: SCIM-created rows whose `externalId` starts with `sso:` are no longer SCIM-managed.** `sso:` is the scheme SSO sign-in writes (`sso:<provider>:<sub>`), so since #3493 SCIM refuses to create, read, update, deactivate, delete or group such an account. A SCIM connector that ever sent an `externalId` starting with `sso:` left a row SCIM can no longer deactivate, and an IdP disable or SCIM `active=false` for it revokes nothing: its PATs and sessions live until a Keyorix administrator suspends (`keyorix user suspend --id N`), deactivates (`keyorix user update --id N --active false`) or deletes (`keyorix user delete --id N`) the user, the PAT expires or the session lifetime ends. The inactivity sweep (`keyorix user suspend-inactive --days N`) is on demand only, not scheduled. To list the affected rows, join `external_id` to the `scim.user_provisioned` audit rows (a bare `external_id LIKE 'sso:%'` would also list every account SSO itself claimed or created); the statement is the same on SQLite and PostgreSQL and was run on both (`TestUpgrading6vCheckQuery_FindsOnlySCIMCreatedSSORows`, the PostgreSQL leg against a kpg database):
+
+  ```sql
+  SELECT u.id, u.username, u.email, u.external_id, u.account_state
+  FROM users u
+  JOIN audit_events a
+    ON a.event_type = 'scim.user_provisioned'
+   AND a.description LIKE 'SCIM provisioned user ' || CAST(u.id AS TEXT) || ' (%'
+  WHERE substr(u.external_id, 1, 4) = 'sso:'
+    AND u.deleted_at IS NULL
+  ORDER BY u.id;
+  ```
+
+  No rows means nothing to do; the check only sees accounts whose audit row is still within audit retention. Details: `docs/UPGRADING.md` section 6v, `docs/CONFIGURATION.md` "Offboarding an SSO / JIT account", threat model SCIM-7.
+- **`demo/vault-migration/run.sh` no longer puts the admin token, the login password or the dev Vault token on argv.** They go through a 0600 header file (`curl -H @file`), stdin (`--data-binary @-`) and `docker --env-file`; the argv-secret guard now also walks `demo/**/*.sh`.
+- **SSO account-change audit events name the client.** `auth.sso_jit_provisioned` and the group/role reconcile events (`auth.sso_groups_synced`, `auth.sso_roles_synced`, `auth.sso_reconcile_refused`, `auth.sso_reconcile_last_admin_removal_refused`) of a SAML or OIDC login now record the same client IP as the login's session (the forwarded client behind a configured trusted proxy); they used to record none. Guarded by `internal/core/sso_account_events_client_ip_test.go` and `server/http/handlers/sso_jit_audit_client_ip_test.go`.
+- **A TLS certificate replaced with its old mtime is now served (#4146).** The HTTP and gRPC listeners decided whether to reload the certificate and key from their modification times alone, so a replacement that kept the old mtime (`cp -p`, `rsync -t`, a restore from backup, some secret-store mounts) was not noticed and the old certificate stayed in service until a restart. Each check (at most once per `CheckInterval`, 30 s by default) now compares a content digest of both files and the identity of each (size, mtime, inode) and parses the pair from the same bytes it compared. A pair that does not load, including a certificate replaced before its key, still leaves the previous pair in service and is retried on the next check. A FIFO or device at either path is refused instead of blocking the handshake.
+- **WebAuthn registration refuses an attestation whose algorithm does not match its attestation key (#4545).** go-webauthn checks the statement signature with x509 `CheckSignature`, which ignores the curve, so a TPM, packed or android-key statement labelled ES256K (-47) over a P-256 key, or ES256 over a P-384 key, used to register. `internal/webauthnrp` now requires the statement's `alg` to name the first x5c certificate's key type and curve (also inside compound statements) and refuses a mismatch with the library's attestation-format error. Genuine ES256/P-256, ES384/P-384, ES512/P-521, RS*/PS* with RSA and EdDSA with Ed25519 attestations register as before; no change for fido-u2f, apple, packed self attestation or none. Guarded by `TestTPMAttestation_AlgMustMatchAIKKey`, `TestAttestation_AlgMustMatchCertKey` and `TestCheckStatementKeyAlg_AndroidKey`.
+- **Duplicate keys in an imported or configured YAML file are rejected in linear time.** The YAML
+  library takes O(n²) time and memory on a mapping that repeats a key and reports the error only
+  afterwards: a 20 KB file allocated about 1.4 GB, which the 100 MiB import size cap does not
+  bound (reported upstream at yaml/go-yaml#510). `keyorix secret import --format vault` and the
+  Kubernetes sync agent config now parse to a node tree first and fail on the first duplicate.
+  Files without duplicate keys decode exactly as before; operator-reachable only, there is no
+  network path.
+- **PostgreSQL and MySQL dynamic-secret targets now follow the transport policy (#4374).** Without `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport`, an `admin_dsn` must verify the server certificate: `sslmode=verify-full` for PostgreSQL (`verify-ca` only with a root certificate installed on the Keyorix server), `tls=true` for MySQL. `sslmode=disable`, `allow`, `prefer` (also the default when `sslmode` is not set), `require`, MySQL `tls=false` (also the default), `skip-verify`, `preferred` and `allowFallbackToPlaintext=true` are refused when a config is created or its `admin_dsn` replaced, decided from the parsed driver settings (so a `PGSSLMODE` environment value counts too). **Who is affected:** project admins whose PostgreSQL or MySQL configs use one of these settings. **Soft period:** a config stored before the upgrade keeps issuing for this release, with a WARNING and a `dynamic_lease.insecure_transport` audit event on every issue; the next release refuses it. **How to fix:** give the database a certificate the Keyorix server trusts and set `sslmode=verify-full` / `tls=true` with `keyorix dynamic-secret set-admin-dsn <config-id>`, or have the operator set the insecure-transport flag. Upgrade note: `docs/UPGRADING.md` §6zt.
 
 ### Added
 - **Operator and k8s-sync: suspended and expired source secrets are reported, never deleted.** A referenced Keyorix secret that is expired is retained in the cluster; one that is suspended is retained by default, or its managed keys are emptied with the new `KeyorixSecret` field `spec.onSuspend: Retain|Clear` (k8s-sync: `on_suspend: retain|clear`, Helm `onSuspend`). The Secret object is never deleted and a Secret the operator does not own is never touched; resuming restores the data on the next reconcile. Each state raises a `SourceSecretHealthy=False` condition (operator), a Warning Event `SourceSecretSuspended` / `SourceSecretExpired` (operator; a log line in k8s-sync) and a metric (`keyorix_operator_source_secrets{state}`; `keyorix_k8s_sync_secrets_total{outcome="source_suspended|source_expired|source_expiring"}`), cleared on recovery. Warnings also fire 30, 7 and 1 days ahead of an expiry. Fetch failures (server unreachable, timeouts, 5xx) still never modify the target Secret. The CRD change is additive and the default keeps the previous behaviour for the held keys. **A held source freezes only its own keys:** when one reference of a target is expired, or suspended under `Retain`, only that reference's keys are kept exactly as they are (never overwritten or deleted); the target's other keys keep syncing in the same single update, so a rotation of a readable sibling propagates (operator and k8s-sync). While a key is held the operator's `Ready` stays `False` with reason `SourceSecretExpired` / `SourceSecretSuspended` and the message names the held keys; nothing is written only when every reference is held. `onSuspend: Clear` is now applied to a suspended reference even while another reference of the same target is expired (only the suspended reference's keys are cleared).
@@ -562,6 +788,116 @@ In transaction mode the lock transactions also set `transaction_timeout = 0` (Po
 - **Refused suspend audit writes are now a metric.** `keyorix_audit_owed_failures_total` (authenticated `GET /api/v1/admin/scheduler-metrics` only) counts owed audit rows, such as a plain secret suspend's `secret.suspended`, that the audit log refused. It moves even when the pending record could not be written either, which `keyorix_audit_owed_pending` cannot see. Suspending is still never blocked by the audit log. See `docs/operations/metrics.md`.
 - **`storage.database.single_writer` (opt-in, PostgreSQL, one server): holder lock, write fence and write epoch.** With the setting on, the server takes a per-schema advisory lock at start-up (a second server, a server without the setting, and `admin --force` are refused while it runs), installs triggers that refuse every direct database write to the security tables from any other session while it runs, and polls a write epoch with a 1 s lease. If the fence cannot be installed and verified, the server refuses to start. The live state is in the start-up log, `GET /api/v1/system/info` (`database.single_writer`) and `admin validate --posture`, with the emergency two-step for a direct change (docs/single-writer.md). The fence's fingerprint includes the trigger and function catalog rows' versions and any child table, so tampering that is undone before the next poll is still seen, and any inheritance or partitioning involving a fenced table and any change to a fenced table's columns; the fence checks every row (a write through a parent table or partition root is refused), resolves no name through the writer's `search_path` (a temp table or a function or operator of a catalog's name cannot change what it checks), and the poller compares the epoch row's version, so a write that passes the fence is seen even if the writer moves the counter back; the server's session tag is set through a bind parameter (not in `pg_stat_activity`); and `admin validate --posture` reports a deviation when the server's database role is a superuser (below-SQL changes are the one bypass the fence cannot see). The fence also refuses a foreign write to its own holder and epoch rows (it decides from the row as it was), the poller compares the holder row's pid, tag hash and version with its own, a lock another role takes on those tables stalls the poll without costing the server its lock session, and a trigger on a security table that is not part of the fence is reported by `admin validate --posture` and keeps the server from trusting its caches. This release changes no cache: reads still confirm against the database. Off by default; with it off nothing changes, except that a start-up refuses while a single-writer server holds the database and removes a fence one left behind.
 - **`storage.database.single_writer`: the server's own writes to the security tables are tracked synchronously.** Every connection of a single-writer server reports its statements to an in-process tracker. A committed write to a fenced table moves a generation before the call returns, which the authoritative caches of the next change validate against. A savepoint rollback inside a transaction does not count as its end. Every move of the database's write epoch flushes the caches at the next poll; one no in-process write explains is also logged as an error and counted (`unattributed_bumps` in `GET /api/v1/system/info`). No cache consumes this yet; with the setting off nothing changes.
+- Fuzzing: an OS-level air-gap / egress harness (`internal/fuzzutil/osairgap`,
+  test-only) that runs real Keyorix binaries as a child process inside a fresh
+  network namespace (`CLONE_NEWNET`, loopback-only) and proves, at the OS layer,
+  that the child makes no egress attempt to anything outside loopback and the one
+  configured database endpoint. It complements the in-process resguard `NetMeter`
+  (which only sees dials routed through the seam it hands the code under test) and
+  the source-level `internal/egressguard` scanner (which cannot see a transitively
+  imported library that dials at `init`). Two detectors: netns containment (a
+  non-loopback connect fails with `ENETUNREACH`) and attempt detection (a loopback
+  canary that the child's proxy env points at, plus `/proc/<pid>/net/*` sampling).
+  New fuzz targets `FuzzEgressClassifier` and `FuzzProcNetParser` fuzz the oracle's
+  classifier and `/proc/net` decoder.
+- Fuzzing: `FuzzAirgapConfigFailClosed` (`internal/config`) fuzzes the air-gap /
+  connector configuration surface and asserts fail-closed startup per ADR-109 /
+  ADR-082 — connector validation rejects every config `server/wire_connect.go`
+  would `log.Fatalf` on, and the air-gapped autocert decision never fails open.
+- **`keyorix-server admin encryption clear-stale-salt-pending` removes an unused `kek.salt.pending` that blocks every `admin backup` (#4105).** With the server stopped it takes the database lock and the key-directory lock `rotate-kek` holds, and removes the file only when no `dek.key.pending` is present, the key-set manifest records no interrupted operation boot would still finish from it, and the DEK unwraps under the active KEK with the current passphrase. It records the removal as an `admin.encryption.clear_stale_salt_pending` audit event, refuses with `refused, nothing was removed: <why>` in every other case, and has nothing to do on a second run; `--dry-run` shows the decision. It never touches a `dek.key.pending`. The backup refusal, the boot WARN line, `admin validate --posture`, `admin diagnose` and `security.backup_refused` now name it instead of moving the file by hand.
+- **A backup refused for a key-rotation staging file is an `admin.backup_refused` audit event (#4105)**, written under the lock the backup itself would hold and only when the database is already at this binary's schema epoch, so a refused backup never migrates the database. When it cannot be written (a live SQLite server, another schema epoch, `--force`), stderr says so and the backup is refused exactly as before (exit 4). An archive taken before such a refusal then restores on the same host only with `--allow-rollback`. Documented in `docs/operator/j6-key-rotation.md`; upgrade note in `docs/UPGRADING.md` §6zr.
+- **Replace a dynamic-secret config's admin DSN in place.** `PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn`
+  and gRPC `DynamicSecretService.UpdateConfigAdminDSN` replace the stored `admin_dsn` without deleting and
+  recreating the config, e.g. to remove an option refused since #3952 (a private-CA `sslrootcert` or
+  `tlsCAFile`). The same checks as create apply: dynamic-secret admin authority on the config's scope (403 /
+  PermissionDenied), the private-network egress policy and the refused driver options (400 /
+  InvalidArgument). While the config has an active or `revoke_failed` lease the new DSN must name the same
+  host and port (for kubernetes the same `api_server`, `namespace` and `revocable`), because those leases
+  are revoked through it (409 / FailedPrecondition). The DSN is encrypted at rest, never returned, logged or written to the audit log; the
+  change commits together with its `dynamic_secret.config_admin_dsn_updated` audit row (503
+  `audit_unavailable` when the audit log refuses it, nothing changed).
+- **Find the dynamic-secret configs that need it.** `GET /api/v1/dynamic-secrets/configs/refused-admin-dsn?project_id=`
+  and gRPC `DynamicSecretService.ListConfigsWithRefusedAdminDSN` list, read-only, a project's configs whose
+  stored admin DSN names an option refused since #3952, with the refused option names and the live lease
+  count (never the DSN or an option value). Needs dynamic-secret admin authority on the project; the startup
+  warning still covers every project.
+- **`keyorix dynamic-secret set-admin-dsn <config-id>` and `keyorix dynamic-secret refused-dsn --project-id N`.** The first replaces a stored admin DSN in place (the #4193 route), for example to drop a private-CA `sslrootcert` or `tlsCAFile` that has been refused since #3952; the second lists the project's configs whose stored DSN names such an option, with option names only (`-o json|yaml` supported). The new DSN is read from `KEYORIX_DYNAMIC_ADMIN_DSN`, a hidden prompt or stdin and is never accepted as a flag (`--admin-dsn` is refused even with `KEYORIX_ALLOW_INSECURE_SECRET_FLAGS=1`); neither command prints it, and an error from the server is scrubbed of it.
+- **Replace a dynamic-secret config's admin DSN from the web.** The Dynamic Secrets page has a per-config "Replace admin DSN" form (shown to roles that can manage configs) and a banner for the selected project listing the configs whose stored admin DSN names an option refused since #3952, with a button that opens the form. Until now an operator in that state could fix it only from the CLI. The DSN goes into an uncontrolled `type=password` field with autocomplete off, is emptied on submit and on cancel, is never rendered, never part of a query key, and the mutation is dropped as soon as the form closes. The banner shows config names and refused option names only.
+- Test-only EX1 existence/enumeration oracle with a deterministic COST proxy
+  (`server/http/existence_cost_oracle_fuzz_test.go`): for a zero-authority actor it compares an
+  existing-but-forbidden id against a same-shape absent id across HTTP status, normalised error
+  text, response-body length bucket, information-bearing headers AND the resguard `DBMeter`
+  DB-query/rows delta — extending oracle 7 (status-only) into the length/timing dimensions it
+  named as uncovered. Includes a census over every single-id GET/DELETE op, an id-encoding fuzz
+  target (`FuzzEX1ExistenceCost`), an account-existence login pair, and a per-dimension red/green
+  of the detector. New guard `INV-HTTP-denial-cost-existence-independent`.
+- **Fuzz coverage for eight previously-unfuzzed small parsers/formatters (I7 sweep).** New
+  `go test` fuzz targets with real oracles, each red/green-proved against a planted defect:
+  the audit checkpoint high-water codec (`auditverify` `FuzzHighWaterRoundTrip`,
+  `FuzzParseHighWater`), the `audit_seals` parser (`FuzzParseSeals`), the retention-anchor
+  codec (`FuzzRetentionAnchorParse`), the audit-list keyset cursor codec read from the
+  `cursor=` request parameter (`core` `FuzzDecodeAuditCursor`, `FuzzAuditCursorRoundTrip`),
+  the key-set manifest codec (`keyfiles` `FuzzManifestRoundTrip`), and the on-disk restore
+  journal parser (`restorejournal` `FuzzJournalRead`). Each is registered in
+  `scripts/fuzzing/targets.d/` and documents in its harness what it does not verify. No
+  production code changed.
+- **Hostile-server fuzz harnesses for the AWS SDK v2 and Azure Key Vault clients.**
+  `fuzz/thirdparty/aws` and `fuzz/thirdparty/azure` drive the SDK clients behind the cloud
+  connectors against fake endpoints that answer with hostile bodies, headers and status codes,
+  and check that the client returns an error instead of panicking or hanging. The Azure harness
+  includes a verified reproducer for a malformed `WWW-Authenticate` challenge panic reported
+  upstream (Azure/azure-sdk-for-go#28004).
+- **Hostile-server fuzz harness for the MongoDB driver.** `fuzz/thirdparty/mongodb` drives
+  `mongo-driver/v2`, the client behind the dynamic-secrets and rotation MongoDB connectors,
+  against a fake server that replies with hostile OP_MSG/OP_REPLY and BSON bytes, and checks
+  that the client returns an error instead of panicking, hanging or exhausting memory.
+- Nightly strict-gate workflow for `FuzzOpenAPIStateful` (`.github/workflows/openapi-strict-nightly.yml`): runs the stateful OpenAPI fuzzer with `KEYORIX_OSF_STRICT=1` at 08:43 UTC, making any undeclared 5xx on a well-formed request fatal the morning after it lands rather than silent in the candidate list. Already-triaged bugs are waived by `osKnownUndeclared5xx` (#4132).
+- **KDF-invocation counter seam (`internal/kdfmeter`) for password-hash cost.**
+  Production credential paths in `internal/core` and `server/admin` now hash and
+  verify passwords through `kdfmeter.GenerateFromPassword`/`CompareHashAndPassword`
+  (thin wrappers over `golang.org/x/crypto/bcrypt`). With no observer installed —
+  the production default — the only added work per call is one atomic load and a
+  nil check; behaviour is byte-for-byte unchanged. A test-only observer (installed
+  by the resguard `KDFMeter`) counts invocations deterministically; a repo guard
+  (`TestKDFMeterSetObserver_NoProductionCallers`) fails the build if any production
+  file enables the meter.
+- **The server reports when `admin backup` is refused for a key-rotation staging file (#4105).** While a `kek.salt.pending` or `dek.key.pending` is in a replica's key directory, `GET /api/v1/system/info` carries `security.backup_refused` for administrators (`system.write`): `reason` `key-rotation-staging-file` (the same token as the backup's `keyorix-backup-refused` stderr line, exit 4), the files, `staging_salt_only` and a one-line remedy. It goes away once the file is moved. A monitor can alert on it even when a cron'd backup's output is discarded. Reading it never touches a staging file; the backup refusal and boot are unchanged. Documented in `docs/operator/j6-key-rotation.md`.
+- **The degraded break-glass count is visible to the people who read the posture.** `emergency_access.degraded_activations` (activations committed while the audit log refused their rows, whose audit rows are still owed) is now declared in the gRPC `EmergencyAccessPosture` message and described in the OpenAPI posture response, and the web compliance page shows it as a "Break-glass degraded (audit rows owed)" tile with a "Review owed" hint when it is above zero. An older server that does not send the field leaves the page unchanged. Guarded by `TestEmergencyAccessPosture_RESTFieldsAreDeclaredInProto`.
+- Test-only `internal/fuzzutil/resguard`: a shared fuzz resource-measurement
+  layer. A `Probe` wraps one fuzz input and returns a `Cost` vector (wall/CPU,
+  goroutines, threads, fds, alloc/live-heap, disk files/dirs/symlinks/bytes/
+  sparse-blocks, write bytes, network dials + bytes, virtual-time sleeps, log
+  bytes and DB query/row counts). Budgets are calibrated from the seed corpus
+  (p99 × factor → `testdata/resguard.json`), never hand-tuned. Includes an
+  air-gap network oracle (any non-loopback dial fails the input), cost-guided
+  coverage buckets (PerfFuzz on the stock `go test -fuzz` engine), a cross-input
+  drift watcher for leaks, and a secret sentinel that reuses the existing
+  `taint` sink. Composes `internal/fuzzutil/complexity` rather than duplicating
+  its allocation meter. A budget meter can also use an input-size-independent
+  `AbsMax` ceiling (`Budget.UseAbsolute`) for decompression-shaped targets, and
+  a slow-promoted input never counts its unmeasured allocation fields.
+- Test-only resguard pilots: the backupfmt archive extractor (disk bomb, `AbsMax`
+  red/green) and the Azure Key Vault connector (air-gap dials and metered
+  retry-delay backoff), each with a committed calibrated budget.
+- Test-only `internal/testutil/fuzzworld` integrity helpers: `WorldDigest` and a
+  schema janitor for leaked PostgreSQL fuzz schemas, plus a reset-soundness test
+  for the core sequence target on SQLite and PostgreSQL.
+- Long-lived **soak test for bounded resource growth** (`TestSoakBoundedGrowth`,
+  `server/http/soak_bounded_growth_test.go`). Drives a deterministic, seeded,
+  replayable stream of mixed operations (secret create/read/update/rotate/delete,
+  login/logout token churn, audit reads, project/environment churn) against the real
+  in-process stack (NewRouter + auth middleware + handlers + core + crypto + storage),
+  file-backed SQLite always and PostgreSQL when `KEYORIX_TEST_PG_DSN` is set, and
+  asserts bounded growth of goroutines, open file descriptors, heap-in-use after GC,
+  database+WAL size per logical record, audit-chain completeness, and probe latency
+  drift — the leak class per-input fuzzers cannot see. Duration is env-driven
+  (`KEYORIX_SOAK_OPS` / `KEYORIX_SOAK_DURATION` / `KEYORIX_SOAK_SEED`), short by default.
+- **Soak operation-sequence fuzzer** (`FuzzSoakOperationSequence`,
+  `server/http/soak_bounded_growth_fuzz_test.go`): maps corpus bytes onto operation
+  orderings and re-verifies audit-chain integrity and goroutine boundedness after every
+  sequence, so coverage-guided fuzzing can explore operation orders for a crash,
+  audit-chain break, or goroutine runaway.
+- **Web: administrators see a warning banner while every `admin backup` is refused (#4105).** When `GET /api/v1/system/info` carries `security.backup_refused` (a leftover `kek.salt.pending` or `dek.key.pending` in the server's key directory), the web app shows a persistent banner on every page for users with `system.write`, including Admin/System: what happened, the staging files, the server's own one-line remedy and a pointer to the "When `admin backup` stops after an interrupted rotation" section of `docs/operator/j6-key-rotation.md`. It goes away on the next system-info refresh after the file is moved. The web app has no Backup page, so the banner lives in the shared layout like the audit-owed and break-glass banners.
 
 ### Changed
 - **The Kubernetes operator and the k8s sync agent now report "Keyorix could not answer" explicitly instead of a bare `SyncError` / `failed`.** When Keyorix is unreachable, a request times out, or the server answers 5xx, the target Secret is still kept untouched and the sync is retried with backoff, as before. The operator's `Ready=False` reason is **unchanged (`SyncError`)**, so existing alerts keep firing; the new detail lives in the condition message (it starts with `KeyorixUnreachable:`), in one Warning Event `KeyorixUnreachable` raised when the state is entered (not on every retry), and in the metric `keyorix_operator_fetch_errors_total{reason="unreachable|timeout|server_error"}`, which counts each failed reconcile. A Normal Event `KeyorixRecovered` follows the first successful read. k8s-sync counts the target `failed` and `keyorix_unreachable` (`keyorix_k8s_sync_secrets_total{outcome="keyorix_unreachable"}`, `/status` `keyorix_unreachable`, `keyorix_unreachable=N` in the pass summary) and logs `KeyorixUnreachable (reason)`. Classification comes from the transport error and the status code only; a cancelled context and a plain 4xx stay unclassified. Other operator failures (missing token Secret, apply error) are also `SyncError` but have no `KeyorixUnreachable` message. Decision: Andrei, 2026-10-13 (review REVIEW-3175B point 1, alert continuity as for `UpstreamAccessRevoked`). The operator and k8s-sync docs tables are updated.
@@ -755,6 +1091,88 @@ In transaction mode the lock transactions also set `transaction_timeout = 0` (Po
 - **Sharing page: Edit and Revoke are disabled on shares you do not own.** The server only lets a secret's owner (who is still a project member) change or revoke its shares, and refuses admins and recipients; the page now says so on the row ("Only the secret's owner can change or revoke its shares") instead of offering an action that ends in a 403. The bulk-select checkbox follows the same rule. Server enforcement is unchanged.
 - **Inactive-user filter documented by its real rule.** The `filter=inactive` description of `GET /api/v1/admin/users` in the OpenAPI spec now says a user is inactive when the last login, or for an account that never logged in its creation date, is 30+ days old (the rule since #3740). Description only, no schema change.
 - **Web session-token guard scans for opaque tokens.** `sessionTokenNeverPersisted.test.ts` (INV-WEB-03) now also fails on a 32+ char hex or base64 run written to `localStorage`/`sessionStorage`, with a calibration case and a UUID allow-list.
+- **Azure AD rotation Graph client is now hardened like the repo's other
+  outbound clients (H1).** `internal/rotation/azure.go`'s Microsoft Graph client
+  gained a redirect policy that refuses all redirects and a `netutil` dialer that
+  refuses link-local targets. It still honours `HTTPS_PROXY`/`NO_PROXY` (the
+  guard then checks the proxy address). The Graph host is a hard-coded public constant, so
+  this is defence in depth against a compromised or man-in-the-middled upstream,
+  bringing the one remaining unhardened outbound client in line with
+  connect/notary/operator.
+- `admin validate --posture` no longer labels a weakening "explicit" when the config file only wrote the *other* side of a per-listener or per-channel setting. A file that enables rate limiting for HTTP and says nothing about gRPC, sets only the HTTP `metrics_token`, secures only one of the two SMTP `tls` keys, or pins a Shamir commitment on the primary key provider but not on a fallback now reports the silent side as `shipped-default` (#2895).
+- **`server.http.allowed_origins` refuses a `*` inside an entry (#4382).** `https://*` and
+  `https://*.example.com` were accepted and treated as patterns by the CORS layer, giving every
+  matching origin a credentialed grant. The same applies to a `*` in `server.http.domain`, the
+  default origin when `allowed_origins` is empty. List each origin explicitly. A configuration
+  that used such a value now fails to start, naming the setting (see the upgrade note in `docs/UPGRADING.md` §6ze).
+- **The authorization differential tells an unmet precondition from a denial (#4525).**
+  `mfa.activate`, `mfa.disable` and `mfa.recovery-codes.regenerate` have no RBAC gate and
+  answer HTTP 400 when the caller's account state does not allow them ("no pending MFA
+  enrolment", "MFA is not enabled"). The reference model and the REST outcome mapping now
+  have a `PreconditionFailed` outcome for exactly that, so the 18 sweep cases that waiver
+  known-12 absorbed agree without a waiver, and a handler that answers 200 or 403 for an
+  unmet precondition fails the strict sweep. Test-side only: no handler and no status code
+  changed. Waiver known-12 and its expiry row are removed.
+- **A backup refused for a key-rotation staging file is easier to see before the backups stop (#4105).** The refusal itself is unchanged (exit status 4, the `keyorix-backup-refused` line, no key file touched or deleted). Now the server start that keeps a `kek.salt.pending` logs that `admin backup` will refuse until the file is moved away, not only that it can be deleted, and `keyorix-server admin diagnose` prints `[WARN] backups would be refused: staging file present (<path>)` with the refusal's steps; for a `dek.key.pending` it says never to delete it by hand. Boot still keeps and removes exactly the same files. Documented in `docs/operator/j6-key-rotation.md` and `docs/operator/startup-refusals.md`.
+- **Dependency bump: `github.com/wneessen/go-mail` v0.8.1 to v0.8.2.** v0.8.2 fixes two go-mail advisories: GHSA-f82v-42xw-72cj (out-of-bounds read panic in the EML parser) and GHSA-w8w6-94hg-2qpm (CRLF header injection in the List-Unsubscribe helper, v0.8.1). Keyorix calls neither the EML parser nor the List-Unsubscribe helper, so neither is reachable here; this keeps the SMTP dependency current, with the connection-closing fixes in the same release.
+- **Dependency bump: `github.com/getkin/kin-openapi` v0.152.0 to v0.153.0.** The release brings fuzz-found nil-dereference and validation fixes (multipleOf, pattern without type, external $ref errors) and decodes YAML natively through go.yaml.in/yaml/v4, so oasdiff/yaml and oasdiff/yaml3 leave go.mod.
+- **Dependency bump: `go.mongodb.org/mongo-driver/v2` v2.9.2 to v2.10.0.** v2.10.0 fixes timeoutMS not being applied to session and transaction operations and adds two internal-use options; it also moves github.com/xdg-go/scram from v1.2.0 to v1.4.0.
+- **Dependency bump: `github.com/digitorus/pkcs7` v0.0.0-20261104113855-bd33e0b11a3d to v0.0.0-20261104125046-a476de3098e4.** The new revision adds RSASSA-PSS signer-info support to signature verification. The CBC padding validation fix is already on main.
+- **CI: `assert-leg-completeness` runs as steps of `static-analysis`.** The five assertions moved into the existing job (same needs, same condition), so a round has one runner, one checkout and one Go setup fewer. The required context name stays: the old job is kept as a job that never runs and reports `skipped`, which satisfies it. A red assertion now turns `static-analysis` red, which build-and-test already requires.
+- **`GET /api/v1/compliance/posture` now has a response schema.** `components.schemas.CompliancePosture` describes every group the endpoint returns, including `emergency_access.degraded_activations`, `access_requests`, `certificates`, `supply_chain` and `trend`, so generated clients see them. `TestCompliancePostureSchemaMatchesHandlerBody` fails when `core.CompliancePosture` and the schema drift apart. The CLI's generated client is regenerated; no wire change.
+- **Help text and output no longer cite internal notes.** `keyorix --help` pages (user, invite, request, machine, rotation, secret, trust, bundle, license, status, mfa, run, dynamic-secret and others), the `keyorix compliance report` "Audit integrity" heading, the `keyorix login` MFA grace-period warning and the server's "old audit-hash format" verification reason said things like "(ADR-024)", "since #3952" or "pre-#1452 ... matches neither encoding". They now say the same thing in plain words. Behaviour, exit codes and JSON field names are unchanged. Guarded by `TestHelpTextHasNoInternalReferences` (cli/cmd).
+- **Boot failures exit 78 or 75 instead of 1, and the shipped systemd unit stops restarting on 78.** A start that only an operator can fix (refused config, missing or unusable key material, missing or wrong master passphrase, database login refused) exits 78; a dependency that may come back (cloud KMS, its sign-in endpoint or remote database unreachable, a KMS answering 5xx or throttling, or a key-provider fallback chain with a member that could not be reached) exits 75; everything else stays 1. One plain hint line is printed last on stderr. `deploy/edge/keyorix-server.service` gets `RestartPreventExitStatus=78` and `RestartSec=30` (was 5: one delay for every restart, crashes included). `deploy/edge/edge_exit_codes_test.go` fails if the unit and `server/boot_exit.go` disagree; `docs/edge-deployment.md` §7a and an upgrade note say what happens on each class. Not run: a real systemd, a container start (pending e2e VM).
+- The egress inventory guard (`TestEgressEveryDirectDependencyIsClassified`) now derives a module's direct dependencies from the imports of its Go files, test files included, instead of the `// indirect` markers of `go.mod`, so a `go mod tidy` (a Dependabot PR) can no longer turn a green guard on main red. Its failure message names the dependency, the importing file and where to add the classification row.
+- **Upgrade note: the Kubernetes sync agent now needs a server that sends snake_case wire keys (`project_id`, `environment_id`), i.e. v0.95.0 or newer.** Against an older server every secret is refused (the target is reported as failed and retried; nothing is removed). Upgrade the server first.
+- **Boot migration records whether the legacy service-account tables are empty (#2541, stage 1).** Every boot now counts the rows of `api_clients` and `api_tokens`. When both are empty it records `service_accounts_purge_v1 = empty` in `system_metadata`. When either holds a row it removes that marker and logs `WARNING: legacy service-account tables are not empty (api_clients: N rows, api_tokens: M rows)`, with no change to any row and no refusal to start. No authentication path has accepted these credentials since v0.87.0. Removing the tables is planned and will be gated on this marker. Guarded by `TestLegacyServiceAccountsState_*` (fresh install plus every v0.91.0–v0.96.3 release snapshot, on SQLite and PostgreSQL) and `TestNoLiveWriterForLegacyServiceAccountTables`.
+- **`total_reads` is now opt-in on the secret versions listing (#3444).** `GET /api/v1/secrets/{id}/versions` returns `data.total_reads` only with `?include=total_reads`, and gRPC `GetSecretVersions` only when `include_total_reads` is set, the same as `GET /secrets/{id}` (#3113). The count is O(reads) over the access log, and the versions page paid it on every call. `keyorix secret versions` asks for it, so its output is unchanged. API or SDK callers that read `total_reads` from the versions response must now request it; version rows (`ReadCount`) are unaffected.
+- **CI: `fuzz-changed` runs once the quick CI of a PR head is green (MQ-LEVERS-1).**
+  The three fuzz-changed jobs move from `fuzz-changed.yml` into `ci.yml` after
+  `build-and-test`, keeping the check names (`fuzz-changed`, `fuzz (shard N)`). A newer
+  push cancels the run with the rest of ci.yml, so fuzz shards no longer run on heads
+  that already fail the quick tests. When `build-and-test` fails, is cancelled or is
+  skipped, `fuzz-changed` is skipped.
+- **Documented why identity folding uses NFC, not NFKC.** `internal/identity`
+  now states that compatibility variants (fullwidth letters, ligatures, roman
+  numerals) are distinct principals by design, and that SSO/SCIM mapping must
+  fold or reject at its own boundary. A test pins the behaviour. No runtime
+  change.
+- **`admin restore --overwrite-existing` no longer replaces a database that holds data on its own.** A target whose tables hold rows (anything outside `system_metadata`, and audit events other than the `admin_cli` bookkeeping admin commands write) is refused with `the restore target database holds data (tables with rows: ...)` (`ErrRestoreTargetPopulated`) before the archive is extracted or any key file is staged: key files, key-set manifest and database stay byte-identical. `--overwrite-existing` alone keeps working for its re-run case (an empty, migrated database left by an interrupted restore). Replacing a deployment's data now also takes `--replace-existing-data`; on PostgreSQL those rows are deleted inside the load transaction, so back the target up first. Scripts that restore over a populated target with `--overwrite-existing` must add the new flag. Guarded by `TestAdminRestore_{SQLite,Postgres}_OverwriteExisting_PopulatedTarget_RefusedKeysByteIdentical` (MIGRATE-VERIFY-1 (b)).
+- **`admin restore` refuses a target whose servers use a newer DEK rotation protocol, and SQLite servers now record theirs.** Every server start with encryption enabled on a local database now records `dek.rotation_protocol` in `system_metadata`. Until now only PostgreSQL starts did, and SQLite got it only from a rotation. `admin restore` now reads it from the target the way `admin encryption rotate` already did: an admin binary older than that protocol is refused (`this binary's DEK rotation is older than the one this database's servers use`) before the archive is extracted or any key file is staged. It refuses even with `--overwrite-existing --replace-existing-data --allow-rollback`. A target without the marker, such as an empty data directory, is not affected. Guarded by `TestSQLiteServerStart_RecordsRotationProtocol_OlderAdminRefusesRotateAndRestore` (the real server binary on SQLite) and `TestAdminRestore_{SQLite,Postgres}_TargetRecordsNewerRotationProtocol_Refused` (KEY-ROTATION-TAILS-NOV-1).
+- **A recovery code can replace a lost authenticator (#4224).** `POST /api/v1/auth/mfa/disable` and `POST /api/v1/auth/mfa/recovery-codes/regenerate` accept an unused recovery code in `code` as the re-authentication proof, so a user who lost the phone can disable TOTP and enrol a new device without an administrator reset. The code is consumed in the same transaction as the change (if the change fails, nothing changes and the code stays unused); every refusal answers HTTP 400 `invalid code or password` and counts toward the account lockout like a wrong TOTP code; a locked account is refused before the code is looked at; two concurrent requests with the same code cannot both succeed. Recovery codes keep working in FIPS 140-only mode, where TOTP codes are refused. The audit rows `mfa.disabled` and `mfa.recovery_codes_regenerated` record `method: recovery_code`, and a disable still ends the user's other sessions. The password alone is still refused on an account with a second factor. Only the `code` field can carry a recovery code: the handler passes `code` and `password` to the core separately, and a recovery code sent in `password` is checked as a password (refused, not consumed), so a password is never hashed or consumed as a recovery code. `docs/operator/lost-totp-runbook.md` section 2 describes the flow; the administrator reset stays the fallback.
+- **Merge-queue slimming can now be enforced per lever (ci.yml).** The `select` job
+  passes `MQ_SLIM_LEVERS` to `scripts/ci/mq_slim.py`, the `leg_tests` and `gate_*`
+  outputs reach the legs, and the seven guard skips that no shadow decision measures
+  become their own `guards` lever, which a sampled full run also runs. With the
+  repository variables unset nothing changes (shadow).
+- **CI: less runner contention in the merge queue (MQ-RUNNER-LOAD-1 P1, P2).** The
+  nightly and scheduled workflows move out of the 02-05 UTC merge-queue peak to
+  06-08 UTC (same order, same off-minute convention). In a merge_group run,
+  `preflight` and `lint` are skipped when the group commit has the byte-identical
+  git tree that a passing `pull_request` run of the PR head already tested; any
+  other case, including a lookup error, runs them as before. Job names and the
+  required checks are unchanged.
+- **SQLite accepts `storage.database.audit_durability: standard`, for read audits only (ADR-112 Amendment 7).** It used to refuse to start. At `standard` a SQLite server opens one extra connection to the same database file with `synchronous=NORMAL`, and the audit flusher commits a batch on it only when every row is a successful secret-value read audit. Secret mutations, their audit rows, denied reads and mixed batches stay on the `synchronous=FULL` pool. A process crash loses nothing; an OS crash or power loss can lose a tail of read-audit rows written since the last disk sync, with no time bound on SQLite, never a gap in the audit chain or a committed mutation. The SQLite default stays `strict` and opens nothing new. Guarded by `INV-STORAGE-sqlite-normal-conn-read-audit-only`; upgrade note in `docs/UPGRADING.md` §6zp.
+- The Audit page shows readable labels for `auth.sso_login_session_failed`, `auth.sso_reconcile_refused` and `auth.sso_reconcile_last_admin_removal_refused` instead of the humanized event name.
+- **The first start after an upgrade scans the audit history once, in the background.** The recover-admin alert job reads the audit table from its saved position (from the first row on an install that never saved one) to its last row in windows of 100,000 ids, one short read per window, and saves its position after every window. It runs in the background scheduler, not in the start-up path, so the server answers requests while it runs. If the server is stopped part-way, the next start continues from the last finished window, and each recover-admin use is alerted exactly once. For an audit table of ordinary size the scan is over within seconds to a few minutes; a table of many millions of rows takes proportionally longer. Afterwards each run reads only the rows added since the previous one. Nothing in the audit table is changed. A test on a SQLite database of about 100,000 audit rows pins the window boundary and the resume after a stop (`TestRunRecoverAdminAlerting_100kRows_WindowBoundaryAndResumeAfterKill`).
+- **Unknown keys in the k8ssync agent config are now rejected.** The agent used to ignore a key
+  it did not know, so a typo such as `prune_on_revok:` left it running with the default. It now
+  refuses to start with an error that names the key and its line (never the value). A config that
+  carries extra keys today must have them removed; the keys the agent reads are `keyorix_url`,
+  `project_id`, `interval`, `health_port`, `cleanup`, `prune_on_revoke`, `on_suspend`,
+  `mass_prune_ack` and `mappings` (each with `ref`, `namespace`, `name`, `key`). The shipped Helm
+  chart, `docs/k8s-sync.md` and the e2e config only use these keys.
+- **YAML parsing moves from the archived `gopkg.in/yaml.v3` to `go.yaml.in/yaml/v4` (v4.0.0).**
+  `gopkg.in/yaml.v3` has been archived upstream and receives no fixes; v3 of the maintained
+  fork is security-fixes only, and active development is on v4. The classic `Unmarshal`,
+  `Marshal`, `NewDecoder` and `NewEncoder` entry points keep their v3-compatible settings,
+  so config, import and export parsing behave as before. The guard tests that forbid the
+  YAML library in `internal/core` and inventory its egress now name the v4 import path.
+  One operator-visible difference: a config type error now reads `yaml: construct errors:
+  line N: cannot construct !!str ... into bool` (was `yaml: unmarshal errors:` / `cannot
+  unmarshal`); the `unknown key "X" under <section>` rewrite is unchanged.
+  Duplicate keys in a mapping still cost quadratic time and memory in v4 (reported upstream
+  as yaml/go-yaml#510).
 
 ### Deprecated
 - **`storage.database.insecure_audit_skip_durable_sync`** is an alias of `audit_durability` for one minor release (`true` = `standard`, explicit `false` = `strict`) and logs a deprecation line; setting both keys to conflicting levels refuses to start.
@@ -1014,7 +1432,7 @@ In transaction mode the lock transactions also set `transaction_timeout = 0` (Po
   within seconds of the first start (the log says `first tick in 0s`). A longer chain is still
   re-walked over 7 daily ticks; `keyorix audit verify --full` proves it at once. What `VALID`,
   `NOT PROVEN` and `BROKEN` mean is unchanged. Upgrade note:
-  `docs/upgrading.d/audit-verify-after-v096-upgrade.md` (#3743).
+  `docs/UPGRADING.md` §6zc (#3743).
 - **`keyorix run --var` read every secret in the environment.** It fetched (and audited as `secret.read`) the value of all secrets in the project and environment and then filtered, so a CI identity injecting one secret looked like it had read the whole project and tripped the `principal_breadth` anomaly rule. It now reads only the secrets named by `--var`; `--derive-names` is unchanged.
 - **`keyorix compliance verify` rejected every genuine evidence pack.** The server binds the signature to the pack's canonical filename (carried in the `.sig`), but the CLI never sent it, so verification always failed with "presented under the wrong filename". The CLI now sends it.
 - **Demo seed no longer leaves a red `principal_breadth` alert.** The seed's own setup calls (13 secrets) are acknowledged with the other first-observation alerts.
@@ -1247,6 +1665,158 @@ In transaction mode the lock transactions also set `transaction_timeout = 0` (Po
 - Web: the project Settings "Require MFA" Save is offered only to a session that holds both `roles.assign` and `secrets.write` (the server needs both: the route checks `secrets.write`, the handler `roles.assign`), so a custom role with only `roles.assign` no longer sees a Save that ends in a refusal.
 - Web: the Dynamic Secrets page offers New config, the classification picker and lease management to a session with `secrets.write` (what the server routes require) instead of to install administrators only.
 - **Roles modal: the permission group headings are readable.** They used the muted text colour (2.5:1 in the light theme, 3.5:1 in the dark one); they now use the secondary text colour.
+- `admin diagnose` is read-only: with missing key files it reports each missing absolute path and creates nothing (no salt, DEK or `dek.lock`). It also reports a DEK or salt that is missing from an otherwise present key set instead of generating it.
+- With a relative `storage.encryption.dek_path` / `salt_path` the server logs one startup warning naming the resolved absolute key paths and the `dek.lock` path (relative key paths resolve against the working directory, not the config directory; where keys are read from is unchanged). The "another process already holds the DEK lock" refusal now names the lock file (`... at /abs/path/dek.lock`).
+- **`verify-release.sh --skip-binaries --assets-dir DIR` no longer fails `release.assets`
+  for the binaries it was told to skip (#4269).** The documented air-gapped transfer
+  (signed files plus SBOMs, no binaries) ended `release.assets FAIL: 14 missing ... of 32
+  expected assets` and `RESULT: FAILED - do not deploy`, while the same flags online
+  passed that check and ended INCOMPLETE (exit 2). With `--skip-binaries` and a directory,
+  the 14 binaries are now not required; an unknown file in the directory, a missing SBOM,
+  an SBOM or `checksums.txt` that does not match, still FAIL. The self-test gains the
+  offline flag matrix, the negative cases and a check that the 32 expected names equal
+  what `make -n release` and `release.yml` emit.
+- **Persisted `created_at` / `updated_at` stamped in UTC on non-UTC hosts (SQLite).** `CreateSecret`, `CreateFolder`, `CreateSecretTemplate`, share creation (`ValidateShareRecord`), the first seed of the role-permission generation row and three server boot writers (the key-directory lock mode, the two ADR-112 grace markers) handed a host-zone `time.Now()` to a plain create, which GORM stores as given. On SQLite that is text carrying the host offset (`... +0900 JST`) that does not order against the UTC text every other writer stores; a predicate such as `updated_at <= <UTC bound>` missed a row written moments earlier. Each now writes `.UTC()`. PostgreSQL stores an instant (`timestamptz`) and was never affected. **No data migration:** rows already written keep their text and still read back as the right instant (the readers parse the host-zone form); only new rows are UTC. Known remaining sites, tracked: `secret_versions.created_at` (`storeSecretVersion`) and the schema-epoch rows of `system_metadata`.
+- **A MySQL client panic during dynamic-secret `Issue` no longer leaves an unleased account on the target (#4378).** The panic was already contained as `ErrEngineClientPanic` (#4133), but if it happened after `CREATE USER` ran (for example while running the creation template or reading the server's reply), the `kx_dyn_*` account stayed on the database with no lease to revoke it. `Issue` now drops the account before the panic reaches the containment wrapper, as the template-failure path already did. Guarded by `TestMySQLIssue_PanicInGrantDropsCreatedUser` and its siblings in `internal/dynamic`.
+- **gRPC: a canceled request is `Unavailable`, not `Internal`.** The family mappers (`mapRoleError`, `mapUserError`, `groupError`, `mapProjectError`, `mapMachineError`, `mapShareError`, `mapDynamicError`, `mapSecretACLError`) passed `context.Background()` to the shared classifier, so a request whose context was canceled while a core call ran was not recognised as an authorize outage and answered `Internal` where REST answers 503. They now take the RPC ctx. `mapSecretError` (and the share scope resolver's read errors) answer through the same classifier, so a secret RPC's audit or storage outage is `Unavailable` too (it was `Internal`). The sentinels the old `mapSecretError` switch listed keep their codes and client texts. Sentinels it did not list now answer their class with the class's default text instead of `Internal` "secret operation failed": `ErrSecretInvalidInput` is `InvalidArgument` "invalid request", `ErrSecretNotDeleted` is `FailedPrecondition`, and a conflict other than a secret name or version (e.g. `ErrDuplicateSecretDependency`) is `AlreadyExists` "already exists".
+- A leftover `storage.encryption.salt_path` no longer stops an install on a non-password key provider (`env`, `file`, `exec`, `shamir`, `tpm`, `aws-kms`, `gcp-kms`, `azure-kms`) from booting (#4395). Only the `password` provider, or a `password` fallback, reads a salt; for the others the key is ignored with one WARN line (`storage.encryption.salt_path (...) is unused by provider <type> and is ignored`) instead of the second start refusing with "key material is an incomplete set". A missing or unreadable salt is still refused under the `password` provider.
+- An absolute `storage.encryption.dek_path` with no `salt_path` (every non-password provider) no longer fails with `open DEK lock file: access denied: path ".../dek.lock" must be relative` (#4396). It is handled like an absolute `dek_path` and `salt_path` in one directory: the keys, `dek.lock` and the `.pending` files sit beside the DEK. Absolute `dek_path` and `salt_path` in different directories are still refused.
+- A `tpm`, `aws-kms`, `gcp-kms` or `azure-kms` provider with an absolute `dek_path` writes its wrapped KEK under the key base `wrapped_key_path` is resolved against everywhere else, so the second start no longer refuses the key set as incomplete. `admin encryption validate` and `fix-perms` no longer fail on a non-password install, and no longer report a stale `kek.salt.pending` as a rotation in progress there. `admin restore` of a backup that archived a now-unused salt (taken by an earlier version with `salt_path` still set) restores the other key files and skips the salt with a log line instead of refusing the key-file set.
+- **The audit page's failed-attempts filter includes failed second factors (#3363).** The
+  dashboard's "Failed Second Factors" card now lands on a list that shows them.
+- Sharing a secret with a user who was deleted but still holds a project role grant (or a group deleted mid-request) answered an undeclared 500 "Failed to share secret". It now answers the same 403 an unknown recipient gets. Found by the nightly strict OpenAPI fuzz (#4641).
+- **`GET /api/v1/secrets/{id}/shares` no longer answers an undeclared 500.** The handler classified errors by message text and ended in `default: 500`; it now goes through the shared error mapper. An expired secret is answered 404 `Secret not found` (it was a 500, found by the strict OpenAPI fuzz, #4653), a storage read fault in the membership or share lookup is the shared 503 `storage_unavailable` with `Retry-After`, and an id of 0 is a 400. The spec now declares 400 and 503 for the operation. Who may list a secret's shares is unchanged.
+- **`keyorix-server admin encryption status` now exits non-zero when it cannot read the key state** (#4270). No keys yet (no wrapped DEK at `dek_path`), a wrong passphrase, a missing passphrase source, or a live server holding the DEK lock still print the same `❌`/`⚠️` line, but the command then exits 1, like `admin encryption validate`. A preflight such as `encryption status && encryption rotate --confirm` no longer continues past a failed state check. A healthy key set and `Enabled: false` still exit 0.
+- **`keyorix-server admin encryption init` now exits non-zero when encryption is disabled in the configuration.** It printed `❌ Encryption is disabled in configuration`, created no keys and exited 0, so a bootstrap script's `encryption init && ...` carried on with no keys. The message is unchanged; `fix-perms` already refused the same way.
+- **`GET /api/v1/audit/verify` for a sealed chain now carries a non-empty `reason`.** Status `sealed` already returned the seal text in `state_reason`; `reason` was absent (it was only set for `broken`), so a client that renders `reason` printed an empty one (#4230). `reason` now repeats the seal text; `first_broken_id` stays absent for a sealed chain.
+- **`POST /api/v1/audit/migrate-chain-encoding` on a chain with a gap answers 409, not 500.** The pre-flight refusal ("refusing to re-encode the audit chain: event N's prev_hash does not link ...") is now returned as `409 Conflict` with the refusal text in `message` and `details.code` = `audit_chain_reencode_refused`, for the preview and the real run. It used to reach the client as "an internal error occurred" (#4230). Classified by the typed sentinel `storage.ErrAuditChainReencodeRefused`.
+- **Compliance controls no longer claim what a failed break-glass read did not collect.** When the break-glass activations of a project could not be read, the `emergency-access` control was already Unknown but its detail still said "(all audited)"; it now says UNKNOWN and gives the counts of what was read. When the independent-reviewer lookup itself failed, the `emergency-access-independent-reviewer` detail no longer says "an independent reviewer is available". Healthy details are unchanged.
+- **A sanctioned audit retention purge no longer reads as truncation (#4351).** A purge that removed every audit row lost the cumulative purged count, so the next verify said "truncated below the certified high-water mark"; a purge that removed the row the latest checkpoint certified as head made verify say "certified by checkpoint #N is missing". Both left the trail BROKEN until re-baselined. The emptying purge now signs a restart anchor carrying the count, and a certified head below an authenticated anchor's purge boundary is accepted as purged, online and in `admin verify-audit` alike. Detection is unchanged: rows removed without an anchor, an anchor with a changed count, an anchor from another chain, and a row put back below a restart anchor stay BROKEN. A trail that already reads BROKEN for this reason is not repaired retroactively.
+- **`admin verify-audit --db` works on a WAL-mode SQLite copy in a read-only directory and leaves it untouched (#4350).** Every keyorix SQLite database is WAL-mode, and opening one in place, even read-only, created `-wal`/`-shm` beside the evidence copy and failed with SQLite error 1544 on a read-only directory. The verifier now copies the database and its `-wal` (if any) into a private `0700` directory under `$TMPDIR`, verifies the copy and deletes it afterwards, also on error and on SIGINT/SIGTERM. The copy is the whole database, so point `TMPDIR` at the evidence volume; after a SIGKILL or crash, delete any leftover `keyorix-audit-verify-*` directory under `$TMPDIR`. Only `--db` copies: the configured database (verify-audit without `--db`) and the automatic verify after `admin restore` are still read in place and need no `$TMPDIR`. A `-wal` beside the `--db` file that is not a regular file is refused instead of left out of the copy. An un-checkpointed `-wal` is still read (no `immutable=1`). Not enough free space under `$TMPDIR` is a clear input error. Guarded by `TestOpenSQLiteReadOnly_WALFileInReadOnlyDirVerifies`, `_WALFileLeavesDirectoryUnchanged`, `_UncheckpointedWALRowIsVerified`, `TestVerifyRestoredAudit_WALDatabaseNeedsNoTempDir`, `TestVerifyAudit_ConfigFallbackWALDatabaseNeedsNoTempDir`, `TestVerifyAudit_DBCopyRemovedOnSIGINT`, `TestOpenSQLiteReadOnly_NonRegularWALRefused` and the `FuzzAuditVerifyHostileSQLiteFile` oracle, which no longer tolerates the sidecars.
+- **A rejected `server.http.host` / `server.grpc.host` is no longer echoed in the startup error.** A `${VAR}`-expanded secret placed in a host field could reach the error text (found by `FuzzConfigLoadValidate`); the error now names only the field.
+- **A degraded break-glass activation now shows in the compliance posture at once.** The posture's `emergency_access.unreviewed_activations` (and the oldest-unreviewed age, and with them the `emergency-access` control) skipped an activation made while the audit log was refusing writes until it was older than the review window, although its review is mandatory from the moment it exists and the review reminder and `security.break_glass_degraded` already listed it. The posture, the reminder and the status now agree on the same set; a test pins that with one fixture.
+- **`keyorix audit verify` on a sealed audit chain.** It printed "audit chain verification FAILED (first broken id 0): " with an empty reason (#4230). It now prints `Audit chain: SEALED` with the server's `state_reason` (seal number, time, operator), in text and in `--json`, and exits 4, the code `keyorix-server admin verify-audit` uses for SEALED. 4 is also the CLI's permission-denied code, so read the printed status when a script branches on it.
+- **A refused `--new-passphrase-file` named `--passphrase-file`.** The refusals for a passphrase file or descriptor (missing, group- or world-readable, foreign owner, empty, unreadable fd) and the "not set" hint printed the primary flag's name even for the second passphrase of `admin encryption rotate-kek` and `migrate-provider` (#4217). They now name the flag that was given (`--new-passphrase-file`, `--new-passphrase-fd`, `--new-passphrase-stdin`).
+- **The Compliance page's audit-chain tile no longer lags `audit verify`.** The tile showed the scheduler's last tail check (once a day by default), so it could report 13 chained events while `audit verify` walked 259 (#4186). A posture request that finds the cached check older than 5 minutes now recomputes it with the same bounded tail check `audit verify` runs; inside the window the cached value is served (marked `stale` with the newer-events count after one minute). If the refresh fails, the previous value is kept and marked `stale` rather than failing the page, and the refresh is retried after the window, not on every load. Without incremental audit verification configured, the posture still walks the chain as before.
+- **`DeleteEnvironment` can no longer delete an environment a concurrent `RestoreProject` just revived (#4287).**
+  On Postgres the storage call counted an environment's active secrets and soft-deleted the
+  environment in separate statements, with nothing locking the environment row, so a restore
+  could commit between the two and the environment was deleted with active secrets inside.
+  It now row-locks the environment (unscoped `FOR UPDATE`) before the count, in the same
+  transaction as the soft-delete. Not reachable through the API today (the scope middleware
+  looks the environment up first). The `RestoreProject / SecretNode / Environment` row of
+  `docs/child-parent-liveness-exempt.tsv` moves from `UNSAFE-OPEN` to `SERIALIZED`, proven by
+  the two-pool Postgres test `TestDeleteEnvironment_CannotDeleteEnvironmentRevivedByConcurrentRestoreProject_Postgres`.
+- **`POST /system/init` refusals now carry typed codes.** A wrong or missing bootstrap token answers 403 `InvalidBootstrapToken`; a server with no `KEYORIX_BOOTSTRAP_TOKEN` answers 403 `BootstrapAPIDisabled` with the hint "Set KEYORIX_BOOTSTRAP_TOKEN or use `keyorix system init` on the host", instead of a generic `Error`. The token comparison and the order of checks are unchanged, and neither answer reveals whether a user exists.
+- **The audit-verify reason for an un-migrated hash encoding is now plain words an operator can act on.** It says the event was hashed with the old audit-hash format, that this is an upgrade step that was not run and not evidence of tampering, and to run `keyorix audit migrate-chain-encoding` (preview, then `--confirm`). The offline verify result gains a stable `reason_code` (`legacy_hash_encoding`). `accept-loss` no longer reads the verifier's reason text to recognise this case: it re-derives the stored row's hash, so rewording cannot change its refusal.
+- **Dashboard Recent Activity no longer fills with scheduler heartbeats (#4184).** `GET /api/v1/dashboard/activity` leaves out `admin_job.*` rows written by the system actor (the anomaly-alerts job logged one every pass). An admin-triggered run is still shown, and the audit log page still lists every row. The empty-pass `admin_job.anomaly_alerts_run` row itself is still written: the admin-job audit-completeness test requires it. The match is NULL-safe, so a legacy row with no actor type that names a user stays in the feed.
+- **The audit log filters search the whole log (#4185).** The actor, actor-type (Human / Machine) and event-type filters on the Audit Log page are sent to the server (`/audit/search?actor=`, `/audit/logs?actor_type=&action=`) instead of filtering only the 100 newest loaded rows, so a machine identity's events are found however old they are. No API change.
+- **The Compliance audit-chain tile says what it counted (#4186).** `GET /api/v1/compliance/posture` `audit_integrity` now carries `head_id`, and, when the last chain check is older than a minute, `stale`, `latest_event_id` and `events_since_check` from one indexed lookup of the newest event id (no chain walk). The tile shows the head id, the last-checked time and at most how many newer events are not yet verified, instead of a bare count that disagreed with `audit verify`. When the chain is broken, sealed or not proven the head tile says "not verified" in the bad (or, for not proven, warn) tone rather than "N events verified". `chained_events` still means the events verified at the last check.
+- **`security.anomaly_detected` audit rows always use actor `system` (#4187).** Rows written on an admin's on-demand run used type `user` with no user id and showed as actor "unknown"; every path now stores actor type `system`, with the accessor named in the description.
+- **`scripts/demo/native-down.sh` no longer reports success for a server it could not stop.** It used to swallow a failed `kill -0` / `kill`, wipe `.demo-native/` and print nothing while an orphan server still held `keyorix.db.server.lock`. It now waits for the server to exit (`KEYORIX_DEMO_STOP_WAIT`, default 15 s), prints one line per pid it could not stop, keeps the pid file and the state dir (even with `--wipe`) and exits 1. A stale pid file is said and cleared; a pid file that holds no pid fails instead of wiping. `native-up.sh` now prints the exit code and the stderr of a failed `admin init` instead of only "admin init failed". Demo tooling only; no server change.
+- **`scripts/demo/check.sh` no longer leaves anomaly alerts of its own on the demo.** The latency step read the seeded `stripe-api-key` 50 times in a burst, which raised `frequency_spike` and `cumulative_rate` alerts that the "no open anomalies" step (even with `--used`) reported as a failure on a native demo. It now reads the verify-write scratch secret, which that step already ignores. Guarded by `TestCheck_LatencyProbeReadsTheScratchSecretNotASeededOne`.
+- **`docs/demo/GOLDEN-PATH.md` no longer says the `verify-audit` legacy-hash wording is pending #4218.** #4218 merged; the output now explains in plain words that an old-format row means an upgrade step was not run, not tampering.
+- **`GET /api/v1/dashboard/stats` `recentActivity` no longer lists scheduler heartbeats (#4272).** #4184 left `admin_job.*` rows written by the system actor out of `/dashboard/activity` only; the stats feed (the deployment-wide one, for a caller with `audit.read`) still showed every `admin_job.anomaly_alerts_run` pass and pushed real events out of its ten slots. It now applies the same NULL-safe filter, so a legacy row with no actor type that names a user stays. The audit log page still lists every row. No API shape change.
+- **gRPC dynamic-secret refusals of the caller's own `admin_dsn`.** A refused driver option or a
+  private-network target on `CreateConfig` answered `Unavailable` ("backend operation failed"); it is
+  `InvalidArgument` with the same text REST sends with its 400. This applies to every dynamic-secret RPC,
+  so issue, renew and revoke against a config whose stored DSN is refused answer `InvalidArgument` too. An audit-log refusal is `Unavailable` with the
+  `audit_unavailable` reason.
+- **A database client panic on a malformed target reply no longer escapes the dynamic-secret engines and rotation executors (#4133).** The engines behind dynamic secrets (`Issue`, `Revoke`, `Renew`) and the rotation executors (`Rotate`) parse replies from an operator-configured database; a panic in the client library on a malformed reply unwound through code holding a lease row or an uncommitted audit step. Both are now wrapped at their single construction point: the panic comes back as a typed `ErrEngineClientPanic` error naming the backend and operation but not the panic text (which can hold target data or the admin DSN), the redacted stack goes to the server log, and the existing engine-failure answer applies (a failed `Issue` leaves no lease, a failed `Revoke` leaves the lease retryable, never marked revoked). Guarded by `TestHostileTargetNeverPanicsIntoCaller`, `TestHostileTargetNeverPanicsIntoRotationCaller` and the lease-state tests in `internal/core`.
+- **A dynamic-secret `Issue` that fails after the target created the account no longer
+  orphans it.** The postgres, mysql, mongodb and redis engines now name the generated
+  account to core before their first target write; when `Issue` then fails, including a
+  contained client-library panic, core revokes the account by name and, if that revoke also
+  fails, records a `revoke_failed` lease for it so the sweep and the manual retry find it.
+  Guarded by `internal/core/dynamic_secrets_issue_abort_test.go`.
+- **Ordinary refusals on the catalog, role and secret routes no longer answer HTTP 500.** Deleting a project that still has secrets (409, `core.ErrProjectHasSecrets`), a duplicate project or environment name (409), restoring something that is not deleted, or restoring under a deleted project or environment (404 / 409), assigning a role that does not exist (404) and sharing a secret with yourself (400) now answer their own status through the shared error classifier. Response bodies keep their wording; the driver text of a duplicate-name constraint no longer reaches a client.
+- **A storage read fault on secret read, create and copy answers 503 with `Retry-After`** instead of a generic 500 (`GET /secrets/{id}`, `GET /secrets/value`, `POST /secrets`, `POST /secrets/{id}/copy`); `GET /secrets/value` declares the 503.
+- **A grant-ceiling refusal on `POST /invitations` (global invite) is 403, not 500 (#4154).** `CreateGlobalInvitation` answered core's `ErrPermissionDenied` ("a role the actor cannot grant") with the generic 500 once past its two pre-checks; it now answers 403 like the other grant routes. `TestEveryGrantRouteMapsTheCeilingRefusalTo403` drives the four routes the guard had listed as exempt or missing (project invite, global invite, access-request approval, membership activation).
+- **A reinstate-ceiling refusal on `POST /groups/{id}/restore` is 403, not 500.** Restoring a soft-deleted group whose grants include an admin-tier role, as an actor who is not a global administrator, fell through to `500 "Failed to restore group"`; it now answers 403 with core's text, as the environment restore does. `POST /projects/{id}/restore` already answered 403 ("Insufficient permissions") and now shows core's text too. `TestEveryGrantRouteMapsTheCeilingRefusalTo403` drives both restore routes.
+- **gRPC answers a typed storage read fault as `Unavailable` + `storage_unavailable` from the role, group, project, share and secret-ACL mappers (was `Internal`).** REST has answered 503 for the same fault since #4077. The user, machine and dynamic-secret mappers already did. A transient authorization-storage fault under a group RPC is `Unavailable` with the gates' fixed text.
+- **A storage fault on the secret behind `PATCH /secrets/{id}/classification`, `PATCH /secrets/{id}/auto-rotate` and `GET /secrets/by-name` is a retryable 503.** These routes answered a failed read of the secret 500 (the by-name route "Failed to get secret"); they now answer `503 storage_unavailable` with `Retry-After`, and a missing secret stays 404.
+- **`POST /user-roles` refuses a user id that does not exist.** It answered 201 and wrote an orphan grant and a `role.assigned` audit row for nobody (`user_roles` has no foreign key). It now answers 404 `User not found` for both the permanent and the time-bound form. The granter ceiling is judged first, so an actor who may not grant the role gets the same 403 for an absent and an existing user.
+- **Bulk delete over REST reports an audit-log outage per item.** The handler did not tag its request context, so an outage never showed; an item whose audit row cannot be written is now left in place and reported with `code: audit_unavailable` and `retryable: true`, and a deleted secret gets one `secret.deleted` audit row.
+- **SCIM provisioning answers 503 with Retry-After during an audit or storage outage.** A SCIM create, replace or patch of a user or group whose audit row the audit log refused, or whose storage read failed, answered 500 with the generic detail. It now answers 503 with an RFC 7644 error body, a fixed detail and `Retry-After`, like every other REST handler (`audit_unavailable`, `storage_unavailable`), so an IdP retries instead of treating the provisioning as broken. `GET /scim/v2/Groups/{id}` answers the same 503 for a storage read fault.
+- **Service encrypt/decrypt no longer wait for a KEK rotation or DEK re-wrap.** `encryption.Service` held its own lock for writing across `rotate-kek` and `migrate-provider`, so encryption through the same Service waited for the rotation's fsyncs even though the key manager stopped blocking readers in #4376. The Service no longer takes that lock around the rotation, which changes no Service state and is serialised by the key manager (#4625).
+- Air-gapped builds (`-tags noaws,noazure,nogcp`) no longer link the Azure and AWS SDKs through `server/boot_exit.go`: the Azure and AWS startup-error classification moved into `!noazure` / `!noaws` files with stubs for the tagged builds. Exit codes 75/78 and messages are unchanged.
+- **Five old fuzz findings re-checked against main.** #3105, #3225, #2842, #3377 and #3429 were already fixed by earlier commits, each with a passing test; `docs/design/fuzz-findings-recheck-2026-11.md` records the commit and test per issue. No code changed.
+- **`keyorix-migrate` no longer derives malformed secret names.** `sanitizeSecretName` now drops
+  control characters and is a fixed point, so a Vault KV key or cloud secret name containing
+  control bytes can no longer reach the create-secret API embedded in a name. A source name that
+  normalises to empty (only separators/control characters) is reported as a skip instead of being
+  sent as an empty name. Compatibility: a source key that contains control characters, or starts
+  or ends with Unicode whitespace, now derives a different Keyorix name than before, so a re-run
+  after upgrading looks up the new name rather than one created by an earlier import.
+- **`keyorix-migrate` Vault import stops re-resolving the KV mount version on every read.** The
+  per-client mount-version cache was keyed by the mount path Vault reports but looked up with
+  mount-relative paths, so it never hit and every list/read issued a redundant
+  `sys/internal/ui/mounts` round-trip. A `Client` targets one mount, so the version is now
+  resolved at most once per import. Guarded by `INV-VAULTSOURCE-mount-version-resolved-once`.
+- **`keyorix-migrate` Vault import bounds its KV walk depth.** `Walk` now stops with a clear error
+  past a fixed recursion-depth cap, so a Vault that returns a folder key at every level can no
+  longer drive unbounded-depth recursion. Guarded by `INV-VAULTSOURCE-walk-depth-bounded`.
+- **A failed invitation accept no longer leaves a live account behind (#4409).** When accepting an invitation panicked after the invitee's account was created (while spending the link, granting the invitation's roles or marking it accepted), the invitee got the dead-link answer but the accept was never undone. The account stayed active and could log in with the new password, usually with its project membership. A resent link then met "an account already exists". Each of those steps now handles a panic like its error: the grants are reverted, the account is removed and the invitation stays pending for the inviter to resend.
+- **An invitation accept that worked but could not sign the invitee in now says so (#4409).** When the account, its grants and the accepted invitation had all committed and only the automatic sign-in failed, `POST /auth/setup/consume` answered "This setup link could not be completed … ask your administrator for a new one". It now answers that the account was created and the invitation accepted, and that the invitee should log in with their new password.
+- **An invitation accept whose "accepted" write committed but reported an error is no longer undone (#4409).** The accept used to remove the account and grants, leaving an invitation that read accepted with nothing behind it, which the inviter could not resend. The invitation is now read back first: if it reads accepted, the accept stands and the invitee is signed in.
+- **An undone invitation accept also removes the account's baseline role and password history (#4410).** The removed account kept its `system_viewer` role (which restoring the account brought back) and its password-history row. Both are now removed with the account, in one transaction. A project membership the accept had created is now revoked too: when the role grant panicked, or when it succeeded and a later step failed, the membership used to stay `active` with no role behind it, so the removed invitee was still listed as a member. The spent setup link and the per-IP login-attempt slot stay by design: the link never becomes live again, and the failure is charged like a dead link.
+- Web: removed duplicate `auth.sso_login_session_failed`, `auth.sso_reconcile_refused` and `auth.sso_reconcile_last_admin_removal_refused` keys from the audit event label table (tsc TS1117 broke the web type-check on main). One label per key now, and both eventLabels test files agree on it.
+- **OpenAPI: `DELETE /api/v1/rejection-reason-templates/{id}` is documented as 204.** The handler answers 204 with no body (and 400 for a non-numeric id); the published spec declared only 200, so a client generated from it waited for a status the server never sends (#4244). The spec now declares 204 and 400.
+- **OpenAPI: `deleteUser` and `restoreUser` declare their 400 refusals.** An invalid id, user id 0 and (for delete) the caller's own account were already answered 400 but were missing from the spec.
+- **Creating a user no longer answers an error for a user that was created (#3225).** `POST /api/v1/users/` (and the other callers of core `CreateUser`) wrote the user, its baseline role and its `user.created` row in one transaction; when that transaction committed but reported an error (a lost acknowledgement), the request failed with HTTP 500, the post-commit password-history seed was skipped, and a client that retried got a duplicate-user conflict on a create that had worked. The create is now read back after such an error: a row that landed is delivered as a success with the rest of the success path done, and a real rollback still answers the error. Guarded by `TestPartialCommit_UserCreateLostAckAnswersSuccess` and `TestPartialCommit_UserCreateRolledBackStaysAnError`. #3105, #2812 and #2842 no longer reproduce on main (fixed earlier), so nothing changed for them.
+- **SCIM provisioning, SSO just-in-time provisioning and create-with-assignments no longer answer an error for an account that was created (#3225).** #4208 fixed `POST /api/v1/users/`; the sibling creators had the same lost-acknowledgement gap. When the create transaction committed but reported an error, gRPC `UserService.CreateUser` and `POST /api/v1/users/` with a role or project assignments answered 500 (and skipped the password-history seed), SCIM `POST /scim/v2/Users` answered 500 so the IdP's retry got a 409 without ever learning the new id, and SSO JIT (OIDC and SAML) refused the login and never wrote `auth.sso_jit_provisioned`. Each now reads the create back: a landed account is answered as a success (SCIM 201, SSO sign-in), a real rollback still answers the error, and a create whose outcome cannot be read back answers SCIM 503 with `Retry-After`. Guarded by `TestPartialCommit_EveryUserCreateSiteHandlesLostAck`, which fails for any new user-insert site in `internal/core` that does not read its lost acknowledgement back. Bootstrap (`POST /system/init`) is listed but not changed here. Paths and verdicts: `docs/design/user-create-lost-ack-2026-11.md`.
+- **`POST /system/init` no longer answers an error for a bootstrap that committed (#3225).** When the bootstrap transaction committed but reported an error, the first-admin bootstrap answered 500. It also skipped the `user.created` / `project.created` audit rows and the password-history seed, and kept the single-use bootstrap token in memory. The bootstrap now reads the admin back. A committed bootstrap is answered as a success and completes, all while the bootstrap lock is still held. A real rollback still answers the error and stays retryable. An outcome that cannot be read back answers the error, and a second claim with the same token is refused by the committed initialised marker.
+- **A user create that is delivered after a lost commit acknowledgement now forwards its audit rows off box.** `CreateUserAudited`, create-with-assignments and SCIM provisioning delivered the committed account, but the `user.created` / `scim.user_provisioned` rows never reached the SIEM forwarder or live audit tails. They are now forwarded exactly once when the read-back confirms the create, and never for a rollback.
+- Docs: `docs/CONFIGURATION.md` quoted an old `require_existing_path` start-up message that named a `keyorix system init --database` command the CLI does not have; it now quotes the current message (`keyorix-server admin init`). `docs/cli-migration.md` listed `keyorix auth login|logout|status`, `keyorix auth mfa stepup` and `keyorix migrate user-to-machine` as the new commands; they are `keyorix login`, `logout`, `status`, `mfa stepup` and `keyorix machine migrate-from-user`. Found by checking every `keyorix` command and flag in the install and operator pages against `--help` of a fresh build.
+- **Compose `web` `/readyz` now reflects the backend.** The web container's nginx had no `/readyz` location, so a probe of `/readyz` on the public port fell through to the SPA and answered `200` with `index.html` whatever the backend did. `/readyz` now answers by status only like `/health` (`200 healthy` when the backend's `/readyz` answers 2xx, `503 unavailable` otherwise; the backend body is not passed through). `docs/SELF_HOSTING.md` now says a load balancer must probe `/health` or `/readyz`, never `/nginx-health`. Guarded by `internal/config/web_nginx_health_guard_test.go`. `nginx -t` and a real-container run: pending e2e VM. The Helm chart's web nginx has no `/readyz` location either (reported, not changed here).
+- **`keyorix login --help` no longer names flags the CLI refuses.** The help told the
+  reader the password comes from `--password` and mentioned `--mfa-code`; both are
+  refused (a secret on the command line shows in `ps`). It now names only
+  `KEYORIX_PASSWORD[_FILE]`, `KEYORIX_MFA_CODE[_FILE]` and the prompt. A new test
+  (`TestNoHelpNamesARemovedFlag`) fails if any command's help names a flag that the
+  CLI refuses and no command still accepts.
+- **`keyorix system init --ca-file <pem>` now prints a `login` next step that works.**
+  The printed line omitted the CA file, so pasting it against the default self-signed
+  TLS server failed with "cannot trust the TLS certificate" (exit 6). It now repeats
+  the `--ca-file` the reader just used.
+- **`keyorix secret import --decrypt-with` now decrypts a file written by `secret export --encrypt-for` (#4278).** The import looked for a compact `{"format":"` prefix, but the export is pretty-printed, so the envelope was never recognised and its own fields (`algorithm`, `encrypted_key`, `nonce`, `ciphertext`, `format`) were imported as secrets. The envelope is now detected by parsing its `format` field. Given without `--decrypt-with` (with any `--format`), an envelope is refused with a message naming `--decrypt-with`. The file is decrypted before the first secret is created, so a wrong key imports nothing.
+- **`keyorix doctor` no longer reports FAIL for a valid machine token (#4279).** A machine principal has no user profile, so `GET /api/v1/auth/profile` answers it 404 once it has authenticated it. For a `kx_machine_` token that answer is now PASS (`machine token: profile not applicable`); for a login or a personal access token a 404 is still FAIL, and a 401 still fails for every kind of token.
+- **The server log no longer repeats the panic value of a database client that failed on a malformed target reply (#4133).** The panic itself was already contained as `ErrEngineClientPanic`, but its value went to the log and can embed bytes the target sent. The log line now keeps the where (operation, redacted stack) and the class (the message of a runtime error such as an out-of-range read, or only the Go type of any other value). Guarded by `TestContain_LogWithholdsPanicValueThatMayCarryReplyBytes`; the hostile-target matrix gained COPY, prepared-statement and multi-result frames.
+- **`keyorix system init` with no `--admin-email` now works.** The default was `admin@localhost`, which the server's email rule refuses, so a bare `system init` always failed. The default is now the placeholder `admin@keyorix.local` (it has no mailbox: pass your own address to receive password-reset mail), and `--help` says so.
+- **`POST /system/init` answers rejected admin details 400, not 403.** A malformed email or username from a caller who holds the bootstrap token now returns 400 with the typed code `ValidationError` and `details.field` naming the input. A wrong or missing bootstrap token, and a server with no token configured, are still 403, and the token is still checked before the details, so the answer tells a caller without the token nothing about validation. `keyorix system init` prints the validation text with the flag to fix (`--admin-email`, `--admin-username`) instead of the "ask a project admin / request access" hint; it recognises the same refusal from a server that still answers it 403 (core's `failed to create admin user: Validation error: ...` text).
+- **`keyorix break-glass activate` and `list` say when an activation went through the degraded (owed-audit) path.** `activate` prints one `DEGRADED:` line after the first line (the audit log was refusing writes, the audit rows are owed, the grant expires sooner, review is mandatory). `list` adds an `AUDIT` column with `DEGRADED` (or `DEGRADED, settled` once the owed rows are written) and a one-line legend, only when some activation is degraded; a list without one is unchanged. The server already reported `degraded` and `audit_settled_at`; nothing on the wire changed.
+- **`keyorix break-glass list` strips control characters from the justification.** The justification is free text set by whoever activated break-glass; it is now passed through the same terminal sanitiser as the role name, so it cannot carry escape sequences into an admin's terminal.
+- **`offline-install.sh` prints commands that run, and `stop` no longer lies (#4281).** The recovery-key step printed `KEYORIX_RECOVERY_KEY_DONE=1 $0 finish --dir <dir>`, which only worked from the directory the script was started in; the script now resolves its own absolute path once and prints `sh <absolute path> finish --dir <absolute dir>` (the install directory is also made absolute, so a relative `--dir` no longer yields relative paths in the printed steps). `stop`/`finish` now stop with `could not stop server (pid N)` when `kill` fails and the process is still alive, keeping `server.pid`, instead of printing "server stopped". Guarded by `internal/docsdrift/offline_install_finish_test.go`.
+- **The disaster drill no longer uses a deprecated flag.** `scripts/drills/disaster.sh` listed secrets with `secret list --format json` (one deprecation line per call); it now uses `--output json`.
+- **Compliance posture no longer reads a degraded break-glass activation as clean.** An activation committed while the audit log refused its rows (BREAKGLASS-OWED-1), whose owed rows the backfill has not yet written, is now counted in `emergency_access.degraded_activations` and marks the snapshot `degraded` with one `emergency_access_audit:project=<id>` reason per project (an unreviewed activation keeps the emergency-access control a Gap; owed rows alone make it Unknown, its detail says how many activations still owe rows instead of "all audited", and the independent-reviewer control is unaffected), so an evidence pack does not claim a complete audit record for it. It reads clean again once the backfill settles it. While rows are owed the daily compliance snapshot is not persisted (`TakeComplianceSnapshot` refuses with `unreadable: emergency_access_audit:project=<id>`, fail-closed) and resumes after the backfill. The web tile and `keyorix compliance` do not show the new field yet.
+- **`POST /api/v1/users/{id}/unlock` is now in the OpenAPI spec** (`unlockUser`), including its typed 503 `audit_unavailable` response (the unlock is audited fail-closed and safe to retry).
+- **Last-used coalescer now has a lifecycle `Stop` wired into graceful shutdown.**
+  On shutdown the server now calls `StopLastUsed` instead of the bare
+  `FlushLastUsed`: it performs the final flush of `last_used_at` / `last_seen_at`
+  stamps and then latches the coalescer shut, so a stamp recorded after the flush
+  can no longer re-arm the 30 s timer (and a failed final flush can no longer
+  re-arm it either) to fire a write against a store the process has already torn
+  down. A background flush still running is cancelled, and one that loses the
+  race to `Stop` writes nothing. Idempotent and bounded by its context. No behaviour change for a healthy
+  server; closes an availability/use-after-teardown hole in the key-custody path.
+- **The recorded schema epoch and its compatibility floor are stamped in UTC (#3914).** On a host whose zone is not UTC, `system_metadata.updated_at` for `schema_epoch` and `min_compatible_schema_epoch` was written in the host zone (GORM keeps an explicit `UpdatedAt`, so its UTC clock did not apply), and the "recorded at" time in the newer-epoch and floor refusals printed whatever zone the row carried. The stamp is now a UTC instant and both refusals print it in UTC (`...Z`). Rows already stored in a host zone are read as the same instant; no migration is performed. Guarded by `TestRecordSchemaEpochAs_StampsUpdatedAtInUTC` and `TestCheckSchemaEpoch_RefusalNamesRecordedTimeInUTC`, which re-run themselves under `TZ=Pacific/Auckland` and `TZ=America/Los_Angeles`.
+- The boot-snapshot answer for the bootstrap and Vault tokens (#3830) and the ENABLE REPLICA refusal in the role-permission trigger proof were already on `main` when this change started; no further behaviour changes for them here.
+- **Setting a secret's access schedule no longer revives a deleted schedule or drops hour 0.** `SetSecretAccessSchedule` was FirstOrCreate followed by a full-row Save: a schedule deleted by another replica in between came back under its old id, one deleted and re-created in between made the set fail with a unique-constraint error, and moving an existing window's start to hour 0 was silently not written. It is now a column-scoped UPDATE conditional on the row existing, else an INSERT ... ON CONFLICT DO NOTHING.
+- **A plain suspend whose audit row could not be written now names the request in the error log.** The `SECURITY: audit event "secret.suspended" could not be written after its effect committed` line already carried the user and secret ids; it now also carries `request=<server-minted request id>` (`-` when there is none), so it can be joined with the request's other log lines. The suspension is unchanged: it stands, and the row is still owed and backfilled. No new metric.
+- **The core errors of a refused clear-synced-copies suspend say that suspending without clearing cuts access now.** `ErrSuspendAuditUnavailable` and `ErrBulkSuspendAuditUnavailable` carry the same next step the REST, web and CLI messages already gave. The `SuspendAuditUnavailable` code and the transports' fixed message are unchanged.
+- **`keyorix system init --admin-email not-an-email` names the flag.** An address the CLI's own client cannot encode (no `name@domain`) used to fail with `contact <server>: json: error calling MarshalJSON ...`, which reads like a connection problem and never mentioned `--admin-email`. The command now checks the flag first, before asking for the admin password, sends nothing, exits with the usage code and says to pass a valid address with `--admin-email`. The address you typed is not echoed back. Addresses the CLI accepts but the server refuses (`admin@localhost`) were already answered 400 `ValidationError` with `details.field` and the same flag hint.
+- **A database upgraded from an older release now has the same schema as a fresh install (#4517, #4518).** An existing database first installed before v0.92 gains the ten `*_machine_identity_id` actor columns (access-request approvals and resolutions, review campaigns, break-glass revocations, machine identities, invitations, memberships, secret dependencies, setup tokens) and `sso_login_states.code_verifier`, and its `ux_access_request_approver` unique index is widened to include `approver_machine_identity_id`. The steps are additive and idempotent on SQLite and PostgreSQL; the index swap runs in one transaction and cannot reject an existing row. Fresh installs now declare `users.mfa_enrolment_required` `NOT NULL DEFAULT false`, like the upgrade's `ALTER`; a boot first sets any NULL left by a pre-release install to false, so the stricter column cannot stop a start.
+- **`PUT /api/v1/users/{id}/roles` answers 409, not an undeclared 500, when the replacement would remove the install's last administrator.** The handler's legacy error switch did not know the last-administrator guard and fell through to `500 InternalError`; it now maps core errors through the shared classifier (`answerCoreError`), so the guard is a `409 ConflictError` (declared in `openapi.yaml`), a storage outage is a `503`, and the 403 grant-ceiling and 404 texts are unchanged. Nothing about which requests succeed changes. Guarded by `TestUpdateUserRolesHTTP_RemovingLastInstallAdmin_Conflict409`. Refs #4672.
+- **Secret version and machine-token timestamps are stored in UTC on a non-UTC host.** `secret_versions.created_at` was stamped with the host-zone clock, so on a server whose process zone is `+0900` SQLite stored it as `... +0900 JST`; it is now UTC. `MachineTokenExpiresAt` (HTTP and gRPC `IssueMachineToken`) now returns a UTC expiry, so the stored value and the `expires_at` in the response carry no host offset. Pinned by `TestHostZoneStamps_CoreWritesStoreUTC` (Asia/Tokyo, SQLite and PostgreSQL), `TestHostZoneStamps_SecretVersionCreatedAtAnyHostZone` and `TestMachineTokenExpiresAt_IsUTCWhateverTheClockZone`.
+- **Audit page, dashboard and compliance views no longer show raw event names.** About 195 server audit events that read as a snake_case name (audit-chain integrity, admin commands, access requests, anomaly, break-glass review, MFA reset, SCIM, dynamic-secret, key rotation, access review, legal hold and more) now have plain-words labels, including `auth.sso_login_session_failed`. Guarded by `web/src/utils/__tests__/eventLabelsParity.test.ts`, which reads the Go sources as text and fails when an event emitted in one of the forms `web/scripts/audit-actions.mjs` recognises (listed in its header, with what it does not see) has neither a label nor a reasoned entry in `web/scripts/audit-intentionally-unlabelled.mjs`.
+- **`GET /api/v1/dashboard/stats` no longer lists the scheduler's own `admin_job.*` heartbeats in `recentActivity`** (#4272). The array is built separately from the activity feed, so API and SDK consumers saw `admin_job.anomaly_alerts_run` every 15 s after #4184 had cleaned only the feed. An admin-triggered run is still listed; the audit log itself keeps every row.
+- Sharing page: the secret name in each row links to the secret, and the row's "View secret" button opens it (it used to open a modal that was never rendered) (#3153).
+- **Project Members tab listed no users to add.** It read `.data` of `GET /api/v1/users`, but the server sends the rows under `users`, so the add-member picker and the pending onboarding / access-request sections always saw an empty user list. `usersApi.list` and `adminApi.getUsers` now return the wire shape (`UserListResponse`).
+- **`keyorix secret import --format vault` no longer imports YAML null or nested values as text.**
+  A secret whose value was `~`/`null`/empty (`value:`) was stored as the literal text `<nil>`, and a
+  mapping or sequence value as Go map/slice text. The import now fails with an error that names the
+  path and field (never the value) and imports nothing from the file. Strings, numbers and booleans
+  are unchanged; a quoted `"~"` or `"null"` is still the literal string.
 
 ### Documentation
 - **Golden path: break-glass on the web.** `docs/demo/GOLDEN-PATH.md` describes the web path next to the CLI commands.
@@ -1399,6 +1969,45 @@ In transaction mode the lock transactions also set `transaction_timeout = 0` (Po
 - **SELF_HOSTING.md §5 and UPGRADING.md §7: PostgreSQL in-place restore.** "Drop and recreate the database, then restore without the flag" was refused, because the key files still exist. The docs now say to empty the database and restore with `--overwrite-existing` (plus `--allow-rollback` on the same host). They also warn that a failed `--overwrite-existing` over a populated database has already replaced the key files, and give the recovery.
 - **UPGRADING.md §7** names both rollback refusals (the floor message for v0.97 → v0.96.x, and the epoch message) and the binary-only rollback within one schema floor. Stale v0.96.2 and epoch-3 references in the operator drills are fixed.
 - **The "migrate off Vault" demo works again** (#3638). `demo/vault-migration/run.sh` ran `keyorix secret import --source vault`, which the CLI no longer has; it now runs `keyorix-migrate vault --apply` with both tokens passed through files, and stops with a clear message when `keyorix-migrate` is not installed. The demo README and `docs/specs/vault-migration-fidelity.md` point to `docs/migrate-from-vault.md`, which now notes that `--force` needs `--apply`.
+- **Egress inventory.** `docs/security/egress-inventory.md` lists every outbound destination class (trigger, config key, default, field names carried) and answers "does it phone home?" from the code: no call to a Keyorix-operated or third-party endpoint is on by default. Linked from `docs/security/README.md`.
+- More pages walked against native binaries (PILOT-RUNBOOK-WALK-4): `QUICK_START.md`, the SQLite-to-PostgreSQL, backup/restore, upgrade and disaster drills, `key-rotation-runbook.md`, `verifying-releases.md` (offline parts), the first-boot part of `SELF_HOSTING.md` and `docs/security/hardening-guide.md`. QUICK_START now states the real admin password policy (16+ characters with upper, lower, digit and special character; no username, email or display name) and that `admin check-admin-password` checks one. The hardening guide no longer says `admin restore --overwrite-existing` leaves a populated PostgreSQL database alone: it empties the tables itself. The key-rotation runbook says `encryption status` and `validate` need the servers stopped, that `migrate-provider cleanup` does not remove `*.pre-restore-*` files, and that `rotate-kek` appends an audit key-transition event. Product defects found on the way: `admin encryption status` exits 0 when it cannot read the key state (#4270), and `verify-release.sh --assets-dir` with `--skip-binaries` FAILs `release.assets` for the binaries it was told to skip (#4269).
+- **"An issuer cannot widen" sweep.** A 22-path sweep of every place an actor
+  causes a principal to gain credentials or permissions found each path enforced,
+  a documented exception, transport-enforced or CLI-only, with no production
+  defect (`docs/findings/2026-11-15-issuer-cannot-widen-sweep.md`). The invariant
+  `INV-CORE-machine-token-issue-cannot-widen-caller` now cites the authzdiff plant
+  that guards the user-caller ceiling.
+- **Key rotation runbook, preflight step 2:** stop the server first, and a failed `admin encryption status` exits non-zero (no keys yet, wrong passphrase, missing passphrase source, held DEK lock).
+- `docs/demo/GOLDEN-PATH.md`: the demo-polish notes for the actor search, the missing key directory message and the `verify-audit` / `restore` wording are brought up to date (`verify-audit` still quotes "pre-#1452" for an old-format row until #4218 lands).
+- A feature or fix PR now documents a new config key in `docs/configuration.d/` and its upgrade note in `docs/upgrading.d/` and never edits `docs/CONFIGURATION.md` or `docs/UPGRADING.md` (rule added to `CLAUDE.md`). Dedicated `docs/fold-*` / `docs/consolidate-*` PRs fold the fragments into the flat files with the new `scripts/docs/fold-fragments.sh` (`--dry-run`, `--check`).
+- **Guides for Kubernetes ServiceAccount authentication and PostgreSQL dynamic secrets.** `docs/k8s-serviceaccount-auth.md` walks through trusting a cluster, creating a machine identity, binding a ServiceAccount and mounting the token; `docs/dynamic-secrets-postgresql.md` covers registering a target, issuing, renewing and revoking leases. The README no longer lists Kubernetes ServiceAccount authentication as roadmap, since machine-identity OIDC federation (ADR-031) already provides it.
+- Operator and pilot docs nits (DOCS-NITS-NOV-1, #3449, RUNBOOKS-1 gaps 3 and 5): the Compose upgrade example now shows the image-tag rule (release v0.97.0 is image `0.97.0`, no leading `v`) and release names in SELF_HOSTING.md carry the `v`; `docs/UPGRADING.md` was already consistent (`v` for releases, none for chart versions and image tags), so it is unchanged. The hardening guide explains that `tls.cert_file` is the certificate the server presents, that the server has no CA or client-certificate (mTLS) setting, and where a client's `ca_file` and the database `ssl_root_cert` fit. SELF_HOSTING.md says there is no command that undoes a DEK rotation and points to the rollback section of the key rotation runbook. That runbook now lists what `verify-audit` prints for a pre-rotation checkpoint after `rotate-kek` (old key alone: BROKEN with the key-mismatch message; new key: VALID with the old anchor unauthenticated; new key plus `--previous-checkpoint-key-file`: authenticated). `rotate-kek` writes the fresh checkpoint itself.
+- **Relative `storage.encryption.dek_path` / `salt_path` (and the other key-provider paths) must be started from the config file's directory.** For the configuration reference: a relative key path is defined against the config file's directory, the base a relative `storage.database.path` uses, but the key files and `dek.lock` are opened from the process working directory, so a server or `admin encryption` command started from another directory refuses to start (`storage.encryption.dek_path "keys/dek.key" is relative, and relative key paths are resolved against the config file's directory (...)`) instead of using or generating another key set. The server logs one startup warning naming the resolved absolute `dek_path`, `salt_path` and `dek.lock`. Use absolute key paths to remove the dependency (the container and Helm configs do). `admin diagnose` is the exception that does not refuse: it opens key files from the current directory, creates nothing, and reports each missing key file by absolute path.
+- **`admin diagnose` is read-only** (`docs/operator/j7-troubleshooting.md`): with no key files it fails `KEK/passphrase access` naming each missing file, and creates no salt, DEK or `dek.lock`. The "another process already holds the DEK lock" refusal now ends `... at <abs>/dek.lock`; the examples in `docs/operator/startup-refusals.md` show it.
+- The `dynamic_secrets` section of `CONFIGURATION.md` and the upgrade note no longer say a stored `admin_dsn` cannot be edited; they name the two commands and the rule that the DSN never goes on the command line.
+- **OpenAPI declares the 404 and 503 answers of four operations.** `assignUserRole` (404 absent target user, 503), `classifySecret`, `getSecretByName` and `setSecretAutoRotate` (503 for a storage read fault). The web, CLI and migrate generated clients are regenerated.
+- **Restores over a populated target name `--replace-existing-data`.** The incoherent-key-set refusal (`key material is incoherent`) and its `startup-refusals.md` entry now say `admin restore --overwrite-existing --replace-existing-data`. So do `SELF_HOSTING.md` §5, the hardening guide, the air-gap runbook and the recovery-options design note. Each also says that `--overwrite-existing` alone is for re-running a restore into an empty database. `TestRestoreOverwriteExistingDocsNameReplaceExistingData` (internal/docsdrift) fails on a docs line that shows `admin restore ... --overwrite-existing` with neither the second flag nor an empty-target sentence next to it.
+- **Growing from SQLite to PostgreSQL: what is and is not verified.** `docs/SELF_HOSTING.md` ("Moving from SQLite to Postgres") states the audit-chain and time-zone results and lists the unverified parts (containers, non-empty targets, very large databases, other key providers, live or multi-replica moves).
+- **Large database: what was tested and what to do before moving one.** `docs/operator/backup-restore-scale.md` states the tested sizes (up to 10,000 secrets with 3 versions and 200,000 audit events, both directions between SQLite and PostgreSQL), the memory behaviour (backup, restore and the move read table by table and insert in batches of 200, so memory does not grow with a table) and a pre-move checklist (#3462).
+- **Air-gap runbook walked end to end on SQLite.** `docs/AIRGAP_RUNBOOK.md` now says that the generated config has no `audit_checkpoints:` block, that anchored `admin verify-audit` needs the server stopped (or `--db <copy>`), and that only the `auto_cert` refusal is listed in `startup-refusals.md`.
+- **`keyorix login --help` names `KEYORIX_MFA_CODE` and `KEYORIX_MFA_CODE_FILE` (#4280).** It told the reader to pass `--mfa-code`, a flag the CLI refuses. `keyorix secret import --help` points at `keyorix-migrate` (`docs/migrate-from-vault.md`, `docs/migrate-from-cloud.md`) instead of "the old CLI's `secret import --source`". `docs/cli-reference.md` and the man page are regenerated; a test now fails for any help text that advises a refused secret flag.
+- **Lost-TOTP, break-glass and audit-chain-break runbooks walked against the binary.** `docs/operator/lost-totp-runbook.md` no longer says a recovery code plus the account password can disable or regenerate MFA (the server accepts a current authenticator code, or the password only after a passkey re-authentication; #4224), says that `clear-login-lockout --user` takes an email address or id, and names the 72h one-time-password expiry of the online two-administrator reset. `break-glass-runbook.md` drops the "note" a degraded activation does not print. `audit-chain-break-runbook.md` lists the `SEALED` verdict and the HTTP 500 that `migrate-chain-encoding` returns for a refusal (#4230).
+
+- **Documented commands the CLI refuses are fixed.** `keyorix user suspend|delete|revoke-sessions|resend-setup-link` take no `--by` (CONFIGURATION.md, SECRET_SHARING_WORKFLOWS.md, ADR-028); `keyorix invite resend` takes `--project` and `--id`; the DEK rotation command in ADR-010 is `keyorix-server admin encryption rotate`.
+- **`docs/AIRGAP_RUNBOOK.md` matches a native SQLite walk.** `admin audit export-checkpoint` is refused while the server runs (let it write a checkpoint, stop it, then export); `admin restore` and `admin diagnose` need the master passphrase, and the runbook now shows it and lists `KEYORIX_MASTER_PASSWORD_FILE`.
+- The pilot runbooks in `docs/operator/` (lost admin, lost TOTP, key rotation, break-glass, audit-chain break) now show real output captured from a native run (SQLite, and PostgreSQL for the key rotations) instead of output derived from the code. Each runbook states the commit and date it was captured on. Corrections made along the way: the audit log table layout, the extra closing line of `recovery-key rotate`, the position of the PostgreSQL write-fence line, `--force` on a PostgreSQL DEK rotation being refused only while the presence lock is held, and a new section on the SEALED verdict after `accept-loss`.
+- **Operator runbooks walked against the binary.** Backup/restore (SQLite and PostgreSQL), DEK and KEK rotation, `recover-admin` and the v0.96.3 upgrade were run on a built main binary and the quoted output corrected where it differed: `admin validate` also needs the server stopped, the rotate and rotate-kek expected output, the setup-session 403 hint and 401 message in the lost-admin runbook, no password or code flags on `change-password`/`mfa activate`, and the empty `limits:` left after removing `secrets.limits.max_secrets_per_user`.
+- Operator runbooks walked against a native binary (`docs/operator/walk-2026-11-b.md`): break-glass, lost-TOTP, restore failure modes and the startup refusals now match what the product prints, and the product gaps found are recorded.
+- Eight more operator runbooks walked against native binaries (PILOT-RUNBOOK-WALK-3): `postgres-tls.md`, `j7-troubleshooting.md`, `j6-key-rotation.md`, `upgrade-rollback.md`, `upgrade-checklist-v0.97.md`, `backup-restore-scale.md`, `restore-failure-modes.md` and `startup-refusals-inventory.md`. The expired-certificate section no longer says the server does not check its certificate (it warns at start), the schema epoch is 10, and the v0.96.x refusals quote what the v0.96.3 release binary prints. A product defect found on the way (relative `dek_path` resolves against the working directory) is #4249.
+- **"Verifying a release candidate" block in `docs/operator/upgrade-rollback.md`:** the copy-paste command line for the RC acceptance check (`verify-release.sh`, `check-docs-version.sh` against the final version, the old release's binary checked against its `checksums.txt`, then the SQLite and PostgreSQL upgrade drills).
+- **RC gate section in `docs/operator/upgrade-rollback.md` and a hard step in `RELEASING.md`:** what each leg proves, what it does not (container and Kubernetes legs are pending the e2e VM), and the rule that a final tag needs a green gate result of its last release candidate.
+- **v0.97.0 release notes and release checklist match the tree.** The notes list the demo fixes merged after the release prep (dashboard activity, audit filters, audit-chain tile, typed `POST /system/init` refusals, plain-words legacy hash reason). RELEASING.md states which tag form `INSTALL-WITH-AI.md` must carry after a release, as the pin tests enforce it. RELEASE-CHECKLIST.md says `dist/` holds 30 files (29 covered by `checksums.txt`) and adds the sandbox `git repack -a -d` note.
+- Operator docs: new `docs/operator/known-limitations.md` collects the two open product decisions the runbooks name (no marked chain-segment restart after a verified audit break, no command to reverse a DEK rotation).
+- The audit-chain-break runbook now shows real captured output (RUNBOOK-CAPTURE-2), not code-derived samples: an edited row, a deleted middle row, two swapped rows and a tail truncation, on SQLite and PostgreSQL, offline and online, with and without the checkpoint key. Corrections: a deleted row is reported as the row after the hole; `chained events` on a BROKEN report counts the rows verified before the break; a tail truncation reads VALID (exit 0) without the key and BROKEN with no `first broken id` line with it; the `keyorix_audit_verify_*` series are on `/api/v1/admin/scheduler-metrics`, not `/metrics`. The lost-admin runbook says `recover-admin --user` takes the email, and the key-rotation runbook records the native check and drops a stale "no accept-loss" gap. Two product gaps are listed as known limitations.
+- `docs/security/security-txt.md` states that nothing in this repository serves `security.txt` and lists the steps to publish it at `/.well-known/security.txt` on the website.
+- **SCIM / SSO offboarding docs corrected (SCIM-JIT-TAILS-1).** The offboarding steps no longer pass the deprecated, ignored `--by` flag and now list the deactivate step (`user update --active false`, `PUT /api/v1/users/{id}`) next to suspend and delete. The SCIM and SSO threat model no longer lists #3494 as an open defect: SCIM user and group handlers classify storage errors by sentinel (404 only for a positively absent or not-SCIM-managed object, 500 with a generic detail otherwise).
+- **The Docker Compose quick starts include the secret-file `chown`.** The README "Quick Start" and `docs/SELF_HOSTING.md` §2 now run `sudo chown root:"$(id -g)" secrets/*` after `init-secrets.sh`: since #3393 the server trusts only secret files owned by root or its own uid, so the blocks as written left the backend restarting in a loop for a regular Linux user (found in the v0.97.0 release QA).
+- **Release names in `SELF_HOSTING.md` carry the `v` prefix.** Three release references (`v0.95.3`, `v0.96.1`, `v0.96.3`) were written without it; image and chart tags keep the bare form on purpose, as the file already says. The other nits of #3449 (version pin, cited control test names, CA versus `tls.cert_file`) were re-checked against main and were already fixed.
 
 ### Testing
 - **No-leak coverage past the route gate.** New handler-level tests call each value-disclosing handler (by id, by ref, certificate, render) as a caller that passes the route gate but fails the per-secret permission check, against suspended, expired and out-of-schedule secrets, and assert it sees exactly what it saw before the state applied (for render, also exactly what a missing secret answers). A reorder of the state guard ahead of the permission check inside core is now caught.
@@ -1810,6 +2419,916 @@ In transaction mode the lock transactions also set `transaction_timeout = 0` (Po
 - **Dialog contrast guard covers every modal and dialog in the web app.** `dialogContrast.test.tsx` inventories all dialog surfaces (new ones must be registered), renders the shared dialogs, the Sharing revoke dialog, the session-timeout warning and the command palette in both themes, and audits the headings drawn inside modals; planted dialogs (title colour equal to its background, the #3153 fixed dark title) fail it. The per-site confirm tests now assert the API is called exactly once.
 - **Reveal and Copy value guard for #2450.** The copy hook test now asserts Copy never reads `/versions` or calls `atob()`, and the real-backend Reveal spec asserts the value comes from `GET /secrets/{id}?include_value=true` with no page error. The Sharing secret names, revoke dialog, transfer-ownership dialog and read-only gating items (#3153, #3142) were re-checked on main and already have unit and real-backend coverage.
 - **The split role-change ops are swept with a plain storage fault at the grant.** `TestSplitOps_AssignRoleStorageFault_NeverStrandsAPrincipal` (`server/faultops`) fails `AssignRole` itself, through the real HTTP stack, on `SetUserRoles`, `SetProjectMemberRole` and the membership activation, and reads the database: a project's only administrator keeps the administrator role, a narrowing that stands is answered with the partial-mutation 503 naming both halves, and a membership whose grant failed is put back to its previous state. No behaviour change.
+- **Hostile-backend record-and-mutate fuzz targets.** Seven `Fuzz*Hostile*` targets (AWS Secrets Manager, Azure Key Vault, Vault, the Kubernetes TokenRequest engine, the evidence webhook, the k8s-sync Keyorix fetcher and the OIDC JWKS resolver) serve a valid backend response from a local server and mutate it at the JSON, status, encoding, framing, redirect and network-fault level. They check fail-closed results, bounded work, retries and redirects, no hang or leak, and no echo of a canary or the sent credential. internal/fuzzutil/hostile holds the harness and its planted-defect self-tests (rules: RULES.md). Triaged, still-open low-severity findings are declared per target as `hostile.Known` entries with a reproducer test that goes red when the finding is fixed.
+- `sdkdiff hostile`: hostile-server mode for the SDK differential harness. A mock server mutates otherwise valid responses (malformed, oversized, slow, truncated) against the Go, Java, Node and Python SDK drivers, with pre-registered oracles, planted-defect validation and direct fuzzing of the Java `JsonParser` (#4043).
+- Added a differential egress-guard SSRF parity harness in `internal/evidencesink`
+  (`FuzzEgressGuardParity` plus table tests) that drives one address — in every
+  embedded-IPv4 IPv6 encoding (NAT64 well-known/local-use, IPv4-compatible, 6to4,
+  Teredo), native link-local literals and the cloud-metadata IPs — through the
+  package's dial-time classifier and compares each verdict to the `netutil`
+  reference and the sibling `siem.DialDisallowed` guard, with an oracle-soundness
+  red-proof that plants a decode hole in a scratch copy of the guard. The two
+  reproducers that found F1/F2 are now active green regression guards (they
+  reported 25 embedded-encoding bypasses and the CGNAT divergences before the
+  fix). Added `netutil` unit coverage for the new
+  `IsPrivateOrLinkLocalExceptLoopback` predicate and red/green egress tests for
+  the Azure Graph client.
+- **Stale full-row writers pinned against concurrent narrow writes.** Storage-level interleaving tests (SQLite and Postgres) for the eight still-exempt full-row writers of `docs/full-row-write-exempt.tsv`: a revoke, reject, close, lift or secret delete committed between a replica's read and its write must survive the write. All eight hold. One latent finding is pinned as known-open: `UpdateLegalHold` is an unconditional `Save`, so a stale `released=false` struct would revert a lift; no production caller does this today (#4210).
+- **v0.96.3 upgrade path pinned.** The existing v0.96.3 snapshots (SQLite and Postgres) are migrated by the real startup path and the audit chain must verify, with a tampered-row calibration.
+- **stdin guard widened to `server/admin`.** `TestNoDirectBufioOverStdin_AdminAndScripts` fails on a new `bufio` reader or scanner built over `os.Stdin` in any `server/admin` file or in `scripts/analysis/remote_storage_classify.go`. The three existing sites (`recover_admin.go:readRecoveryKeyFromStdin`, `testhook.go:runHoldLockForTest`, `remote_storage_classify.go:main`) are allowlisted by file and function because each is the only stdin read of its process; an allowlist entry that no longer matches a call fails as stale.
+- **Egress guard.** `internal/egressguard` fails when a non-test file creates an outbound client (HTTP, TCP/TLS dial, DNS lookup, database, SMTP, cloud SDK) with no row and reason in `docs/security/egress-allowlist.tsv`, when a direct `go.mod` dependency is not classified as client or local, and when shipped code imports a `DEV` tool. Report-only on its first day (`docs/guard-rollout.d/`).
+- **#3362's four-step rolling-upgrade sequence pinned at the refusal a replica serves.** New replica suspends with clear-synced-copies, an old (pre-#3215) replica resumes and then plain-suspends (simulated by a raw UPDATE of `status` and `updated_at` only), and a new replica's `SecretSuspended` refusal must not tell the operator and k8s-sync to empty the synced copies. Green on PostgreSQL through the existing `trg_secret_nodes_suspend_marker` trigger (and red with it dropped); the schema-epoch floor 3 refuses a pre-#3215 binary outright. No schema change, no epoch change: rolling-upgrade behaviour is unchanged. `TestCTAReview_SuspendMarker_OldBinaryResumeThenPlainSuspend_CrossReplicaPostgres` and the SQLite twin.
+- **Remaining exempt full-row writers reviewed against their tables' other writers.** New SQLite and PostgreSQL interleavings race `TransitionMachineIdentityState` (a stale classify) against the project-delete cascade suspend and its restore, and `UpdateAccessRequest` (a stale approve) against the secret-delete close of an approval. None of the six remaining exempt writers can revert a revoke, close or decision; each `docs/full-row-write-exempt.tsv` row now says why, naming its test.
+- **Guards no longer need a hand edit when an unrelated PR adds a site.** `TestDirectLogAuditEventCallersAreSafe` and `TestNoAdHocCoreDirListing` now read inline `// audit-direct-ok: <reason>` / `// dir-listing-ok: <reason>` markers at each site instead of a hand-kept `path:func` list, so the merge queue (main + PR) can no longer fail a PR that is green alone. The rule is documented in `docs/guard-rollout-contract.md` (rule 3).
+- **Host-zone stamp sites classified by `TZ=Asia/Tokyo` / `TZ=Asia/Kolkata` tests and guarded.** Each site is driven through its real entry point on SQLite and PostgreSQL and its stored column read back; the sites that were real defects are red on `main`, the harmless ones (the store or GORM normalises, or the value is never written) are pinned green. `TestEveryModelTimestampStampIsUTC` fails on a new `CreatedAt` / `UpdatedAt` assigned from a bare `time.Now()` in non-test code under `internal/` and `server/`; it is report-only on its first day (`docs/guard-rollout.d/`) and every remaining site is allow-listed with its reason.
+- **Bounded-work super-linear fuzz oracle (`internal/fuzzutil/boundedwork`).** A
+  fuzz oracle that measures the *shape* of a parser's time and memory cost across
+  scaled variants of one input (factors 1,2,4,8) and fails on clearly super-linear
+  (quadratic-or-worse) growth — the common real defect class that never-panic and
+  absolute-ceiling harnesses miss. Fit over the asymptotic tail; the memory arm
+  (`runtime.MemStats.TotalAlloc`) red-proofs deterministically, and the time arm
+  uses best-of-N process CPU time so a loaded CI runner does not bend a linear
+  curve into a false positive. Guards in
+  `INVARIANTS.d`; calibrated against the real yaml.v3 duplicate-key quadratic.
+- **Ecosystem bounded-work generator (`scripts/fuzzing/bwgen`).** A `go/types`
+  scan (offline) that finds decoder/parser/validator functions
+  (`func([]byte|string|io.Reader)(T,error)` and `Unmarshal`-style) in the module
+  cache and emits bounded-work + Marshal/Unmarshal round-trip fuzz targets. A BW1
+  sweep of ~23 libraries (86 function targets) found a 0/78 false-positive rate.
+  The committed linear-growth regression guards (`internal/boundedworksweep`,
+  with `targets.d` entries) are `json.Unmarshal` (scaled as a valid JSON array,
+  `boundedwork.ScaleJSONArray`), yaml/v2 `Unmarshal` and `UnmarshalStrict`, and
+  the json and yaml/v2 Marshal/Unmarshal round-trip targets.
+  `TestBoundedWorkSweep_EveryTargetJudgesASeed` fails if any committed target
+  can never reach a verdict; bwgen skips functions that cannot (reader-wrapping
+  `New*` constructors, `json.Valid`).
+- **Last exempt full-row writer interleaving: a stale machine-identity classify after A->B->A.** `TransitionMachineIdentityState` is the only exempt writer whose table cycles back to an earlier state (active <-> suspended). After a project-delete cascade suspend, the restore and an admin suspend, a stale classify matches its CAS again and writes the cleared cascade marker back. A new SQLite and PostgreSQL interleaving pins that this is inert: a second delete + restore of the project does not re-activate the admin-suspended identity. With this, every writer still in `docs/full-row-write-exempt.tsv` has been raced against every other writer of its table. None can revert a revoke, reject, close or decision, so no row is removed.
+- **The full-row exempt ledger's reason column is machine-checked.** `TestFullRowWriteGuard_EveryExemptRowNamesAReasonClass` refuses a row whose reason does not start with a class from the ledger header (`SAFE-CAS`, `RESIDUAL`, `NO-CALLER`, `FIXED-NO-CALLER`, `UNSAFE-OPEN #issue`, `pending: #PR`, `arrives with #PR`) followed by a justification; `TestFullRowWriteGuard_ReasonClassCalibration` holds the accepted and refused shapes. Report-only on pull requests until its first green nightly on main.
+- **`DeleteProjectIfEmpty` raced against secret creation on SQLite (#2887).** Goroutines on independent connections create secrets while the project is deleted; a committed secret must stay live under a live project, and a deleted project must hold no committed secret. The Postgres half (forced interleaving) already existed. Four older issues were re-verified as fixed on main: #3420 (break-glass owed audit), #3428 (online unlock audits in the same transaction), #2887 and #4210 (conditional legal-hold lift); #3420 and #3428 get closure rows naming them.
+- **Test-only change, no behaviour change.** The `TestNoErrorTextClassification` exceptions are now one file per function under `internal/core/guards/testdata/errtext_classification_exceptions.d/` instead of one shared TSV, so a PR that migrates a handler family and a PR that adds a function can no longer fail each other in the merge queue. A new `TestNoNewSingleFileAllowlist` fails when a new flat `*exempt*`/`*exception*`/`*allowlist*` data file or a new non-empty guard allowlist map is added without a per-entry layout.
+- Every deprecated `insecure_` alias is now tested for all three origin cases in the posture report: old name written (explicit), nothing written (shipped default), both written (explicit) (#2925).
+- A guard fails if a registry entry that reads more than one config key is neither narrowed to its weak side nor exempted with a reason.
+- **Family guards for credential revocation and delete sweeps.** One table test drives every
+  transition that blocks login (`SuspendUser`, `DeleteUser`, `DeprovisionSCIMUser`,
+  `UpdateSCIMUser` deactivate, `UpdateUser` deactivate, `MigrateUserToMachine` with suspend,
+  and `setAccountState` into each blocked state) on SQLite and Postgres and asserts that
+  sessions (including impersonation), PATs, step-up grants and auth-cache entries are all gone
+  and one audit row is written; a static guard fails when a new account-state writer is not in
+  that table. A second guard derives the tables with a `secret_id` column and fails when
+  `DeleteSecret` and the project cascade do not sweep the same ones (#2797/#2798 class). The
+  project child-write liveness guard now checks that the `LockLiveProject` re-check comes after
+  the write and inside the same transaction. Test-only; no behaviour change.
+- **Fuzzers for four third-party libraries that sit on untrusted input (LIB-FUZZ-2).** go-tpm / go-webauthn "tpm" attestation (through `webauthnrp`, with an independent oracle and a harness-owned trust root) and the sealed-KEK blob decode; modernc.org/sqlite on a hostile audit database and on file-name/URI spellings (`OpenSQLiteReadOnly`, `sqlitepath.DatabaseFile` against the real driver); golang.org/x/oauth2 token-endpoint responses behind `CompleteSSO` and the OIDC discovery fetch; spf13/pflag scope-flag aliasing and the passphrase sources. Eleven targets registered in `scripts/fuzzing/targets.d/`; every oracle has a planted-fault test.
+- **authzdiff oracle model follows #4332.** The reference model now holds a user caller to the target machine identity's permission ceiling in `IssueMachineToken`, with a regression seed, a table test and a planted-defect entry. The process-global invalid-token limiter's refusal is recorded as n/a on both transports (fuzz-corpus #118), and `FuzzAuthCacheDifferential` caps login and password-change ops at three of each per program so bcrypt storms no longer trip the fuzz worker's hang limit (fuzz-corpus #119). The regression tests for the cap assert operation counts, not wall time.
+- **`FuzzDSNHostsCoverDriverHosts` oracle trims the port-stripped host.** The oracle compared
+  `net.SplitHostPort`'s host untrimmed against the parser's trimmed candidates, so the input
+  `host=0\ :` failed on main as well. Test-only.
+- **The "no other writer" part of every SAFE-CAS full-row exemption is now machine-checked.** The seven full-row writers of security-state rows still in `docs/full-row-write-exempt.tsv` (machine identity and membership transitions, invitation and access-request updates, access-review campaign and item updates, risk-exception approval) were re-reviewed against every other writer of their tables, and all seven are SAFE: none can be reverted by a concurrent narrow writer. A SAFE verdict also depends on no new writer of the table appearing. `TestFullRowWriteGuard_EveryOtherWriterOfASafeCASTableIsMarked` now requires every other update-shaped write of those tables in `internal/storage/store` to carry a `safe-cas-writer-ok: <Model>: <why>` marker. It fails closed on a write whose table it cannot resolve. The four existing writers (project-delete cascade suspend and restore, risk-exception revoke, the secret-delete close of approved access requests) carry their reviewed reasons. Report-only on pull requests until its first green nightly on main.
+- **Test-helper guard.** `RBACTestHelper.AssignUserRole` / `AssignGroupRole` refuse a global-only role (the legacy `super_admin`/`admin`/`editor`/`viewer`/`auditor`, the `system_*` roles) at a project scope, which core refuses too (#3605); a fixture that did it tested a grant no install can hold.
+- **Audit-outage mapping guard** flags a gRPC mapper that calls `context.Background()`/`TODO()`, with or without a `context.Context` parameter (`INV-GRPCSVC-mapper-takes-rpc-ctx`); its calibration has red and green cases.
+- **Real dm-flakey power-cut coverage for the PostgreSQL backend.** `scripts/powercut-pg` cuts power under a scratch Postgres cluster on a dm-flakey device (WAL-stream, CHECKPOINT-at-cut and drained shapes) and checks that, under strict audit durability, every commit acknowledged before the cut survives, WAL replay succeeds, the audit hash chain verifies and `pg_amcheck` and `e2fsck` are clean. Under the PostgreSQL default (`standard`) only the lost acknowledged tail is accepted: `soak.sh` reports any recovery failure, broken audit chain, amcheck or fsck failure as a finding and exits non-zero. Needs root on Linux; not part of CI. No production code change.
+- **spf13/pflag hostile-argv fuzz target now covers `StringToInt`.** `FuzzPflagParse` (`fuzz/thirdparty/spf13pflag`) registers a `StringToInt` flag and seeds that reach its per-pair `strconv.Atoi` parser and the empty-value paths. No separate pflag target is added.
+- **Resource metering for four third-party fuzz targets.** The bcrypt, precis,
+  ssh and webauthn targets under `fuzz/thirdparty/` now meter every input with
+  `resguard` and fail an input whose allocation exceeds the committed budget in
+  `testdata/resguard-<lib>.json`. A missing or invalid budget file fails the
+  target instead of silently turning the check off, and each
+  `TestResguard<Lib>_RedGreen` judges the committed file itself.
+- **The authzdiff model knows the bulk-op actor rules (#4514, #4515).** `bulk.rename`,
+  `bulk.suspend` and `resume.all` are human-only in the model (a machine actor is refused 403), and
+  `bulk.delete` requires `secrets.read` as well as `secrets.delete` for a user actor, because each
+  item is read before it is deleted. Waivers known-10 and known-11 are removed.
+- Fuzz oracles: the TPM attestation oracle accepts ESP256 (-9) and tolerates ES256K (-47) with a P-256 AIK until #4545, pinned by a library test (KFZ-2026-165/166); the configcompat and configspace key-echo masks handle spaced key names and stop at "; "-joined construct errors; configspace I4 exempts only a canary echoed from a non-secret field of a loaded config and fails closed for load errors, env-sourced secrets and sequence secrets (KFZ-2026-167).
+- **`docs/atomicity-exempt.tsv` is under the exemption-review rule (#2693).** Every row now needs a reviewer other than its author, recorded as one fragment per row in `docs/atomicity-exempt.reviewed.d/`; `TestExemptLedgers_EveryRowIndependentlyReviewed` fails on a missing, self-reviewed, duplicate or orphan fragment. All 47 rows were re-read against the code, and stale reasons were corrected in place.
+- **Three CI flakes fixed (PILOT-FLAKES-NOV-2).** The stale-salt boot-log test in
+  `server/admin` reads its log capture only under a lock (a background logger of
+  another test raced the bare buffer under `-race`, #4501), and the Postgres live
+  backup fixture now closes the storage it builds so its trigger-integrity check
+  no longer outlives the test. `internal/egressguard` pins that stray files in the
+  root-level scratch dirs it skips (`tmp/`, `.scratch/`, `.redproof-*` exports) do
+  not affect its scan, while same-named dirs below the root are still scanned.
+- **Soak heap oracle has a 2 MiB noise floor (#4389).** On the default 1.5k-op run
+  the heap verdict now also needs a 2 MiB fitted rise over the second half, so
+  sample noise no longer extrapolates into a false leak. Stated coverage loss: a
+  per-op heap leak below about 2.8 KiB/op is not caught on that run (it needs a
+  manual `KEYORIX_SOAK_OPS` of about 6700 or more); `TestSoakHeapOracle_FloorBoundary`
+  pins the floor from both sides.
+- **FuzzRedisReply skips oversized declared RESP lengths.** Inputs whose length header (at any byte offset, including after a bulk-body desync) exceeds an allowance are skipped instead of exhausting the rig's memory; the go-redis behaviour is recorded by a log-only characterisation test.
+- Merge-queue slimming: `MQ_SLIM_TESTREACH_CHECKS` narrows an enforced testreach lever to the named unsharded checks (for example `test-suite/root-1,test-suite/root-2`). A list that names a sharded leg (`http-2`, `server-3`, ...) is refused whole and testreach enforces nothing, because a sharded package's narrowed tests run only on its first shard.
+- **Metamorphic audit-chain tamper fuzzer (`FuzzAuditChainMetamorphicTamper`).**
+  Builds a fresh, valid, fully-checkpointed audit chain through the real writer,
+  applies one fuzz-driven structured mutation from a family (byte-flip,
+  timestamp change, delete, truncate-tail, duplicate-id0, content-reorder,
+  splice-from-another-log, replace-last-N, numeric nudge, plus two VALID
+  controls) and asserts the offline verifier's metamorphic relation: any
+  mutation that changes the authenticated 16-column read-set must drive
+  `auditverify.Verify` off VALID (or to a typed error), while a change confined
+  to the unauthenticated `machine_identity_id` column or a true no-op must stay
+  VALID. Generalizes `differential_test.go`'s fixed tamper matrix into a
+  random-chain, random-mutation fuzzer. The oracle decision has a two-direction
+  red/green proof (`TestMetamorphicOracle_RedGreen`) and a per-family live
+  detection proof (`TestMetamorphicOracle_EndToEnd_PerFamily`,
+  `TestMetamorphicOracle_Controls_StayValid`). A secondary `resguard` tripwire
+  (absolute wall + alloc ceilings) bounds Verify work on mutated artifacts.
+- **New report-only guard `TestNoReturnNilAfterFailureMarker_EncryptionAdmin`** (server/admin, scans server/admin and internal/encryptionops): an exported `*WithConfig` or `run*` function must not `return nil` directly after a `❌` print. Report-only on pull requests until a green nightly on main (docs/guard-rollout.d).
+- **Audit-log truthfulness for DENIED operations (`FuzzDeniedOpAuditNeverSuccess`, AUD1).**
+  New fuzz target in `server/faultops` that reuses `FuzzMixedPrincipalAuthority`'s
+  independent authorization reference model to drive random
+  (principal, operation, target-project) triples the model denies, and asserts
+  the compliance-critical direction the existing audit fuzzers did not cover: a
+  denied, no-effect operation must never leave a `Success=true` audit row (a
+  FALSE-SUCCESS audit certifies an unauthorized action as completed). Soundness-
+  gated on "non-audit state unchanged" so it only asserts where a success record
+  would genuinely be false. A ground-truth census (`TestDeniedOpAuditCensus`)
+  documents that Keyorix today does not audit mutation/authorization denials at
+  all (secret-value *read* denials remain audited via `AuditSecretValueReadDenials`),
+  a reviewed completeness baseline rather than a per-run failure.
+- Extended the `server/authzdiff` cross-layer authorization differential harness to
+  two further transport-enforced operation families — access-review campaign opening
+  and risk-exception creation — each bound to its REST router permission gate and
+  checked against the independent reference model, with a committed deterministic
+  strict sweep and a planted-defect red proof that removes the router gate.
+- Extended the `server/authzdiff` cross-layer authorization differential harness to a
+  further transport-enforced operation — risk-exception **approval**
+  (`POST /api/v1/risk-exceptions/{id}/approve`) — bound to its REST router permission
+  gate (`system.write` at global scope) and checked against the independent reference
+  model, with a dedicated pending-exception fixture whose creator is a non-probed user
+  so the dual-control business rules never vary by probed principal. Includes the
+  committed deterministic strict sweep (via `TestV8StrictSweep`) and a planted-defect
+  red proof (`riskexception-approve-router-gate-removed`) that removes the router gate.
+- **Transferred the digitorus/pkcs7 binary-parser bug classes (BER memory-exhaustion
+  DoS, BER out-of-bounds panic, round-trip divergence) to the other binary-format
+  parsers Keyorix reaches.** New bounded-work + round-trip fuzz targets in
+  `internal/libconformance`: `FuzzCBORBoundedWork` and `FuzzCBORRoundTrip`
+  (fxamacker/cbor/v2 — the attestation/COSE codec reached indirect-only via
+  go-webauthn), `FuzzTPMUnmarshalBoundedWork` (google/go-tpm `tpm2.Unmarshal` of the
+  TPM2B sealed-KEK / attestation structures reached from
+  `internal/crypto/tpm_provider.go`), and `FuzzCOSEKeyBoundedWork`
+  (go-webauthn `webauthncose.ParsePublicKey`). Each asserts decode time (Guard) and
+  allocation (`64 MiB + 4 KiB·N` envelope) stay proportional to input; the round-trip
+  target names every benign disagreement in a committed `EXPECTED-DIFFERENCE.md` table
+  so only a NEW class fails. Pinned behaviour recorded in
+  `internal/libconformance/INVARIANTS.md`. No production code changed.
+- **CL1 hostile-server fuzz target against the CLI transport (`cli/cmd.FuzzCLIHostileServer`).**
+  Drives the real hardened API client (`apiclient.NewHardenedHTTPClient`: 10 MiB response
+  cap, redirect refusal, request timeout) and the `cli/cmd` response-parsing/printing paths
+  against a live `httptest` server returning mutated, truncated, oversized, slow,
+  redirecting and type-confused replies. Oracles: no panic/hang, air-gap (no non-loopback
+  dial — a 3xx `Location` to the cloud-metadata IP must never be dialled), no bearer-token
+  forwarding to a redirect target, fail-closed on malformed/oversized/truncated replies, the
+  10 MiB size cap, no terminal escape or secret echo in anything the CLI prints, and exit
+  codes matching the documented table. Complements `FuzzApiError`, which fuzzes `apiError`
+  in isolation and never exercises the transport. The hardening/oracles are red/green-proven
+  by `TestCLIHostile_RedGreen_*` (hardened vs. a deliberately un-hardened client). Uses
+  `internal/fuzzutil/resguard` (NetMeter air-gap + Probe meters) as a test-only dependency.
+- **Algorithmic-complexity (PerfFuzz-style) fuzzing of third-party parsers.** Added
+  a shared cost oracle (`internal/fuzzutil/complexity`) that measures a single
+  parse's cost with deterministic proxies (allocated bytes via
+  `runtime.ReadMemStats`, an optional work counter, wall time as a sanity guard
+  only) and fails above a calibrated per-byte ratio or absolute ceiling, with
+  unit tests that classify a known-linear vs known-quadratic subject. Added five
+  `Fuzz*Complexity` targets in `internal/libconformance` over the parsers Keyorix
+  feeds untrusted or operator-supplied bytes — x/text PRECIS/NFC, golang-jwt
+  decode, beevik/etree XML, protobuf runtime decode, and yaml.v3 — each
+  registered in `scripts/fuzzing/targets.d/`.
+- The audit actor-search test now also pins that `actor_type` combines with an actor term (machine and user terms, each kind), on SQLite and PostgreSQL, and the degraded break-glass owed-audit row is asserted to carry the same named-user text (`user N ("<username>") self-granted`) as a normally written one.
+- **Dependency time-travel differential harness (`scripts/fuzzing/time-travel/`).**
+  Builds one driver per historical version of a pinned library — each in its own
+  throwaway module, offline from the module cache, never touching the repo's
+  `go.mod`/`go.sum` — runs them all on a shared corpus, and diffs the canonical
+  verdict/error-class/parsed-shape/bounded-work per input between consecutive
+  versions. Instantiated for `github.com/digitorus/pkcs7` across its three
+  pinned versions; the differential independently re-derives the
+  GHSA-3xqc-rpq8-wgp9 BER nesting-depth amplification fix (old transcodes work
+  proportional to nesting depth, new caps descent at 500) and confirms the
+  2026-09 → 2026-11 bump changes nothing on the `pkcs7.Parse` surface Keyorix
+  reaches. Adds `FuzzPKCS7TimeTravelOracle`
+  (`internal/libconformance`): coverage-guided fuzzing of the repo-pinned
+  (new) `pkcs7.Parse` with an older version as a subprocess oracle, failing only
+  when the new version accepts what the old rejected or panics.
+- **Added `FuzzYAMLV4Differential` (`internal/libconformance`), a differential fuzz target
+  over the YAML v3→v4 major rewrite** (`go.yaml.in/yaml/v3` v3.0.5 vs `go.yaml.in/yaml/v4`
+  v4.0.0). Three oracles on the same input: bounded-work (resguard alloc/malloc absolute
+  ceiling), accept/reject parity, and decoded-value equality, each gated by a committed
+  `EXPECTED-DIFFERENCES-yaml-v3-v4-differential.md` table with red/green proofs
+  (`TestYAMLV4DifferentialRedGreen`). Complements `FuzzYAMLSiblingDifferential`, which covers
+  only the v3.0.1↔v3.0.5 patch gap. The run found one divergence (`nonspecific-tag-empty-scalar`:
+  the non-specific tag `!` on an empty scalar resolves to `null` in v3 but the empty string in
+  v4) — a deliberate, more-spec-aligned v4 change, documented as a forward-looking migration
+  hazard (v4 has no live Keyorix caller today). Enforced by
+  `INV-LIBCONF-yaml-v4-differential`.
+- **Extended the YAML v3→v4 differential (`internal/libconformance`, DF3) with struct-decode,
+  multi-document-stream and round-trip oracles.** `FuzzYAMLV4StructDifferential` decodes the
+  same bytes into the real `internal/config.Config` family and a synthetic struct (lenient and
+  strict `KnownFields`/`WithKnownFields`); `FuzzYAMLV4MultiDocDifferential` compares every
+  document of a `---` stream; `FuzzYAMLV4RoundTrip` asserts per-library `decode→encode→decode`
+  idempotence. Each ties typed/stream divergences back to the single-doc class table, so a
+  typed split where the `any`-path agreed is a finding. New tolerated classes, all red/green
+  proven (`TestYAMLV4StructStreamRedGreen`) and documented
+  (`EXPECTED-DIFFERENCES-yaml-v3-v4-differential.md`):
+  - **D12 `nonspecific-tag-nonempty-scalar`** — generalises the DF2 D1 empty-scalar class to
+    non-empty scalars: `! 00`→ v3 int `0` / v4 `"00"`, `! true`→ v3 bool / v4 `"true"`, etc.
+  - **D13 `v4-strict-rejects:empty-doc`** — v4's one-shot strict `Load` rejects an empty stream
+    (`no documents in stream`) where v3's strict `Decoder` returns `io.EOF` and `Config.Load`
+    treats it as a valid all-default config — a forward-looking config-loader migration gotcha.
+  - **D14 `v4-strict-rejects:nonintegral-float-into-int`** — `int: 0.1` is silently coerced by
+    v3 (truncating `0.1`→ int `0`, a data-loss footgun) but **rejected by v4**; integral floats
+    agree. Found by the struct fuzzer; invisible to the `any`-path.
+  - Surfaced via the typed path and tolerated via D12: `int: ! 00` is accepted by v3 (int `0`)
+    but **rejected by v4** (cannot construct the kept string `"00"` into an `int` field),
+    invisible to the `any`-path oracle. All forward-looking (v4 has no live Keyorix caller).
+    Enforced by `INV-LIBCONF-yaml-v4-struct-stream-differential`.
+  - The fuzz run drained a long v3/v4 tail — **13 further classes (D12–D23 plus a stream-context
+    D4 mirror, a `v3-rejects:mapping-key-context`, and a `roundtrip:marshal-dup-key` footgun
+    affecting BOTH libraries), each red/green proven and documented**. Highlights below; see
+    `EXPECTED-DIFFERENCES-yaml-v3-v4-differential.md` for the full table.
+  - The fuzz run also drained a further any-path tail (all red/green proven, documented): **D15**
+    `v3-rejects:flow-seq-tagged-empty` (`[!x]`), **D16** `v3-rejects:flow-node-content` (`[: 1]`),
+    **D17** `nonspecific-tag-structural` (the `!`-tag divergence in a KEY, `! : 00`), **D18**
+    `anchor-name-colon-boundary` (a `:` inside an anchor name, `&a:b`: v3 `":b"` / v4 nil), and a
+    round-trip footgun **`roundtrip:negzero-float-to-int`** (`-.000`: v3 float `-0.0`→`-0`→ int `0`,
+    non-idempotent — D10 across a round-trip). A reflection-walker key-type panic
+    (`map[string]any` vs `map[any]any`) was fixed with a logical-key lookup.
+- **The `gopkg.in/yaml.v3` and `go.yaml.in/yaml/v3` dependencies are retired from this module's direct requirements.** Production already parsed YAML with `go.yaml.in/yaml/v4`; v3 survived only as the second parser in the libconformance differential fuzz targets and in two scripts. The CI-guard, config-compat and go-i18n fuzz tests now use v4. The v3-vs-v4 and v3-vs-v3 differential targets (`FuzzYAMLV3V4Differential`, `FuzzYAMLV4Differential`, `FuzzYAMLV4StructDifferential`, `FuzzYAMLV4MultiDocDifferential`, `FuzzYAMLSiblingDifferential`) and their red-proofs are removed. `FuzzYAMLV4RoundTrip`, `FuzzYAMLVsJSON` and `FuzzYAMLParseComplexity` now run against v4 only, and the bounded-work calibration uses v4's duplicate-key behaviour as its known-bad case. Typed-struct decode, multi-document streams and strict `KnownFields` mode are no longer compared against a second parser.
+- **DSN host extraction keeps an empty bracketed host (`host=[]`) as a candidate.** The host-list
+  splitter stripped the brackets to an empty string and every caller dropped it, so the host guard
+  saw no host for a DSN whose host the Postgres driver still reads. The entry is now kept as
+  written; `FuzzDSNHostsCoverDriverHosts` covers it with a regression seed.
+- The `admin_dsn` replace route (REST and gRPC) is now an `opCatalog` operation and `StatusFuzzed` in the faultops inventory.
+- **Hostile-server tests for the cloud engines and executors.** aws-sts, gcp and azure
+  (engines) and aws-iam, azure-app and gcp-service-account (executors) run against
+  `internal/fuzzutil/hostile` with malformed replies, giant length prefixes and headers,
+  hangs, slow drips and connection resets, and must refuse with an ordinary error, return
+  within their deadline, leave no goroutine or descriptor behind and carry no sent
+  credential in the error or log text.
+- **pgx and MySQL hostile-server fuzz budgets model server-claimed lengths.** The RESGUARD alloc
+  budgets for the length-prefixed protocol parsers were a per-input-byte slope, so every input
+  whose header claims a large body failed, which is why `fuzz-changed` went red on unrelated PRs
+  that touch those targets. The pgx harness now builds its connection config with the same bound
+  production uses, the four length-prefixed pgx targets and the three MySQL targets use an
+  absolute ceiling of the calibrated one plus that bound (MySQL: the protocol's 16 MiB per-packet
+  maximum; `Budget.UseBoundedAbsolute`, INV-RES-bounded-absolute-from-product-cap), and
+  the pgx process is warmed once so the first metered input no longer pays one-time
+  initialisation (`FuzzPgxSSLNegotiation` failed on its 1-byte seed).
+- Classified `github.com/boombuler/barcode`, `github.com/google/uuid` and
+  `github.com/klauspost/compress` in the egress inventory's `dependencyKinds` as
+  local (no connection of their own; only test files import them) and moved their
+  `go.mod` lines out of the `// indirect` block, as `go mod tidy` does. This stops
+  `TestEgressEveryDirectDependencyIsClassified` failing on every Dependabot PR that
+  touches `go.mod`.
+- **The 15 project-scoped legacy-role fixtures in `server/grpc/**` grant project roles** (`project_developer`, `project_viewer`, `project_admin`) instead of the install-wide editor/viewer/admin/super_admin.
+- **`scripts/k8s-e2e/run.sh` passes again on a real cluster (#3451).** Three checks had gone stale: J6 looked for the chart's Postgres as a StatefulSet (it is a Deployment), J6 compared the whole chart error text where it now carries a trailing "See deploy/helm/keyorix/README.md" sentence, and J1 looked for `POST http://localhost:8080/system/init` in the server log, which is now `https://` since the secure baseline. The bootstrap itself worked. The script is still manual (no CI job runs it).
+- **Edge unattended tests reach only the server they started (#4356).** The install asks for port 0 and the helpers read each start's own listening line, instead of reusing a port picked once and closed, which another process of a CI job could take between restarts.
+- **Restores the 80% coverage floor.** #4043 added the sdkdiff hostile-server mode (about 1,580 statements) with 61% of them unexercised by the root-4 leg, which took the merge-queue total from 80.2% to 79.2%. The mutation catalogue, the mock server's wire framing, the oracles, the report and the run/replay orchestrator now have offline tests (stub driver, raw TCP client); those files are 95.7% covered. No exclusion was added and the floor is unchanged.
+- **`TestAWSSMResponseFuzzO4RedProof` no longer flakes (FLAKE-AWSSM-REDPROOF-1).** The
+  un-hardened half of the O4 red proof now serves its 3 x 64 MiB error body from an
+  in-process `RoundTripper` (no socket, no server goroutine) and first asserts that the
+  SDK consumed every wire byte before comparing the allocation with `awssmO4Budget`, so
+  the budget and the assertion are unchanged and the proof still goes red when the oracle
+  cannot catch an unbounded response. On loaded CI the real-socket version intermittently
+  saw the client consume only 17-21 MB of 201 MB; a short read now fails with the consumed
+  byte count instead of a misleading budget message.
+- `docs/INVARIANTS.md` no longer carries a hand-kept Total row; `TestInvariantsIndexHasNoDuplicateRowsAndTotalsAddUp` computes and logs the sums, so two PRs editing the counts table cannot fail each other in the merge queue (#4237).
+- `TestKnownOpenTolerances_AreLoadBearing` reports a dead tolerance through `guardrules.KnownFindingClosed`: logged on pull_request/merge_group runs, failing on main and the nightly run.
+- **Real PostgreSQL fault coverage (`server/pgfault`).** New test-only package: a TCP fault proxy sits between keyorix's storage layer and a real PostgreSQL server and cuts or stalls the connection at any point of the v3 wire protocol — including the ambiguous-commit window (COMMIT sent, acknowledgement not yet received). It drives the production audit-commit path (`store.LocalStorage.LogAuditEvent`) through the fault and asserts durability oracles survive: no acknowledged commit is lost, the audit hash chain stays intact (no torn row), and an ambiguous commit is never reported as a false success. This is the real-fault counterpart to `server/faultops` (interface-level mock faults) and the PostgreSQL counterpart to `scripts/powercut` (SQLite-only). Covered by `FuzzPGFaultCommit` plus deterministic sweeps and three red-proofs; PG-gated (skips without `KEYORIX_TEST_PG_DSN`), every write lands in a throwaway `fspg_`-prefixed database dropped on cleanup.
+- Fuzz wall-clock hang oracles (`fuzzutil.Guard`, the hostile-server harnesses, the encryption hang guards and several third-party targets) now tell a hung call from a frozen fuzz process before reporting: a deadline miss while the process was frozen gets one more full limit; test-only change.
+- The grace is refused when the input caused the freeze itself (heap allocation or GC CPU growth in the window, read from `runtime/metrics`), and it forgives only the frozen time: a call that ran longer than its limit while the process was running still fails. Every excused miss is logged to stderr and `FUZZ_STALL_LOG`.
+- `fuzzutil.OverDeadline` (bounded-work oracle for timed synchronous calls: fails above 2x the deadline of wall time, when running time exceeds the deadline, or when the freeze was self-inflicted) and `FUZZ_STALL_LOG` (appends one line per detected freeze and per excused miss, to measure how often the boxes freeze).
+- **Canary leak fuzz targets for PostgreSQL.** Plant a canary secret and assert it never appears in errors, logs, stdout/stderr, metrics, DB error DETAIL, gRPC status or HTTP bodies/headers, across core, HTTP, gRPC, panic-dump and CLI paths. PG-gated: they skip without `KEYORIX_TEST_PG_DSN`.
+- **CH1 differential fuzzer: go-chi routing vs. the restricted-PAT authorization
+  gate.** `FuzzChiAuthzRouteDifferential` (`server/middleware`) drives the real
+  `RefuseRestrictedPATUngatedWrites` middleware, the real `core.RestrictedPATWriteRefusal`
+  table and a real chi router over percent-encoded, encoded-slash, dot-segment,
+  double-slash, trailing-slash, case and unicode paths, asserting the gate's refusal
+  decision always matches the refusal-status of the route chi actually dispatches (never
+  authorized as route A and served as route B). This is the one HTTP authz surface that
+  re-matches the route independently of chi; all other gates are per-route middleware.
+  Guarded by `TestChiAuthzRouteDifferential_Seeds` and red/green-proved against a planted
+  decoded-path defect (`TestChiAuthzRouteDifferential_RedProof`); routing-differential
+  disagreement classes are enumerated in `server/middleware/EXPECTED-DIFFERENCE.md`. No
+  Keyorix defect found — the gate is sound.
+- **CH2 run: the CH1 fuzzer was exercised for 126 minutes of real wall time**
+  (14×540s chunks, ~23M executions, `-parallel 2`) against the real middleware, table
+  and chi router. Zero oracle violations (no CH1-A bypass, CH1-B wrong-route refusal or
+  new CH1-C routing-differential class); the interesting-input corpus saturated at ~213
+  entries. No crasher, no harness bug, and no production change: the latent decoded-path
+  fallback branch flagged in CH1 stayed unreachable under every fuzzed input, so the
+  optional hardening was deliberately NOT applied.
+- **CH2 run: the CH1 fuzzer was exercised for 126 minutes of real wall time**
+  (14×540s chunks, ~23M executions, `-parallel 2`) against the real middleware, table
+  and chi router. Zero oracle violations (no CH1-A bypass, CH1-B wrong-route refusal or
+  new CH1-C routing-differential class); the interesting-input corpus saturated at ~213
+  entries. No crasher, no harness bug, and no production change: the latent decoded-path
+  fallback branch flagged in CH1 stayed unreachable under every fuzzed input, so the
+  optional hardening was deliberately NOT applied.
+- Added a cross-release configuration-compatibility fuzz harness
+  (`scripts/fuzzing/configcompat`, `FuzzConfigCompat`) that takes configuration
+  files shipped by earlier releases and differentially checks them against the
+  current loader: an old file must still load or be refused with an error that
+  names the offending key, an accepted configuration must not hold a
+  security-relevant posture that no explicit setting or documented default
+  explains, and a deprecated setting name must keep its original meaning and warn
+  when used. Harness-only; no shipped code changed.
+- **configspace fuzzer: refusal-unnamed findings are keyed by the refusal, not the
+  options.** The in-process and process-stage "refusal does not name the offending
+  option" (I2c) findings now dedupe on a masked signature of the refusal text (numbers,
+  paths, line numbers and quoted values stripped) instead of the case's first three
+  option ids. The old key collapsed unrelated `pair-all` refusals into one entry and let
+  minimisation drift between causes; the new key ties each finding to its cause so two
+  different refusals can never share a key. Model conflict C20 also now matches a blank
+  `storage.type` (mapped to `local` at boot), closing a stale false "unnamed refusal".
+  `known.tsv` rows migrated accordingly (harness only, no production change).
+- **PostgreSQL leg of the process-death crash fuzzer.** `FuzzProcessCrashRecoveryPG` kills the process (and cuts the connection) at fuzzed points during encryption rotation, backup and restore against real PostgreSQL, recovers with documented commands only and checks whole-install invariants; red-proofs cover the migration schema oracle. Registered in `scripts/fuzzing/targets.conf`.
+- **Process-death crash-recovery fuzzer.** `FuzzProcessCrashRecovery` (`internal/encryption`, SQLite only) runs one real admin or core operation (DEK and KEK rotation, backup, restore, secret create and update, role grant, revoke and create, fresh-install migration) in a re-executed test binary, SIGKILLs it at the Nth write seam, then reopens the install through the boot steps. It checks that the install opens or refuses with a documented error, that secrets read back, that secrets, roles and authorization are together wholly the before or the after state, and that a rerun completes or refuses. `KEYORIX_PCRASH_EXHAUSTIVE=1` kills every operation at every seam; its red-proof runs nightly (`.github/workflows/process-crash-nightly.yml`). No production code changed; SIGKILL leaves the page cache to the kernel, so this says nothing about fsync or power loss.
+- **Differential fuzzing between sibling implementations (DP1).** Added three
+  differential fuzz targets under `internal/libconformance`, each oracle a
+  *classified disagreement* (never panic-only) gated by a committed
+  EXPECTED-DIFFERENCE table (`differential_expected_difference_test.go`):
+  `FuzzYAMLSiblingDifferential` (go.yaml.in/yaml/v3 v3.0.5 vs gopkg.in/yaml.v3
+  v3.0.1 — accept/reject parity, decoded-value equality via a fixed canonical
+  re-encoder, and a test-only duplicate-key pre-scan standing in for the absent
+  `internal/yamlsafe`); `FuzzJSONSchemaValidatorDifferential`
+  (santhosh-tekuri/jsonschema/v6 vs getkin/kin-openapi `openapi3` — verdict
+  parity on Keyorix-shaped schemas with a fuzzed instance); and
+  `FuzzJSONStrictDecodeDifferential` (the `json.NewDecoder(r.Body).Decode` path
+  every HTTP handler uses vs `json.Unmarshal` / `DisallowUnknownFields` / a
+  schemaless map decode — accept/reject parity on the same bytes). Each target is
+  declared in `scripts/fuzzing/targets.d/` and documented in
+  `internal/libconformance/INVARIANTS.d/`.
+- **Reusable differential-fuzzing kit (`fuzzkit/diffkit`) plus its first instances.** A
+  stdlib-only kit compares two or more independent implementations of one security
+  decision (accept/reject plus the value extracted on accept) and reports any
+  disagreement that a documented-differences table does not explain; a panic or hang in
+  one implementation is captured as a verdict, not a crash of the harness. First
+  instances in the standalone `fuzzkit/` module: **Instance B** (`fuzzkit/certdiff`,
+  `FuzzCertChainDifferential`) differentially fuzzes X.509 chain-trust decisions
+  (Go `crypto/x509` vs `openssl verify`) over Frankencert-style chains, and **Instance A**
+  (`fuzzkit/jwtdiff`, `FuzzJWTVerifyDifferential`) differentially fuzzes JWT verification
+  (`golang-jwt/jwt/v5` vs an independent spec-derived stdlib reference). No production
+  code changes.
+- **Pin repeated-bracket seeds for `FuzzDSNHostsCoverDriverHosts`.** Three seeds (`host=[[::1]]`, `host=[[fe80::1]]`, `host=[[::1]],203.0.113.5`) lock in the driver differential for repeated brackets.
+- **SQLancer-style logic-bug fuzzing of the GORM data layer (task SQ1).** New
+  `internal/storage/sqllogicfuzz` package with four Fuzz targets driving the
+  production modernc-SQLite dialector and PostgreSQL: `FuzzTLP` (Ternary Logic
+  Partitioning), `FuzzNoREC` (optimised vs un-optimised count), `FuzzCrossDialect`
+  (same GORM query over a defined common subset on SQLite vs PostgreSQL —
+  skips cleanly without `KEYORIX_TEST_PG_DSN`, creates/drops a `sq1_<pid>`
+  database) and `FuzzGormInjectionStructure` (a bind-parameter value, including
+  SQL-injection payloads, never changes the prepared-statement text). Each
+  oracle has a committed red/green proof. Targets registered under
+  `scripts/fuzzing/targets.d/`.
+- **Four fuzz harnesses no longer leak one in-memory database per input.** `FuzzPATValidateLifecycle`, the clock-extremes and fake-clock targets (`internal/core`) and the login-throttle target (`server/http/handlers`) built a fresh SQLite fixture for every fuzz input and never closed it, so a worker grew about 150 MB per 18 s at roughly 30 execs/s until the kernel killed it (5 GB after about 40,000 inputs, on a 7 GB and again on a 31 GB host). Each fixture now closes its database in `t.Cleanup`; resident memory of `FuzzPATValidateLifecycle` stays flat at about 190 MB over the same run. No product code changed.
+- Added slow-disk fault coverage for key-material durable writes: a new test
+  injects a bounded delay at the KEK-rotation directory fsync and verifies the
+  rotation still commits atomically and the store reopens and recovers its key,
+  while measuring that the slow fsync is held under the key-manager lock (an
+  availability characterization of rotation under a degraded disk).
+- Fixed a memory leak in the fault-injection fuzz world fixture: a freshly built
+  world's last-used bookkeeping timer kept the whole core graph (and its database
+  schema cache) alive after the world was torn down, so long fuzz runs grew
+  resident memory without bound. The fixture now quiesces that bookkeeping at
+  teardown, and a new gate asserts a torn-down world retains no significant heap.
+- Add `FuzzJSONSchemaRefDifferential` (Oracle D) to `internal/libconformance`: a verdict
+  differential between getkin/kin-openapi and santhosh-tekuri/jsonschema/v6 over schemas
+  with `$ref`/`$defs`, which `FuzzOpenAPIVsJSONSchema` (Oracle C) cannot compare. kin resolves
+  the refs through its Loader on a wrapping OpenAPI 3.0.3 document. Classifies one new
+  dialect split, `openapi-ref-sibling-ignored` (OpenAPI 3.0 ignores keywords next to `$ref`),
+  and inherits the Oracle-C allowlist. Pure ref-only cycles and `$dynamicRef` are crash/hang
+  coverage only, and a reach test pins that. Adds a `targets.d` entry for the continuous
+  fuzzing rig (15m).
+- **Leaf-library conformance fuzz targets (LF1).** Six new targets compare small third-party libraries on keyorix's paths with an independent reference, a second reader or a round-trip: mattermost/xml-roundtrip-validator against encoding/xml and etree, the QR encoder behind pquerna/otp against an ISO 18004 reference decoder, go-mail message rendering (header set, address, subject, body, CRLF framing), pquerna/otp TOTP codes and otpauth:// URIs against RFC 6238, filippo.io/age armor and recipients as `admin recovery-key` uses them, and go-chi/cors grants over every `server.http.allowed_origins` list the config validator accepts. Each oracle was seen to fire on a planted library defect. Library defects found on first contact are modelled exactly inside the oracles and pinned by reproducer tests that go red when they are fixed; invariants in `internal/libconformance/INVARIANTS.d/`.
+- **Re-open and extend library fuzz coverage (LIB-FUZZ-3).** Add fuzz targets for GCP KMS hostile gRPC replies (`fuzz/thirdparty/gcpkms/`), YAML v3→v4 differential correctness (`internal/libconformance/`), Redis RESP3 large-declared-bulk + credential oracle (`fuzz/thirdparty/redis/resp3_bulk_fuzz_test.go`), and gRPC metadata/header abuse via raw HTTP/2 frames (`server/grpc/metadata_abuse_test.go`). All targets registered in `scripts/fuzzing/targets.d/`. Findings: LF3-F3 (go-redis pre-allocates declared bulk length before read timeout; capped at 16 MB, documented for upstream) and LF3-F1 through LF3-F8 (YAML 1.1/1.2 divergences, all EXPECTED-DIFFERENCE, none Keyorix security defects).
+- **YAML v3/v4 differential fuzzer: twelve new divergence classes documented and allowlisted (D24–D35).** The fuzz campaign on `internal/libconformance` confirmed and classified twelve new behavioural differences between `go.yaml.in/yaml/v3` (YAML 1.1) and `go.yaml.in/yaml/v4` (YAML 1.2): flow-sequence colon-nospace, empty-implicit-key, indentation-indicator, block-scalar EOS clip, anchor-character rejection, merge-value rejection, block-header re-parse, YAML 1.1 binary integer literals, tab as block-scalar indentation, anchor-EOS compound, flow-context token-start, and multi-doc stream document-count split. All are YAML spec differences with no live caller impact (v4 is not in production). Five classifier/regex fixes were also applied: `v3AnchorTokenRe` stops at `?`, `directive` case ordering, `isAnchorColonBoundaryDivergence` extended to multi-anchor inputs, and `blockScalarHeaderRe` extended to handle both CR line terminators and leading-whitespace indented block scalars. `FuzzGoMailRenderRoundTrip` oracle O3 and `FuzzJSONSchemaRefDifferential` `$dynamicRef` skip were also fixed.
+- **Hostile-source fuzzing for the `keyorix-migrate` tool and its `vault scan` health
+  assessment.** The record-and-mutate hostile-backend harness (`internal/fuzzutil/hostile`,
+  proposed in #4032 and not yet on main) is vendored into the migrate module as
+  `migrate/internal/hostile` (the migrate tool is a
+  separate Go module and cannot import the root module's internal packages); its nine
+  planted-defect self-tests pass unchanged. New fuzz targets cover the untrusted inputs
+  reached at first contact with a customer source: three direct parsers — `splitjson.Object`
+  (JSON-object explode for `--split-json`), `healthscan.ParsePolicyHCL` (the hand-rolled Vault
+  ACL-policy HCL scanner, with a ReDoS watchdog), and `cmd.sanitizeSecretName` (provider name →
+  Keyorix secret-name derivation) — and three hostile-server targets driving the real client
+  code against fake backends whose responses are fuzz-mutated: `vaultsource.Client.Walk` (the
+  recursive KV reader / import write path), the whole `healthscan.Run` check suite (the paid
+  `vault scan` assessment) with its rendered reports, and `awssource.Client.List` through the
+  real aws-sdk-go-v2 client (SDK `BaseEndpoint` seam). Oracles: no panic/hang/alloc-blowup,
+  secret values and credentials never leak into an error/log/report, derived names/paths are
+  normalised, redirects are never followed, and a non-success response is never a truncated
+  success. Each target has a `scripts/fuzzing/targets.d` entry; `splitjson` and `vaultsource`
+  gain `INVARIANTS.md` + fragment entries for the invariants the targets enforce.
+- **Skip-version upgrade fuzzers over real old-release databases.** `FuzzUpgradeFromOldSchema` and `FuzzUpgradeInterrupted` (`internal/storage`) upgrade SQLite databases written by v0.91.0 through v0.96.3 with this tree's startup path, on top of generated state, and check that secrets still decrypt, authorization matches the old release, the audit log stays intact, a second migration changes nothing, the schema matches a fresh install apart from listed differences, and an upgrade stopped after any write statement completes on restart. PostgreSQL and sources before v0.91.0 are not covered.
+- **Multi-process PostgreSQL race harness (e2e).** Added a Go fuzz harness that
+  boots several real `keyorix-server` processes against one shared PostgreSQL
+  database (the ADR-039 HA shape) and drives them concurrently through the REST
+  API, choosing cross-replica interleavings from the fuzz input. It checks
+  cross-replica convergence and single-register serial equivalence per
+  iteration, and carries seeded oracles for cross-replica unique-name creation
+  (exactly one winner and one active row — a second fuzz target races concurrent
+  same-name creates), post-return visibility, revoked personal-access-token
+  denial across replicas, a SIGKILLed replica leaving no stuck advisory lock and
+  reopening the shared store without hand repair, audit-chain verification plus
+  exactly-one-audit-row-per-acknowledged-op, and a secret/key log canary. Each
+  oracle has a red/green proof. Requires the `e2e` build tag and
+  `KEYORIX_TEST_PG_DSN`; skips otherwise. No production code changed.
+- **Concurrency/linearizability fuzzers for the third-party connection pools Keyorix shares
+  across goroutines.** New `fuzz/thirdparty/pools` package with a seeded scheduler
+  (`internal/testutil/schedfuzz`) driving concurrent operation histories against three pools,
+  each checked for linearizability with porcupine and watched by connection-leak (including
+  mid-query/mid-transaction context cancellation), pool-drain-to-baseline, goroutine-leak, and
+  deadlock-within-timeout oracles, run under `-race`: `FuzzSQLitePoolLinearizable`
+  (`database/sql` + `modernc.org/sqlite`), `FuzzPgxPoolLinearizable` (`jackc/pgx/v5/pgxpool`,
+  the native read pool, `KEYORIX_TEST_PG_DSN`-gated), and `FuzzGormTxnLinearizable` (gorm
+  transactional read-modify-write, the `TryAcquireSchedulerLock` FOR-UPDATE shape, with a
+  monotonic-counter model whose linearizability is the transaction-isolation / lost-update
+  oracle). Every oracle has a committed red/green proof (`TestOracle_*`). New store invariant
+  `INV-STORE-gorm-txn-rmw-no-lost-update`.
+- **Reachability-first third-party fuzzing (`scripts/fuzzing/reachgen`).** New
+  offline, read-only tool that enumerates the exported third-party functions
+  Keyorix actually calls with attacker/operator-influenced arguments
+  (go/packages + a lightweight provenance taint), ranks the uncovered ones, and
+  emits draft fuzz skeletons for the fuzzable leads. Ships the Phase-0 ranked
+  top-40 (`scripts/fuzzing/reachgen/RANKED-TOP40.md`) and unit tests on an
+  offline fixture module.
+- **Five promoted third-party fuzz targets with sound oracles**, each traced to
+  a live Keyorix caller and red-proofed: `precis.Profile.String` idempotence
+  (identity name normalization), `bcrypt` round-trip + fail-closed + cost-bomb
+  bound (login), `ssh.ParseAuthorizedKey` round-trip stability (admin
+  recovery-key recipient), `webauthncose.ParsePublicKey` bounded-work
+  (WebAuthn COSE classify), and `go.yaml.in/yaml/v4` bounded-work/anti-alias-bomb
+  (config + credstore). Targets live under `fuzz/thirdparty/`. The precis, ssh
+  and webauthn targets are direct library-level complements to existing
+  Keyorix-level targets (`internal/identity` fold oracles,
+  `server/admin` recovery-key recipient, `internal/libconformance` COSE key).
+- **Secret-canary leak fuzz targets.** New `FuzzCoreSecretOpsCanaryLeak` (internal/core), `FuzzHTTPRequestEchoCanary` (server/http), `FuzzPanicDumpCanary` (server/faultops) and `FuzzCLIArgsCanaryLeak` (internal/fuzzutil/canary) put marked values into every request field and fail when a secret reaches a log, stdout, stderr, error, response, metric, audit row or file outside an explicit allowlist. Each target has a red-proof and a positive control on every execution. internal/fuzzutil/canary holds the shared minting, capture and scanning helpers; it is imported only by test files, so shipped binaries are unaffected.
+- Added `scripts/fuzzing/sinkmap`, an offline deterministic sink-mapper that
+  lists dangerous call sites in the root module by kind, resolves each one's
+  enclosing function, API/parser reachability and fuzz coverage over a static
+  call graph, and emits a ranked machine-readable table to guide where fuzz
+  harnesses are pointed next.
+- Added three sink-guided fuzz targets chosen by that mapper, one per invariant
+  family: `FuzzWebhookSSRFGuard` (notification webhook/chat SSRF guard refuses
+  private/link-local destinations), `FuzzSafePathConfinement` (config key-file
+  paths cannot traverse outside their base directory), and
+  `FuzzPostgresRotateRecordingDriver` (the role-rotation `ALTER ROLE` statement
+  keeps attacker-influenced bytes inside their quoted slots, checked by a
+  recording driver).
+- **Storage crash-replay fuzzing (FS1).** Five corpus-driven fuzz targets cover the reader/crash-replay and real-filesystem-fault seams the existing write-seam fault campaign (`internal/encryption` `FuzzFaultInjectedOperations`, the crash-recovery fuzzers, the dm-flakey power-cut harness) did not: `FuzzKeySetCrashReconcile` (key-set manifest #2900/ADR-112 — a mixed-generation/partial/stuck/torn-manifest set is never accepted as one coherent generation), `FuzzWitnessCrashReplay` (audit high-water witness — a torn/forged witness never verifies under the real key, an unparseable one is surfaced not silently absent, the mark is never lowered on replay), `FuzzRestoreJournalCrashReplay` (restore journal — a torn/wrong-version journal is never silently accepted, the `HashFile==Entry.SHA256` install-gate rejects torn staged files), `FuzzSecureWriteUnderFault` (`SecureWriteFileSync`/`SecureOpenBeneath` under real read-only/symlink/non-dir/escape faults — error surfaced, old-or-new never partial, no fd leak on the per-component `O_NOFOLLOW` walk error paths), and `FuzzCredStoreCrashReplay` (thin-CLI credential store Save→Load round-trip and torn-Save handling). Each oracle is red-proofed against a planted defect. New `INVARIANTS.md`/`INVARIANTS.d` for `internal/keyfiles`, `internal/restorejournal`, `internal/securefiles` and a new `internal/auditverify` fragment. No production code change.
+- **go-tpm and go-mail fuzz targets on the TPM KEK and setup-link mail paths (TP1).** Six new targets: the TPM KEK provider's sealed-blob file decode (prefix and inner round-trip, allocation cap), go-tpm's two TPMT_PUBLIC decoders against each other, the provider's real unseal path against the go-tpm-tools simulator with a mutated Unseal or Load response (outData checked by an independent spec-direct reader, response codes, the KEK `validateKEK` accepts, time cap), the setup-link email from `SMTPDelivery.buildMessage` parsed back with net/mail, mime/multipart, quoted-printable and x/net/html (header set, addresses, subject, both MIME parts, HTML tag skeleton), the same email over go-mail's SMTP client to an in-memory relay (envelope, command set, dot-unstuffed DATA round-trip), and a hostile relay (no cleartext password under `tls=none`, nothing but EHLO/STARTTLS before TLS under `starttls`, bounded send time, success only after a 2xx end-of-data). Each oracle was seen to fire on a planted defect. Library defects found (go-tpm truncated size fields read as empty, legacy/tpm2 misreading RSAES and ECDAA schemes, go-mail's unbounded SCRAM iteration count) are modelled exactly in the oracles and pinned by tests that go red when they are fixed.
+- **Skip-version upgrade fuzzers for SQLite and PostgreSQL.** `FuzzUpgradeFromOldSchema` and `FuzzUpgradeInterrupted` (and their `PG` variants, PG-gated) start from real snapshots of releases v0.91.0 to v0.96.3, apply the migrations (also interrupted midway), and check that secrets still decrypt, authorization is unchanged, the audit chain is intact and the schema matches a fresh install. Findings are in `docs/findings/`; the v0.91.0 interrupted-upgrade artifact is reproducible only on the unlocked path.
+- **authzdiff V5EXT4: bind bulk.rotate, mfa.stepup, and 8 SCIM operations.** Extends the authorization reference-model differential (`server/authzdiff`) with three new binding groups: `BulkRotateSecrets` (router-only gate, `errNotAuthzLayer` at core for all principals), `VerifyMFAStepUp` (MFA-enrollment modelled via `mfaRequired` requirement field, `pkMFAUser` fixture principal), and 8 SCIM write endpoints (POST/PUT/PATCH/DELETE for Users and Groups) via a standalone SCIM-enabled router sweep. Adds `TestBulkRotateRouterGatePresent` and `TestSCIMRouterGatePresent` anchor guards with red/green proof. Coverage reaches 115/212 REST operations bound.
+- **Authzdiff V5EXT5: bind mfa.activate, mfa.disable, mfa.recovery-codes.regenerate to the authorization differential.** Adds a `pkMFAEnrollee` fixture principal with a pending enrollment, a `pendingMFARequired` model field for `ActivateMFA`'s enrollment check, and three new op bindings. `mfa.enroll` (BeginMFAEnrollment) is covered structurally by `TestMFARouteGatesPresent`, which asserts `BlockWhenImpersonating` on all four MFA self-service routes. No production-code changes.
+- authzdiff: bound three more operations into the cross-layer authorization
+  differential — risk-exception approve (`system.write@global` router gate),
+  risk-exception delete (core-enforced creator-or-admin-tier, modelled as a
+  global admin role) and break-glass revoke (`roles.assign@project` at both the
+  REST router and the gRPC interceptor, also binding the previously-unbound
+  `BreakGlassService.RevokeBreakGlass` RPC). Coverage of in-scope matrix
+  operations rises to REST 96/212 and gRPC 36/47. Each binding is red/green
+  validated by a planted-defect self-test.
+- **authzdiff oracle model extended with access-review and break-glass review gates.** Five operations previously deferred from the V5EXT campaign are now bound into the cross-layer authorization differential: `accessreview.attest` (roles.read@project router gate), `accessreview.revoke` (roles.assign@project), `campaign.decide` (roles.assign@campaignProject, coreGateExcluded), `campaign.close` (roles.assign@campaignProject, ID-2: core_refusal none), and `breakglass.review` (roles.assign@project + humanOnly). A new `coreGateExcluded` flag on `opSpec` excludes the core leg from both oracles for ops where core enforces only reviewer-independence and human-only rules, not the router's permission gate. A new `humanOnly` field on `requirement` models `requireHumanReviewer` (machines refused even when the router gate passes). All five gates are red/green-proved via planted-defect sweeps (181–246 unexplained cases on gate removal, 0 clean). REST coverage advances from 96 to 101 of 212 in-scope operations.
+- **Fuzz the gRPC server edge: hostile metadata through the real interceptor chain.**
+  New `FuzzGRPCEdgeAuthMetadata` (`server/grpc/interceptors`) drives fuzzed,
+  hostile gRPC metadata — oversized / repeated / binary / odd-encoding
+  authorization headers, malformed Bearer/PAT/session/machine-token forms, junk
+  neighbour headers, and cancelled / past-deadline contexts — through the
+  production-order unary interceptor chain (Recovery → Timeout → WriteContention →
+  Auth → RateLimit → ShareElevationAudit) in front of a sentinel handler. Oracles
+  (each red/green-proven in `edge_auth_metadata_redgreen_test.go` against the same
+  `edgeViolation` predicate the fuzzer uses): no panic is ever caught by Recovery;
+  a handler is reached if and only if a fully-resolved authenticated principal is
+  on its context (no partial auth/ratelimit/audit evaluation); bounded work/memory
+  via the shared `resguard` budget; no server secret or caller bearer-token echoed
+  into the client error or the server log; every non-OK result is a well-formed
+  fail-closed gRPC status. Registered in `scripts/fuzzing/targets.d/`.
+- **Fuzz the shared httpx request decoder behind the real body-size cap.** New
+  `FuzzHTTPXDecodeEdge` (`server/http/handlers/httpx`) drives hostile
+  `(content-type, body)` — content-type confusion, charset tricks, trailing data,
+  huge numbers, duplicate keys, unknown fields, deep nesting, invalid UTF-8, and
+  oversized declared-length/chunked bodies — through `httpx.MustDecodeBody` behind
+  `middleware.MaxBodyBytes`, with a sentinel business handler behind the decode.
+  Non-duplicative of `FuzzJSONDecodeBoundedWork`: adds a leak guard on the
+  decode-error response envelope, the fail-closed-through-the-cap invariant
+  (handler reached iff decode succeeded), HTTP status discipline, and a `resguard`
+  bounded-memory budget — each red/green-proven in `edge_decode_redgreen_test.go`.
+- **gorm identifier/clause injection & tenant-isolation fuzzing (GM1).** Added
+  `FuzzGormListSQLShape` over the three caller-influenced list builders
+  (`ListSecrets`, `ListUsers`, `GetAuditLogs`): it builds each query on the SQLite and
+  PostgreSQL dialects in gorm DryRun, captures the parameterised SQL and bind vars off
+  `db.Statement`, and asserts that no caller byte reaches the statement text (all
+  identifiers/clauses are bound), the statement never stacks, the tenant `project_id`
+  predicate is present and bound when a project scope is requested, and the two dialects
+  reduce to the same structural skeleton modulo a committed EXPECTED-DIFFERENCE table.
+  Added `FuzzGormListTenantIsolation`, which seeds two tenants into a migrated store
+  (SQLite and PostgreSQL) and asserts a project-scoped `ListSecrets` never returns
+  another project's row under any hostile sort/search/classification/type, with
+  error-class agreement across backends. Both targets are red/green-proven
+  (`TestGormIdentifierOracle_RedGreen`, `TestGormTenantIsolation_RedGreen`). No
+  production code changed — the campaign confirmed Keyorix already binds every
+  identifier/sort/filter input it forwards to gorm and scopes every list to its tenant.
+- **Hostile-response fuzz oracles for the Connect hardened HTTP client.** Added four
+  pure-function fuzz targets over `internal/connect/hardened_client.go` — the shared
+  outbound-response layer the Azure Key Vault (Azure-identity-authenticated) and
+  Vault/AWS Secrets Manager connectors route every response through: `FuzzScrubbedErrorBody`
+  (O-SCRUB — the scrubbed error body is always valid JSON of a fixed shape whose code is
+  charset-bounded and never invented), `FuzzValidErrorCode` (O-CODE — differential against an
+  independent regexp), `FuzzCappedBodyReader` (O-CAP — content-length boundary delivers exactly
+  `min(len,cap)` bytes and flags oversize) and `FuzzErrorBodyScrubRoundTrip` (O-RT — content-type/
+  content-length/transfer-encoding rewrite on error statuses, pass-through on success). Each
+  oracle is red/green proven against a planted defect; no production code changed. Guards new
+  `INV-CONNECT-hardened-response-scrub`.
+- **Hostile-server fuzzing of the cloud SDKs (SK1).** Added four hostile-SERVER
+  fuzz targets under `fuzz/thirdparty`, driving the real SDK clients Keyorix uses
+  against loopback servers with grammar-aware mutated responses, through each SDK's
+  own endpoint/transport override: `FuzzKMSResponse` (aws-sdk-go-v2/kms, awsJson1_1),
+  `FuzzS3PutObjectResponse` (aws-sdk-go-v2/s3, REST-XML — the evidencesink object
+  store), `FuzzAzureKeysResponse` (azure-sdk-for-go keyvault/azkeys, JSON over TLS),
+  and `FuzzSMTPDialogue` (wneessen/go-mail, plaintext SMTP dialogue). Oracles (each
+  red/green-proven): no panic, bounded time, no goroutine/fd leak, fail-closed on a
+  non-2xx response, no retry storm, and no sent credential (AWS access-key id, Azure
+  bearer token, SMTP password) on the wire or in an error. Complements the existing
+  `internal/connect` federated-secret response fuzzers (AWS SM / Azure KV / GCP SM /
+  Vault) by covering the disjoint surface those do not: KMS wrap/unwrap, S3 REST-XML,
+  and the SMTP dialogue. Shared oracle harness in `fuzz/thirdparty/internal/cloudfuzz`.
+- **Fuzz coverage for two doc-only invariants (IV1).** `FuzzRemoteStorageServerBoundary` (`internal/config`) checks INV-STORAGE-35: every config with `storage.type: remote` must fail `validateStorageSection` whatever the other storage fields and http/grpc flags are, and flipping only the type to `remote` on a valid local config must turn it invalid. `FuzzMigrateBackupRoundTrip` (`internal/encryptionops`) checks that migrate-provider backups keep the DEK bytes exactly, never overwrite an earlier backup (even in the same instant), and that restore by rename reproduces the backed-up bytes. Both are registered in `scripts/fuzzing/targets.d/`. Test-only; no production code changes.
+- **golang-jwt/jwt/v5 claims-codec fuzzing (JO1).** Added `FuzzJWTClaimsCodec` and
+  `FuzzNumericDateDifferential` to `fuzz/thirdparty/jwt`, covering the previously
+  unfuzzed `jwt.NumericDate`/`jwt.ClaimStrings` JSON codec that both live verify
+  paths (`internal/oidcverify OIDCVerifier.VerifyWithExpiry`,
+  `internal/core KeyorixCore.verifyIDToken`) invoke when decoding a token payload
+  into `jwt.RegisteredClaims` before the signature is checked. Oracles: no
+  panic/hang, bounded allocation, round-trip idempotence to a fixed point, and an
+  exact Unix-seconds differential for integer `exp`/`nbf`/`iat` values (with a
+  committed EXPECTED-DIFFERENCE table for float-precision/overflow/fractional
+  classes). Each oracle carries an in-test red/green proof; no production code
+  changed. `go-jose` is not a dependency of this repo — this extends the nearest
+  reachable JOSE-family surface instead. Guarded by `INV-FUZZJWT-claims-codec`.
+- **Differential + bounded-work fuzz harnesses for the token libraries Keyorix
+  authenticates with (`golang-jwt/jwt/v5`, `pquerna/otp`).** New `fuzz/thirdparty/jwt`
+  and `fuzz/thirdparty/otp` packages. The JWT harness differentially compares
+  golang-jwt's structural parse against an in-harness strict RFC 7519/7515/8725
+  reference decoder (no second JWT implementation is in the module cache), pins the
+  asymmetric-only alg-confusion posture of the two live verify paths
+  (`internal/oidcverify`, SSO login) with red proofs, and guards against the
+  header memory-exhaustion CVE class (CVE-2025-30204). The OTP harness pins the
+  RFC 4226 (SHA1, 6 digits) and RFC 6238 (8 digits) vectors, round-trips `otpauth://`
+  URLs, and documents base32-secret leniency versus a strict decoder. Disagreement
+  classes are enumerated in committed `EXPECTED-DIFFERENCE.md` tables so only a NEW
+  class fails. No production code changed.
+- **resguard `KDFMeter` resource seam.** The fuzz resource helper
+  (`internal/fuzzutil/resguard`) gains a `KDFMeter`, exposed as
+  `Cost.KDFGenerates`/`KDFCompares`, counterpart to `DBMeter` for password-hash
+  cost — the signal an account-enumeration timing oracle needs that a DB-query
+  counter cannot see.
+- **`FuzzKDFEnumerationOracle` (`internal/core`).** Account-enumeration-by-difference
+  oracle on the local bcrypt login path: for every account-existence class
+  (known-active, known-wrong, locked, deactivated, suspended, reset-required,
+  absent) it asserts `VerifyPasswordCredentials` spends exactly one KDF compare and
+  zero generates, and that DB round-trips match the absent baseline for the balanced
+  classes. Makes the login timing-equaliser machine-checked where a wall-clock test
+  is flaky.
+- **Process-level key-lifecycle fuzzer (`FuzzKeyLifecycleProcess`, `server/admin`).**
+  Drives the full key lifecycle — create/update/delete secret, DEK rotation (+sweep),
+  KEK/passphrase rotation, backup, restore into a fresh store, SIGKILL of a rotation
+  child at an observed phase (before the pending DEK exists, while it exists, after the
+  sweep committed but before the promote, after the promote but before the redo marker
+  is cleared), concurrent writers, SIGKILL of a lock holder, documented recovery
+  (`encryption upgrade-aad`), reopen — as REAL child processes, so the cross-process
+  `dek.lock` flock the in-process backup fuzzer could not drive (#4104/#4105) is
+  exercised directly. Oracles (`TestKLRedProof_*`: watched red/green for the decrypt,
+  lost-write, error-gate and recovery oracles; a free-vs-held contrast for the lock):
+  the store always opens or returns a documented typed error (never a panic); every
+  acknowledged write still exists and decrypts to its exact plaintext; a restore of a
+  pending-rotation backup starts or fails with a documented error, never undecryptable
+  or missing secrets; after the documented recovery command the store is usable with no
+  hand repair and a rotation killed after its sweep committed has its new DEK promoted;
+  two concurrent rotations never both proceed and a killed holder never blocks the lock
+  forever. Ships a
+  deterministic replay matrix (`TestKeyLifecycleProcessReplay`, both backends) and a
+  Postgres corpus-replay test (`TestKeyLifecycleProcessCorpusPostgres`). SQLite always;
+  Postgres via `KEYORIX_TEST_PG_DSN` (isolated `v3_*` databases, dropped on cleanup).
+  Guards two new invariants (`INV-ADMIN-keylifecycle-rotation-lock-mutual-exclusion`,
+  `INV-ADMIN-keylifecycle-interrupted-rotation-auto-recovers`).
+- **Key-material leak oracle under real SIGKILL + a post-kill backup (KL1).** New fuzz target `FuzzKeyLifecycleCrashKeyLeak` (`internal/encryption`) extends the real-subprocess crash world used by `FuzzProcessCrashRecovery`: it forks a child that performs a DEK rotation or a KEK rotation (the passphrase change), SIGKILLs it at a random write seam, recovers the install, takes a backup of the recovered install, and asserts that no file anywhere under the install tree or inside the produced backup archive contains any raw KEK/DEK-derived key-material value byte-for-byte (the evidence-sign, audit-checkpoint and backup-manifest keys — all held only in application memory and never persisted). Both the pre-rotation and the post-recovery values are used as needles, so neither the retired nor the freshly-minted key material may spill. The recover-then-backup region is metered by the shared `resguard` layer (`disk_bytes`, absolute mode; wall/goroutines advisory). The leak oracle is database-independent (it scans local key files), so SQLite carries the fuzzing and PostgreSQL is proven once by a deterministic test. The tree scan and the disk meter are red/green-proven by `TestResguardKeyLeakRedGreen`; the archive scan is red/green-proven separately on hand-built tar.gz files (`TestResguardKeyLeakArchiveRedGreen`: a needle inside an entry, and a missing, non-gzip, truncated or zero-entry archive after a successful backup, are each a violation). The fuzz target needles only the three derived keys; the raw DEK is covered by `TestKeyLifecycleKeyLeakBackends`. No production code changed; key material is read through the existing exported `Service` getters.
+- Added `fuzz/thirdparty/cors` `FuzzCORSHostileOrigin`: a hostile-origin fuzzer for the
+  go-chi/cors middleware as wired in `server/http/router.go`. It drives the real
+  `cors.Handler` option set over attacker-controlled `Origin` / `Access-Control-Request-*`
+  headers and asserts the reachable CORS security properties — never reflect a
+  non-allowlisted origin under the exact allowlist, never pair `Access-Control-Allow-Origin:*`
+  with credentials — plus a faithful-reference pin on the origin matcher and a no-panic /
+  bounded-work (resguard) oracle. Red/green-proven; committed guard
+  `TestCORSRealConfig_NeverReflectsUnlisted`.
+- Added `fuzz/thirdparty/kinopenapi` `FuzzOpenAPISchemaBoundedWork`: a bounded-work fuzzer
+  for the kin-openapi `openapi3.Schema` validator (deep allOf/anyOf/oneOf nesting, pattern,
+  format, additionalProperties, large instances). Oracles: no panic, no hang/amplification
+  (`fuzzutil.Guard` + resguard alloc ceiling + superlinear-wall), and schema `MarshalJSON`
+  idempotence. Library-hardening (the schema is trusted in every live Keyorix caller).
+- Added `fuzz/thirdparty/kinopenapi` full-document loader fuzz targets (KO3):
+  `FuzzOpenAPIDocumentLoader` (bounded-work, load→marshal→load idempotence, and
+  resolved-vs-JSON-round-trip differential over recursive/circular/deep/fan-out `$ref`
+  graphs, extension fields and colliding names) and `FuzzOpenAPILoaderNoExternalRead`
+  (an air-gap oracle proving `openapi3.Loader` with `IsExternalRefsAllowed=false` never
+  reads a file or the network — hostile httptest server + `file://`/SSRF canaries +
+  resguard NetMeter). Library-hardening only: Keyorix feeds this loader only the trusted
+  build-time-embedded `openapi.yaml`; no production code changed.
+- **Leaf-library fuzz targets, batch 2 (compress decompression-amplification, uuid).** New
+  test-only `fuzz/thirdparty/compress` (`compresshostile`) and `fuzz/thirdparty/uuid`
+  (`uuidhostile`) harnesses. `FuzzMongoDecompressPayload` drives the real sink the MongoDB
+  dynamic-secrets engine reaches — `go.mongodb.org/mongo-driver/v2`
+  `driver.DecompressPayload` (snappy/zlib/zstd) — through a resguard memory oracle keyed to
+  the genuine decompressed OUTPUT size (the size is derived from the frame, never fuzzed;
+  committed budget + red/green: a planted 50×-output allocation at 1 MiB trips it; benign
+  frames and a genuine high-ratio bomb pass). The oracle is a coarse tripwire (about a 17.5 MB
+  absolute ceiling for small inputs) and does not cover the server-declared `UncompressedSize`
+  the driver pre-allocates; that gap is unguarded here and tracked privately. `FuzzSnappyRoundTrip` pins the
+  klauspost/compress snappy block round-trip and `DecodedLen` self-consistency.
+  `FuzzUUIDParse`/`FuzzUUIDFromBytes` cover google/uuid parse round-trip, canonical-form
+  superset differential, and the 16-byte AAGUID path. Reachability is traced and labelled
+  honestly in each package's `INVARIANTS.md` (the compress path is reachable whenever the Mongo
+  server is malicious; the uuid path is weak/indirect). Seven of the eleven named libraries are not in the module
+  graph and are skipped with that reason.
+- **Leaf third-party library hostile-input fuzz targets.** Added
+  `fuzz/thirdparty/gotpm` (`FuzzGoTPMUnmarshal`, google/go-tpm tpm2 wire
+  (un)marshalling with a Marshal round-trip oracle, mapping to the sealed-blob
+  decode in `internal/crypto/tpm_provider.go`), `fuzz/thirdparty/goi18n`
+  (`FuzzGoI18nParseMessageFile`, nicksnyder/go-i18n message-file parsing),
+  `fuzz/thirdparty/burnttoml` (`FuzzBurntTOML`, BurntSushi/toml round-trip),
+  `fuzz/thirdparty/gopsutil` (`FuzzGopsutilProc`, gopsutil/v4 /proc parsers via a
+  fake HOST_PROC root), `fuzz/thirdparty/spf13pflag` (`FuzzPflagParse`, pflag
+  argv parsing) — all attacking the libraries' public APIs only. Two known-open
+  upstream robustness defects, recorded privately, are excluded from the oracles
+  (temporal values in the TOML round-trip check, and `load.Avg` in the gopsutil
+  target) so the targets stay green; Keyorix is not exposed to either. Kept as
+  regression tripwires.
+- **Added `FuzzLogRedaction` (internal/logging), the package's first fuzz
+  target.** Drives the real logger configuration (`logging.Setup` in text and
+  json modes over the standard `log` package) with per-family secret canaries
+  and with newline/ANSI/control-character log-injection payloads. Metamorphic
+  oracles: recognisable secrets are removed by `Redact` and never survive the
+  `Event()` path in either format (format independence), `Redact` is idempotent
+  over arbitrary input, and log injection cannot forge a JSON record or a text
+  line through the sanitised fields. Metered with the shared `resguard` layer
+  (`log_bytes`/`alloc` ceiling, advisory `wall`/`cpu` for regex ReDoS). Red/green
+  proofs and characterization tests for the redaction behaviour are committed
+  alongside.
+- **Four op-sequence fuzzers over small in-process state machines, each with an independent model as oracle** (SQLite only, no Docker/PG): `FuzzLoginLockoutModel` (per-account lockout counters, cooldown backoff, fake clock), `FuzzSecretLifecycleModel` (secret version history, rollback, soft-delete, restore, retention purge), `FuzzAuthBudgetLedger` (per-IP login / password-reset / SSO attempt budgets, reservations, relay, prune) and `FuzzAuditChainOpSequence` (audit hash chain through the real writer, checkpoints and retention purges, checked by both the online and the offline verifier, plus terminal tamper ops). Registered in `scripts/fuzzing/targets.d/`.
+- **Fuzzers for the third-party libraries keyorix puts on untrusted input (LIB-FUZZ-1, part 1).** Ten new targets in `scripts/fuzzing/targets.d/`: Unicode folding (`FuzzFoldedNameOracles`, `FuzzAddressNameOracles`, `FuzzSearchFoldOracles`, `FuzzDomainAllowlistAgreesWithFold`), age and ssh recovery-key recipients (`FuzzRecoveryKeyRecipientSpec`, `FuzzRecoveryKeyEncryptRoundTrip`, `FuzzRecoveryKeyRecipientFile`, `FuzzAgeDecryptArmoredBounded`) and TOTP (`FuzzValidateTOTPStep`, `FuzzMFAEnrollmentURI`). Each oracle is red-proved by a test that feeds it a deliberately wrong implementation. Two open keyorix-side defects found while writing them are pinned by known-open tests that fail when the defect is fixed, so the narrow tolerance in the oracle is removed with the fix.
+- **The expiry sweep revokes a lease under a deleted project (#2652).** New test
+  `TestDynamicSecrets_SweepRevokesLeaseUnderDeletedProject` shows that `RevokeExpiredLeases`
+  revokes an expired `active` or `revoke_failed` lease whose config the #369 cascade
+  disabled and whose project and environment were soft-deleted. That bounds any lease that
+  escapes `DeleteProject`'s own revocation to its TTL. Invariant
+  `INV-CORE-expired-lease-revoked-under-deleted-parent` says parent liveness gates minting,
+  never revocation.
+- **Child-parent liveness ledger updated.** Four rows in
+  `docs/child-parent-liveness-exempt.tsv` (CreateEnvironment, CreateSecret, and two
+  RestoreProject rows) were still marked `UNSAFE-OPEN` after #2710, #2711 and #2724 had been
+  fixed. They are now `SERIALIZED` and name the Postgres test that proves each one. The fifth
+  row, RestoreProject vs DeleteEnvironment, was not covered by #2724's fix; it now points at
+  #4287 and says why it is not reachable through the API today.
+- **Unforced cross-replica race loops for child inserts under a deleted parent (#2646, #2647, #2649, #2652, #2656).** Five pg-gated tests in `internal/core/cta_review_liveness_race_loop_postgres_test.go` race ShareSecret, ShareSecretWithGroup and GrantSecretACL against DeleteSecret, and RestoreEnvironment and IssueLease against DeleteProject. Each runs on two replicas with their own connection pools, released from a barrier for 50 rounds. Each round asserts that no live child exists under the deleted parent, and each test requires both orderings to have occurred. They complement the forced-hook tests of #2785, whose write-then-`FOR SHARE` re-check closes these windows. `TestCTAReview_LeaseRevokeUnderDeletedProject_CrossReplicaPostgres` shows that a lease which escapes the cascade is still revoked by the expiry sweep and by `RevokeLease` after the real storage cascade has run.
+- **Injection-class fuzzing of outbound formatting (ML1).** Added five
+  structural-equality fuzz targets, each parsing produced output with an
+  independent parser: `FuzzMailSetupLinkInjection` (`internal/delivery`) and
+  `FuzzNotifyEmailInjection` (`internal/notifychan`) assert that CRLF/header or
+  MIME bytes in recipient/subject/display-name/body can never add a header,
+  recipient or MIME part to a go-mail message (net/mail + mime/multipart oracle);
+  `FuzzSIEMEventJSONForging` (`internal/audit/siem`) asserts an audit event always
+  serialises to exactly one JSON line/object (no newline/delimiter log-forging);
+  `FuzzSecretTemplateRenderStructure` (`internal/secrettemplate`) asserts a
+  resolved secret value cannot inject a JSON key or an extra `.env` line;
+  `FuzzI18nLocalizeFormat` (`internal/i18n`) asserts go-i18n never re-parses
+  `TemplateData` as template source and never panics. Each oracle is red/green
+  proven. No production code changed; no injection vulnerability found.
+- **Memory-residue oracle: encoded KEKs and the passphrase provider (#4498).** The oracle now also looks for the KEK's hex and base64 (standard and URL-safe) text and for the master passphrase. It runs one scenario each for raw, hex, base64 and URL-safe base64 KEK files and for the passphrase provider, with a separate ratchet per scenario. A new site-claims check, run with the GC off, fails if a copy allocated under `FileKeyProvider.KEK` survives `Shutdown` (`INV-ENCRYPTION-file-kek-read-wiped`).
+- **Memory-residue oracle for DEK/KEK bytes after `Shutdown` (#4498).** A Linux-only long-lane test (`KEYORIX_MEMRESIDUE_ORACLE=1`) re-runs the test binary as a child that scans its own `/proc/self/mem` for the raw DEK and KEK. It fails if the DEK is still at `EncryptionService.dek` (INV-ENCRYPTION-24), and holds the other copies it finds to a per-kind ratchet that only goes down. It has a live control and a red control. Today every counted copy is state inside Go's crypto packages (`INV-ENCRYPTION-memresidue-ratchet`). It skips on macOS and where `/proc/self/mem` is not readable.
+- **Vault→Keyorix migration round-trip & convergence fuzz oracles (task MGV1).** Added two
+  fuzz targets exercising the full Vault importer (`vaultsource.Walk` →
+  `buildVaultPlanEntries`/`sanitizeSecretName` → `plan.BuildPlan`/`Apply` → target).
+  `FuzzVaultImportRoundTrip` (migrate/cmd) generates KV v1/v2 export shapes — nested paths,
+  versions, custom_metadata, soft-deleted/destroyed versions, binary/multiline/unicode/bidi/
+  NUL/long/duplicate-key fields, odd mounts, empty secrets — serves them over a faithful
+  httptest Vault, and asserts a non-mirroring conservation oracle: nothing silently dropped or
+  duplicated, no invented or resurrected (soft-deleted) value, every target name namespace-safe
+  (no `/`,`\\`,NUL,control), versions/custom_metadata recorded, deleted/empty leaves reported
+  not dropped, and the secret-value canary never in an error/log/skip-reason (Walk metered by
+  the shared `hostile.Harness`). `FuzzVaultImportConvergence` fails each write seam
+  before/after an atomic commit and requires a clean re-run to converge with no lost names, no
+  duplicates and a fixed point — guarding the `plan.planOne` idempotency design. Registered in
+  `scripts/fuzzing/targets.d/`; new invariant `INV-VAULTSOURCE-walk-conserves-and-reports`.
+- **SQLite to PostgreSQL check asserts the audit head.** `scripts/migrate/sqlite-to-pg-check.sh` now also proves that the head row of the audit chain keeps its id and entry hash through `admin backup` / `admin restore`, and that the first event written on PostgreSQL chains onto it. Run under a non-UTC host time zone (`TZ=Pacific/Auckland`).
+- **Scale tests for the SQLite/PostgreSQL move and restore.** A seeded-instance generator (secrets with versions encrypted under the instance's own key, users, roles, shares, access logs, chained audit log; sizes from `KEYORIX_MIGSCALE_*`) drives in-process tests of `admin backup` + `admin restore` in both directions: equal row counts, `verify-audit` valid, decrypt-all, bounded peak heap at two sizes. The loader's batch size and the refusal of a restore onto a populated SQLite database are pinned by tests (#3462).
+- **Merge-queue slimming can be enforced one lever at a time.** `scripts/ci/mq_slim.py` reads a new `MQ_SLIM_LEVERS` (comma list of `gate`, `testreach`); with `MQ_SLIM_MODE=enforce` only the named levers write outputs (`gate` writes `gate_edge`/`gate_e2e_smoke`/`gate_smoke`, `testreach` writes `leg_tests`), the others are still computed and logged as shadow. Unset keeps today's behaviour; a value naming no known lever enforces nothing. Guarded by `scripts/ci/mq_slim_test.go`.
+- **Operator reconcile: idempotence/convergence + strong scope-confinement fuzz target.**
+  `FuzzReconcileIdempotentScopeConfined` (`operator/internal/controller`) runs a full
+  reconcile twice over a fake cluster that also holds a populated second tenant, asserting
+  the reconcile converges (target Secret `ResourceVersion` and `Ready` reason stable on the
+  second pass over a stable upstream), only ever touches its own namespace (every API
+  object operation's namespace is recorded by an interceptor), never mutates the second
+  tenant's identically-named victim/token Secrets, never leaks the fetched canary, and
+  keeps upstream fetches + goroutines bounded. Red/green proofs:
+  `TestIdempotenceOracleRedGreen`, `TestScopeOracleRedGreen`. Closes the idempotence and
+  strong-scope gaps the existing reconcile targets left open.
+- **k8ssync fetcher: resguard-metered resource bound.** `FuzzK8sSyncFetcherResource`
+  (`internal/k8ssync`) wraps the shared `internal/fuzzutil/resguard` resource layer
+  (NetMeter air-gap, `dials`/`net_bytes_in`, sampled `alloc_bytes`) around
+  `FetchWithExpiry` against a fuzz-shaped httptest server: the fetcher never dials a
+  non-loopback host and no bounded-page response shape exceeds the calibrated absolute
+  ceiling. `TestResguardK8sSyncPaginationRedGreen` documents a HARDENING finding —
+  `resolveID` has no client-side pagination ceiling, so a hostile/broken server advertising
+  a large `total_pages` makes one resolution read an unbounded cumulative response volume,
+  bounded only by the caller's context deadline.
+- **Cross-library parser-differential fuzz targets (DF1).** Four new differential
+  fuzzers that feed ONE input to two independent readings and fail on a disagreement
+  that is not a documented library difference, each with an EXPECTED-DIFFERENCE allowlist
+  (reason per entry) and a dead-entry guard test: `FuzzXMLEtreeVsEncodingXML`
+  (beevik/etree vs encoding/xml, namespace-resolved structural view — the SAML
+  signature-wrapping substrate), `FuzzOpenAPIVsJSONSchema` (getkin/kin-openapi vs
+  santhosh-tekuri/jsonschema/v6 verdict agreement), `FuzzYAMLVsJSON` (gopkg.in/yaml.v3 vs
+  encoding/json on JSON-that-is-also-YAML — duplicate-key and float64-precision splits),
+  and `FuzzIdentityFoldVsPrecis` (Keyorix's custom identity fold vs the RFC 8265
+  `precis.UsernameCaseMapped` an external IdP would use — the fullwidth-`ＡＤＭＩＮ`/`admin`
+  shadow-admin shape). Each oracle documents what it does NOT verify. See
+  `internal/libconformance/INVARIANTS.d/` and the DF1 report.
+- The storage-fault harness now drives `POST /system/init` and the `invitation_accept` purpose of `POST /auth/setup/consume`. The exhaustive sweep over invitation accept found two open issues, tolerated narrowly until they are resolved: #4409 (a panic after the invitee's account was created skips the undo and leaves a live account) and #4410 (residue left by a compensated failure).
+- **New guard `TestScriptsDeprecatedCLIFlags_*` (internal/statemap):** fails when a script under `scripts/` calls a CLI flag the built CLI deprecates on that command (seeded with `--format` and `--by`; `secret export --format` stays allowed).
+- **`make docs-cli-check` finds docs that give the CLI a flag or command it does not have.** `scripts/docs/check-cli-flags.sh` reads every fenced `keyorix` / `keyorix-server` command line in the documentation and checks the command path and each `--flag` against the built binary's `--help`; secret flags the CLI refuses count as missing. Placeholders go in `scripts/docs/check-cli-flags.allow` with a reason per row.
+- **The emergency-access control status for degraded activations is pinned.** A degraded activation keeps the control a Gap while it is unreviewed, Unknown once reviewed with audit rows still owed, and Pass once reviewed and settled (`TestEvaluateControls_EmergencyAccessDegradedActivationTable`). No behaviour change.
+- `TestFailureNamedAuditEvents_AreWrittenWithSuccessFalse` now has calibration cases on synthetic sources (literal, constant and wrapper violations red; clean and allowlisted sources green; stale entry and run-time event types reported), so the guard cannot go vacuous.
+- **Message-level (structure-aware) hostile-server fuzzing of the PostgreSQL (pgx)
+  and MySQL client paths.** Complements the byte-level hostile-server harnesses
+  (PR #4136) with generators that emit structurally-valid wire messages carrying
+  field-level disagreements: for PostgreSQL, pgproto3-generated
+  RowDescription/DataRow/Notice/Error with mutated OIDs, format codes, column
+  counts and message order (`fuzz/thirdparty/pgx`, `FuzzPgxMessageLevel`,
+  `FuzzPgxResponseMixing`); for MySQL, hand-built text result sets with mutated
+  column-count/type/flags and LOCAL INFILE requests (`fuzz/thirdparty/mysql`,
+  `FuzzMySQLMessageLevel`, `FuzzMySQLResponseMixing`, `FuzzMySQLLocalInfile`).
+  New sound oracles, each with a red proof: TLS never silently downgrades under a
+  required mode (pgx `sslmode=require` rejecting a `'N'` negotiation byte; MySQL
+  `tls=true` rejecting a server that clears the SSL capability flag), LOCAL INFILE
+  canary-file egress refused by default, no credential leak in driver error text,
+  server→client decoding parity, and no cross-statement response contamination.
+  No production code changed; no real database or network required (loopback
+  hostile servers).
+- **Upgrade drill covers rollback by restore, and prints its time.** `scripts/drills/upgrade.sh` now takes a backup with the old binary before the upgrade and, after the new binary has run on the data, restores it into the old binary (`--overwrite-existing --allow-rollback`; on PostgreSQL the public schema is emptied first, as `docs/operator/upgrade-rollback.md` 4B says). Login, a decrypted secret and `verify-audit` VALID must work again and the post-upgrade write must be gone. Every drill now ends with an `elapsed: Ns (backend: ...)` line before its `PASSED` line.
+- **One-command RC gate: `scripts/release/rc-gate.sh <candidate-tag> [<previous-tag>]`.** Downloads the candidate's and the previous release's binaries, runs `verify-release.sh` on the candidate, hashes the previous binaries, then runs `scripts/drills/upgrade.sh` (downgrade probe and restore-as-rollback included) and `scripts/drills/backup-restore.sh` on SQLite and PostgreSQL with the previous release as the old server. It prints one PASS/FAIL/SKIP line per leg (a SKIP names its reason), writes `rc-gate-result.tsv` and exits non-zero on any FAIL; `--check-result` re-checks a result file. `scripts/release/rc-gate-selftest.sh` calibrates the exit code red and green without a network.
+- **MongoDB driver fuzz harness: allocation oracle scales with connection churn and reply size.** `FuzzMongoReply` oracle (a) now counts TCP dials and the bytes the client reads, and budgets a fixed 32 MiB plus 12 KiB per dial plus 3 bytes per byte read, replacing the 73 MB "48 MB read buffer" bound (KFZ-2026-130 is heartbeat reconnect churn, not a large read buffer). Guarded by `TestKFZ2026130ReconnectChurnWithinBudget`, `TestKFZ2026130ReconnectChurnLargeReplyWithinBudget` and `TestAllocOverBudget`.
+- **At-rest key-material canary (`FuzzAtRestKeyMaterial`).** A new `internal/encryption` fuzzer drives secret writes, DEK rotation with its re-encryption sweep and KEK rewraps onto new file providers. It fails when raw DEK, KEK or secret-value bytes (raw, hex or base64) rest anywhere on disk other than the KEK's own provider file, and re-checks the INV-ENCRYPTION-24 DEK wipe on Shutdown. Self-tests plant each leak, and a clean lifecycle must count every rotation and decrypt every row afterwards.
+- **RL1 lockout / rate-limit metamorphic fuzzers.** Added
+  `FuzzSourceRateLimitKeyEquivalence` (server/middleware): a metamorphic fuzzer
+  over the source-attribution pipeline every per-source rate limiter / lockout
+  counter keys on (`middleware.ClientIP` extraction → `core.CanonicalIP`), proving
+  equivalent IP presentations (ephemeral port, bracketed/bare IPv6, upper/lower
+  hex, zero-expanded, IPv4-mapped) collapse to one bucket, that an untrusted peer's
+  forwarding headers can never move the key off the TCP peer (anti-spoof +
+  anti-targeted-DoS), and that a left-prepended X-Forwarded-For spoof behind a
+  trusted proxy never changes the attributed client. Added
+  `FuzzAuthFallbackLimiterBounded` (internal/core): a resguard-metered
+  bounded-memory oracle over the in-memory `authFallbackLimiter`, asserting its
+  `byID`/`byStored` index maps stay bounded by the cap (exactly one entry per live
+  attempt) under a flood of up to 65 536 distinct keys — a memory-DoS class the
+  existing `size()`-only assertion is structurally blind to. Both carry red/green
+  proofs; no production code changed.
+- **Coalescer `Stop` red/green.** `TestLastUsedCoalescer_StopVsFlushOnLateStamp`
+  proves, in one harness, that a plain flush re-arms the timer and writes after the
+  store is closed while `Stop` latches shut; plus final-flush-not-lost, idempotency,
+  context-bounded stop under a wedged background flush, no timer/goroutine
+  re-arm after stop, no write from a background flush that lost the race to
+  `Stop`, and cancellation of an in-flight background flush.
+- Added `internal/core/identity_boundary_sso_scim_sweep_test.go`, driving the full
+  confusable corpus (fullwidth, ligature, roman numeral, circled digit, NBSP/ZWSP/ZWJ,
+  Turkish dotted/dotless i, NFC-vs-NFD, Cyrillic homograph, case, email plus-tag/dot)
+  through the real `GetUserByEmail`/`GetUserByUsername`/`resolveSSOUser` boundary.
+- Added a SAML response/assertion validation differential fuzz suite for
+  `internal/saml` that compares `(*Provider).ParseResponse` against independent
+  offline references (crewjam/saml and goxmldsig) across structural and byte-level
+  response mutations, covering accept/reject agreement, identity provenance, and
+  bounded work on hostile XML.
+- **XML parser-differential fuzz oracle for the SAML stack (`FuzzXMLParserDifferential`, `internal/libconformance`).** The highest-value XML bug class for a Go SSO stack is "the same bytes read differently by two XML layers", because crewjam/saml verifies a signature over a beevik/etree tree (via goxmldsig) and then extracts the structs it trusts with an independent `encoding/xml` decode. The new target asserts: for any input `mattermost/xml-roundtrip-validator` **accepts** (the guard keyorix runs at `internal/saml/provider.go:534`, and crewjam runs again via its vendored `internal/xmlroundtrip`), the resolved element skeleton — ordered `{namespace-uri}local` names + nesting depth + per-element resolved attribute names — built by etree must equal the one built by an `encoding/xml` `Decoder.Token()` walk. A disagreement the validator accepts is a validator-bypass candidate. Known-benign classes (undeclared/reserved namespace prefix, duplicate attribute name, etree-stricter-than-the-round-trip-check, trailing content) are catalogued in `EXPECTED-DIFFERENCES-xml-parser-differential.md` and normalized away by `normalizeSkeleton`, so only a NEW class fails; the catalogue function IS the machine-checked form of the table. Red-proof tests show the comparator fires on a genuine etree-vs-encoding/xml divergence, that the catalogue suppresses only the classes it names, and that the validator antecedent genuinely filters a namespace-collision XSW class out of the accepted set. Guarded by `INV-LIBCONF-xml-parser-skeleton-agreement`.
+- **SCIM storage-fault table extended to the list endpoints, and the JIT offboarding gap pinned.** `TestSCIM_ListStorageError_Is500NotNotFound` covers `GET /Users` and `GET /Groups` (paged and filtered): any storage error is a 500 SCIM error body, never 404 or an empty 200, never the driver text. `TestJITOffboardingGap_PATSurvivesSCIMDeactivation` pins the documented behaviour that a JIT-provisioned user's PAT keeps working after SCIM `active=false` and `DELETE` for its external id (both refused as not SCIM-managed); a future offboarding design that changes it must update the docs and rewrite the test.
+- **Argv-secret guard now sees a credential header held in a shell variable.** `TestDocsShowNoLiteralSecretOnCommandLine` fails on a script that assigns `NAME="Authorization: Bearer ..."` (or any `X-*Token`/`Key`/`Secret`/`Auth`/`Password` header, `Cookie`, `Proxy-Authorization`) and later passes it as `curl -H "$NAME"`: the token lands in `ps`. The safe form is a 0600 header file read with `-H @file`. A calibration pair (`TestScriptsHeaderVarGuardCalibration`) covers both directions. Every script under `scripts/` and `deploy/` is already clean, so no script changed.
+- **Setup-link consume: every pre-verdict fault kind is pinned.** The token-lookup fault test on `POST /auth/setup/consume` now drives error, panic and effect-then-error (it drove only error) and asserts each answers 503 + Retry-After, hands the per-IP slot back and is identical for a valid and a dead token (#3298).
+- **SMTP AUTH iteration-cap test no longer depends on the clock (SMTP-TIMING-1).**
+  `TestSCRAMRefusesHugeIterationCountBeforeDeriving` in `internal/smtpauth` used to
+  assert that a refusal took under 100 ms, which fails on a loaded runner. It now
+  counts the calls that reach the key derivation (0 for a refused iteration count,
+  1 for an allowed one) with a test-only stub; no production code changed.
+- **Known-answer conformance + mutation fuzzing for the TOTP and age library contracts
+  keyorix's MFA and recovery-key paths depend on.** New `internal/libconformance`
+  lib-contract targets: `TestHOTP_RFC4226_KnownAnswers` / `TestTOTP_RFC6238_KnownAnswers`
+  pin `github.com/pquerna/otp` to the RFC 4226 / RFC 6238 vectors (SHA-1/256/512), and
+  `FuzzTOTPMutation` asserts that — with the verifier configured as `internal/core/mfa.go`
+  configures it — a one-digit mutation of a valid code that is not itself a ±1-step window
+  code is always rejected. `TestAge_KnownAnswerVector` decrypts the upstream `filippo.io/age`
+  test vector to its known plaintext, and `FuzzAgeCiphertextMutation` asserts that no
+  single-bit flip of a valid `age` ciphertext (recovery-key encryption,
+  `server/admin/recovery_key_encrypt.go`) ever decrypts to different plaintext, including
+  across the >64 KiB STREAM chunk boundary. Both oracles are red/green-proved. Guarded by
+  INV-CORE-totp-verify-accepts-only-window-codes and
+  INV-ADMIN-recovery-key-age-ciphertext-is-tamper-evident.
+- **The stale full-row write guard now sees past store and core.** A new sibling,
+  `TestFullRowWriteGuard_WidenedScanNoStaleFullRowWrite` (internal/storage/store), applies
+  the #2704 rule to every production package whose files import gorm or the models
+  package (derived, not listed) and also reports `UpdateColumns(struct)` and
+  `CreateInBatches` under an `UpdateAll` upsert. It is report-only until its first green
+  nightly on main. It finds nothing today. A planted `Save(*models.User)` in
+  internal/encryption and an `UpdateColumns(u)` in store, both missed by the original
+  guard, fail it.
+- **The stateful OpenAPI fuzzer no longer reports a secret's own read counter as a non-idempotent read.**
+  Reading a secret increments `read_count` by design, so two back-to-back GETs differed in that one
+  field and failed the idempotence oracle whenever the fuzzer drew such a pair (it failed unrelated
+  pull requests' fuzz shard at random). The field is now stripped like the other volatile fields.
+- **stdin guard no longer fails the nightly in enforce mode.** `TestNoDirectBufioOverStdin_AdminAndScripts` still listed the three sites that #4179 migrated (`recover_admin.go`, `testhook.go`) or switched to a single `io.ReadAll` (`remote_storage_classify.go`), so the nightly rollout run reported them as stale. The allowlist now holds only the shared reader `readStdinLine`; the classify script stays in the scan and is exempt because one read to EOF has no read-ahead to lose. A new test shows the bug class on one piped input: a reader built per prompt loses the second line, `readStdinLine` returns both.
+- **DeleteEnvironment / RestoreProject / DeleteProject lock-order check.** A two-environment project is deleted, then both environment deletes, the restore and a re-delete run concurrently on four Postgres pools, 200 times; no call may deadlock or fail outside its documented refusals, and no active secret may end in a deleted environment (#4287 follow-up).
+- **Swarm testing and typed-error oracles for the stateful OpenAPI fuzzer.**
+  `FuzzOpenAPIStateful` now decodes a per-input *feature subset* (which operations, principals
+  and resource kinds are enabled) from the corpus bytes, so a short sequence concentrates on a
+  rare slice of the 307-operation surface instead of scattering uniformly; all-features stays
+  reachable so no coverage is lost (`KEYORIX_OSF_NOSWARM=1` forces the plain generator, and
+  `TestOpenAPISwarmReachProfile` measures the depth/absence-region gains at equal budget). Two
+  new always-on oracles were added, each with a deterministic repo-wide census proving test:
+  (6) a typed-error mapper — every `>=400` body is leak-free (no stack frame, internal path,
+  SQL text or secret) and carries the documented `{success,error,message,code}` envelope
+  (`TestOSFErrorMapperCensus`); (7) denial existence-independence — a zero-authority actor's
+  denial status for a single-id GET/DELETE is the same whether the target exists or not, so it
+  cannot be used as an existence oracle (`TestOSFDenialExistenceCensus`). Both oracles are
+  green across all 309 enumerated operations today; both were red-proofed against planted
+  defects. Guarded by `server/http/INVARIANTS.d/INV-HTTP-openapi-error-typed-and-leakfree.md`
+  and `INV-HTTP-denial-status-existence-independent.md`.
+- **Swarm testing for the stateful authorization fuzzer.** Added a reusable
+  feature-mask decoder (`internal/fuzzutil.Swarm`) and wired it into the
+  authorization-sequence fuzz target, which takes a swarm mask as the first fuzz
+  argument. Each execution now exercises a random subset of the operation
+  alphabet instead of the whole alphabet every time, which reaches operation
+  interactions that uniform generation under-exercises. The existing seed corpus
+  keeps its meaning (an all-ones mask is the full alphabet), guarded by a
+  seed-compatibility test. The OpenAPI-sequence fuzzer already has its own
+  feature selection on main (`osSelectFeatures`).
+- **Full-identity SAML XSW differential (`FuzzSAMLFullIdentity`, `internal/saml`).**
+  The existing structure-aware SAML fuzz oracles (`FuzzParseResponseXSW` and the
+  S1/S2/S3 differential) all assert only on the derived `Subject`. The new target
+  starts from one genuinely-signed response whose every identity field holds a
+  DISTINCT value (NameID, email, name, two groups) and, on ANY acceptance by
+  `(*Provider).ParseResponse`, requires the WHOLE derived identity — `Subject`,
+  `Email`, `Name` and `Groups` (as a set) — to equal the signed one. It adds
+  attribute-targeted mutations on top of the shared structural engine:
+  comment-truncation inside the signed email/group/name `AttributeValue` text,
+  injection of an unsigned `AttributeStatement` granting an elevated group, and
+  (ops 21-23) an unsigned copy of the signed assertion (same fresh IssueInstant, bearer
+  `SubjectConfirmation`, conditions, issuer, audience, NameID, email and name) with one
+  extra group, placed first, last, or wrapping the signed assertion in its `Advice`. Ops 21-23 generate the shape the Subject-only oracles pass
+  clean: the real ACS handler (`internal/core.(*KeyorixCore).CompleteSAML`) maps
+  `info.Groups` to Keyorix roles, so an accepted response that keeps the signed NameID
+  but carries a different group set would be a privilege escalation. Deterministic
+  tests (`full_identity_xsw_test.go`) pin the oracle: it fires on forged results in
+  every field (subject, email, name, groups added/swapped/dropped) and stays silent on
+  the pristine signed identity and on a rejection; the pristine fixture must verify;
+  every op must change the document; ops 21-23 fed through a deliberately naive
+  first/last-assertion reader reach the oracle's groups check, and the forged assertion,
+  signed with the IdP key, passes the library's own assertion validation (so the groups
+  check is reachable); and every op, run
+  through the real parser, is rejected or yields exactly the signed identity.
+  Registered in `scripts/fuzzing/targets.d/`.
+- `TestUnmarshal_DistinctKeysLinear` (internal/yamlsafe) now asserts growth between 25000 and 100000 keys instead of a fixed 5 s limit, so a loaded CI runner no longer fails it while a quadratic decode still does. Five other tests with 100 ms to 1 s wall-clock limits got hang-detector margins.
+- **Hostile token-endpoint fuzzer for `golang.org/x/oauth2` on the SSO/OIDC login path.**
+  New `fuzz/thirdparty/oauth2sso.FuzzOAuth2HostileTokenEndpoint` drives the real
+  `(*oauth2.Config).Exchange` — as `core.CompleteSSO` drives it on the unauthenticated SSO
+  callback — against a fuzzer-controlled loopback token endpoint that writes raw HTTP
+  responses (arbitrary status / content-type / body, and a lying `Content-Length` for the
+  truncation oracle). Oracles (all red/green-proven in `oracle_validation_test.go`): fails
+  closed on a truncated response, never echoes the client secret in a returned error or
+  token, yields a non-empty `access_token` on a nil-error Exchange, and stays air-gapped with
+  bounded dials / response bytes / per-input allocation via the shared `resguard` resource
+  helper. Closes a gap: no prior target exercised oauth2's token-response parser on our call
+  path (existing SSO fuzzers cover the id_token JWT verification that runs after Exchange).
+- **The host-zone model-timestamp guard lost its one tracked defect row.** `TestEveryModelTimestampStampIsUTC` now lists only the harmless, test-pinned sites.
+- **authzdiff models environment-scoped role grants.** The cross-layer
+  authorization differential's reference model now expresses role-grant
+  environment scope independently of core: it reads `environment_id` from the
+  user/group/machine grant tables and applies the `environment_id = 0 OR
+  (environment_id = target AND the environment is live)` predicate, so a grant
+  scoped to one environment is modelled as refused in every other environment.
+  A new `secret.read.env` binding drives a secret value-read in two environments
+  of the same project, and a planted-defect self-test (`env-scope-clause-removed`)
+  removes the real environment clause from `userPrincipalPermissionSQL` and
+  confirms the model catches the resulting cross-environment over-allow on core,
+  REST and gRPC. Guarded by `TestV5bEnvScopedStrictSweep` and
+  `TestV5bEnvScope_GrantInOneEnvRefusesTheOther` (default `go test`).
+- **Real-backend spec for the dynamic-secrets refused-admin-DSN banner** (`web/e2e/real/dynamic-secrets-refused-dsn.spec.ts`). It skips until the web e2e harness seeds a config with a refused admin DSN.
+- **The web response drift guard now covers the `any`-mapped readers and the `include_value` read.** `web/src/types/__tests__/anyMappedResponsesDrift.test.ts` compares what the web reads in the roles, groups, sharing, dashboard, audit-anomaly and project services (and the query parameter and `value` field of `GET /secrets/{id}?include_value=true`) with `openapi.yaml`, so a server rename fails in CI instead of showing a blank field. Where the spec has a schema the check is strict (a `?? default` read counts); where the 200 body is only a description the field must still appear there as a word, a weaker check, which the file header says. Reads the spec does not cover are pinned with a reason, and two real mismatches are pinned as known drift: `rbacApi.getRole` reads `data` as a role while the server sends `{role, permissions}`, and the project list/get readers expect secret and environment counts and a last-activity time that `projectWire` never sends.
+- **The audit label parity test names `auth.sso_login_session_failed`** in its non-vacuity block, so an extractor refactor cannot silently stop covering the SAML-TAILS-1 event.
+- **Reveal and Copy value (#2450) pinned at the HTTP boundary.** #2450 itself was already fixed on main; a new test keeps the real hooks and stubs only axios, with a versions response that has no value field and a value read that answers 200, 403, 404 or 503. A refused or malformed reveal shows the inline error with the server's reason and cannot unmount the page.
+- **Response-field drift guard.** `responseFieldsDrift.test.ts` fails when the web requires a field of the secret list row, the secret version list or the user list that the `openapi.yaml` response schema does not define (calibrated red and green; it found the Members tab defect above).
+- **Real-server Playwright spec for Reveal and Copy value** (`e2e/real/secret-reveal-copy.spec.ts`): success path of both controls, clipboard content, no page error.
+- **goxmldsig / digitorus-timestamp library-level fuzz targets for the XML-signature stack (`internal/libconformance`).** Three new structure-aware targets extend the XML/signature library coverage (etree, encoding/xml, xml-roundtrip-validator and digitorus/pkcs7 were already covered; goxmldsig and digitorus/timestamp were not). (1) `FuzzGoxmldsigC14NIdempotent` — for every canonicaliser `russellhaering/goxmldsig` exposes, canonicalising an already-canonical document must be a fixed point (`b1 == b2`); a canonical form not stable under re-canonicalisation is a non-idempotence candidate, because SAML signature stability rests on C14N being a normal form. (2) `FuzzGoxmldsigSignatureMetamorphic` — the only target that drives goxmldsig's signer+validator directly: it signs the fuzzed element enveloped and, *only if the result verifies* (a gate that keeps the oracle sound), asserts that tampering with the signed content (an attribute added to the signed root, included by exclusive-C14N in the digest) makes verification fail; a tampered document that still verifies is a signature-integrity candidate. (3) `FuzzDigitorusTimestamp` — RFC 3161 request/response parsing on top of digitorus/pkcs7: `ParseRequest`/`Parse`/`ParseResponse` must never panic and stay within a resguard alloc/wall budget on hostile ASN.1, and request `marshal∘parse` must be a fixed point. `ParseResponse`/`Parse` are live hostile sinks (`internal/notary/rfc3161.go`, `notary.go`); the production path's strict-DER-framing + `recover()` guards are documented, so a BER-amplification finding is upstream/HARDENING. Each target uses the shared `resguard` resource helper with a committed, calibrated budget and a red/green proof, and is registered in `scripts/fuzzing/targets.d/`. Guarded by `INV-LIBCONF-goxmldsig-c14n-idempotent`, `INV-LIBCONF-goxmldsig-signature-tamper-rejection`, `INV-LIBCONF-digitorus-timestamp-bounded-roundtrip`.
+- **`FuzzYAMLV4TypedDecode` for `internal/config`.** Checks no panic, bounded work, a deterministic
+  typed decode and that an unknown top-level key is rejected under KnownFields (named, value not
+  echoed). The go-yaml behaviour that a typed decode accepts an anchor cycle or a duplicate key
+  under an ignored key is recorded as a triage entry in `docs/findings/`; its two inputs are seeds.
+- **v4-only baseline for typed decode, multi-document streams and KnownFields (#4574).** Committed golden files pin what go.yaml.in/yaml/v4 accepts, rejects and decodes for the config struct family (internal/config, internal/k8ssync, the CLI credential store, secret import), so a go-yaml bump shows a readable diff in the normal test tier; two fuzz targets (`FuzzYAMLV4MultiDocument`, `FuzzYAMLV4KnownFields`) check properties v4 must keep on its own. No second parser.
+- `hostile` harness: O4 BOUNDED-WORK gains `Config.AllocPerRequest`, a per-request allocation allowance (default 0, unchanged for other targets). `FuzzHealthscanHostileVault` sets it to 3 x `httpsafe.MaxResponseBytes`: a scan reads up to 10 MiB per response over many requests, so the flat 256 MiB limit flagged bounded work (#184).
+- `FuzzUpgradePGInterrupted`: a stop that fails only the deferred `pg_advisory_unlock`, whose error production ignores, now counts as a completed upgrade, not a crash; invariant 6 no longer flags it. Any earlier failure a migration swallows and commits is still an interruption, guarded by `TestUpgradePGInterrupted_SwallowedFailureStillFires` (keyorixhq/fuzz-corpus#182).
 
 ### Internal
 - **`scripts/gen-security-closures-tsv.sh` refuses malformed closure fragments.** A fragment in `docs/security-closures.d/` must now be exactly one row on one line: a second row, a field with an embedded newline (a row split across lines) or any carriage return (CRLF) fails `--check` with a message naming the file. The two historical multi-row fragments (`mi-suspend-cachehit`, `ar-revoke-atomic`) were split into one file per claim_id. New `--self-test` (also run by `scripts/check-closures.sh --self-test`) proves each case goes red.
@@ -1929,6 +3448,147 @@ In transaction mode the lock transactions also set `transaction_timeout = 0` (Po
 - **Removed `server/tools`**, the dev-only `go run tools/test_runner.go` wrapper around `go test` that nothing called (its own tests were permanently skipped), with its TESTING_GUIDE sections, its CI leg pin and review-coverage row. Also dropped five SonarCloud ignore rules for files that no longer exist.
 - **faultops CI legs get the 3300 s per-binary timeout the core legs already have.** faultops-2 ran p90 27.9 min against a 30 min timeout and timed out in 3 merge-group runs on Oct 18–20; rebalancing the two shards is still open.
 - **CI: report-only weights-drift check (`scripts/ci/check-weights-drift.py`) and a verbose-log converter (`scripts/ci/logs-to-timings.py`).** From per-test seconds it warns when a sharded package has a test above 60 s with no row in `scripts/ci-test-weights.tsv` (Rule A) or a shard above 1.30 x the median shard (Rule B, or "dominated by <test>: split the test" when one test already weighted above the shard target is the cause). The layout comes from `ci-test-legs.sh` (`sharded_legs`, `weighted_shard_assignment`), not a second packer. Always exits 0; wired into no workflow yet.
+- **BW1 finding: yaml.v3-family duplicate-key quadratic (library defect).** Both
+  offline yaml.v3 forks (`gopkg.in/yaml.v3` v3.0.1, `go.yaml.in/yaml/v3` v3.0.5,
+  and the `oasdiff/yaml*` wrappers) decode a mapping of N duplicate keys in
+  O(N²) time and memory (~4.19× per input-doubling; 20 KB → ~4.2 s, ~1.6 GB);
+  `go.yaml.in/yaml/v2` is linear. Distinct keys are quadratic in CPU too (a
+  pairwise uniqueness scan per mapping, small constant) but linear in memory. No attacker-reachable Keyorix server path
+  decodes untrusted yaml (all yaml.v3 use is operator/CLI config), so this is
+  hardening, not a server vulnerability. See the BW1 report for the reproducer.
+- `web/nginx.conf`: the internal `/_backend_health` and `/_backend_readyz` probe locations carry an inline `nosemgrep` for `generic.nginx.security.missing-internal.missing-internal` (both already declare `internal;`; Semgrep 1.172 reports a false positive). The `proxy_pass` lines keep their line numbers so the code-scanning alerts do not respawn.
+- **Claude Code no longer appends AI attribution in this repo.** `.claude/settings.json` sets `attribution.commit` and `attribution.pr` to empty strings, `attribution.sessionUrl` to `false` and the deprecated `includeCoAuthoredBy` to `false`, so sessions run from a clone stop adding the trailers and footers that fail the `no-attribution` check.
+- **`admin audit accept-loss` no longer decides by matching the verifier's reason text.** It uses the verifier's typed `LinkBroken` on a walk from the chain start, and the stored rows after a sealed gap (the resume row's `prev_hash` against the verified chain before it), so rewording a verifier message cannot change a verdict. The verdicts themselves are unchanged; a break on the resume row or the last surviving row of an already accepted gap is now refused by name as a modified row (`INV-CORE-audit-seal-loss-classified-by-type`).
+- **A pull request that changes permission-check code now runs the `server/authzdiff` oracle.** `fuzz-plan` maps the diff by call shape (`scripts/ci/authzgate`: callers of the core decision functions and RBAC storage methods, permission constants and seed migrations, the transport code of authz-checked rows) to the authzdiff ops it can affect, and the new `authz-oracle` job runs the strict sweep on those ops (or all of them) plus the `FuzzAuthzDiff` seeds. A model that disagrees with the product fails the job. #4332 changed the IssueMachineToken ceiling with CI green and left the model stale (KFZ-2026-092); its diff plans exactly `machine.token.issue`. The job reports through `fuzz-changed` once the repository variable `AUTHZ_ORACLE_GATE` is `enforce`. Guarded by `scripts/ci/authzgate` tests, including `TestEveryRootReferenceIsInTheTriggerSet`. The same PR brings the model up to #4332 (`machine.token.issue`: a user caller must hold the target machine's permissions, a restricted PAT is refused), so the strict sweep is green on main's product.
+- **The merge-queue selector now gives the same answer for a checkout reached through a symlink.** `scripts/ci/select-affected.py` compared `go list`'s `Dir` (derived from `$PWD`, so under the link) with Python's resolved `os.getcwd()`; on macOS (`/tmp` is `/private/tmp`) no package matched, every file counted as outside every package, and any test-only change selected nearly every leg. It now hands `go list` the resolved path and fails loudly when no package directory lies under the checkout. Found by the main-canary, whose worktree is `/tmp/wt-canary`; Linux CI was never affected.
+- **CI: `server/admin` runs in four test-name shards (admin-1..4, was 2), `internal/encryption` in three (encryption-1..3, was 2) and `internal/core` in five (core-1..5, was 4).** On the merge_group runs of 2026-11-22 admin-1/2 took 1337-1776 s of their 1800 s per-binary timeout and ran in nearly every round; encryption-2 took 1274-1408 s and core-4 1121-1525 s. A leg's time depends on the runner: the same shard runs about 1.3 times longer on an Azure-hosted runner than on an AWS-hosted one, so the shard counts aim at about 15 minutes on the slower kind. Every Test*/Fuzz* name still runs in exactly one shard (`assert_all_shards_complete`); no weights changed.
+- **A verbose CI dispatch also records the Go build action graph per test leg (ci.yml).** With `workflow_dispatch` and `verbose_tests=true`, `go test` gets `-debug-actiongraph` and each leg uploads the JSON as an artifact, so the non-test part of a leg (compile, vet, link) can be split by measurement. Normal runs are unchanged.
+- **Merge-queue test legs start Postgres in the background, only when the leg runs (ci.yml).** The `test-suite` job no longer declares a job-level `postgres` service, which started serially before the first step in about 22 s on every leg, including legs the merge-queue selection skips. A new step starts the same image, credentials, port and database detached while checkout, setup-go and the cache restore run, and a "Wait for Postgres" step gates `go test`. A skipped leg now ends in a few seconds instead of about 26 s.
+- **CI: the closure and ADR-conformance ledgers are verified exactly once per run.** On merge_group (and every FULL run) `adr-numbers` ran `check-closures.sh --self-test` and then the plain `check-closures.sh` over the same real ledger (and the same pair for `check-adr-conformance.sh`), about 3 minutes of a ~15 minute job. Each plain "Verify" step now runs only where its self-test is skipped, the same rule FAST pull requests already used; `scripts/ci/guardinputs/pathgate_test.go` asserts "exactly once" on every event.
+- **CI: `server/authzdiff` runs in two test-name shards (authzdiff-1, authzdiff-2) instead of in root-4's catch-all.** The package was 1332 s of root-4's 1793 s step on a merge_group run and timed out at 30 min on another (FAIL server/authzdiff 1806 s, run 44952169246), after two tests (`TestResguardAuthzRedGreen`, `TestResguardAuthzCalibrate`) made it four times slower in six days. Every Test*/Fuzz* name runs in exactly one shard (`assert_all_shards_complete`); the weights are rows of `scripts/ci-test-weights.tsv`.
+- CI: the preflight job now runs `go mod tidy -diff` in every module of the repo (`GOWORK=off`), so a stale `// indirect` marker or a missing `require` fails the PR instead of surfacing later in a Dependabot update. `devtools/asymanalyzer/go.mod` and `go.sum` are tidied to match.
+- **CI test-leg weights refreshed from a verbose run.** `scripts/ci-test-weights.tsv` was regenerated from the per-test times of a verbose dispatch run, so the shards of each sharded package end within about 2% of each other. Weights only: which test lands in which shard changes, never whether it runs.
+- **Demo scripts keep response bodies and TOTP seeds off python's argv.** `scripts/demo/lib.sh` (`demo_json`, `demo_open_anomalies`) and `scripts/demo/check.sh` (`jget`, `totp_code`) passed a server response (it can carry a session token) or a TOTP seed to `python3 -c` as an argument, visible in `ps`. They now pass it through the environment; output is unchanged. `TestDocsShowNoLiteralSecretOnCommandLine` learned the shape (`scanShellForPyArgv`) and `TestDocsSecretGuardCalibration` plants a line for each variant.
+- **`realAzureMinter` holds an `azcore.TokenCredential`** instead of the concrete
+  `*azidentity.DefaultAzureCredential` (the same value in production), so a test can aim
+  the same `GetToken` path at a hostile authority.
+- The stateful OpenAPI fuzzer no longer waives `OPENAPI-STATEFUL-3` for `deleteProject`, `updateProject`, `createProjectEnvironment`, `restoreEnvironment`, `restoreSecret`, `renderSecretTemplate` and `shareSecret`; each is pinned by a handler table test.
+- **The eight gRPC family mappers (`mapRoleError`, `mapMachineError`, `mapUserError`, `mapProjectError`, `mapShareError`, `mapDynamicError`, `mapSecretACLError`, `groupError`) answer through the shared `coreErrorStatus` adapter.** Every current gRPC code and client text is kept, apart from the storage-fault change above, the codes the classifier now answers where the old default was `Internal` (a validation sentinel, a not-found of another entity; such a sentinel gets the classifier's default text, not the family's), and one more: an untyped network or driver error (connection reset or refused, a `net.Error`, Postgres class 08/53) or a wrapped `context.Canceled` / `DeadlineExceeded` under the role, user, project, share, secret-ACL, group and machine mappers now answers `Unavailable` with the authorize-outage text instead of `Internal`. On a write that tells the client to retry a possibly committed change; a replay answers AlreadyExists or NotFound, so the retry stays safe. `ErrBuiltinRole` stays `FailedPrecondition` on gRPC while REST answers 403 (ask `errmap-grpc-builtin-role-code`). `TestFamilyMappers_*` pins the shared storage-fault and refusal answers on all eight.
+- **One derivation of the granting set.** `TestEveryGrantingServiceMapsPermissionDenied` reads `internal/core/testdata/grant_ceiling_reaching_methods.txt`, the file the REST guard uses; `guardrules.GrantCeilingMethods` is deleted. The shared derivation also roots on the ceilings refused with other wording (`ErrMachinePrivilegeCeilingDenied`, the reinstate-on-restore ceiling), so `IssueMachineToken`, `RestoreProject`, `RestoreEnvironment` and `RestoreGroup` are in the set, and the (blocking) REST guard covers the restore handlers.
+- The package table in `docs/INVARIANTS.md` is now generated by `scripts/gen-invariants-index.sh` (`--check` exits 1 when stale) from every `<pkg>/INVARIANTS.md` and `INVARIANTS.d/` fragment, between `GENERATED` markers. A PR that adds or changes an invariant edits only its package's file and reruns the script; a conflict in the block is resolved by taking main's file and rerunning it. `internal/docsdrift` now fails on a stale block, a row whose file is missing, and a row outside the markers, besides the duplicate/sum/malformed-row checks it already had. The regenerated numbers are the real counts (718 invariants, 711 guarded, 7 UNGUARDED), the hand-kept table had drifted to 616 / 611 / 5.
+- **Key-manager readers no longer wait on a KEK rotation's or DEK re-wrap's fsync.**
+  `KeyManager`'s `RotateKEKPassphraseWithPrepare` (rotate-kek) and
+  `RewrapDEKWithPrepare` (migrate-provider) used to hold the key manager's lock across
+  their key-file writes and directory fsyncs, so `GetDEK`, `GetKeyVersion` and the
+  KEK-derived key getters blocked for as long as the disk stalled. Both now
+  serialise on their own lock and publish the new key state in one atomic step once
+  the key files are durable; readers see the old state until then. On-disk format and
+  crash-recovery behaviour are unchanged. Not changed: `RotateDEKWithSweep` still
+  holds the lock across its re-encryption sweep, and `encryption.Service` still holds
+  its own lock across a rotation or re-wrap it runs, so a secret encrypt or decrypt
+  through the same `Service` still waits for it; a live server refuses both anyway
+  (`dek.lock`) (#4376).
+- **A test-suite leg that uses more than 80 % of its `go test -timeout` now says so.** `scripts/ci/rerun-known-flakes.py`, which wraps every leg's `go test`, times the run and prints a `::warning title=LEG-TIMEOUT-BUDGET::` annotation plus a greppable `LEG-TIMEOUT-BUDGET leg=... used=NN%` line when the run took more than 80 % of its `-timeout` (green or red; the exit code is never touched). admin-2 took 1400 to 1790 s of its 1800 s on the merge-queue runs of 2026-11-21/22 with no signal before the run that timed out.
+- **`fuzz-targets` now runs on pull requests that add, remove or re-tag a Fuzz function.** It used to run only in the merge queue, so a PR that added `func FuzzX` without its `scripts/fuzzing/targets.d` conf was green on FAST and failed the queue. The required context name is unchanged and a PR touching none of those paths still skips it. Guarded by `scripts/ci/fuzz_pr_gate_test.go`.
+- **Merge-queue legs rerun a known flaky test once.** A failed test that is on `scripts/ci/known-flakes.txt` is rerun once inside the same job (`scripts/ci/rerun-known-flakes.py`, merge_group only), so a timing flake no longer ejects the queue entry. Every rerun prints `FLAKE-RERUN <test> passed on retry`, an annotation, a job-summary line and a `FLAKE-RERUN-COUNT` line; a test that fails twice, or is not listed, fails the leg as before. Pull requests, push and the nightly never rerun.
+- **Seven open code-scanning warnings in test/e2e tooling closed in code.** `scripts/e2e/sdkdiff` and `scripts/e2e/livereplay` refuse a non-loopback target and keep redirects on loopback; the sdkdiff shim decode, `hostile.ParseJSON` (new `MaxParseJSONBytes`) and the web drift guard's `proseMissing` no longer read unbounded input or build a regexp from data.
+- **OpenAPI lint runs a pinned vacuum release binary instead of building vacuum from source.** CI's `openapi-lint` job and `make openapi-lint` now download vacuum 0.42.3 (previously 0.33.0, built from the `devtools/vacuum` Go module) with `devtools/vacuum/install.sh`. The script refuses the archive unless its SHA-256 equals the value checked in to `devtools/vacuum/VACUUM.pin`. The `devtools/vacuum` Go module and its Dependabot entry are removed: Dependabot bumped vacuum's dependency tree on its own, and on #4649 that broke the job. The lint results are the same, except for one new warning: `oas3-server-trailing-slash` on the same-origin server `url: /`. `.vacuum.yaml` had always set that rule to `warn`, but vacuum before 0.39.3 ignored the setting. The bump procedure is in `devtools/vacuum/README.md`.
+- **vacuum pin: a bad cache entry no longer keeps `openapi-lint` red, and the pin has a bump script and a guard.** `devtools/vacuum/install.sh` now deletes a cached archive that fails its SHA-256 check and downloads it once more; it fails only when the fresh download also mismatches. It also refuses a pin file with a duplicate key. `scripts/ci/vacuum-install-selftest.sh` (run by the Go suite) proves the refusal paths offline. `scripts/ci/vacuum-pin-bump.py` prepares a pin bump from the latest release (7-day cooldown, `checksums.txt` cross-checked against the release digests) and prints the diff; it opens no PR. `TestNoToolModuleInGoModGuard` fails if any `go.mod` or `go.work` requires `github.com/daveshanley/*` or `github.com/pb33f/*`, so a CI tool cannot become a product dependency again. The procedure is in `devtools/vacuum/README.md`.
+
+## v0.96.3 — 2026-10-21
+
+### Security
+- **Go toolchain bumped to 1.27.3**, fixing CVE-2026-111943 (Go standard library) in the server, server-airgap, operator, k8s-sync and mcp images, and GO-2026-6809 (`crypto/x509`), reachable via notary receipt verification.
+- **Web image: `libx11` pinned to >= 1.8.14-r0**, fixing CVE-2026-88806.
+
+### Fixed
+- **Deleting a secret no longer reports a failure when the purge-date read-back panics (#3508).** `DELETE /api/v1/secrets/{id}` and the gRPC `DeleteSecret` read the purge date back after the soft-delete and its `secret.deleted` audit row had committed. A returned error there was already tolerated; a panic in the storage read was not, so the client saw an aborted request for a delete that had happened. Both paths now run the read-back through `besteffort.Run`: the panic is recovered, logged and counted, and the `Keyorix-Purge-At` header (HTTP) or `purge_at` field (gRPC) is simply omitted, exactly as on the error path. Guarded by `TestDeleteSecret_PurgeAtReadbackFault_DoesNotUndoCompletedDelete` (HTTP), `TestSecretService_DeleteSecret_PurgeAtReadbackFault_DoesNotUndoCompletedDelete` (gRPC) and the `FuzzStorageFaultOperations` op `REST DELETE /api/v1/secrets/{id}` with `GetSecretIncludingDeleted#1/panic`.
+
+## v0.96.2 — 2026-10-20
+
+### Security
+- **SAML responses are now checked strictly before processing.** The ACS endpoint accepts only the
+  HTTP-POST binding with plaintext assertions: the artifact binding and encrypted assertions are
+  refused (neither was documented as supported). A response must carry exactly one assertion with
+  one subject `NameID` and one `Conditions` in the SAML 2.0 assertion namespace. Refusals return the
+  same generic SAML login error as every other rejection and are logged server-side.
+
+### Changed
+- **A member can list their own break-glass activations.** `GET /api/v1/projects/{id}/break-glass`, `BreakGlassService.ListBreakGlassActivations` and `keyorix break-glass list` used to require `roles.read`, so a member who had just activated emergency access could not see it. A caller with `roles.read` at the project still gets every activation (`"scope": "project"`, unchanged); any other current member of the project now gets only their own activations (active, expired and revoked, `"scope": "own"`), and nothing about anyone else's, not even a count. The own view shows status, timestamps, justification, expiry and whether it was reviewed or revoked, but omits the review note and the reviewer's and revoker's identities (`review_note`, `reviewed_by`, `revoked_by`, `revoked_by_machine_identity_id`); `"scope": "project"` still carries them. A non-member (the same 403 for every project id, so no project existence or MFA setting leaks), a machine identity without `roles.read`, a restricted PAT whose restriction does not allow `roles.read` at the project, or a failed authorization read are refused with 403 / PermissionDenied as before. The per-project MFA policy applies to both views; listing is still not audited. The CLI labels the own view ("Your break-glass activations"). Guarded by `server/http/break_glass_own_list_test.go`, its gRPC and core twins, and journey 9 (INV-CORE-break-glass-list-own-only).
+
+### Fixed
+- **A fresh demo no longer grows a red Alerts tile a few minutes after start (#3152).** The detector's first pass reports the seed's own first reads and writes as low-severity "first observed access" alerts (no baseline exists yet; detection and thresholds are unchanged). `scripts/demo/up.sh` now waits for that first pass and acknowledges exactly those alerts (new_user / new_ip / off_hours, low or medium, accessor one of the seeded demo principals); anything else stays open.
+- **A first-admin password the policy refuses now fails with its real reason (#3201).** On Helm and compose first boot, a configured admin password that contains the admin's username (for example `Dw5-Admin-...` for user `admin`) crash-looped the server pod with ten `403` retries and a hint that blamed the bootstrap token, because BusyBox `wget` cannot show the refusal body. The entrypoint now asks the new `keyorix-server admin check-admin-password` (the server's own policy, password on stdin) after the first refused POST, prints e.g. `admin password rejected: password must not contain your username, email, or display name`, and, after the bootstrap retries are used up, exits non-zero with that reason instead of the token hint. `check-admin-password` exits 2 for a policy refusal and 1 for any other failure (unreadable stdin, bad flags), which the entrypoint treats as no verdict. An already-initialised install with an old non-compliant password in its config still boots, including after a transient first-POST failure. The password policy itself is unchanged.
+- **The Helm chart and `init-secrets.sh` catch it before deploy.** `helm install`/`template` fails when `auth.adminPassword` contains the username, the email's local part or `Administrator`; `scripts/selfhost/init-secrets.sh` and `keyorix-server admin generate-secrets` never generate such a password, and `init-secrets.sh --from-env` warns about a supplied one.
+- **Main pages no longer scroll sideways at phone width (#3154).** At 390 px the project tab strip, the My Account tab strip, the secret-expiry tabs, the User Management header buttons and the access-review campaign header pushed the whole page wider than the screen (up to 478 px). The tab strips now scroll inside themselves and the two headers wrap.
+
+### Documentation
+- Helm README and `values.yaml` no longer say a rejected bootstrap leaves a healthy pod with no admin; the pod crash-loops (since #3025) and its log has the reason.
+
+### Testing
+- `scripts/demo/check.sh` gains a step that waits until the demo server has been up 6 minutes and fails if any anomaly alert is still open.
+- **`web/e2e/real/mobile-layout.spec.ts`** drives the real UI at 390x844 over the main demo routes and fails when the document scrolls horizontally, naming the elements that stick out (red before this change, green after).
+
+## v0.96.1 — 2026-10-13
+
+### Security
+- **Operator and web images rebuilt without the two HIGH CVEs that blocked v0.96.0's image scan.** The `keyorix-operator` binary now links `golang.org/x/net` v0.60.0 (CVE-2026-78669, HTTP/2 SETTINGS DoS; the `migrate` and `devtools/vacuum` modules are bumped too), and the `keyorix-web` image upgrades `pcre2` to 10.49-r0 (CVE-2026-103111) and `tiff` to 4.7.2-r0 (CVE-2026-4775) on top of the pinned nginx base. Guarded by the docker-publish trivy gate (`--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1`). Fixes #3200. Upgrade note: the `0.96.0` operator and web images were published before their scan failed and carry no attestation; use `0.96.1`.
+- **`docker-publish` scans, attests and signs every image by digest before any tag is pushed.** The server, airgap, k8s-sync, operator, mcp and web builds now push by digest only; the Trivy gate, provenance attestation and cosign signature run on that digest, and the release tags (`0.96.1`, `0.96`, `latest`, ...) are created last with `docker buildx imagetools create`. A failed scan therefore leaves no tag behind, instead of an unattested, unsigned `:0.96.0` as happened for the operator and web images (#3200).
+- **The entrypoint refuses to publish anything but a certificate as `KEYORIX_PUBLIC_CA_FILE`.** `KEYORIX_LOCAL_CA_FILE` is copied to a world-readable (0644) file on the volume shared with the web container; the entrypoint now exits non-zero, creating no public file, when the source is not a regular file, contains any `PRIVATE KEY` PEM block, or is not a PEM `CERTIFICATE` bundle (nothing else allowed, at most 256 KiB). The copy is made privately (0600) and the copy is what is checked. Guarded by `server/entrypoint_public_cert_test.go`.
+- **A FIFO at a key-file path is refused instead of hanging startup.** The file KEK provider, Shamir share files, `--passphrase-file`, the wrapped-DEK/salt/TPM-blob reader (`securefiles.SafeReadFile`), the key-file permission fixer, the backup key-file reader and `--checkpoint-key-file` now open non-blocking and refuse a non-regular file on the opened descriptor (`secretenv.OpenRegular`); the KEK and `--passphrase-file` mode checks run on that same descriptor. A new AST guard (`TestSecretFileReadsGoThroughOpenRegular`) fails when a read in the secret-handling packages bypasses the helper.
+- **`KEYORIX_DB_PASSWORD` can no longer change where or how Keyorix connects to PostgreSQL.**
+  Since v0.96.0 (#3159) the password from `KEYORIX_DB_PASSWORD`, `KEYORIX_DB_PASSWORD_FILE` or
+  `storage.database.password` was spliced into `storage.database.dsn`. With a keyword DSN ending
+  in a backslash, a password such as `a sslmode=disable host=evil x=\` became connection
+  keywords (another host, TLS off); with a URL DSN holding `?` in the user name, the result
+  connected to a different host with `sslmode=prefer`. The DSN is now parsed by the driver's own
+  parser and the password is set on the parsed connection settings; it is never written into a
+  connection string. A DSN the driver cannot parse is now reported at startup (`admin validate`)
+  rather than at the first connection, and a keyword DSN with an unterminated quote no longer
+  crashes the config check. Password precedence is unchanged (a DSN that has its own password
+  plus a configured one is still refused).
+- **The metrics token no longer appears in k8s-sync / operator usage output.** Both registered `-metrics-bearer-token` with `KEYORIX_METRICS_TOKEN` as its default, and Go's flag usage (printed on `-h` and on any unknown flag) shows defaults, so a typo in the container args wrote the token to the pod log. The variable is now read after flag parsing; behaviour is otherwise unchanged. A Semgrep rule (`keyorix-secret-env-as-flag-default`) blocks the pattern.
+- **A `*_FILE` secret that names a FIFO is refused instead of hanging startup.** Applies to the server (`internal/secretenv`), `keyorix system init` and k8s-sync's `KEYORIX_TOKEN_FILE`, which now also enforces the 1 MiB limit and regular-file rule the other secret files follow.
+
+### Changed
+- **Published images carry a build date.** `docker-publish` now passes `BUILD_DATE` (the commit date in UTC, never the wall clock, so rebuilding a commit reproduces the stamp) to the server, server airgap and web image builds, so `keyorix --version` / `system info` on a published server image no longer reports `unknown`.
+
+### Fixed
+- **A machine identity's secret read is attributed to the machine in the audit log.** A value
+  read by a machine (`GET /api/v1/secrets/{id}?include_value=true`, by-ref, by-name lookups)
+  showed actor `unknown` in `keyorix audit logs`, the HTTP audit API and gRPC, and read
+  "User ci-app read secret ...". It now shows the machine's name as the actor (`ci-app`) and
+  says "Machine identity ci-app read secret ...". Rows written earlier keep their stored
+  wording; the actor of old machine rows is resolved from `machine_identity_id`, so they show
+  the name too. Audit semantics are unchanged: `secret.read` is still written, before the
+  value is returned, for value reads only; a plain `GET /api/v1/secrets/{id}` is metadata only
+  and is not a `secret.read`.
+- **GOLDEN-PATH section 5 and `up.sh` use the value-read call.** The documented machine
+  `curl` was a metadata-only GET, which writes no audit row, so `audit logs` showed nothing.
+  The doc now uses `?include_value=true` and `--actor-type machine_identity`;
+  `scripts/demo/check.sh` asserts the machine read appears with actor `ci-app`.
+- **The image's `ENTRYPOINT` is now absolute (`/app/entrypoint.sh`)**, so `docker run -w /app/data <image> <cmd>` works: the demo's `docs/demo/GOLDEN-PATH.md` section 7 backup/restore commands failed before starting with `exec: "./entrypoint.sh": no such file` because a relative ENTRYPOINT resolves against the working directory (#3145). `entrypoint.sh` also calls `/app/keyorix-server` by absolute path. New guard `scripts/demo/golden-path-s7.sh` (run by `scripts/demo/check.sh`, so by the `demo-up-smoke` CI job) extracts and executes section 7 from the document against the built demo image and requires `verify-audit on the restored database: VALID`.
+- **`admin backup` now includes soft-deleted rows.** The backup walk used the default soft-delete scope (`deleted_at IS NULL`), so a deleted project/environment/secret was silently left out of the archive while append-only `audit_events` still referenced it, and `admin restore` then refused the archive with `dangling reference(s) ... references missing projects.id=N`. Any server that had ever deleted a project produced an unrestorable backup (found by the new GOLDEN-PATH s7 guard in `demo-up-smoke`, #3164). `scripts/demo/check.sh` also prints a failing step's whole output instead of its last line.
+- **The audit CSV export names the machine identity on machine rows.** `GET /api/v1/audit/export.csv`
+  left the `actor` column blank for a row written by a machine identity, and the JSON feed
+  `GET /api/v1/audit/export` (rendered by `keyorix audit export --csv`) left `actor` empty too.
+  Both now carry the identity's name (e.g. `ci-app`), with `actor_type` `machine_identity`, as the
+  audit list and search already do. Names only; no token or secret material is added. The stored,
+  hash-covered fields of the export are unchanged, so off-box chain verification is unaffected.
+- **`helm upgrade --reuse-values` from chart 0.95.x to 0.96.x no longer fails with `nil pointer evaluating interface {}.enabled`.** (#3199) `--reuse-values` drops the new chart's defaults, so `secureBaseline.*`, `web.hsts.*`, `web.trustedProxies`, `postgresql.runAsUser`/`migrateOwnership` and `auth.existingSecretKeys.*` were missing. The chart now fills in a missing value with its `values.yaml` default (an explicit value, `secureBaseline.enabled=false` included, is kept); `secureBaseline` stays on by default. Guarded by `TestHelmReuseValues_*`, which renders the chart with only the 0.95.3 values file. `--reset-then-reuse-values` (Helm 3.14+) is still the recommended flag.
+- **Read-only roles no longer see the secret dependency Add form or Remove buttons.** The secret detail's Dependencies section offered "Add a dependency" and per-edge "Remove" to a `project_viewer`, whose POST/DELETE `/secrets/{id}/dependencies` then returned 403. Both are now shown only with `secrets.write` (`useCan().writeSecrets`); the dependency graph and blast radius stay readable. Check Drift / Rotation Plan stay offered because the server allows them for `secrets.read` (#3142; server enforcement unchanged).
+- **`storage.database.dsn` no longer silently ignores the database password (#3151).** With `storage.type: postgres` and a `dsn` that carries no password, the password from `KEYORIX_DB_PASSWORD` / `KEYORIX_DB_PASSWORD_FILE` (or `storage.database.password`) is now used (set on the parsed connection settings, never written into the DSN; see Security above); before, it was dropped and the failure surfaced as `connection reset by peer`. If the `dsn` already contains a password and one of those sources is also set, startup (and every command that opens the database) now refuses with an error naming the setting and the fix (remove the password from the `dsn`, or unset the other source) rather than choosing one; the error never prints either password. Passwords containing spaces, quotes or backslashes work in both the `dsn` and the field-by-field form. Documented in `docs/CONFIGURATION.md`.
+- **Sharing page names the secret.** The Secret column showed "Secret #2"; `GET /api/v1/shares` and `GET /api/v1/shares/owned` now return `secretName`, `projectId` and `projectName` for each share, and the page shows them (#3153). The name is returned only for a secret the caller may read (`AuthorizeSecret`, `secrets.read`: ACL, role, share, PAT restriction); otherwise the fields are omitted and the page keeps "Secret #id".
+- **Revoke dialog title readable in both themes.** The confirm dialog's title and message used fixed grey text colours that vanished on the dark dialog background; they now use the theme tokens (#3153).
+
+### Documentation
+- `docs/UPGRADING.md`: the 0.96.0 Helm upgrade command uses `--reset-then-reuse-values` and says which flag works with which chart; stale "latest is v0.95.3" text removed. `QUICK_START.md`, `docs/SELF_HOSTING.md` and `INSTALL-WITH-AI.md` no longer present v0.95.3 as the newest release (v0.96.0 has `admin generate-secrets` and `mfa enroll`).
+- **ADR-115 (local audit journal) parked.** The prototype was measured; the journal only improved median latency over the existing audit group commit while adding complexity and an undetectable-loss tail, so the ADR is marked Parked with an Outcome section. Revisit only if group commit becomes the bottleneck.
+
+### Testing
+- The Helm chart hardening tests (`deploy/hardening`) now run with `secureBaseline.enabled` both `true` and `false`, so the opt-out is covered by the existing CI job.
+- **Real-backend web smoke now runs in the merge queue.** `web-e2e-real-smoke` and its two shards ran on `pull_request` only, so a web spec broken by a PR-vs-main interaction (#3080) reached main unnoticed. They now also run on `merge_group` (docs-only and operator-only groups still skip). Neither job is a required check, so the queue is not stalled by them.
+- **Fixed a ~1/3 flake in the real-backend `mfa-login.spec.ts` MFA-login test (#2442).** The test waits up to one full 30s TOTP step for a code the anti-replay counter will accept, which does not fit Playwright's 30s default test timeout; it now has an explicit 90s budget. The anti-replay wait and assertions are unchanged.
 
 ## v0.96.0 — 2026-10-13
 

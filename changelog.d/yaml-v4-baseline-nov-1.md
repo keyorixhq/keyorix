@@ -1,2 +1,0 @@
-### Testing
-- **v4-only baseline for typed decode, multi-document streams and KnownFields (#4574).** Committed golden files pin what go.yaml.in/yaml/v4 accepts, rejects and decodes for the config struct family (internal/config, internal/k8ssync, the CLI credential store, secret import), so a go-yaml bump shows a readable diff in the normal test tier; two fuzz targets (`FuzzYAMLV4MultiDocument`, `FuzzYAMLV4KnownFields`) check properties v4 must keep on its own. No second parser.

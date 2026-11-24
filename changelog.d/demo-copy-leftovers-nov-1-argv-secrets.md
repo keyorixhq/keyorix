@@ -1,2 +1,0 @@
-### Internal
-- **Demo scripts keep response bodies and TOTP seeds off python's argv.** `scripts/demo/lib.sh` (`demo_json`, `demo_open_anomalies`) and `scripts/demo/check.sh` (`jget`, `totp_code`) passed a server response (it can carry a session token) or a TOTP seed to `python3 -c` as an argument, visible in `ps`. They now pass it through the environment; output is unchanged. `TestDocsShowNoLiteralSecretOnCommandLine` learned the shape (`scanShellForPyArgv`) and `TestDocsSecretGuardCalibration` plants a line for each variant.
