@@ -38,6 +38,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/migrate/internal/healthscan"
 	"github.com/keyorixhq/keyorix/migrate/internal/hostile"
+	"github.com/keyorixhq/keyorix/migrate/internal/httpsafe"
 )
 
 const hostileScanToken = "kx-hostile-scan-token-b4e2-SECRET"
@@ -81,6 +82,10 @@ func FuzzHealthscanHostileVault(f *testing.F) {
 			Credentials:    []string{hostileScanToken},
 			CallTimeout:    2000000000, // 2s: the whole suite, not one request
 			RequestCeiling: 2000,
+			// healthscan reads up to httpsafe.MaxResponseBytes per response across many
+			// requests; O4's flat limit does not allow for that (#184). Three copies per
+			// response covers read + decode, and the allowance stays linear in requests.
+			AllocPerRequest: 3 * httpsafe.MaxResponseBytes,
 		})
 		defer h.Close()
 
