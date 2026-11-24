@@ -1,0 +1,1 @@
+TestNoToolModuleInGoModGuard	scripts/ci	#4678	new guard: no go.mod or go.work may require, replace or list as a tool a CI tool module (github.com/daveshanley/*, github.com/pb33f/*); green on main because vacuum runs as a pinned release binary since VACUUM-BIN-1
