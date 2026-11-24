@@ -242,6 +242,9 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	// key set no passphrase opens yet, and this is the error that explains it.
 	// readKeyFilesForBackup checks again under the key lock.
 	if err := refusePendingKeyRotation(cfg); err != nil {
+		if r, ok := errors.AsType[*pendingRotationRefusal](err); ok {
+			recordBackupRefusal(cfg, r)
+		}
 		return machineVisibleBackupRefusal(err)
 	}
 
@@ -641,10 +644,12 @@ func readKeyFile(path string) ([]byte, error) {
 // opens, so a staging salt still there afterwards is unused (#4105). The DEK's
 // staging file is never suggested for removal.
 //
-// The refusal runs before storage is opened, so it writes no audit event: the
-// error (exit backupRefusedExitCode with a structured stderr line,
-// machineVisibleBackupRefusal) and `admin validate --posture`
-// (collectBackupRefusalPosture) are where it shows.
+// The refusal shows in the error (exit backupRefusedExitCode with a structured
+// stderr line, machineVisibleBackupRefusal), in `admin validate --posture`
+// (collectBackupRefusalPosture) and, where storage can be opened without
+// changing anything, as an admin.backup_refused audit event
+// (recordBackupRefusal). The unused staging salt is removed with
+// `admin encryption clear-stale-salt-pending`, never by this command.
 func refusePendingKeyRotation(cfg *config.Config) error {
 	pending, err := keyfiles.PendingRotationFiles(&cfg.Storage.Encryption, ".")
 	if err != nil {
@@ -665,9 +670,10 @@ func refusePendingKeyRotation(cfg *config.Config) error {
 			saltAdvice = fmt.Sprintf(" %[1]s is the KEK salt's staging file. After an interrupted rotate-kek the start may need it and the "+
 				"new passphrase, and if it is refused, follow the recovery it prints. A server start that succeeds and leaves %[1]s in "+
 				"place (its log says the file \"can be deleted\") has proved that the active key set opens without it: the rotation never "+
-				"changed the active keys, and every backup is refused until the file is gone. To remove it safely, check that no "+
-				"`admin encryption rotate-kek` is running, move it out of the key directory (mv %[1]s <a directory outside the key "+
-				"directory>), back up again, and delete the moved copy once that backup and a server start have succeeded.", p.Path)
+				"changed the active keys, and every backup is refused until the file is gone. Remove it with "+
+				"`keyorix-server admin encryption clear-stale-salt-pending` (server stopped; `--dry-run` shows its decision first): it removes %[1]s only when no DEK "+
+				"staging file is present, no `admin encryption rotate-kek` is running and the active key set opens with the current "+
+				"passphrase without it, records that in the audit chain, and refuses otherwise; then back up again.", p.Path)
 		}
 	}
 	return &pendingRotationRefusal{paths: paths, dek: dek, msg: fmt.Sprintf("backup refused: a key rotation is running or was interrupted (found %s). "+

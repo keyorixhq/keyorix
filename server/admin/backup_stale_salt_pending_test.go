@@ -6,7 +6,6 @@ package admin
 // --posture` reports it until the file is gone. Boot behaviour is unchanged.
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -33,7 +32,7 @@ func TestAdminBackup_StaleSaltPendingAfterBoot_RefusedVisiblyUntilRemoved(t *tes
 	for range 2 {
 		stderr := requireRefusedAndUntouched(t, planted)
 		require.Contains(t, stderr, "has proved that the active key set opens without it")
-		require.Contains(t, stderr, "move it out of the key directory (mv "+testSaltPending)
+		require.Contains(t, stderr, "admin encryption clear-stale-salt-pending")
 		require.Contains(t, stderr, "no `admin encryption rotate-kek` is running")
 		require.Contains(t, stderr, "admin validate --posture")
 	}
@@ -41,7 +40,9 @@ func TestAdminBackup_StaleSaltPendingAfterBoot_RefusedVisiblyUntilRemoved(t *tes
 	out := postureOutput(t)
 	require.Contains(t, out, "[backup/explicit] "+backupRefusedPostureLine+" ("+testSaltPending+")", "posture output:\n%s", out)
 
-	require.NoError(t, os.Remove(testSaltPending))
+	code, cout, cerr := runClearStaleSalt(t)
+	require.Zero(t, code, "stdout:\n%s\nstderr:\n%s", cout, cerr)
+	require.NoFileExists(t, testSaltPending)
 	require.NotContains(t, postureOutput(t), backupRefusedPostureLine)
 	code, stderr := runBackupCommand(t, filepath.Join(t.TempDir(), "after.tar.gz"))
 	require.Zero(t, code, "stderr:\n%s", stderr)
@@ -56,5 +57,5 @@ func TestPosture_ReportsPendingDEKBackupRefusal(t *testing.T) {
 	plantStagingFiles(t, testDEKPending)
 	out := postureOutput(t)
 	require.Contains(t, out, backupRefusedPostureLine+" ("+testDEKPending+")", "posture output:\n%s", out)
-	require.NotContains(t, out, "move it out of the key directory")
+	require.NotContains(t, out, "clear-stale-salt-pending")
 }

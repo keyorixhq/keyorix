@@ -49,6 +49,6 @@ func TestBootLeavesStaleSaltPending_WarnsThatBackupsRefuseUntilMoved(t *testing.
 	lines := logs.Lines(testSaltPending)
 	require.Len(t, lines, 1, "exactly one WARN line names the staging salt; log:\n%s", logs.String())
 	require.Contains(t, lines[0], "[WARN] key set:")
-	require.Contains(t, lines[0], "admin backup` will refuse until "+testSaltPending+" is moved away")
+	require.Contains(t, lines[0], "admin backup` will refuse until "+testSaltPending+" is gone: with the server stopped, run `keyorix-server admin encryption clear-stale-salt-pending`")
 	require.Contains(t, lines[0], "can be deleted", "the existing wording stays")
 }

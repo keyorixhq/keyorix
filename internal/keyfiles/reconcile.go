@@ -161,10 +161,13 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 		case l == saltPending:
 			// Boot leaves this file, and `admin backup` refuses while it exists
 			// (#4105), so the line says so: "can be deleted" alone read as optional.
+			// The command it names re-proves this under the key lock before it
+			// removes anything (StaleSaltPendingCandidate).
 			res.Warnings = append(res.Warnings, fmt.Sprintf(
 				"%s is a staging file left over from a key operation that was interrupted before it changed the active "+
 					"key set; the set is coherent without it and the file can be deleted. `admin backup` will refuse until %s is "+
-					"moved away (move it out of the key directory with no `admin encryption rotate-kek` running)", l, l))
+					"gone: with the server stopped, run `keyorix-server admin encryption clear-stale-salt-pending`, which "+
+					"removes it only after proving the active key set opens without it", l, l))
 		case l == dekPending:
 			res.Warnings = append(res.Warnings, fmt.Sprintf(
 				"%s is left over from an interrupted DEK operation; the active key set is coherent without it, and the "+

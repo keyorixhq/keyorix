@@ -44,7 +44,7 @@ func TestDEKPending_SurvivesBackupPostureDiagnoseAndKeySetReconcile(t *testing.T
 
 			for range 2 {
 				stderr := requireRefusedAndUntouched(t, planted)
-				require.NotContains(t, stderr, "move it out of the key directory (mv "+testDEKPending)
+				require.NotContains(t, stderr, "removes "+testDEKPending)
 			}
 			requireFilesUnchanged(t, planted, "backup")
 

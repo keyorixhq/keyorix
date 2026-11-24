@@ -93,9 +93,9 @@ func TestAdminBackup_RefusedWhileARotationIsPending(t *testing.T) {
 			sqliteBackupSource(t)
 			stderr := requireRefusedAndUntouched(t, plantStagingFiles(t, c.files...))
 			if c.saltAdvice {
-				require.Contains(t, stderr, "move it out of the key directory")
+				require.Contains(t, stderr, "admin encryption clear-stale-salt-pending")
 			} else {
-				require.NotContains(t, stderr, "move it out of the key directory",
+				require.NotContains(t, stderr, "clear-stale-salt-pending",
 					"only an unused staging salt may ever be suggested for deletion")
 			}
 		})
@@ -163,14 +163,15 @@ func requireRestores(t *testing.T, archive string, overwrite bool) {
 	require.Contains(t, out, "verify-audit on the restored database: VALID")
 }
 
-// The fix the refusal names works, and a refusal costs nothing: an archive
-// taken before it still restores on the same host, and the backup taken after
+// The fix the refusal names works, and a refusal costs no data: an archive
+// taken before it still restores on the same host (with --allow-rollback, past
+// the refusal's own audit event), and the backup taken after
 // recovery restores on a clean one, which is the restore #4058 was refused.
 func TestAdminBackup_RefusalThenRecovery_RestoresOnSameAndCleanHost(t *testing.T) {
 	cases := []struct {
 		name  string
 		files []string
-		// mustDelete is what boot leaves and the refusal says to delete.
+		// mustDelete is what boot leaves and clear-stale-salt-pending removes.
 		mustDelete string
 	}{
 		{"DEK staging file is cleared by boot", []string{testDEKPending}, ""},
@@ -193,7 +194,8 @@ func TestAdminBackup_RefusalThenRecovery_RestoresOnSameAndCleanHost(t *testing.T
 			recoverLikeBoot(t)
 			if c.mustDelete != "" {
 				require.FileExists(t, c.mustDelete, "boot leaves an abandoned staging salt in place")
-				require.NoError(t, os.Remove(c.mustDelete))
+				code, out, cerr := runClearStaleSalt(t)
+				require.Zero(t, code, "the command the refusal names must remove it; stdout:\n%s\nstderr:\n%s", out, cerr)
 			}
 			for _, name := range c.files {
 				require.NoFileExists(t, name)
@@ -203,7 +205,12 @@ func TestAdminBackup_RefusalThenRecovery_RestoresOnSameAndCleanHost(t *testing.T
 			code, stderr = runBackupCommand(t, after)
 			require.Zero(t, code, "the backup after recovery must work; stderr:\n%s", stderr)
 
+			// The refusal is an admin.backup_refused audit event (#4105) that the
+			// earlier archive does not hold, so the same-host restore of it is
+			// behind this host's audit trail like after any audited admin action.
+			restoreAllowRollback = true
 			requireRestores(t, before, true)
+			restoreAllowRollback = false
 
 			cleanHost := t.TempDir()
 			require.NotEqual(t, srcDir, cleanHost)
