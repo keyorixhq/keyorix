@@ -531,6 +531,7 @@ func TestResumeProjectSecrets_HappyPath_S13(t *testing.T) {
 	require.NoError(t, err)
 	proj, err := cs.CreateProject(context.Background(), "s13resume", "")
 	require.NoError(t, err)
+	grantProjectPermissions(t, cs, 1, proj.ID, "secrets.write") // the route gate, which core decides too (#4657)
 
 	r := withChiParam(withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil)),
 		"id", fmt.Sprintf("%d", proj.ID))

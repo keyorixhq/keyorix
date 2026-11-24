@@ -41,8 +41,9 @@ type BackupRefusedStatus struct {
 // Remedy texts. Full steps: `keyorix-server admin validate --posture` and
 // docs/operator/j6-key-rotation.md.
 const (
-	backupRefusedRemedySalt = "Check that no `admin encryption rotate-kek` is running, then move the staging file out of the key " +
-		"directory (do not delete it yet) and back up again; `keyorix-server admin validate --posture` prints the full steps."
+	backupRefusedRemedySalt = "Stop the server and run `keyorix-server admin encryption clear-stale-salt-pending` (it removes the " +
+		"staging file only after proving the active key set opens without it), then back up again; " +
+		"`keyorix-server admin validate --posture` prints the full steps."
 	backupRefusedRemedyDEK = "A key rotation is running or was interrupted: wait for it to finish, or restart the server so boot " +
 		"recovery completes it, then back up again. Never delete a DEK's .pending file by hand: it can be the only copy of the new DEK."
 	backupRefusedRemedyCheckFailed = "Fix the key directory so its staging files can be checked; the server log names the error."

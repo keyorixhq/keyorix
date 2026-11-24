@@ -86,7 +86,7 @@ func TestSystemInfo_BackupRefused_StaleSaltPending_SignalsUntilRemoved(t *testin
 		require.Equal(t, keyfiles.BackupRefusedReasonStagingFile, st.Reason)
 		require.Equal(t, []string{saltPending}, st.Files)
 		require.True(t, st.StagingSaltOnly)
-		require.Contains(t, st.Remedy, "move the staging file out of the key directory")
+		require.Contains(t, st.Remedy, "admin encryption clear-stale-salt-pending")
 		require.Contains(t, st.Remedy, "admin validate --posture")
 	}
 
@@ -118,7 +118,7 @@ func TestSystemInfo_BackupRefused_DEKPending_ReportedAndNeverTouched(t *testing.
 		require.ElementsMatch(t, []string{saltPending, dekPending}, st.Files)
 		require.False(t, st.StagingSaltOnly, "with a DEK staging file present the salt advice does not apply")
 		require.Contains(t, st.Remedy, "Never delete a DEK's .pending file by hand")
-		require.NotContains(t, st.Remedy, "move the staging file")
+		require.NotContains(t, st.Remedy, "clear-stale-salt-pending")
 	}
 
 	for path, data := range want {

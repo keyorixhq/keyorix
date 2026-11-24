@@ -108,6 +108,7 @@ cli	keyorix encryption auth-encryption migrate	server/admin/auth_encryption.go	r
 cli	keyorix encryption auth-encryption rotate	server/admin/auth_encryption.go	runAuthRotate	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix encryption auth-encryption status	server/admin/auth_encryption.go	runAuthStatus	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix encryption auth-encryption validate	server/admin/auth_encryption.go	runAuthValidate	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix encryption clear-stale-salt-pending	server/admin/encryption_clear_stale_salt.go	runEncClearStaleSalt	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix encryption fix-perms	server/admin/encryption.go	runEncFixPerms	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix encryption init	server/admin/encryption.go	runEncInit	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix encryption key-secret	server/admin/encryption_key_secret.go		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)

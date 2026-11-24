@@ -25,16 +25,31 @@ updates:
   # #478: without a gomod entry, Go dependency/toolchain-minimum drift (e.g. #477)
   # has no automated forcing function and depends on someone noticing manually.
   #
-  # go-patch-minor groups every patch/minor bump into one PR: each PR (regardless
-  # of diff size) pays the same fixed CI cost -- CodeQL/SonarCloud/the full
-  # test-suite scale with the codebase, not the diff -- so N ungrouped routine
-  # bumps cost roughly N times what one grouped PR costs for the same updates.
-  # Patch/minor bumps essentially never conflict with each other and rarely need
-  # individual review. Majors are deliberately left ungrouped/individual: they
+  # ONE gomod entry covers every Go module directory, so a group yields ONE PR
+  # across all of them instead of one PR per directory per group. Each PR
+  # (regardless of diff size) pays the same fixed CI cost -- CodeQL/SonarCloud/the
+  # full test-suite scale with the codebase, not the diff -- so N ungrouped
+  # routine bumps cost roughly N times what one grouped PR costs for the same
+  # updates. Patch and minor are SEPARATE groups so a breaking minor does not
+  # block the patches. Majors are deliberately left ungrouped/individual: they
   # can be breaking and deserve their own review/testing pass, not a bundle that
   # blocks on the slowest one.
+  #
+  # The nested modules (/operator, /migrate, /cli, /fuzzkit) pin the same
+  # libraries as the root module (aws-sdk-go-v2, smithy-go, x/*, cbor, ...) and
+  # must follow root; the corobix drift-guard (check-shared-pins.sh) reported
+  # ~35 mismatches in migrate/ and operator/ on 2026-11-20. Everything now moves
+  # in the same monthly run, so the pins land together instead of lagging.
+  #
+  # Edits to this file make Dependabot recreate every update at once (bursts of
+  # 19 and 10 PRs on 21 and 23 Nov 2026): change it rarely and in one commit.
   - package-ecosystem: gomod
-    directory: /
+    directories:
+      - /
+      - /operator
+      - /migrate
+      - /cli
+      - /fuzzkit
     # Indirect dependencies are skipped by default, so a stale transitive pin
     # (e.g. go-toml/v2 via viper) never got a bump PR. They join the same groups.
     allow:
@@ -44,100 +59,40 @@ updates:
     cooldown:
       default-days: 7
     groups:
-      go-patch-minor:
+      go-patch:
+        update-types:
+          - "patch"
+      go-minor:
         update-types:
           - "minor"
-          - "patch"
-  - package-ecosystem: gomod
-    directory: /operator
-    allow:
-      - dependency-type: all
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    groups:
-      go-patch-minor:
-        update-types:
-          - "minor"
-          - "patch"
-  # Nested modules that pin the same libraries as the root module (aws-sdk-go-v2,
-  # smithy-go, x/*, cbor, ...) but had no Dependabot entry, so their pins froze
-  # while root moved on. The corobix drift-guard (check-shared-pins.sh) reported
-  # ~35 such mismatches in migrate/ and operator/ on 2026-11-20. Weekly, unlike
-  # /operator: the nested pins must follow root, and a monthly cadence let them
-  # lag it by up to a month, which is the drift these entries exist to remove.
-  - package-ecosystem: gomod
-    directory: /migrate
-    allow:
-      - dependency-type: all
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      go-patch-minor:
-        update-types:
-          - "minor"
-          - "patch"
-  - package-ecosystem: gomod
-    directory: /cli
-    allow:
-      - dependency-type: all
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      go-patch-minor:
-        update-types:
-          - "minor"
-          - "patch"
-  - package-ecosystem: gomod
-    directory: /fuzzkit
-    allow:
-      - dependency-type: all
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      go-patch-minor:
-        update-types:
-          - "minor"
-          - "patch"
   # ADR-070: web/ (the dashboard, ex-keyorix-web) is now a subtree here.
   # web/.github/dependabot.yml — the pnpm-ecosystem entry that covered it as
   # a standalone repo — is deleted along with the rest of web/.github/ in the
   # same commit; without this entry Dependabot would silently stop updating
   # the frontend's dependency tree entirely.
   #
-  # npm-patch-minor groups routine bumps the same way as go-patch-minor above.
-  - package-ecosystem: npm
-    directory: /web
-    schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    groups:
-      npm-patch-minor:
-        update-types:
-          - "minor"
-          - "patch"
   # The repo root also has its own package.json/package-lock.json
   # (keyorix-ci-tools: cdxgen, pinned for Scorecard
   # supply-chain compliance). Dependabot's security updates already cover
   # it regardless of this file (PR #1687 bumped fast-uri here without any
-  # entry below) -- this entry is only for routine patch/minor version
-  # updates, which this directory had none of until now.
+  # entry for it) -- listing / here is for routine patch/minor version
+  # updates of that tree.
+  #
+  # npm-patch and npm-minor group routine bumps the same way as go-patch and
+  # go-minor above: one PR per group across both directories; majors stay
+  # individual.
   - package-ecosystem: npm
-    directory: /
+    directories:
+      - /web
+      - /
     schedule:
       interval: monthly
     cooldown:
       default-days: 7
     groups:
-      npm-patch-minor:
+      npm-patch:
+        update-types:
+          - "patch"
+      npm-minor:
         update-types:
           - "minor"
-          - "patch"

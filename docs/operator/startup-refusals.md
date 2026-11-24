@@ -1330,7 +1330,7 @@ Error: backup refused: a key rotation is running or was interrupted (found keys/
 wrapper can match status 4 or the first line. The same server start logs:
 
 ```
-[WARN] key set: keys/kek.salt.pending is a staging file left over from a key operation that was interrupted before it changed the active key set; the set is coherent without it and the file can be deleted. `admin backup` will refuse until keys/kek.salt.pending is moved away (move it out of the key directory with no `admin encryption rotate-kek` running)
+[WARN] key set: keys/kek.salt.pending is a staging file left over from a key operation that was interrupted before it changed the active key set; the set is coherent without it and the file can be deleted. `admin backup` will refuse until keys/kek.salt.pending is gone: with the server stopped, run `keyorix-server admin encryption clear-stale-salt-pending`, which removes it only after proving the active key set opens without it
 ```
 
 and `keyorix-server admin diagnose`, which changes nothing, prints (after `config parse`):
@@ -1348,9 +1348,31 @@ as `security.backup_refused` (`system.write` callers; see `j6-key-rotation.md`).
 
 **Cause / fix.** A key rotation is running or was interrupted. Wait for a running one, or
 start the server once so boot recovery settles it. If `kek.salt.pending` is still there after
-a start that succeeded, it is unused: check that no `rotate-kek` is running, move it out of
-the key directory, back up, and delete the moved copy once that backup and a server start
-have succeeded. Never delete a `dek.key.pending` by hand.
+a start that succeeded, it is unused: with the server stopped, run `keyorix-server admin
+encryption clear-stale-salt-pending` (below), then back up. Never delete a `dek.key.pending` by
+hand. With the server stopped, each refusal is also an `admin.backup_refused` audit event (the
+backup's stderr says whether it was recorded).
+**In place:** [j6-key-rotation.md](j6-key-rotation.md#when-admin-backup-stops-after-an-interrupted-rotation).
+
+### `admin encryption clear-stale-salt-pending` refused
+
+Real output (the same SQLite install, a wrong `KEYORIX_MASTER_PASSWORD`, exit status 1):
+
+```
+Error: clear-stale-salt-pending refused, nothing was removed: the active key set does not open with the current passphrase without keys/kek.salt.pending (failed to initialize key manager: failed to unwrap DEK — wrong passphrase or corrupted key file: ...). The file may be the salt an interrupted rotate-kek needs, so it is left in place: ...
+```
+
+**Match:** `refused, nothing was removed`
+
+**Cause / fix.** The command removes `kek.salt.pending` only when it can prove the file unused,
+and says which check failed: a server or another admin command holds the database (stop it), a
+server or `rotate-kek` holds the key lock (stop it or let it finish), a `dek.key.pending` is
+present (start the server once so boot recovery settles it; never delete it by hand), the
+key-set manifest records an interrupted operation boot would still finish from the file (start
+the server once), or the active key set does not open with the current passphrase (check the
+passphrase; if the server does not start either, the file may be the salt the DEK needs:
+[key-rotation-runbook.md](key-rotation-runbook.md), "Interrupted rotate-kek or migrate-provider").
+Nothing is changed by a refusal.
 **In place:** [j6-key-rotation.md](j6-key-rotation.md#when-admin-backup-stops-after-an-interrupted-rotation).
 
 ### An admin command cannot open the server lock file — from code
