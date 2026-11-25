@@ -147,10 +147,18 @@ guard `FuzzDigitorusPKCS7BoundedWork`).
 
 **In place.**
 
-- **Dependabot** (`.github/dependabot.yml`): every entry runs monthly with
-  a 7-day cooldown. Three ecosystems are covered: `github-actions` (`/`),
-  `gomod` (one entry over `/`, `/operator`, `/migrate`, `/cli` and
-  `/fuzzkit`, indirect dependencies included) and `npm` (`/web` and `/`).
+- **Dependabot** (`.github/dependabot.yml`): every entry has a 7-day
+  cooldown. Five ecosystems are covered. `github-actions` (`/`), `gomod`
+  (one entry over `/`, `/operator`, `/migrate`, `/cli` and `/fuzzkit`,
+  indirect dependencies included) and `npm` (`/web` and `/`) run monthly.
+  `docker` (the Dockerfiles under `/web`, `/server`, `/operator`,
+  `/cmd/keyorix-mcp`, `/cmd/keyorix-k8s-sync` and `/scripts/dast`) and
+  `docker-compose` (`/` and `/scripts/dast`) run weekly; each yields one
+  grouped PR (`docker-base-images`, `compose-images`) that refreshes tags
+  and `@sha256` digests. The `golang` image tag is ignored for every
+  semver type because it must equal go.mod's `toolchain` line, and the
+  `ghcr.io/keyorixhq/*` release pins are bumped by the release process,
+  not by Dependabot.
   For `gomod` and `npm`, patch and minor updates are separate groups
   (`go-patch`, `go-minor`, `npm-patch`, `npm-minor`), each yielding one PR
   across all of the ecosystem's directories, to avoid paying the fixed CI
