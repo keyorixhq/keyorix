@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS builder
+FROM golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS builder
 RUN apk add --no-cache git
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -21,7 +21,7 @@ RUN set -- \
 # Runtime stage — distroless static, non-root (no shell, no package manager). The agent
 # reaches the Keyorix server over HTTPS (CA bundle baked into the static base) and the
 # Kubernetes API via the mounted ServiceAccount CA; it needs no shell/wget at runtime.
-FROM gcr.io/distroless/static:nonroot@sha256:963fa6c544fe5ce420f1f54fb88b6fb01479f054c8056d0f74cc2c6000df5240
+FROM gcr.io/distroless/static:nonroot@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5
 COPY --from=builder /out/keyorix-k8s-sync /usr/local/bin/keyorix-k8s-sync
 USER 65532:65532
 # The sync agent has no HTTP listener; health is managed by the Kubernetes
