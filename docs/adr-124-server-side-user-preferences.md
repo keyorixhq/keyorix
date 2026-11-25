@@ -12,8 +12,14 @@ A user's web UI settings are stored on the server, in the database, per user. Th
 user to any browser and device. The browser keeps only a small cache so the first screen is drawn
 correctly before the server has answered. The server value wins as soon as it is known.
 
+**One place.** Every per-user UI setting lives in this store and nowhere else. A setting is not
+split between the browser, a cookie and the server. A new setting is added as a new key here; it
+is never added as a new `localStorage` key. The only browser-side copy is the first-paint cache
+in rule 5.
+
 This covers, in the first version: theme, interface language, timezone, the expanded or collapsed
-state of sidebar groups, and the "seen" state of page hints.
+state of sidebar groups, the recently used projects list (ADR-018), and the "seen" state of page
+hints.
 
 ## Context
 
@@ -68,7 +74,11 @@ Browser-only storage has three costs for a product used by administrators on sev
     once, so nobody loses their theme.
 11. **Same on both databases.** A plain table that works identically on SQLite and PostgreSQL,
     registered with the other models and covered by the migration guard tests.
-12. **Audit.** Changing a setting is not a security event and is not written to the audit chain.
+12. **No second store.** A guard test fails the web build if code under `web/src` writes to
+    `localStorage` or `sessionStorage` under a key that is not on a short allowlist (the
+    first-paint cache, and the bookkeeping already allowed by INV-WEB-03 such as session expiry
+    times). This is what keeps settings from spreading back across places.
+13. **Audit.** Changing a setting is not a security event and is not written to the audit chain.
     This is stated here so it is a decision and not an omission; it is revisited if a setting
     ever affects what a user may see or do.
 
@@ -76,9 +86,8 @@ Browser-only storage has three costs for a product used by administrators on sev
 
 - **Notification settings** (email, browser, sharing, security). They depend on delivery
   channels with their own decisions, and the frontend type for them has no server behaviour behind
-  it. Added later as new allowlisted keys.
-- **The recently used projects list.** It is a list, changes on every visit and has its own ADR.
-  It may move later.
+  it. When those channels exist, their per-user switches become keys in this same store, not a
+  second one.
 - **Deployment-wide defaults** (for example a site that wants Spanish for everyone) and
   administrator reset. Both are useful, neither is needed for the first version.
 - **Anything the CLI reads.** These are web UI settings only.
@@ -100,13 +109,14 @@ Browser-only storage has three costs for a product used by administrators on sev
 - The exact key names, types and allowed values for the first version, and the limits.
 - Whether the interface language needs a translation mechanism first. No i18n library is in the
   web application today, so a language key is only useful once strings can be translated.
-- Whether sidebar group state should be stored server-side or stay browser-local, since it is
-  per-machine by nature. It is listed in the first version only for consistency.
+- How the recently used projects list is stored: it changes on every visit, so writes must be
+  batched or delayed, and the value needs a size bound.
 - Administrator reset and deployment-wide defaults, as above.
 
 ## Consequences
 
 A new table, two API calls, OpenAPI and generated types, a settings layer in the web store that
-reads on sign-in and writes through, and tests for the carry-over, for failure without blocking,
-and for refusing other users' settings. The `UserPreferences` type and the README section on a
+reads on sign-in and writes through, the browser-storage guard test from rule 12, and tests for the
+carry-over, for failure without blocking, and for refusing other users' settings. The sidebar
+state and the recent projects list move from the browser into the store. The `UserPreferences` type and the README section on a
 preferences store are replaced by what this ADR describes. Nothing changes until it is approved.
