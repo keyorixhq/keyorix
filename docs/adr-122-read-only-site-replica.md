@@ -85,6 +85,46 @@ notes, not in this repository) is made until the capability exists and is benchm
    store. One central command revokes a site. A revoked site can still serve its cached secrets
    until it next reaches the centre or its lease on the replica expires; the maximum offline
    lease must be an explicit, per-site setting, with the default fail-closed.
+7. **Site-originated data is untrusted.** The only things a site sends to the centre are its
+   status and its audit records. The centre treats both as input from an unknown box: it
+   authenticates the site, validates the shape, never lets them change a secret, a policy or
+   another site's state, and shows them as "reported by the site", not as verified fact. The
+   evaluator's reason for the one-way model is exactly this: nobody knows where the box stands
+   or who has touched it.
+8. **Replication mechanism.** See the next section.
+
+## Replication mechanism (open)
+
+The evaluator confirmed that one-way replication is simpler to build and safer than two-way,
+because the state of a remote box cannot be trusted. He added that if it is built, it should use
+a proven resilient mechanism, naming block-level replication or Raft, and said Raft has a good
+record. His remark is recorded as input, not as a decision. Requirements the mechanism must meet,
+taken from the points above:
+
+- A site receives only its own subset of secrets, never the whole store (point 6).
+- The site starts the connection and the centre needs no inbound path (model above).
+- It tolerates links that are down for hours, resumes where it stopped, and applying a batch
+  twice changes nothing.
+- It runs on SQLite on a small gateway and does not turn Keyorix into a different storage engine.
+- What the site holds is re-encrypted for that site, so a copy of the site's data does not
+  expose the centre's keys.
+
+Options, to be tested against those requirements before choosing:
+
+| Option | Fit | Concern |
+|---|---|---|
+| One-way change feed built in Keyorix: the single writer numbers every change to a site's subset, the site pulls batches after its last acknowledged number, applies them idempotently, and acknowledges | Meets all five requirements; no election or quorum is needed because there is one writer | The code is ours to write and prove; needs the fault-injection tests the project already uses for storage |
+| Raft, with the site as a non-voting follower | Mature, well understood; lag of a follower does not affect the centre | One log carries everything to every follower, so there is no per-site subset unless there is one log per site (fifty groups at the centre); it replaces the storage layer rather than sitting on SQLite or PostgreSQL; its main gain, failover of the writer, is a different problem from centre-to-site replication |
+| Block-level replication of the database | Simple to describe | Copies the whole encrypted store under the same keys, which breaks the subset and re-encryption requirements; replicates corruption and tampering as faithfully as data |
+| PostgreSQL logical replication | Native, row filters exist in recent versions | Sites run SQLite; ties the site to PostgreSQL |
+
+Centre availability (a second central node, failover of the writer) is a separate question from
+this ADR. The PostgreSQL backend and existing multi-replica behaviour (ADR-112, immediate
+revocation on every replica) already cover part of it, and Raft would be a candidate for that
+question, not for this one.
+
+The statements about Raft and PostgreSQL in the table are general knowledge and must be verified
+against current documentation before this ADR is accepted.
 
 ## Alternatives not chosen (so far)
 
