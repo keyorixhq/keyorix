@@ -213,7 +213,7 @@ func (h *DynamicSecretHandler) IssueLease(w http.ResponseWriter, r *http.Request
 
 	lease, err := h.coreService.IssueLease(r.Context(), cfg.ID, body.TTLSeconds, userCtx.UserID)
 	if err != nil {
-		if sendStorageUnavailable(w, err) {
+		if sendStorageUnavailable(w, err) || sendAuditUnavailable(w, err) {
 			return
 		}
 		msg := dynamicSecretClientMessage(err, fmt.Sprintf("Error issuing dynamic-secret lease for config %d", cfg.ID))
