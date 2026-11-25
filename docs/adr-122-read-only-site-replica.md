@@ -42,6 +42,8 @@ One voice. He is an evaluator, not a prospect, and he tested v0.96.3 on an empty
 site scenario is his pilot idea, not something he ran. This ADR therefore records a hypothesis
 and its design constraints.
 
+A second remark from the same evaluator is a requirement on the design, not on a site: horizontal scaling of the centre is mandatory, and the nodes must not be synchronised through a key-value store of the etcd kind. His reason is experience: a split brain when one data centre drops, then a hard recovery. Recorded as input from one voice, like the rest.
+
 **Reopening trigger:** two or more prospects who need central management of disconnected
 sites. Until then no implementation work starts. No website claim of edge or IoT readiness
 (the "Edge & IoT ready" wording, removed earlier; the decision is recorded in the planning
@@ -129,10 +131,19 @@ Options, to be tested against those requirements before choosing:
 | Block-level replication of the database | Simple to describe | Copies the whole encrypted store under the same keys, which breaks the subset and re-encryption requirements; replicates corruption and tampering as faithfully as data |
 | PostgreSQL logical replication | Native, row filters exist in recent versions | Sites run SQLite; ties the site to PostgreSQL |
 
-Centre availability (a second central node, failover of the writer) is a separate question from
-this ADR. The PostgreSQL backend and existing multi-replica behaviour (ADR-112, immediate
-revocation on every replica) already cover part of it, and Raft would be a candidate for that
-question, not for this one.
+Centre availability (several central nodes, failover of the writer) is a separate question from
+this ADR, but the evaluator's requirement above constrains how it may be answered. What exists
+today (ADR-039, Accepted): several identical stateless API replicas behind a load balancer, all
+using one PostgreSQL; the audit chain and the background schedulers are serialised with
+PostgreSQL advisory locks; there is no node-to-node synchronisation and no consensus store in
+Keyorix. That design has no split brain of its own, because there is one writer, the database.
+It moves the question to the operator's PostgreSQL high availability, which Keyorix does not
+provide and does not describe for a multi-data-centre case; known caveats are in ADR-039 (login
+rate limit counted per replica, schema-epoch rolling upgrade gap). Whether the multi-replica
+behaviour holds under test has not been verified for this ADR. Rule for any later design of the
+centre: no consensus or key-value store added to the secrets path, and one writer at any moment
+(the same shape as the one-way change feed above, which also has one writer by construction).
+Raft or similar stays a candidate only if it is shown not to bring that failure mode back.
 
 The statements about Raft and PostgreSQL in the table are general knowledge and must be verified
 against current documentation before this ADR is accepted.
@@ -152,6 +163,7 @@ Fields needed on the fleet view; whether the centre must also push rotations whe
 returns or only observe; sites and services per site, local database and broker; secrets per
 site and rotation frequency; who restores the gateway after a power cut and where its unseal key
 should live; permission to use the "site three hours away" example (unnamed) in scenario text.
+How many data centres, where the Vault database sits today, and what exactly was hard in recovery after a split brain.
 
 ## Consequences
 
