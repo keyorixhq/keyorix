@@ -782,9 +782,8 @@ few minutes, audit could be written to disk in series instead of one event at a
 time, and throughput would rise. The idea was checked against this ADR:
 
 - `standard` already skips the wait for the disk sync, so the speed gain is already
-  taken (PostgreSQL single client 4.11 ms to 1.84 ms, Amendment 3). A longer batch
-  delay would not help a lone request: it has nobody to batch with and would only
-  wait.
+  taken (Amendment 3). A longer batch delay would not help a lone request: it has
+  nobody to batch with and would only wait.
 - What a UPS can add is **safety for `standard`**, not speed: a signal that power
   is about to fail lets the server close the loss window that `standard` leaves
   open. That is what this amendment specifies.
@@ -836,8 +835,8 @@ Rules:
    to the configured level. A missing `on-mains` leaves the server at `strict`,
    which costs speed only.
 3. **Authenticated and local.** The operation needs an admin credential and is
-   reachable on the local interface used by host scripts; it is not an anonymous
-   endpoint. A caller who can send `on-battery` can only slow the server down.
+   reachable only on a local, authenticated surface (open question 1); it is not
+   an anonymous endpoint. A caller who can send `on-battery` can only slow the server down.
 4. **Audited.** Each transition writes an `admin.audit_power_state_changed` event
    with old and new state, so the chain records when the server ran in which mode.
 5. **Reported.** `GET /system/info` and `admin validate` show the configured level
@@ -854,9 +853,13 @@ State this plainly in the documentation, because it is the difference between
 - A kernel panic, an OS crash, a hard reset, or a UPS that fails or never sends
   the signal.
 - A battery that runs out before the flush completes.
-- An attacker with physical access who cuts power at the UPS or removes it. At
-  unattended remote sites where this threat matters (Amendment 3, point 4),
-  `strict` stays the right level and this amendment is not a reason to relax it.
+- An attacker with physical access who cuts power at the UPS or removes it. Such
+  an attacker controls whether the on-battery signal is ever sent: cutting power
+  downstream of the UPS, or pulling the UPS, gives no signal at all, so the server
+  never switches to `strict` and the `standard` tail is lost. Only a server that
+  already runs at `strict` keeps every row in that case. At unattended remote
+  sites where this threat matters, `strict` stays the right level and this
+  amendment is not a reason to relax it.
 - A process crash is not a new risk: rows are committed to the WAL before every
   disclosure, as today.
 
