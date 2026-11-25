@@ -2,6 +2,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '../../../test/test-utils';
 import { MfaSection } from '../MfaSection';
 import { DEFAULT_SENSITIVE_IDLE_MS } from '../../../hooks/useAutoClearOnIdle';
+import { useAuthStore } from '../../../store/authStore';
+import { SETUP_STEP_ENROLL_MFA } from '../../auth/setup';
+import type { User } from '../../../types';
+
+// A session the server has confined to MFA enrolment (pending_steps: ["enroll_mfa"]).
+const owesEnrolment = () =>
+    useAuthStore.setState({ user: { id: 1, pendingSteps: [SETUP_STEP_ENROLL_MFA] } as unknown as User });
 
 let recoveryStatus: { remaining: number; total: number } | undefined;
 let statusLoading = false;
@@ -53,6 +60,7 @@ beforeEach(() => {
     activateReset.mockReset();
     disableReset.mockReset();
     regenerateReset.mockReset();
+    useAuthStore.setState({ user: null });
 });
 
 describe('MfaSection', () => {
@@ -94,6 +102,7 @@ describe('MfaSection', () => {
             opts.onSuccess({ secret: 'SECRET', otpauth_uri: 'otpauth://x' });
         });
 
+        owesEnrolment();
         render(<MfaSection enrolmentRequired />);
         // No click: the setup key is already on screen.
         expect(screen.getByText('Set up two-factor authentication')).toBeInTheDocument();
@@ -118,6 +127,18 @@ describe('MfaSection', () => {
         render(<MfaSection enrolmentRequired />);
         expect(screen.queryByText('Set up two-factor authentication')).not.toBeInTheDocument();
         expect(enrollMutate).not.toHaveBeenCalled();
+    });
+
+    it('does not open the enrolment modal on the URL parameter alone, without a pending enrolment step', () => {
+        // A bookmarked or crafted ?mfa=required for a session the server does not confine,
+        // including one whose status read failed (enabled falls back to false).
+        statusError = true;
+        recoveryStatus = undefined;
+        render(<MfaSection enrolmentRequired />);
+        expect(screen.queryByText('Set up two-factor authentication')).not.toBeInTheDocument();
+        expect(enrollMutate).not.toHaveBeenCalled();
+        // The way in is still one click away.
+        expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument();
     });
 
     it('opens the regenerate re-auth modal', () => {

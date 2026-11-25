@@ -10,10 +10,21 @@ import { ProfilePage } from '../ProfilePage';
 
 const recoveryCodesStatus = vi.fn();
 const enroll = vi.fn();
+// What the login response / GET /auth/profile said about this session (#3155):
+// ["enroll_mfa"] when require_mfa confines it to enrolment.
+const session = vi.hoisted(() => ({ pendingSteps: [] as string[] }));
 
 vi.mock('../../../store/authStore', () => {
-    const user = { id: 1, username: 'admin', displayName: 'Admin', email: 'admin@example.com' };
-    const useAuthStore: any = () => ({ user, setUser: vi.fn() });
+    const useAuthStore: any = () => ({
+        user: {
+            id: 1,
+            username: 'admin',
+            displayName: 'Admin',
+            email: 'admin@example.com',
+            pendingSteps: session.pendingSteps,
+        },
+        setUser: vi.fn(),
+    });
     useAuthStore.getState = () => ({ clearPasswordChangeRequired: vi.fn() });
     return { useAuthStore };
 });
@@ -42,6 +53,7 @@ function enrolmentRequired403() {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    session.pendingSteps = ['enroll_mfa'];
     recoveryCodesStatus.mockRejectedValue(enrolmentRequired403());
     enroll.mockResolvedValue({ secret: 'JBSWY3DPEHPK3PXP', otpauth_uri: 'otpauth://totp/x' });
 });
@@ -77,6 +89,20 @@ describe('#2924 ProfilePage after an MFAEnrollmentRequired redirect', () => {
         await waitFor(() => expect(enroll).toHaveBeenCalledTimes(2));
     });
 
+    it('does not start the setup by itself for a session the server does not confine', async () => {
+        // A bookmarked or crafted /profile?tab=security&mfa=required, with no pending
+        // enrolment step: the banner may show, but nothing is POSTed without a click.
+        session.pendingSteps = [];
+        window.history.pushState({}, '', '/profile?tab=security&mfa=required');
+        render(<ProfilePage />);
+
+        expect(await screen.findByText('Set up two-factor authentication to continue')).toBeInTheDocument();
+        expect(screen.queryByTestId('mfa-setup-key')).not.toBeInTheDocument();
+        expect(enroll).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+        await waitFor(() => expect(enroll).toHaveBeenCalledTimes(1));
+    });
+
     it('stays on Basic Info with no banner for an ordinary visit to /profile', async () => {
         window.history.pushState({}, '', '/profile');
         render(<ProfilePage />);
@@ -86,6 +112,7 @@ describe('#2924 ProfilePage after an MFAEnrollmentRequired redirect', () => {
     });
 
     it('does not show the banner once MFA is on', async () => {
+        session.pendingSteps = [];
         recoveryCodesStatus.mockReset();
         recoveryCodesStatus.mockResolvedValue({ remaining: 8, total: 10 });
         window.history.pushState({}, '', '/profile?tab=security&mfa=required');

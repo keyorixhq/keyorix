@@ -386,7 +386,8 @@ const ReauthModal: React.FC<{
 // call the expected 403 on the recovery-code status endpoint "could not load".
 export const MfaSection: React.FC<{ enrolmentRequired?: boolean }> = ({ enrolmentRequired = false }) => {
     const { user } = useAuthStore();
-    const { data: status, isLoading, isError } = useMfaRecoveryStatus(!userOwesMfaEnrolment(user));
+    const owesEnrolment = userOwesMfaEnrolment(user);
+    const { data: status, isLoading, isError } = useMfaRecoveryStatus(!owesEnrolment);
     const disable = useDisableMfa();
     const regenerate = useRegenerateRecoveryCodes();
     const [enrolling, setEnrolling] = useState(false);
@@ -394,6 +395,9 @@ export const MfaSection: React.FC<{ enrolmentRequired?: boolean }> = ({ enrolmen
     // dialog once, so the first screen after login is the setup itself (QR code, key for manual
     // entry, code check, recovery codes) rather than a page they must search for a button on.
     // Once only: closing the dialog must not reopen it; the Enable button is still there.
+    // Only when the server says this session owes enrolment (pending_steps), not on the URL
+    // parameter alone: a bookmarked or crafted ?mfa=required must not start an enrolment
+    // (an audit row, and a replaced pending secret) without a click.
     const autoOpened = React.useRef(false);
     const [regenOpen, setRegenOpen] = useState(false);
     const [disableOpen, setDisableOpen] = useState(false);
@@ -405,12 +409,14 @@ export const MfaSection: React.FC<{ enrolmentRequired?: boolean }> = ({ enrolmen
 
     const showEnrolmentBanner = enrolmentRequired && !enabled && !isLoading;
 
+    const autoOpen = showEnrolmentBanner && owesEnrolment;
+
     React.useEffect(() => {
-        if (showEnrolmentBanner && !autoOpened.current) {
+        if (autoOpen && !autoOpened.current) {
             autoOpened.current = true;
             setEnrolling(true);
         }
-    }, [showEnrolmentBanner]);
+    }, [autoOpen]);
 
     const enabledButton = enabled ? (
         <Button variant="destructive" size="sm" onClick={() => setDisableOpen(true)}>
