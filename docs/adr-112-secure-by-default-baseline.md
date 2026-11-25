@@ -41,6 +41,12 @@ opened with `synchronous=NORMAL`. `strict` stays the SQLite default. See
 "Amendment 7" below; it replaces the "SQLite" rejection in Amendment 1 and the
 SQLite row of Amendment 3's table.
 
+Amendment 8 (2026-11-25, **proposed, pending Andrei's OK**): a bounded sync
+window for `standard` on SQLite, and an authenticated power-state signal that
+switches audit to `strict` while a UPS reports battery. It adds no speed beyond
+`standard`; it closes `standard`'s loss window on a signalled power failure. See
+"Amendment 8" below.
+
 Amendment 2 (2026-10-10, **proposed, pending Andrei's OK**, #2908): the
 `enable_file_permission_check` upgrade grace period is a reported state:
 a start-up warning, a settings-diff value and a posture deviation.
@@ -762,6 +768,137 @@ backend is SQLite.
 - Config: SQLite accepts `standard`, the default stays `strict`
   (`internal/config/audit_durability_test.go`).
 - Invariant: `internal/storage/INVARIANTS.d/INV-STORAGE-sqlite-normal-conn-read-audit-only.md`.
+
+## Amendment 8 (2026-11-25): bounded sync window for `standard`, and a UPS-assisted switch to `strict`
+
+**Proposed, pending Andrei's OK.** Design only; nothing is implemented. Builds on
+Amendment 3 (`audit_durability`) and Amendment 7 (SQLite `standard`). It does not
+change the default of either backend and does not relax `strict`.
+
+### Origin
+
+Andrei's idea, 2026-11-25: where a site or datacentre has a UPS that holds for a
+few minutes, audit could be written to disk in series instead of one event at a
+time, and throughput would rise. The idea was checked against this ADR:
+
+- `standard` already skips the wait for the disk sync, so the speed gain is already
+  taken (PostgreSQL single client 4.11 ms to 1.84 ms, Amendment 3). A longer batch
+  delay would not help a lone request: it has nobody to batch with and would only
+  wait.
+- What a UPS can add is **safety for `standard`**, not speed: a signal that power
+  is about to fail lets the server close the loss window that `standard` leaves
+  open. That is what this amendment specifies.
+
+Evidence level: one idea from Andrei, plus an evaluator's remark that power loss
+is a minor matter in a datacentre (datacentres go down in batches). No customer has
+asked for it. It is cheap, and it removes the main objection to running `standard`.
+
+### The problem it addresses
+
+At `standard`, an OS crash or power loss can lose a tail of read-audit rows. On
+PostgreSQL that tail is bounded (about 600 ms, Amendment 3). On SQLite it is not:
+Amendment 7 states that SQLite has no background flush, so on a read-only
+workload the window lasts until the next write, a checkpoint, or an OS writeback
+with no timing guarantee.
+
+### Decision 1: a bounded sync window on SQLite `standard`
+
+At `standard` on SQLite, a background task makes pending `synchronous=NORMAL`
+commits durable at most every `audit_sync_interval` (proposed default 500 ms, in
+line with PostgreSQL's window). It acts only when there are commits not yet
+synced, so an idle database does no work. Because an fsync acts on the file,
+syncing the `-wal` file makes every earlier frame durable in commit order; it
+cannot reorder rows or create a gap or a fork (the WAL-prefix argument of
+Amendment 7). The exact mechanism (fsync of the `-wal` file, or a passive
+checkpoint) is an implementation choice, constrained by that argument.
+
+This is useful with or without a UPS, and it gives SQLite `standard` a stated
+loss window like PostgreSQL's.
+
+### Decision 2: a power-state signal that switches audit to `strict` temporarily
+
+A new admin operation (name to settle; sketched here as `audit-power`) accepts two
+states:
+
+- **on-battery:** the server (a) makes all pending audit rows durable now, then
+  (b) runs every audit commit at `strict` until the next state change, on both
+  backends. On PostgreSQL that means audit commits stop using
+  `synchronous_commit = off`; on SQLite the dedicated NORMAL connection is not
+  used.
+- **on-mains:** the server returns to the configured level. It can never go below
+  the configured level, so this signal cannot weaken anything.
+
+Rules:
+
+1. **Only meaningful at `standard`.** At `strict` the operation reports that there
+   is nothing to change.
+2. **Fail-safe direction.** `on-battery` moves toward stricter; a restart returns
+   to the configured level. A missing `on-mains` leaves the server at `strict`,
+   which costs speed only.
+3. **Authenticated and local.** The operation needs an admin credential and is
+   reachable on the local interface used by host scripts; it is not an anonymous
+   endpoint. A caller who can send `on-battery` can only slow the server down.
+4. **Audited.** Each transition writes an `admin.audit_power_state_changed` event
+   with old and new state, so the chain records when the server ran in which mode.
+5. **Reported.** `GET /system/info` and `admin validate` show the configured level
+   and, while active, the current override.
+6. **No UPS logic in Keyorix.** Monitoring the UPS is the host's job (NUT or
+   `apcupsd`). Keyorix provides the hook and the documentation gives an example
+   script for the UPS daemon's on-battery and on-mains events.
+
+### What this does not cover
+
+State this plainly in the documentation, because it is the difference between
+`strict` and `standard` plus a UPS:
+
+- A kernel panic, an OS crash, a hard reset, or a UPS that fails or never sends
+  the signal.
+- A battery that runs out before the flush completes.
+- An attacker with physical access who cuts power at the UPS or removes it. At
+  unattended remote sites where this threat matters (Amendment 3, point 4),
+  `strict` stays the right level and this amendment is not a reason to relax it.
+- A process crash is not a new risk: rows are committed to the WAL before every
+  disclosure, as today.
+
+The guarantee is therefore stated as "`standard` with a bounded loss window,
+and no loss on a signalled power failure with a working UPS", never as
+"equivalent to `strict`". The posture report does not call it hardened.
+
+### Alternatives considered
+
+- **Buffer audit in process memory beyond the WAL, flush when power fails.**
+  Rejected: a process crash would lose records of secrets already disclosed, which
+  breaks audit-before-disclosure.
+- **A longer group-commit delay.** Rejected: no gain for a lone request, extra
+  latency for every request.
+- **Trust the UPS implicitly, no signal.** Rejected: nothing would tell the server
+  when to flush.
+- **Make this a new durability level.** Rejected for now: it is a temporary
+  override of `standard`, not a third baseline level, so the posture model stays
+  with two levels.
+
+### Enforcement (to write with the implementation)
+
+- A test that on SQLite `standard` pending NORMAL commits are made durable within
+  `audit_sync_interval`, and that an idle database does no sync work.
+- A test that `on-battery` makes pending rows durable and moves all audit commits
+  to `strict` on both backends, and that `on-mains` restores the configured level
+  but never goes below it.
+- A test that the operation is refused without an admin credential and reports
+  "nothing to change" at `strict`.
+- The `verify-audit` chain test after `kill -9` under load at `standard`, with
+  and without the sync task, stays VALID.
+- Power-loss behaviour stays "pending e2e VM (dm-flakey)", as in Amendment 7: no
+  claim beyond the WAL-prefix argument is made without that test.
+
+### Open questions
+
+1. Name and surface of the operation (CLI command, admin API, local socket), and
+   how a containerised server receives the host's signal.
+2. Default `audit_sync_interval`, and whether it is configurable.
+3. What happens to requests in flight at the moment of the switch to `strict`.
+4. Whether a UPS-assisted site may advertise a stronger posture line than plain
+   `standard`, and in what words.
 
 ## Decisions recorded (2026-10-15)
 
