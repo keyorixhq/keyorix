@@ -51,6 +51,7 @@ InviteGlobalWithLink
 InviteMember
 InviteToProject
 InviteToProjectWithLink
+IssueLease
 IssueMachineToken
 LiftLegalHold
 LogCryptoInventoryRead

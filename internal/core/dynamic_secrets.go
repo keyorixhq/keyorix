@@ -722,8 +722,17 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	}
 	uid := userID
 	pid := cfg.ProjectID
-	c.writeAuditEventFull(ctx, "dynamic_lease.issued", &uid, nil, &pid, "",
-		fmt.Sprintf("issued dynamic credential (lease=%s, config=%q, ttl=%s)", lease.LeaseID, cfg.Name, ttl))
+	// Audit-before-disclosure (#4716), like LogSecretReadWithProject and
+	// LogCryptoInventoryRead: the credential leaves this function only if its
+	// dynamic_lease.issued event was committed. The lease id and expiry exist only
+	// after the mint, so the audit cannot come first; checking the committed result
+	// before the return is equivalent for the disclosure, because nothing has been
+	// shown to the caller yet. A panic in the writer comes back as false.
+	if !c.writeAuditEventFull(ctx, "dynamic_lease.issued", &uid, nil, &pid, "",
+		fmt.Sprintf("issued dynamic credential (lease=%s, config=%q, ttl=%s)", lease.LeaseID, cfg.Name, ttl)) {
+		c.abortUnauditedLease(ctx, cfg, engine, adminDSN, lease, userID)
+		return nil, fmt.Errorf("%w: audit event %q was not recorded; the credential was revoked and not returned, retry", ErrMutationAuditUnavailable, "dynamic_lease.issued")
+	}
 	return &IssuedLease{LeaseID: lease.LeaseID, Username: cred.Username, Password: cred.Password, Fields: cred.Fields, ExpiresAt: expiresAt}, nil
 }
 
@@ -734,8 +743,15 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 // permanent and undrop-able. To keep it visible, we record a revoke_failed lease
 // capturing the role name and audit it, mirroring RevokeLease's failure handling.
 func (c *KeyorixCore) cleanupOrphanedRole(ctx context.Context, cfg *models.DynamicSecretConfig, engine ports.DynamicBackendEngine, adminDSN, roleName string, userID uint) {
+	c.revokeOrRecordOrphan(ctx, cfg, engine, adminDSN, roleName, userID)
+}
+
+// revokeOrRecordOrphan is the body of cleanupOrphanedRole. It reports whether the role
+// was dropped cleanly (true) or a revoke_failed row was recorded instead (false), for the
+// one caller that must also close a lease row it already persisted (abortUnauditedLease).
+func (c *KeyorixCore) revokeOrRecordOrphan(ctx context.Context, cfg *models.DynamicSecretConfig, engine ports.DynamicBackendEngine, adminDSN, roleName string, userID uint) (revoked bool) {
 	if err := engine.Revoke(ctx, adminDSN, roleName); err == nil {
-		return // role dropped cleanly — nothing to track
+		return true // role dropped cleanly — nothing to track
 	} else {
 		now := c.now()
 		leaseID, gerr := generateSecureToken()
@@ -773,6 +789,7 @@ func (c *KeyorixCore) cleanupOrphanedRole(ctx context.Context, cfg *models.Dynam
 		}
 		c.writeAuditEventFailedFull(ctx, "dynamic_lease.revoke_failed", uidPtr, nil, pidPtr, "",
 			fmt.Sprintf("FAILED to clean up orphaned dynamic role %s after an aborted issue (config=%q): %v — drop it manually", roleName, cfg.Name, err))
+		return false
 	}
 }
 
