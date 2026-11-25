@@ -47,7 +47,7 @@ The checklist form of this section is
    instance made with v0.96.3 and the server refused to start with a message that names the
    setting; removing or fixing it let it start. SQLite ran the bootstrap token, `auto_cert`,
    SCIM, CORS, project-name and Shamir cases, PostgreSQL ran `session_replication_role` and
-   `ssl_mode`, and the KMS case ran against a local KMS emulator, not a real cloud KMS. Three
+   `ssl_mode`, and the KMS case ran against a local KMS emulator, not a real cloud KMS. Two
    differences from the sentence above:
    - A weak SCIM token only **warns** on the first start of an upgraded install that already
      used SCIM (the ADR-112 grace period, §6i). It refuses from the start after that, on a
@@ -56,9 +56,6 @@ The checklist form of this section is
      `security.auto_fix_file_permissions` is on (the generated config), and the server
      starts. The refusal of §6zo appears with the permission check or auto-fix off. A foreign
      **owner** refuses either way.
-   - The configuration refusals exit 78, but the bootstrap token, `session_replication_role`
-     and project-name refusals exit 1 ([startup-refusals.md](operator/startup-refusals.md),
-     "Exit statuses"): the shipped systemd unit retries after them.
 2. Back up **with the v0.96.x binary**, database and key files together (§1, §4). The
    archive is format v2 and carries its own wrapped DEK. A later `admin encryption
    rotate` (DEK) does not affect it. After `admin encryption rotate-kek` it still
