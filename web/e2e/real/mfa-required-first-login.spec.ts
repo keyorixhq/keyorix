@@ -24,7 +24,7 @@
 //   3. Independently of the UI, a plain same-origin fetch of an authed API route returns
 //      403 MFAEnrollmentRequired. This proves the server policy is really on, so step 2
 //      is not satisfied by some other redirect, and gives step 6 something to flip.
-//   4. The user clicks Enable, reads the setup key off the page, computes the current
+//   4. The setup window opens by itself; the user reads the setup key off the page, computes the current
 //      TOTP code with the repo's own helper (helpers.ts totpCode), enters it with the
 //      account password and clicks "Verify & enable". The recovery-codes dialog appears.
 //   5. The user clicks Done. The Security tab now shows the Enabled badge and the banner
@@ -103,8 +103,8 @@ test('first login under require_mfa lands on enrolment, enrols TOTP, and reaches
         error: 'MFAEnrollmentRequired',
     });
 
-    // 4. Enrol TOTP through the UI.
-    await page.getByRole('button', { name: 'Enable', exact: true }).click();
+    // 4. Enrol TOTP through the UI. The setup window opens by itself on arrival, so there is
+    //    no Enable button to click (the open modal makes the page behind it aria-hidden).
     const secretLocator = page.getByTestId('mfa-setup-key');
     await expect(secretLocator).toBeVisible({ timeout: 10_000 });
     const secret = (await secretLocator.textContent())?.trim();
