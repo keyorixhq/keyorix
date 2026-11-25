@@ -4,8 +4,9 @@
 until Andrei approves, and the reopening trigger below is not met. No code follows from this ADR.
 **Date:** 2026-11-25
 **Origin:** Follow-up interview with the author of the 2026-11-21 devops.org.ru review (an
-infrastructure lead who runs Vault). Notes: Keyorix planning notes,
-`claude/2026-11-25-friend-cto-interview-requests-and-next-steps.md`.
+infrastructure lead who runs Vault). Notes: a private Keyorix planning note dated 2026-11-25
+(follow-up interview), kept outside this repository; the facts this ADR relies on are restated
+in Context below so the ADR can be read without it.
 
 ## Non-negotiable invariants this ADR must not weaken
 
@@ -41,9 +42,10 @@ One voice. He is an evaluator, not a prospect, and he tested v0.96.3 on an empty
 site scenario is his pilot idea, not something he ran. This ADR therefore records a hypothesis
 and its design constraints.
 
-**Reopening trigger (unchanged from the earlier deferral):** two or more prospects who need
-central management of disconnected sites. Until then no implementation work starts. The website
-claim "Edge & IoT ready" stays removed until the capability exists and is benchmarked.
+**Reopening trigger:** two or more prospects who need central management of disconnected
+sites. Until then no implementation work starts. No website claim of edge or IoT readiness
+(the "Edge & IoT ready" wording, removed earlier; the decision is recorded in the planning
+notes, not in this repository) is made until the capability exists and is benchmarked.
 
 ## Proposed model (hypothesis)
 
@@ -67,12 +69,15 @@ claim "Edge & IoT ready" stays removed until the capability exists and is benchm
    reconnect, so the centre sees delay, not a gap. Reuses the idea of
    [ADR-115](adr-115-local-audit-journal.md) (currently Parked); its status must be revisited.
 3. **Service identity on a site.** Machine-identity OIDC federation needs a reachable issuer.
-   The offline variant (verification from a local key file, no reachable issuer) is not
-   supported on main; [ADR-075](adr-075-airgap-oidc-federation.md) is Proposed. A site needs a
-   locally verifiable identity path.
+   Verification from a local key file with no reachable issuer is not supported on main.
+   [ADR-075](adr-075-airgap-oidc-federation.md) (Proposed) covers air-gapped OIDC with an
+   internal IdP, which is only a loose match: a site needs a locally verifiable identity path,
+   and whether ADR-075 can be extended to it is open.
 4. **Rotation with lag.** If the centre rotates while a site is offline, the old credential must
-   stay valid until every site has acknowledged the new one. The two-credential approach used for
-   dynamic secrets ([ADR-035](adr-035-dynamic-secrets.md)) is the starting point.
+   stay valid until every site has acknowledged the new one. Overlapping validity of an old and a
+   new credential is not implemented today: [ADR-035](adr-035-dynamic-secrets.md) (related, not
+   reused) issues a single short-lived credential per lease and revokes it at expiry. A
+   dual-validity rotation scheme is a new design item for this ADR or a follow-up.
 5. **Fleet view in the centre.** Per site: last seen, version of each replicated secret,
    rotation pending or acknowledged. Sites report status only, never values. This slice can ship
    before replication exists and is the part the evaluator named as decisive.
