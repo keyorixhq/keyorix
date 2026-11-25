@@ -51,18 +51,30 @@ afterEach(() => {
 });
 
 describe('#2924 ProfilePage after an MFAEnrollmentRequired redirect', () => {
-    it('opens the Security tab, explains why, and offers Enable', async () => {
+    it('opens the Security tab, explains why, and starts the setup by itself', async () => {
         window.history.pushState({}, '', '/profile?tab=security&mfa=required');
         render(<ProfilePage />);
 
         expect(await screen.findByText('Set up two-factor authentication to continue')).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument();
         // The 403 on the status call is expected here, not a load failure.
         expect(screen.queryByText(/could not load two-factor status/i)).not.toBeInTheDocument();
 
-        // And it is a working way in: Enable starts the enrolment.
+        // The setup window opens without a click: enrolment starts and the key is shown.
+        await waitFor(() => expect(enroll).toHaveBeenCalledTimes(1));
+        expect(await screen.findByTestId('mfa-setup-key')).toHaveTextContent('JBSWY3DPEHPK3PXP');
+    });
+
+    it('keeps Enable available after the setup window is closed, without reopening it', async () => {
+        window.history.pushState({}, '', '/profile?tab=security&mfa=required');
+        render(<ProfilePage />);
+
+        await screen.findByTestId('mfa-setup-key');
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+        await waitFor(() => expect(screen.queryByTestId('mfa-setup-key')).not.toBeInTheDocument());
+        expect(enroll).toHaveBeenCalledTimes(1);
+
         fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
-        await waitFor(() => expect(enroll).toHaveBeenCalled());
+        await waitFor(() => expect(enroll).toHaveBeenCalledTimes(2));
     });
 
     it('stays on Basic Info with no banner for an ordinary visit to /profile', async () => {

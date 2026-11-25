@@ -54,9 +54,8 @@ test('login, forced MFA enrolment, sign out, wrong then right second factor, and
     await page.waitForURL(/\/profile\?tab=security&mfa=required/, { timeout: 20_000 });
     await expect(page.getByText('Set up two-factor authentication to continue')).toBeVisible();
 
-    // 2. Enrol TOTP: read the setup key off the page, answer with the current step's code and the
-    //    account password.
-    await page.getByRole('button', { name: 'Enable', exact: true }).click();
+    // 2. Enrol TOTP: the setup window opens by itself on arrival. Read the setup key off the page,
+    //    answer with the current step's code and the account password.
     const setupKey = page.getByTestId('mfa-setup-key');
     await expect(setupKey).toBeVisible({ timeout: 10_000 });
     const secret = ((await setupKey.textContent()) ?? '').trim();

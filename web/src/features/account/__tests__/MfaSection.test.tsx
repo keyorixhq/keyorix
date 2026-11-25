@@ -89,6 +89,37 @@ describe('MfaSection', () => {
         expect(enrollMutate).toHaveBeenCalled();
     });
 
+    it('opens the enrolment modal by itself when enrolment is required, once', () => {
+        enrollMutate.mockImplementation((_vars, opts) => {
+            opts.onSuccess({ secret: 'SECRET', otpauth_uri: 'otpauth://x' });
+        });
+
+        render(<MfaSection enrolmentRequired />);
+        // No click: the setup key is already on screen.
+        expect(screen.getByText('Set up two-factor authentication')).toBeInTheDocument();
+        expect(screen.getByText('SECRET')).toBeInTheDocument();
+        expect(enrollMutate).toHaveBeenCalledTimes(1);
+
+        // Closing it does not reopen it; Enable still starts enrolment.
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+        expect(screen.queryByText('Set up two-factor authentication')).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'Enable' }));
+        expect(screen.getByText('SECRET')).toBeInTheDocument();
+    });
+
+    it('does not open the enrolment modal by itself when enrolment is not required', () => {
+        render(<MfaSection />);
+        expect(screen.queryByText('Set up two-factor authentication')).not.toBeInTheDocument();
+        expect(enrollMutate).not.toHaveBeenCalled();
+    });
+
+    it('does not open the enrolment modal by itself when a second factor is already active', () => {
+        recoveryStatus = { remaining: 8, total: 10 };
+        render(<MfaSection enrolmentRequired />);
+        expect(screen.queryByText('Set up two-factor authentication')).not.toBeInTheDocument();
+        expect(enrollMutate).not.toHaveBeenCalled();
+    });
+
     it('opens the regenerate re-auth modal', () => {
         recoveryStatus = { remaining: 5, total: 10 };
         render(<MfaSection />);

@@ -1,0 +1,2 @@
+### Changed
+- **The two-factor setup window now opens by itself after the first login when the deployment requires MFA.** The redirect to `/profile?tab=security&mfa=required` used to leave the user on a page with a banner and an Enable button; the setup dialog (QR code, key for manual entry, code check, recovery codes) only opened after a click. It now opens once on arrival, closing it does not reopen it, and Enable remains. The banner text mentions that the key can be typed in by hand.

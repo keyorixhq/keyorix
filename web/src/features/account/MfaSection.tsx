@@ -390,6 +390,11 @@ export const MfaSection: React.FC<{ enrolmentRequired?: boolean }> = ({ enrolmen
     const disable = useDisableMfa();
     const regenerate = useRegenerateRecoveryCodes();
     const [enrolling, setEnrolling] = useState(false);
+    // The user was sent here because the deployment requires a second factor. Open the setup
+    // dialog once, so the first screen after login is the setup itself (QR code, key for manual
+    // entry, code check, recovery codes) rather than a page they must search for a button on.
+    // Once only: closing the dialog must not reopen it; the Enable button is still there.
+    const autoOpened = React.useRef(false);
     const [regenOpen, setRegenOpen] = useState(false);
     const [disableOpen, setDisableOpen] = useState(false);
 
@@ -399,6 +404,13 @@ export const MfaSection: React.FC<{ enrolmentRequired?: boolean }> = ({ enrolmen
     const lowCodes = enabled && remaining <= LOW_CODES_THRESHOLD;
 
     const showEnrolmentBanner = enrolmentRequired && !enabled && !isLoading;
+
+    React.useEffect(() => {
+        if (showEnrolmentBanner && !autoOpened.current) {
+            autoOpened.current = true;
+            setEnrolling(true);
+        }
+    }, [showEnrolmentBanner]);
 
     const enabledButton = enabled ? (
         <Button variant="destructive" size="sm" onClick={() => setDisableOpen(true)}>
@@ -421,7 +433,7 @@ export const MfaSection: React.FC<{ enrolmentRequired?: boolean }> = ({ enrolmen
                     <Alert
                         type="warning"
                         title="Set up two-factor authentication to continue"
-                        message="Your organisation requires two-factor authentication. Click Enable below and add the key to an authenticator app; the rest of the console unlocks as soon as it is active."
+                        message="Your organisation requires two-factor authentication. Scan the QR code with an authenticator app, or type the key in by hand if you cannot scan it. If you closed the setup window, click Enable. The rest of the console unlocks as soon as it is active."
                     />
                 </div>
             )}
