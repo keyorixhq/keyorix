@@ -4,7 +4,7 @@
 # static JS/CSS/HTML bundle with no architecture dependence, so this stage gets
 # no benefit from running under the target arch, only the cost of QEMU
 # emulation when TARGETPLATFORM differs from the runner's own arch.
-FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS builder
 # Exact version, not just the major (docker:S8543) — reproducible builds need
 # a resolved pin, not a moving target. Corepack (bundled with node:22-alpine)
 # fetches the pnpm tarball from the npm registry and verifies it against the

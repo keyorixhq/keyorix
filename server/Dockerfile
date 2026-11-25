@@ -20,7 +20,7 @@
 # arch), matching every other base image in this file. pnpm comes from corepack, which
 # honours web/package.json's own `packageManager` field including its integrity hash --
 # so the pnpm version and its checksum are pinned by the repo, not by this file.
-FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS webui
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS webui
 WORKDIR /web
 # Manifests first, so a source-only change does not re-resolve dependencies.
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
@@ -36,7 +36,7 @@ RUN pnpm build && test -d dist/assets
 # even when cross-building for a different $TARGETPLATFORM: the Go toolchain
 # cross-compiles natively via GOOS/GOARCH below, which is far faster than
 # running the whole build stage under QEMU emulation for the target arch.
-FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS builder
 RUN apk add --no-cache git make
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -92,7 +92,7 @@ RUN set -- \
 # round should attempt — tracked as a follow-up. In the meantime we keep Alpine but
 # strip the `apk` package manager (binary + package db) once the packages we need
 # are installed, so RCE inside this container can no longer `apk add` extra tooling.
-FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 RUN apk add --no-cache ca-certificates tzdata && \
     rm -rf /sbin/apk /etc/apk /lib/apk /usr/share/apk /var/cache/apk && \
     addgroup -g 1001 keyorix && \
