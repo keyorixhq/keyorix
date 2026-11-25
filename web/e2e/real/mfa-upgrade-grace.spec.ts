@@ -86,7 +86,8 @@ test('upgrade grace: banner with days left, first admin enrolment ends it, then 
             timeout: 10_000,
         });
         await expect(viewer.getByTestId('mfa-grace-banner')).toHaveCount(0);
-        await expect(viewer.getByRole('button', { name: 'Enable', exact: true })).toBeVisible();
+        // The setup window opens by itself, so the way in is already on screen.
+        await expect(viewer.getByTestId('mfa-setup-key')).toBeVisible({ timeout: 10_000 });
         expect(await apiProbe(viewer), 'after the grace period the API confines to enrolment').toEqual({
             status: 403,
             error: 'MFAEnrollmentRequired',

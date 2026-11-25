@@ -24,7 +24,7 @@
 //   3. Independently of the UI, a plain same-origin fetch of an authed API route returns
 //      403 MFAEnrollmentRequired. This proves the server policy is really on, so step 2
 //      is not satisfied by some other redirect, and gives step 6 something to flip.
-//   4. The user clicks Enable, reads the setup key off the page, computes the current
+//   4. The setup window opens by itself; the user reads the setup key off the page, computes the current
 //      TOTP code with the repo's own helper (helpers.ts totpCode), enters it with the
 //      account password and clicks "Verify & enable". The recovery-codes dialog appears.
 //   5. The user clicks Done. The Security tab now shows the Enabled badge and the banner
@@ -77,9 +77,12 @@ test('first login under require_mfa lands on enrolment, enrols TOTP, and reaches
 
     // 2. The MFA-pending session is routed to the enrolment route.
     await page.waitForURL(/\/profile\?tab=security&mfa=required/, { timeout: 20_000 });
-    // getByText is a case-insensitive substring match, so it also hits the enrolment banner
-    // ("Set up two-factor authentication to continue") and its message. Target the section heading.
-    await expect(page.getByRole('heading', { name: 'Two-Factor Authentication', exact: true })).toBeVisible();
+    // The setup window opens by itself, and the open modal makes the page behind it
+    // aria-hidden, so a getByRole lookup of the section heading finds nothing here. Assert
+    // the dialog itself, which is what the user sees first; the heading is checked in step 5.
+    await expect(page.getByRole('dialog', { name: 'Set up two-factor authentication' })).toBeVisible({
+        timeout: 10_000,
+    });
     await expect(page.getByText('Set up two-factor authentication to continue')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('You do not have permission to perform this action.')).toHaveCount(0);
     // The Security tab's own status read has settled by the time the banner shows; nothing
@@ -103,8 +106,8 @@ test('first login under require_mfa lands on enrolment, enrols TOTP, and reaches
         error: 'MFAEnrollmentRequired',
     });
 
-    // 4. Enrol TOTP through the UI.
-    await page.getByRole('button', { name: 'Enable', exact: true }).click();
+    // 4. Enrol TOTP through the UI. The setup window opens by itself on arrival, so there is
+    //    no Enable button to click (the open modal makes the page behind it aria-hidden).
     const secretLocator = page.getByTestId('mfa-setup-key');
     await expect(secretLocator).toBeVisible({ timeout: 10_000 });
     const secret = (await secretLocator.textContent())?.trim();
@@ -123,6 +126,9 @@ test('first login under require_mfa lands on enrolment, enrols TOTP, and reaches
 
     // 5. Finish the dialog; the Security tab reflects the enrolled state.
     await page.getByRole('button', { name: 'Done' }).click();
+    // The dialog is closed, so the page is no longer aria-hidden: the section heading is
+    // reachable by role again.
+    await expect(page.getByRole('heading', { name: 'Two-Factor Authentication', exact: true })).toBeVisible();
     await expect(page.getByText('Enabled', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Set up two-factor authentication to continue')).toHaveCount(0);
 

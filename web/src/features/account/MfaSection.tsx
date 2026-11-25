@@ -386,10 +386,19 @@ const ReauthModal: React.FC<{
 // call the expected 403 on the recovery-code status endpoint "could not load".
 export const MfaSection: React.FC<{ enrolmentRequired?: boolean }> = ({ enrolmentRequired = false }) => {
     const { user } = useAuthStore();
-    const { data: status, isLoading, isError } = useMfaRecoveryStatus(!userOwesMfaEnrolment(user));
+    const owesEnrolment = userOwesMfaEnrolment(user);
+    const { data: status, isLoading, isError } = useMfaRecoveryStatus(!owesEnrolment);
     const disable = useDisableMfa();
     const regenerate = useRegenerateRecoveryCodes();
     const [enrolling, setEnrolling] = useState(false);
+    // The user was sent here because the deployment requires a second factor. Open the setup
+    // dialog once, so the first screen after login is the setup itself (QR code, key for manual
+    // entry, code check, recovery codes) rather than a page they must search for a button on.
+    // Once only: closing the dialog must not reopen it; the Enable button is still there.
+    // Only when the server says this session owes enrolment (pending_steps), not on the URL
+    // parameter alone: a bookmarked or crafted ?mfa=required must not start an enrolment
+    // (an audit row, and a replaced pending secret) without a click.
+    const autoOpened = React.useRef(false);
     const [regenOpen, setRegenOpen] = useState(false);
     const [disableOpen, setDisableOpen] = useState(false);
 
@@ -399,6 +408,15 @@ export const MfaSection: React.FC<{ enrolmentRequired?: boolean }> = ({ enrolmen
     const lowCodes = enabled && remaining <= LOW_CODES_THRESHOLD;
 
     const showEnrolmentBanner = enrolmentRequired && !enabled && !isLoading;
+
+    const autoOpen = showEnrolmentBanner && owesEnrolment;
+
+    React.useEffect(() => {
+        if (autoOpen && !autoOpened.current) {
+            autoOpened.current = true;
+            setEnrolling(true);
+        }
+    }, [autoOpen]);
 
     const enabledButton = enabled ? (
         <Button variant="destructive" size="sm" onClick={() => setDisableOpen(true)}>
@@ -421,7 +439,7 @@ export const MfaSection: React.FC<{ enrolmentRequired?: boolean }> = ({ enrolmen
                     <Alert
                         type="warning"
                         title="Set up two-factor authentication to continue"
-                        message="Your organisation requires two-factor authentication. Click Enable below and add the key to an authenticator app; the rest of the console unlocks as soon as it is active."
+                        message="Your organisation requires two-factor authentication. Scan the QR code with an authenticator app, or type the key in by hand if you cannot scan it. If you closed the setup window, click Enable. The rest of the console unlocks as soon as it is active."
                     />
                 </div>
             )}
