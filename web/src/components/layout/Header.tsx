@@ -1,12 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router';
 import { clsx } from 'clsx';
-import {
-    Bars3Icon,
-    UserCircleIcon,
-    ArrowRightStartOnRectangleIcon,
-    Cog6ToothIcon,
-} from '@heroicons/react/24/outline';
+import { Bars3Icon, UserCircleIcon, ArrowRightStartOnRectangleIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { Dropdown, DropdownItem } from '../ui/Dropdown';
 
 import { useAuth } from '../../features/auth';
