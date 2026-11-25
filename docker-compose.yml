@@ -259,7 +259,7 @@ services:
     # SMOKE-FLAKE-3: pinned by tag@digest (index digest from docker.io, 2026-10-24, via
     # `docker buildx imagetools inspect docker.io/caddy:2-alpine`). Bumping requires
     # re-fetching from UPSTREAM docker.io, never from a mirror. Same pin as the caddy service.
-    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    image: caddy:2-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     profiles: ["tls"]
     restart: "no"
     user: "0:0"
@@ -296,7 +296,7 @@ services:
   caddy:
     # SMOKE-FLAKE-3: same tag@digest pin as caddy-init above; bump both together, digest
     # re-fetched from UPSTREAM docker.io (`docker buildx imagetools inspect docker.io/caddy:2-alpine`).
-    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    image: caddy:2-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     profiles: ["tls"]
     restart: unless-stopped
     user: "65532:65532"
