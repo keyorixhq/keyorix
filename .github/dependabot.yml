@@ -96,3 +96,69 @@ updates:
       npm-minor:
         update-types:
           - "minor"
+  # Base images: Dependabot's docker ecosystem refreshes the tag and the
+  # @sha256 digest on every FROM line. It does NOT see apk packages inside an
+  # image, so the `apk add --upgrade` floors in web/Dockerfile stay manual; this
+  # only stops the pinned digests from going stale unnoticed (the web image's
+  # nginx:alpine digest failed the Trivy gate in v0.97.0-rc.1).
+  #
+  # One entry lists every directory holding a Dockerfile; the group makes a
+  # week's updates ONE PR. Dependabot's docker fetcher matches any file name
+  # containing "dockerfile" or "containerfile" (case-insensitive), so
+  # scripts/dast/Dockerfile.scanner is covered by listing its directory.
+  - package-ecosystem: docker
+    directories:
+      - /web
+      - /server
+      - /operator
+      - /cmd/keyorix-mcp
+      - /cmd/keyorix-k8s-sync
+      - /scripts/dast
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      docker-base-images:
+        patterns:
+          - "*"
+    ignore:
+      # The Go image tag must equal go.mod's `toolchain` line
+      # (deploy/dockerfile_go_toolchain_test.go): the official images set
+      # GOTOOLCHAIN=local, so the tag, not go.mod, decides the compiler. The
+      # toolchain moves with go.mod (the gomod entry), tag and digest together.
+      # Ignoring every semver type stops Dependabot from moving the tag alone
+      # and failing that test; a re-pushed digest for the SAME tag is not a
+      # version update and still arrives.
+      - dependency-name: golang
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      # node:22 is the dashboard's supported Node line (web/CLAUDE.md); a new
+      # major is a deliberate decision, not a base-image refresh.
+      - dependency-name: node
+        update-types:
+          - "version-update:semver-major"
+  # docker-compose.yml pins postgres and caddy by tag+digest. The postgres
+  # major must not move on its own (a data-directory format change); the
+  # ghcr.io/keyorixhq/* lines are release pins bumped by the release process.
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+      - /scripts/dast
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    groups:
+      compose-images:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: postgres
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: ghcr.io/keyorixhq/*

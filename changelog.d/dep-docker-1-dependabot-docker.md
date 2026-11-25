@@ -1,0 +1,2 @@
+### Changed
+- **Dependabot now refreshes container base images.** `.github/dependabot.yml` gains weekly `docker` (all Dockerfiles) and `docker-compose` entries, one grouped PR each, so pinned `FROM` tags and digests no longer go stale unnoticed. The `golang` image is ignored for version bumps because `deploy/dockerfile_go_toolchain_test.go` ties its tag to go.mod's toolchain line. apk packages inside an image are not covered.
