@@ -174,6 +174,62 @@ func TestADRTextOnlySkipsExactlyTheGoSteps(t *testing.T) {
 	}
 }
 
+// ghJQStub is a stub gh that applies the --jq expression the filter step passes
+// to a JSON fixture, so the test sees what the step's own jq does with the real
+// API shape (filename plus previous_filename on a rename).
+const ghJQStub = `gh() {
+  if [ "$EVENT_NAME" = push ]; then echo 0; return; fi
+  local e=""
+  while [ $# -gt 0 ]; do
+    if [ "$1" = --jq ]; then e="$2"; fi
+    shift
+  done
+  jq -r "$e" "$LIST"
+}`
+
+// renameFilter runs the real filter step over one renamed file (the files API
+// entry shape: filename = new path, previous_filename = old path). pulls/files
+// returns an array, compare returns {"files": [...]}.
+func renameFilter(t *testing.T, step, ev, from, to string) map[string]string {
+	t.Helper()
+	entry := `{"filename":"` + to + `","previous_filename":"` + from + `","status":"renamed"}`
+	body := "[" + entry + "]\n"
+	if ev == "merge_group" {
+		body = `{"files":[` + entry + "]}\n"
+	}
+	return runFilterGH(t, step, ev, body, ghJQStub)
+}
+
+// TestADRTextOnlyRenameIntoADRPath: GitHub lists a rename's old path only in
+// previous_filename. A test file renamed to docs/adr-999-x.md must not look
+// ADR-text-only (its closure row's proving test just left main), so the ledger
+// Verify steps must still run. A rename between two allowlisted paths stays
+// ADR-text-only.
+func TestADRTextOnlyRenameIntoADRPath(t *testing.T) {
+	root := repoRoot(t)
+	g := loadPathGate(t, root)
+	for _, ev := range events {
+		out := renameFilter(t, g.filter, ev, "internal/core/admin_rank_ceiling_snapshot_test.go", "docs/adr-999-rank-ceiling.md")
+		if out["adr_text_only"] != "false" || out["docs_only"] != "false" {
+			t.Errorf("%s: test file renamed to an ADR: adr_text_only=%q docs_only=%q, want both false", ev, out["adr_text_only"], out["docs_only"])
+		}
+		r := g.eval(t, ev, out)
+		if !(r.selfClos || r.verifyClos) || !(r.selfConf || r.verifyConf) {
+			t.Errorf("%s: a ledger is not verified after a rename out of a test file (%+v)", ev, r)
+		}
+		// Control: ADR to ADR and fragment to fragment (the real eb933f50c rename)
+		// stay ADR-text-only.
+		for _, c := range [][2]string{
+			{"docs/adr-122-read-only-site-replica.md", "docs/adr-999-rank-ceiling.md"},
+			{"changelog.d/web-cve-alpine-1-libxml2.md", "changelog.d/4701-web-libxml2-libxslt.md"},
+		} {
+			if out := renameFilter(t, g.filter, ev, c[0], c[1]); out["adr_text_only"] != "true" {
+				t.Errorf("%s: rename %s -> %s: adr_text_only=%q, want true", ev, c[0], c[1], out["adr_text_only"])
+			}
+		}
+	}
+}
+
 func TestADRTextOnlyTurnsOffForAnyOtherPath(t *testing.T) {
 	root := repoRoot(t)
 	g := loadPathGate(t, root)

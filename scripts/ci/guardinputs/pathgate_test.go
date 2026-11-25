@@ -146,16 +146,23 @@ func (g pathGate) eval(t *testing.T, ev string, out map[string]string) pgResult 
 // lookup with 0 runs (queue_verified=false).
 func runFilter(t *testing.T, step, ev string, changed []string) map[string]string {
 	t.Helper()
+	body := strings.Join(changed, "\n")
+	if len(changed) > 0 {
+		body += "\n"
+	}
+	return runFilterGH(t, step, ev, body, `gh() { if [ "$EVENT_NAME" = push ]; then echo 0; else cat "$LIST"; fi; }`)
+}
+
+// runFilterGH is runFilter with the stub gh body and the file it reads given:
+// ghDef defines the shell function gh, which reads $LIST (holding body).
+func runFilterGH(t *testing.T, step, ev, body, ghDef string) map[string]string {
+	t.Helper()
 	dir := t.TempDir()
 	stepFile := filepath.Join(dir, "filter.sh")
 	listFile := filepath.Join(dir, "changed.txt")
 	outFile := filepath.Join(dir, "out")
 	if err := os.WriteFile(stepFile, []byte(step), 0o600); err != nil {
 		t.Fatal(err)
-	}
-	body := strings.Join(changed, "\n")
-	if len(changed) > 0 {
-		body += "\n"
 	}
 	if err := os.WriteFile(listFile, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -167,17 +174,14 @@ func runFilter(t *testing.T, step, ev string, changed []string) map[string]strin
 	case "push":
 		ref = "refs/heads/main"
 	}
-	driver := `set -eo pipefail
-gh() { if [ "$EVENT_NAME" = push ]; then echo 0; else cat "$LIST"; fi; }
-. "$STEP"
-`
+	driver := "set -eo pipefail\n" + ghDef + "\n. \"$STEP\"\n"
 	cmd := exec.Command("bash", "-c", driver)
 	cmd.Env = append(os.Environ(),
 		"STEP="+stepFile, "LIST="+listFile, "GITHUB_OUTPUT="+outFile,
 		"EVENT_NAME="+ev, "REPO=keyorixhq/keyorix", "REF="+ref, "SHA=0000000", "PR_NUMBER=1",
 		"MG_BASE_SHA=1111111", "MG_HEAD_SHA=2222222", "HAS_CI_FULL_LABEL=false", "BASE_REF=main", "GH_TOKEN=x")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("changes/filter step failed for %s %v: %v\n%s", ev, changed, err, out)
+		t.Fatalf("changes/filter step failed for %s %q: %v\n%s", ev, body, err, out)
 	}
 	b, err := os.ReadFile(outFile)
 	if err != nil {

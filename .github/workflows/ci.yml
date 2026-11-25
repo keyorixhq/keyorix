@@ -234,8 +234,10 @@ jobs:
       # INVARIANTS and every other doc stay out. Gates only the Go-based
       # adr-numbers steps whose inputs are none of those files (the two ledger
       # Verify steps, the review-coverage pair and Set up Go): no proving test
-      # in either ledger reads ADR text. scripts/ci/guardinputs/pathgate_test.go
-      # pins which steps it skips and that any other path turns it off.
+      # in either ledger reads ADR text. scripts/ci/guardinputs/adrfast_test.go
+      # pins which steps it skips and that any other path turns it off. A rename
+      # lists both its old and new path, so a rename out of a code path is never
+      # ADR-text-only.
       adr_text_only: ${{ steps.filter.outputs.adr_text_only }}
       # True only on a push to main whose EXACT commit (github.sha) already
       # passed this workflow on the merge_group event. The merge queue
@@ -449,7 +451,7 @@ jobs:
             target="${target%/pr-*}"
             changed=""
             if [ "$target" != "$REF" ] && [ -n "$target" ]; then
-              changed=$(gh api "repos/$REPO/compare/$target...$MG_HEAD_SHA" --jq '.files[].filename') || changed=""
+              changed=$(gh api "repos/$REPO/compare/$target...$MG_HEAD_SHA" --jq '.files[] | .filename, (.previous_filename // empty)') || changed=""
             fi
             if [ "$(printf '%s\n' "$changed" | grep -c .)" -ge 300 ]; then
               changed=""
@@ -487,7 +489,7 @@ jobs:
             } >> "$GITHUB_OUTPUT"
             exit 0
           else
-            changed=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename') || changed=""
+            changed=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)') || changed=""
           fi
           echo "Changed files:"
           echo "$changed"
