@@ -1,0 +1,2 @@
+### Changed
+- **The header now shows the theme choice and Settings openly.** The single quiet icon that cycled dark, light and system is replaced by a three-position switch (light, match system, dark) with all positions visible and the current one highlighted, and a Settings gear sits beside it. The switch is a labelled radio group usable with the arrow keys; the gear opens the Appearance page. Choosing a theme works as before.

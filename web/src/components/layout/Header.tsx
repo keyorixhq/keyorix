@@ -1,20 +1,13 @@
 import React from 'react';
 import { useNavigate } from 'react-router';
 import { clsx } from 'clsx';
-import {
-    Bars3Icon,
-    UserCircleIcon,
-    ArrowRightStartOnRectangleIcon,
-    SunIcon,
-    MoonIcon,
-    ComputerDesktopIcon,
-} from '@heroicons/react/24/outline';
+import { Bars3Icon, UserCircleIcon, ArrowRightStartOnRectangleIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { Dropdown, DropdownItem } from '../ui/Dropdown';
 
 import { useAuth } from '../../features/auth';
 import { userOwesMfaEnrolment } from '../../features/auth/setup';
 import { NotificationBell } from '../../features/notifications';
-import { useUIStore } from '../../store/uiStore';
+import { ThemeSwitch } from './ThemeSwitch';
 import { ROUTES } from '../../constants';
 
 export interface HeaderProps {
@@ -25,8 +18,6 @@ export interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
-    const { theme, setTheme } = useUIStore();
-
     const handleLogout = async () => {
         try {
             await logout();
@@ -70,22 +61,6 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
         </button>
     );
 
-    let nextTheme: 'light' | 'system' | 'dark' = 'dark';
-    if (theme === 'dark') nextTheme = 'light';
-    else if (theme === 'light') nextTheme = 'system';
-
-    let themeTitle = 'System mode (click for dark)';
-    if (theme === 'dark') themeTitle = 'Dark mode (click for light)';
-    else if (theme === 'light') themeTitle = 'Light mode (click for system)';
-
-    let themeAriaLabel = 'System mode';
-    if (theme === 'dark') themeAriaLabel = 'Dark mode';
-    else if (theme === 'light') themeAriaLabel = 'Light mode';
-
-    let themeIcon = <ComputerDesktopIcon className="h-5 w-5" aria-hidden="true" />;
-    if (theme === 'dark') themeIcon = <MoonIcon className="h-5 w-5" aria-hidden="true" />;
-    else if (theme === 'light') themeIcon = <SunIcon className="h-5 w-5" aria-hidden="true" />;
-
     return (
         <header
             className={clsx('shadow-xs border-b', className)}
@@ -106,22 +81,26 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                         </button>
                     </div>
 
-                    {/* Right — theme toggle + notifications + user menu */}
+                    {/* Right — notifications + theme + settings + user menu */}
                     <div className="flex items-center space-x-2">
                         {/* Notifications (ADR-024) — unread badge + dropdown. */}
                         {/* Not under the MFA-enrolment confinement (#3155): its poll would 403. */}
                         {!userOwesMfaEnrolment(user) && <NotificationBell />}
 
-                        {/* Theme toggle — cycles dark → light → system */}
+                        {/* Theme: all three positions visible at once (light, system, dark) */}
+                        <ThemeSwitch />
+
+                        {/* Settings: always visible, not hidden in a menu */}
                         <button
                             type="button"
-                            onClick={() => setTheme(nextTheme)}
-                            className="p-2 rounded-md transition-colors focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-blue-500"
-                            style={{ color: 'var(--text-muted)' }}
-                            title={themeTitle}
-                            aria-label={themeAriaLabel}
+                            data-testid="settings-button"
+                            onClick={() => navigate(ROUTES.SETTINGS_APPEARANCE)}
+                            className="p-2 rounded-full transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500"
+                            style={{ color: 'var(--text-secondary)' }}
+                            title="Settings"
+                            aria-label="Settings"
                         >
-                            {themeIcon}
+                            <Cog6ToothIcon className="h-6 w-6" aria-hidden="true" />
                         </button>
 
                         {/* User menu */}
