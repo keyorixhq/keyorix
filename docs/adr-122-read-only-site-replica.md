@@ -68,6 +68,17 @@ notes, not in this repository) is made until the capability exists and is benchm
 2. **Audit offline.** Write to a local durable journal first, forward to the centre on
    reconnect, so the centre sees delay, not a gap. Reuses the idea of
    [ADR-115](adr-115-local-audit-journal.md) (currently Parked); its status must be revisited.
+   Two kinds of record must not be mixed up. **Audit records** are hash-chained evidence
+   (ADR-029); each site keeps its own chain, and the centre treats a copy as reported by the
+   site (point 7), not as a replacement for the site's chain. **Operational logs** are not
+   replicated by Keyorix at all: they go to the customer's own log stack (ELK, Loki), which a
+   large technology company already runs. The evaluator's view: logs in large companies should
+   reach ELK or Loki by themselves. For audit, main already has native push to a SIEM
+   (`audit.siem`: `splunk`, `datadog` or generic `webhook`) with an optional on-disk spool
+   that re-sends until the receiver accepts, so a site can deliver its audit to the
+   customer's SIEM when the link returns. There is no native Loki or Elasticsearch provider;
+   whether the generic `webhook` fits them is unchecked. Centre-side collection of site audit
+   is therefore optional, and the fleet view (point 5) stays status only.
 3. **Service identity on a site.** Machine-identity OIDC federation needs a reachable issuer.
    Verification from a local key file with no reachable issuer is not supported on main.
    [ADR-075](adr-075-airgap-oidc-federation.md) (Proposed) covers air-gapped OIDC with an
