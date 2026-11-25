@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -41,6 +42,13 @@ func TestBackfillFoldedColumn_RefusesOnCollision(t *testing.T) {
 	require.Error(t, err, "two colliding row groups must refuse the entire backfill")
 	assert.Contains(t, err.Error(), "admin", "error must name the colliding folded value")
 	assert.Contains(t, err.Error(), "cannot backfill users.username_folded")
+	// EXIT78-1: the refusal is a typed error naming its table and column, so the
+	// server can mark only projects.name_folded as an operator fix (exit 78).
+	fc, ok := errors.AsType[*FoldCollisionError](err)
+	require.True(t, ok, "a collision must be a *FoldCollisionError, got %T", err)
+	assert.Equal(t, "users", fc.Table)
+	assert.Equal(t, "username_folded", fc.Column)
+	assert.Equal(t, 2, fc.Groups)
 
 	// Nothing was written -- not even the non-colliding row -- since the
 	// collision check runs before any write.

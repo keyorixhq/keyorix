@@ -31,6 +31,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 )
 
 // bootAttempt runs the server once with the given arguments and environment and
@@ -100,6 +103,10 @@ func TestBootExitCodes_OperatorFixIs78(t *testing.T) {
 		name   string
 		break_ func(t *testing.T, e *edgeInstall)
 		args   []string
+		env    []string // extra environment
+		// wantMsg, when set, must appear verbatim in stderr: operators grep for
+		// these refusals, so the exit status must not change their text.
+		wantMsg string
 	}{
 		{
 			name:   "missing passphrase file",
@@ -124,6 +131,21 @@ func TestBootExitCodes_OperatorFixIs78(t *testing.T) {
 			},
 			args: []string{"--passphrase-file=./pass"},
 		},
+		// EXIT78-1: refusals that exited 1 (a unit without 78 restarted them every 30 s).
+		{
+			name:   "bootstrap token shorter than 32 characters",
+			break_: func(*testing.T, *edgeInstall) {},
+			args:   []string{"--passphrase-file=./pass"},
+			env:    []string{"KEYORIX_BOOTSTRAP_TOKEN=too-short"},
+			wantMsg: "failed to initialize core service: bootstrap token: " +
+				"KEYORIX_BOOTSTRAP_TOKEN too short (min 32 characters): generate one with: openssl rand -hex 32",
+		},
+		{
+			name:    "two live projects with the same folded name",
+			break_:  collidingProjects,
+			args:    []string{"--passphrase-file=./pass"},
+			wantMsg: "failed to migrate database: cannot backfill projects.name_folded: 1 existing row group(s) normalize to the same identity",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,12 +154,41 @@ func TestBootExitCodes_OperatorFixIs78(t *testing.T) {
 				t.Fatal(err)
 			}
 			tc.break_(t, e)
-			code, stderr := bootAttempt(t, e, bootEnv(e), tc.args...)
+			code, stderr := bootAttempt(t, e, bootEnv(e, tc.env...), tc.args...)
 			if code != 78 {
 				t.Errorf("exit status = %d, want 78 (operator must fix)\nstderr:\n%s", code, stderr)
 			}
+			if tc.wantMsg != "" && !strings.Contains(stderr, tc.wantMsg) {
+				t.Errorf("stderr lost the refusal text %q:\n%s", tc.wantMsg, stderr)
+			}
 			requireHint(t, e, stderr, "keyorix-server: exit 78 ")
 		})
+	}
+}
+
+// collidingProjects leaves two live projects whose names fold to the same value
+// and no folded value stored, as a database from before §6zk has: the next boot's
+// backfill refuses. The unique index is dropped first (it did not exist then).
+func collidingProjects(t *testing.T, e *edgeInstall) {
+	t.Helper()
+	db, err := appstorage.OpenGormDB(&config.Config{Storage: config.StorageConfig{
+		Type: "local", Database: config.DatabaseConfig{Path: filepath.Join(e.dir, "keyorix.db")},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sqlDB.Close() }()
+	for _, stmt := range []string{
+		"DROP INDEX IF EXISTS uniq_projects_name_active",
+		"INSERT INTO projects (name, name_folded) VALUES ('Alpha', ''), ('alpha', '')",
+	} {
+		if err := db.Exec(stmt).Error; err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
 	}
 }
 

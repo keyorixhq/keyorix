@@ -68,7 +68,12 @@ func wireBootstrapToken(cw *coreWiring) error {
 		// Both KEYORIX_BOOTSTRAP_TOKEN and _FILE set, the file unreadable, or the pinned
 		// token shorter than 32 characters: do not fall through to a generated token the
 		// operator never asked for.
-		return fmt.Errorf("bootstrap token: %w", btErr)
+		err := fmt.Errorf("bootstrap token: %w", btErr)
+		if errors.Is(btErr, errBootstrapTokenTooShort) {
+			// Only an operator can lengthen it: restarting cannot help (exit 78).
+			return operatorFix(err)
+		}
+		return err
 	}
 	bootstrapTokenGenerated := false
 	if bootstrapToken == "" {

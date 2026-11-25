@@ -88,10 +88,7 @@ func backfillFoldedColumn(db *gorm.DB, table, idColumn, sourceColumn, foldColumn
 	}
 	if len(collisions) > 0 {
 		sort.Strings(collisions)
-		return fmt.Errorf(
-			"cannot backfill %s.%s: %d existing row group(s) normalize to the same identity under Unicode NFC normalization/case-folding -- "+
-				"resolve manually via the application's rename API before upgrading (renaming one row changes only that row's identity, never merges the two): %s",
-			table, foldColumn, len(collisions), strings.Join(collisions, "; "))
+		return &FoldCollisionError{Table: table, Column: foldColumn, Groups: len(collisions), Detail: strings.Join(collisions, "; ")}
 	}
 
 	for id, folded := range foldedByID {
@@ -100,6 +97,23 @@ func backfillFoldedColumn(db *gorm.DB, table, idColumn, sourceColumn, foldColumn
 		}
 	}
 	return nil
+}
+
+// FoldCollisionError is the refusal of backfillFoldedColumn when existing rows
+// normalize to the same identity, as opposed to a failed read or write. Table
+// and Column say which backfill refused (server/boot_exit.go marks only
+// projects.name_folded exit 78).
+type FoldCollisionError struct {
+	Table, Column string
+	Groups        int
+	Detail        string
+}
+
+func (e *FoldCollisionError) Error() string {
+	return fmt.Sprintf(
+		"cannot backfill %s.%s: %d existing row group(s) normalize to the same identity under Unicode NFC normalization/case-folding -- "+
+			"resolve manually via the application's rename API before upgrading (renaming one row changes only that row's identity, never merges the two): %s",
+		e.Table, e.Column, e.Groups, e.Detail)
 }
 
 // normalizeColumnInPlace re-normalizes every row of table's column (scoped by

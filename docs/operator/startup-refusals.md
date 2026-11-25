@@ -57,7 +57,8 @@ prefix names (see "How to read an entry"):
 |---|---|---|
 | 78 | Configuration that cannot be read or is refused | `Failed to load configuration:`, `Configuration is invalid:` |
 | 78 | Key, secret-file, SCIM-token and file-permission refusals; the master passphrase missing or wrong; a key consistency check; a KMS that answered "no" | `startup validation:`, `transport security:`, the refusal's own name, `failed to initialize core service:` |
-| 78 | A database login the database refused; an undeclared transaction-mode pooler | the driver's error |
+| 78 | A database login the database refused; an undeclared transaction-mode pooler; a PostgreSQL `session_replication_role` other than `origin`; two live projects whose names fold to the same value (the `projects.name_folded` backfill) | the driver's error, `failed to initialize core service: failed to initialize storage:` |
+| 78 | A `KEYORIX_BOOTSTRAP_TOKEN` shorter than 32 characters | `failed to initialize core service: bootstrap token:` |
 | 75 | A KMS, its sign-in endpoint or a remote database that did not answer, or answered 5xx or throttling | `failed to connect to postgres:`, `connect to postgres for server-presence check:`, `startup validation:`, `failed to initialize core service:` |
 | 75 | The DEK lock is held by another process (a second server, or a rotation) | `failed to initialize core service: ... another process already holds the DEK lock` |
 | 1 | Everything else: a relative key path used from another directory than the config's, the FIPS self-test, logging or memory-hardening setup, a listener port in use, a Postgres connection that fails the TLS check or is closed during login, the server-presence lock held by an admin command, `single_writer` refusals, a lock lost while running | `Refusing to start:`, `Failed to set up logging`, `HTTP server error:`, `single_writer:` |
@@ -190,19 +191,26 @@ Configuration is invalid: unsupported language: xx. Supported languages: en, ru,
 
 ### Wildcard CORS origin
 
-Real output:
+Real output, a bare `*` in `server.http.allowed_origins`:
 
 ```
 Configuration is invalid: server.http.allowed_origins must not contain "*" — list explicit origins (e.g. https://app.example.com); a wildcard origin defeats the CORS allowlist
 ```
 
-**Match:** `a wildcard origin defeats the CORS allowlist`
+Real output, a `*` inside an entry (`https://*.example.com`) and in `server.http.domain`
+(the default origin, `https://<domain>`, when `allowed_origins` is empty):
+
+```
+Configuration is invalid: server.http.allowed_origins entry "https://*.example.com" must not contain "*" — list each origin explicitly; a wildcard pattern defeats the CORS allowlist
+Configuration is invalid: server.http.domain must not contain "*" — it is the default CORS origin (https://<domain>); a wildcard pattern defeats the CORS allowlist
+```
+
+**Match:** `a wildcard origin defeats the CORS allowlist`, `a wildcard pattern defeats the CORS allowlist`
+
+The first text is only the bare star; an entry with a star inside, and `server.http.domain`, print the second.
 
 **Cause / fix.** List each origin as `scheme://host[:port]`. Entries that are not origins, or
-use a scheme other than http/https, are refused with a similar message, and so is a `*` inside
-an entry (`https://*`, `https://*.example.com`), which the CORS layer would treat as a pattern,
-or in `server.http.domain` (the default origin, `https://<domain>`, when `allowed_origins` is empty).
-**In place:** yes.
+use a scheme other than http/https, are refused with a similar message. **In place:** yes.
 
 ### Other value checks — from code
 
@@ -275,6 +283,27 @@ invalid:`; nothing has been served yet. The pattern in the message is the one th
 compiled, wrapped as `^(?:...)$`. **Fix.** Correct the pattern (RE2 syntax: no look-ahead or
 back-references), or set `secret_name_policy.enabled: false`, and restart. **In place:** yes.
 [CONFIGURATION.md](../CONFIGURATION.md).
+
+### Bootstrap token shorter than 32 characters
+
+Real output (`KEYORIX_BOOTSTRAP_TOKEN` of fewer than 32 characters, SQLite):
+
+```
+failed to initialize core service: bootstrap token: KEYORIX_BOOTSTRAP_TOKEN too short (min 32 characters): generate one with: openssl rand -hex 32
+```
+
+**Match:** `KEYORIX_BOOTSTRAP_TOKEN too short (min 32 characters)`
+
+**Exit status:** 78, so the shipped systemd unit does not restart it (earlier builds exited 1 and
+the unit restarted the server every 30 s).
+
+**Cause.** The bootstrap token is the only thing that authorises claiming the first admin over
+`POST /system/init`, so a token you set yourself must not be a guessable phrase. The value is
+never printed. Like the secret-name policy above, this refusal comes after the start-up lines
+(storage opened), not as `Configuration is invalid:`. **Fix.** Set a token of at least 32
+characters (`openssl rand -hex 32`) in `KEYORIX_BOOTSTRAP_TOKEN` or the file named by
+`KEYORIX_BOOTSTRAP_TOKEN_FILE`, or unset both and let the server generate a one-time token,
+then start again. **In place:** yes. [UPGRADING.md §6g](../UPGRADING.md).
 
 ---
 
@@ -460,6 +489,54 @@ did not mount, or a wrong path). **Fix.** Fix the mount or path; do **not** remo
 setting to "make it start", that would create an empty database beside your real one.
 **In place:** stop first.
 
+### `session_replication_role` is not `origin`
+
+Real output (PostgreSQL, `ALTER ROLE ... SET session_replication_role = replica`):
+
+```
+failed to initialize core service: failed to initialize storage: refusing to start: PostgreSQL session_replication_role is "replica" for this server's database sessions, want "origin". In "replica" mode foreign keys and ordinary triggers do not run, so Keyorix cannot keep its data consistent or its caches fresh. Remove the setting (Helm postgresql.settings, ALTER ROLE/ALTER DATABASE ... SET session_replication_role, PGOPTIONS, or the DSN options); check with: SELECT current_setting('session_replication_role')
+```
+
+`keyorix-server admin migrate` refuses with the same text (`Error: migration failed: refusing to start: ...`)
+and keeps the `admin` exit code 1.
+
+**Match:** `PostgreSQL session_replication_role is`
+
+**Exit status:** 78 for the server (earlier builds exited 1 and the unit restarted it every 30 s). A
+database that is down, or that fails the read of the setting, is not this refusal and keeps its
+status (75 for an unreachable database).
+
+**Cause.** The server's database sessions run in `replica` or `local` mode, set server-wide
+(Helm `postgresql.settings`), per role or database, by `PGOPTIONS` or in the DSN `options`.
+In `replica` mode PostgreSQL fires no ordinary trigger and enforces no foreign key. **Fix.** Remove
+the setting: `ALTER DATABASE <db> RESET session_replication_role;` or `ALTER ROLE <role> [IN DATABASE <db>]
+RESET session_replication_role;`, drop `PGOPTIONS` or the DSN option, then start again. **In place:**
+yes. [UPGRADING.md §6n](../UPGRADING.md).
+
+### Two live projects whose names fold to the same value
+
+Real output (SQLite; two live projects named `café` in different Unicode forms; PostgreSQL prints the
+same text):
+
+```
+failed to initialize core service: failed to initialize storage: failed to migrate database: cannot backfill projects.name_folded: 1 existing row group(s) normalize to the same identity under Unicode NFC normalization/case-folding -- resolve manually via the application's rename API before upgrading (renaming one row changes only that row's identity, never merges the two): "café" shared by projects row id(s) [1 2] (project names must be unique ignoring case and Unicode normalization. The server cannot start to rename them itself: with the server stopped, rename one project of each listed group directly, e.g. UPDATE projects SET name = '<new name>' WHERE id = <id>, then start it again; nothing was changed by this check)
+```
+
+**Match:** `existing row group(s) normalize to the same identity under Unicode NFC normalization/case-folding`
+
+The table is named just before that text (`cannot backfill projects.name_folded` here); a collision in
+`users`, `roles` or `groups` prints the same text with its own table.
+
+**Exit status:** 78 (earlier builds exited 1 and the unit restarted it every 30 s). Only this
+backfill is 78: another migration failure, or the same collision in another table's backfill
+(`users`, `roles`, `groups`), keeps status 1.
+
+**Cause.** Project names are unique ignoring case and Unicode normalization (§6zk). The upgrade
+computes `projects.name_folded` for every live project and finds two that share it. Nothing was
+changed. **Fix.** With the server stopped, rename one project of each listed group as the
+message says (`UPDATE projects SET name = '<new name>' WHERE id = <id>`), on a copy first, then
+start the new version. **In place:** no, take a backup first ([UPGRADING.md §6zk](../UPGRADING.md)).
+
 ### A migration cannot create a unique index — from code
 
 ```
@@ -468,8 +545,8 @@ cannot create unique index on <table> (<columns>): <n> pre-existing group(s) of 
 
 **Match:** `cannot create unique index on`
 
-**Cause.** An upgrade adds a uniqueness rule (for example case-folded names) and your data
-already has duplicates. The upgrade stops before changing anything. **Fix.** The message
+**Cause.** An upgrade adds a uniqueness rule (for example one share per secret and recipient) and your data
+already has duplicates. Not for `projects.name_folded`: that has its own entry above. The upgrade stops before changing anything. **Fix.** The message
 names the table and rows; rename or remove the duplicates (on a copy first), then start the
 new version. **In place:** no, read [UPGRADING.md](../UPGRADING.md) and take a backup first.
 

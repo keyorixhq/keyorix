@@ -1,0 +1,3 @@
+### Fixed
+
+- `keyorix-server` now exits with status 78 (sysexits `EX_CONFIG`, operator must fix) instead of 1 for three start-up refusals: a `KEYORIX_BOOTSTRAP_TOKEN` shorter than 32 characters, a PostgreSQL `session_replication_role` other than `origin`, and two live projects whose names fold to the same value (`cannot backfill projects.name_folded`). The shipped systemd unit (`RestartPreventExitStatus=78`) therefore stops instead of restarting the server every 30 seconds. The refusals and their messages are unchanged, and other exit statuses are unchanged. `docs/operator/startup-refusals.md` documents the three refusals and corrects the CORS wildcard entry.
