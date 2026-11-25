@@ -1,0 +1,2 @@
+### Added
+- **ADR-125 (Proposed): certificate issuing, external CAs first, own CA later.** Records one evaluator's signal, what Keyorix does with certificates today (store, inspect, monitor expiry; no issuing), and a preliminary direction: integrate existing issuers (ACME, on-premise CA, cert-manager, Vault/OpenBao PKI, enterprise CA) before any built-in CA, which reopens only after two or more prospects need their own CA with revocation. Design only; no code and no behaviour change.
