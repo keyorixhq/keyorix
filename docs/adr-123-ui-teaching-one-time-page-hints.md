@@ -70,6 +70,15 @@ Two separate things are in his answer, and this ADR deals only with the first:
    dismissal, reopened by the help control, and not blocking the controls of the page. End-to-end
    specs set the "seen" state in setup, so a hint never changes what they click.
 
+9. **Global controls stay in the header, in the open.** The controls every user may need
+   (theme, settings, notifications, account) are shown in the header, at a size and contrast
+   that reads at a glance (WCAG AA), not behind a menu and not as one quiet icon that cycles
+   through states. A choice with a few values shows every value at once with the current one
+   highlighted, so the state is visible without a tooltip, and it keeps an accessible name and
+   keyboard operation. The evaluator did not notice a single muted icon that cycled dark, light
+   and system, and a header menu that held only My Account and Sign out. The header tests cover
+   this.
+
 ## Alternatives considered
 
 - **Interactive tour on first login (Doppler style).** Rejected: wrong audience, interrupts
