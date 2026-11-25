@@ -37,7 +37,7 @@ jobs:
       # Until that toggle is on this step reports a GitHub-side "not supported"
       # error; continue-on-error lets the PR merge while not silently removing
       # the check once the feature is enabled (it will start enforcing then).
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         continue-on-error: true
         with:
           # Block any PR that introduces a high or critical known-vulnerable package.
