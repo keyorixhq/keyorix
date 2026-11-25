@@ -159,24 +159,51 @@ describe('Header', () => {
         });
     });
 
-    describe('theme toggle', () => {
-        it('cycles dark -> light -> system -> dark and drives the real uiStore', () => {
+    describe('theme switch', () => {
+        it('shows all three positions at once and marks the current one', () => {
             render(<Header onMenuClick={onMenuClick} />);
-            const darkButton = screen.getByRole('button', { name: 'Dark mode' });
-            expect(darkButton).toHaveAttribute('title', 'Dark mode (click for light)');
+            const group = screen.getByRole('radiogroup', { name: 'Theme' });
+            const radios = Array.from(group.querySelectorAll('[role="radio"]'));
+            expect(radios.map((r) => r.getAttribute('aria-label'))).toEqual(['Light', 'Match system', 'Dark']);
+            expect(screen.getByRole('radio', { name: 'Dark' })).toHaveAttribute('aria-checked', 'true');
+            expect(screen.getByRole('radio', { name: 'Light' })).toHaveAttribute('aria-checked', 'false');
+            expect(screen.getByRole('radio', { name: 'Match system' })).toHaveAttribute('aria-checked', 'false');
+        });
 
-            fireEvent.click(darkButton);
+        it('sets each theme directly in the real uiStore, in any order', () => {
+            render(<Header onMenuClick={onMenuClick} />);
+            fireEvent.click(screen.getByRole('radio', { name: 'Light' }));
             expect(useUIStore.getState().theme).toBe('light');
-            const lightButton = screen.getByRole('button', { name: 'Light mode' });
-            expect(lightButton).toHaveAttribute('title', 'Light mode (click for system)');
+            expect(screen.getByRole('radio', { name: 'Light' })).toHaveAttribute('aria-checked', 'true');
 
-            fireEvent.click(lightButton);
+            fireEvent.click(screen.getByRole('radio', { name: 'Match system' }));
             expect(useUIStore.getState().theme).toBe('system');
-            const systemButton = screen.getByRole('button', { name: 'System mode' });
-            expect(systemButton).toHaveAttribute('title', 'System mode (click for dark)');
 
-            fireEvent.click(systemButton);
+            fireEvent.click(screen.getByRole('radio', { name: 'Dark' }));
             expect(useUIStore.getState().theme).toBe('dark');
+        });
+
+        it('has one tab stop (the selected option) and moves with the arrow keys', () => {
+            render(<Header onMenuClick={onMenuClick} />);
+            expect(screen.getByRole('radio', { name: 'Dark' })).toHaveAttribute('tabindex', '0');
+            expect(screen.getByRole('radio', { name: 'Light' })).toHaveAttribute('tabindex', '-1');
+
+            fireEvent.keyDown(screen.getByRole('radio', { name: 'Dark' }), { key: 'ArrowRight' });
+            expect(useUIStore.getState().theme).toBe('light'); // wraps from the last to the first
+            fireEvent.keyDown(screen.getByRole('radio', { name: 'Light' }), { key: 'ArrowRight' });
+            expect(useUIStore.getState().theme).toBe('system');
+            fireEvent.keyDown(screen.getByRole('radio', { name: 'Match system' }), { key: 'ArrowLeft' });
+            expect(useUIStore.getState().theme).toBe('light');
+        });
+    });
+
+    describe('settings button', () => {
+        it('is visible in the header, named for screen readers, and opens the settings page', () => {
+            render(<Header onMenuClick={onMenuClick} />);
+            const button = screen.getByRole('button', { name: 'Settings' });
+            expect(button).toHaveAttribute('title', 'Settings');
+            fireEvent.click(button);
+            expect(navigateMock).toHaveBeenCalledWith(ROUTES.SETTINGS_APPEARANCE);
         });
     });
 });

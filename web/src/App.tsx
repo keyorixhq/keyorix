@@ -236,7 +236,7 @@ function App() {
                                                         </AdminRoute>
                                                     }
                                                 />
-                                                <Route path="/settings/appearance" element={<AppearancePage />} />
+                                                <Route path={ROUTES.SETTINGS_APPEARANCE} element={<AppearancePage />} />
                                                 <Route
                                                     path={ROUTES.SETTINGS_HEALTH}
                                                     element={

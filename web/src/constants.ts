@@ -78,6 +78,7 @@ export const ROUTES = {
     SHARING: '/sharing',
     PROFILE: '/profile',
     SETTINGS: '/settings',
+    SETTINGS_APPEARANCE: '/settings/appearance',
     SECURITY: '/security',
     AUDIT: '/audit',
     ADMIN: '/admin',
