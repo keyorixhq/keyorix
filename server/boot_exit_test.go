@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 )
 
@@ -132,5 +133,62 @@ func TestBootHint_OneLineNoSecretsOnlyForClassified(t *testing.T) {
 	}
 	if h := bootHint(1); h != "" {
 		t.Errorf("exit 1 must stay as before, got hint %q", h)
+	}
+}
+
+// EXIT78-1: only the replication-role refusal and the projects.name_folded
+// collision are operator fixes; a database that is down, any other migration
+// failure and another table's backfill collision keep their status.
+func TestBootExitCode_StorageStep(t *testing.T) {
+	refused := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}
+	wrap := func(err error) error {
+		return fmt.Errorf("failed to initialize core service: %w", storageStepError(fmt.Errorf("failed to initialize storage: %w", err)))
+	}
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"session_replication_role", &appstorage.NonOriginReplicationRoleError{Role: "replica"}, exitOperatorFix},
+		{"projects name fold collision", fmt.Errorf("failed to migrate database: %w", &appstorage.FoldCollisionError{Table: "projects", Column: "name_folded", Groups: 1}), exitOperatorFix},
+		{"users name fold collision stays 1", fmt.Errorf("failed to migrate database: %w", &appstorage.FoldCollisionError{Table: "users", Column: "username_folded", Groups: 1}), 1},
+		{"other migration failure stays 1", fmt.Errorf("failed to migrate database: %w", errors.New("syntax error")), 1},
+		{"database down stays 75", fmt.Errorf("failed to connect to postgres: %w", refused), exitDependencyDown},
+		{"replication role unreadable stays 1", errors.New("failed to read session_replication_role: boom"), 1},
+		{"database starting up stays 1", &pgconn.PgError{Code: "57P03"}, 1},
+	}
+	for _, tc := range cases {
+		if got := bootExitCode(wrap(tc.err)); got != tc.want {
+			t.Errorf("%s: bootExitCode = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The mark must not change the logged text (operators grep for it).
+func TestBootExitCode_StorageStepMessageUnchanged(t *testing.T) {
+	for _, inner := range []error{&appstorage.NonOriginReplicationRoleError{Role: "replica"}, &appstorage.FoldCollisionError{Table: "projects", Column: "name_folded", Groups: 1, Detail: "x"}} {
+		in := fmt.Errorf("failed to initialize storage: %w", inner)
+		if got := storageStepError(in).Error(); got != in.Error() {
+			t.Errorf("message changed: %q != %q", got, in.Error())
+		}
+	}
+}
+
+// EXIT78-1: the too-short bootstrap token is an operator fix, at the boundary,
+// and the text is unchanged. (Both KEYORIX_BOOTSTRAP_TOKEN and _FILE set is refused
+// earlier, by config validation, and was 78 already.)
+func TestBootExitCode_BootstrapTokenTooShort(t *testing.T) {
+	t.Setenv("KEYORIX_BOOTSTRAP_TOKEN", strings.Repeat("a", 31))
+	t.Setenv("KEYORIX_BOOTSTRAP_TOKEN_FILE", "")
+	err := wireBootstrapToken(&coreWiring{core: core.NewKeyorixCore(nil)})
+	if err == nil {
+		t.Fatal("a 31-character token was accepted")
+	}
+	if got := bootExitCode(fmt.Errorf("failed to initialize core service: %w", err)); got != exitOperatorFix {
+		t.Errorf("bootExitCode = %d, want %d", got, exitOperatorFix)
+	}
+	const want = "bootstrap token: KEYORIX_BOOTSTRAP_TOKEN too short (min 32 characters): generate one with: openssl rand -hex 32"
+	if err.Error() != want {
+		t.Errorf("message = %q, want %q", err.Error(), want)
 	}
 }

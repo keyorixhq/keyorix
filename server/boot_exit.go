@@ -177,6 +177,22 @@ func poolerStepError(err error) error {
 	return err
 }
 
+// storageStepError classifies an error from creating the storage (connect,
+// migrate). Only two refusals that restarting cannot change are operator fixes:
+// a PostgreSQL session_replication_role other than origin, and the
+// projects.name_folded backfill finding two live projects with the same folded
+// name. Everything else (a database that is down, any other migration failure,
+// a collision in another table's backfill) stays unmarked as before.
+func storageStepError(err error) error {
+	if _, ok := errors.AsType[*appstorage.NonOriginReplicationRoleError](err); ok {
+		return operatorFix(err)
+	}
+	if fc, ok := errors.AsType[*appstorage.FoldCollisionError](err); ok && fc.Table == "projects" && fc.Column == "name_folded" {
+		return operatorFix(err)
+	}
+	return err
+}
+
 // bootExitCode is the exit status for a boot failure err. An explicit mark
 // wins; otherwise a database authentication failure needs an operator and an
 // unreachable dependency may recover. Anything else stays 1.

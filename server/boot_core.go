@@ -36,7 +36,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	factory := appstorage.NewStorageFactory()
 	store, err := factory.CreateStorage(cfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize storage: %w", err)
+		return nil, nil, storageStepError(fmt.Errorf("failed to initialize storage: %w", err))
 	}
 
 	// key_dir_lock: database — record it in the database so `admin --force` and a
