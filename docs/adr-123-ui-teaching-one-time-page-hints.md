@@ -55,11 +55,10 @@ Two separate things are in his answer, and this ADR deals only with the first:
    test queries is ruled out (the MFA enrolment work found that an open Radix dialog hides the
    background). The hint is an inline region or a non-modal popover, reachable by keyboard, with
    an accessible name.
-4. **State.** "Seen" is remembered per user and per hint id. It is a UI preference, which the
-   storage rule in `web/src/INVARIANTS.md` (INV-WEB-03) already allows in `localStorage`; it is
-   never a credential. A first version keyed by user id in the browser is enough. If the same
-   user must not see a hint again on a second browser, moving the flag to a server-side user
-   preference is a later, separate decision.
+4. **State.** "Seen" is remembered per user and per hint id on the server, as a per-user UI
+   setting stored in SQL ([ADR-124](adr-124-server-side-user-preferences.md)), with keys of the form
+   `hint.<id>`. It is not kept in `localStorage`, so a hint does not come back in another browser
+   or after a cleared profile. It is a UI preference, never a credential.
 5. **Re-show.** A hint is shown again only when its text changes in a way that matters, by raising
    the hint's version. Wording fixes do not.
 6. **Mandatory security flows are not hints.** A flow the deployment requires, such as first-login
@@ -87,11 +86,11 @@ Two separate things are in his answer, and this ADR deals only with the first:
 
 - Which pages get a hint first, and the text for each. Suggested order: projects list (environments
   belong to a project), secrets, machine identities, dynamic secrets, audit, administration.
-- Whether "seen" should later move to a server-side user preference.
 - The shape of the help control and where it sits in the page header.
 
 ## Consequences
 
 New pages ship with a hint or state why they do not need one. Reviewers check new UI against this
 principle. No new dependency is added. The cost is one small shared component, hint texts for the
-primary pages, and the tests above; none of that exists in `web/src` today.
+primary pages, and the tests above; none of that exists in `web/src` today. The "seen" state depends on the
+server-side settings store in ADR-124, so the hint work follows that one.
