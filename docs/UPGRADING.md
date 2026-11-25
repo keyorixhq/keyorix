@@ -28,7 +28,11 @@ binaries (SQLite or PostgreSQL), run `scripts/drills/upgrade.sh`; see
 Commands marked **UNVERIFIED** were not run in the v0.97.0 release QA; the others were
 (release QA REL-V097-2, 2026-11-24: the locally built `make release` binaries and images of
 the release commit, on a Linux VM, SQLite and PostgreSQL, from the published v0.96.3
-assets). The checklist form of this section is
+assets). A second pass (UPGRADE-VERIFY-1, 2026-11-25) ran the statements that were then
+marked **UNVERIFIED** on the published v0.97.0-rc.2 release artifacts (binaries, images and
+charts, checksums checked; a Linux VM with SQLite and PostgreSQL, and kind); "run on rc.2"
+below means that pass. v0.97.0 is the same code as v0.97.0-rc.2; only documents differ.
+The checklist form of this section is
 [operator/upgrade-checklist-v0.97.md](operator/upgrade-checklist-v0.97.md).
 
 **From v0.96.x (v0.96.0 to v0.96.3): one hop.**
@@ -39,8 +43,22 @@ assets). The checklist form of this section is
    `session_replication_role` other than `origin` (§6n), a `*` inside a CORS origin
    (§6ze), `ssl_mode: verify-full`/`verify-ca` without `ssl_root_cert` (§2), two live
    projects whose names fold to the same value (§6zk), and a Shamir share file with the
-   wrong owner or mode (§6zo). **UNVERIFIED** in release QA (no refused configuration was
-   planted; each refusal has its own tests).
+   wrong owner or mode (§6zo). Run on rc.2: each of the eight was planted on its own on an
+   instance made with v0.96.3 and the server refused to start with a message that names the
+   setting; removing or fixing it let it start. SQLite ran the bootstrap token, `auto_cert`,
+   SCIM, CORS, project-name and Shamir cases, PostgreSQL ran `session_replication_role` and
+   `ssl_mode`, and the KMS case ran against a local KMS emulator, not a real cloud KMS. Three
+   differences from the sentence above:
+   - A weak SCIM token only **warns** on the first start of an upgraded install that already
+     used SCIM (the ADR-112 grace period, §6i). It refuses from the start after that, on a
+     fresh install, and always under 20 characters.
+   - A Shamir share file with a loose **mode** is repaired and logged as `[FIXED]` while
+     `security.auto_fix_file_permissions` is on (the generated config), and the server
+     starts. The refusal of §6zo appears with the permission check or auto-fix off. A foreign
+     **owner** refuses either way.
+   - The configuration refusals exit 78, but the bootstrap token, `session_replication_role`
+     and project-name refusals exit 1 ([startup-refusals.md](operator/startup-refusals.md),
+     "Exit statuses"): the shipped systemd unit retries after them.
 2. Back up **with the v0.96.x binary**, database and key files together (§1, §4). The
    archive is format v2 and carries its own wrapped DEK. A later `admin encryption
    rotate` (DEK) does not affect it. After `admin encryption rotate-kek` it still
@@ -60,21 +78,51 @@ assets). The checklist form of this section is
 **From v0.95.x: two hops.** A skip over a minor is not supported before 1.0
 ([VERSIONING.md](VERSIONING.md)). Upgrade to v0.96.3 first with the steps in §2
 (including "Upgrading Docker Compose or Helm from v0.95.x to v0.96.0"), start it once,
-check `keyorix audit verify --full`, take a new backup with v0.96.3, then follow the
-v0.96.x path above. A v0.95.x backup restores directly into v0.97.0 (§4), but that is a
-restore, not an upgrade of a running install. **UNVERIFIED** for the two-hop path as a
-whole; the v0.96.3 → v0.97.0 hop is the one release QA ran.
+check `keyorix audit verify` (it must print `Audit chain: VALID`; the v0.96.3 CLI and server
+have no `--full`, so use the plain form, or `keyorix-server admin verify-audit` with the
+server stopped), take a new backup with v0.96.3, then follow the v0.96.x path above. A
+v0.95.x backup restores directly into v0.97.0 (§4), but that is a restore, not an upgrade
+of a running install. Run on rc.2, on SQLite and on PostgreSQL (an empty database each):
+data and a login on v0.95.3, v0.96.3 started once on it, a backup with v0.96.3, then rc.2
+started on the same data. `keyorix audit verify --full` printed `Audit chain: VALID`, the
+secrets (one with three versions) read back, and the start-up log carried the lines this
+guide names (the ADR-112 grace period, the key-set manifest adoption (§6za), the
+deprecated-key warnings (§6zg) and, on PostgreSQL, `audit durability: standard` (§6c)).
+The v0.95.3 backup also restored directly into rc.2 on both backends, printed
+`Encrypted 1 notification channel URL(s)` and read back the data, while v0.96.3 refuses
+that archive (`has column "url"`), as §4 says.
 
 **Helm.** Chart `keyorix` 0.97.0 (`appVersion` 0.97.0). Use `helm upgrade
 --reset-then-reuse-values` (§5). The chart refuses to render `server.replicas` above 1
-without Secret mode, and rejects `postgresql.settings.session_replication_role`
-(`docs/releases/v0.97.0.md`, "Helm"). With an external PostgreSQL on `verify-full`, set
-`externalDatabase.sslRootCert` (or `externalDatabase.caSecret`) before the upgrade.
-Scale to one replica, or stop the release, before the upgrade for the floor reason
-in step 3. Release QA ran `helm upgrade --reset-then-reuse-values` from chart 0.96.3 (one
-replica, bundled PostgreSQL, `auth.existingSecret`) on kind: the data read back and
-`keyorix audit verify --full` printed `Audit chain: VALID`. The `externalDatabase` and
-multi-replica sentences are **UNVERIFIED**.
+without Secret mode (a `ReadWriteMany` keys volume is refused too), and rejects
+`postgresql.settings.session_replication_role` (`docs/releases/v0.97.0.md`, "Helm"). With
+an external PostgreSQL on `verify-full`, set `externalDatabase.sslRootCert` (or
+`externalDatabase.caSecret`) in the same `helm upgrade`: chart 0.96.3 has neither value
+(it can use `verify-full` only with a publicly trusted certificate), and without a CA the
+upgrade fails at render and changes nothing. For the floor reason in step 3, scale a
+multi-replica server to one replica, or stop the release, before the upgrade. Chart 0.96.x
+always runs one server replica (strategy `Recreate`), so for a release that chart installed
+there is nothing to scale down: the sentence is for a deployment you scaled by hand and for
+rc.2 or later releases in Secret mode. Release QA ran `helm upgrade --reset-then-reuse-values`
+from chart 0.96.3 (one replica, bundled PostgreSQL, `auth.existingSecret`) on kind: the data
+read back and `keyorix audit verify --full` printed `Audit chain: VALID`. Run on rc.2, on kind:
+- Chart 0.96.3 with an external PostgreSQL (TLS, `externalDatabase.sslMode: require`,
+  `auth.existingSecret`) upgraded to chart 0.97.0-rc.2 with `--reset-then-reuse-values`: the
+  data read back and `keyorix audit verify --full` printed `Audit chain: VALID`.
+- `externalDatabase.sslMode=verify-full` without a CA failed at render (`externalDatabase.sslMode
+  is verify-full but no CA is configured`); with `externalDatabase.caSecret.name` the server
+  connected and the data read back.
+- `server.replicas=2` without Secret mode failed at render (`server.replicas=2 needs Secret
+  mode`). After moving the upgraded release's keys into a Secret as
+  [multi-replica-keys.md](multi-replica-keys.md) describes, two replicas started, served the
+  same data and accepted a write; scaling to one replica, to zero and back to two kept the data
+  and `Audit chain: VALID`.
+- The floor: a `helm rollback` to chart 0.96.3 after the upgrade started the 0.96.3 pod, which
+  refused with `database declares a minimum compatible schema epoch of 3 (database schema epoch
+  10)` and left the data untouched; `helm upgrade` to rc.2 then started normally.
+
+Still **UNVERIFIED**: a rolling upgrade of a hand-scaled multi-replica v0.96.x deployment. It
+needs a `ReadWriteMany` keys volume with a working `flock`, which kind does not provide.
 
 **keyorix-operator chart: apply the CRD yourself.** The `KeyorixSecret` CRD changed
 since v0.96.3 (the new `spec.onSuspend` field, and `secretKey` must be unique within a
@@ -95,8 +143,17 @@ them. Check the downloaded assets offline with `scripts/release/verify-release.s
 --offline` ([operator/verifying-releases.md](operator/verifying-releases.md)); backup and
 restore are as above ([AIRGAP_RUNBOOK.md](AIRGAP_RUNBOOK.md)). Release QA ran
 `scripts/airgap-e2e.sh` (`--network none`) against the image built with `BUILD_TAGS=noaws,noazure,nogcp`
-and checked that the air-gapped binary's SBOM and build info list no cloud SDK;
-`verify-release.sh --offline` needs the tag-time signatures and is **UNVERIFIED** for this release.
+and checked that the air-gapped binary's SBOM and build info list no cloud SDK. Run on
+rc.2, in an empty network namespace: `verify-release.sh --offline --assets-dir <the rc.2
+assets>` passed the asset list, the checksums of the 14 binaries and 15 SBOMs and the two
+partial signature checks, SKIPped the cosign signature, the attestations, the CI evidence and
+the registry checks, and ended `INCOMPLETE` (exit 2). It never ends in exit 0 offline: the
+cosign check of `checksums.txt` needs the network (verifying-releases.md, "Air-gapped or
+mirrored registries"). The tag-time signatures are the release assets `checksums.txt.sig` and
+`checksums.txt.pem`; without them the run FAILs (`release.signature.files`), so run it on the
+assets of the final v0.97.0 release, after the tag exists. A changed binary FAILs the checksum
+check. The rc.2 air-gapped binary is built with `-tags=noaws,noazure,nogcp`, lists no cloud SDK
+module (0, against 27 in the full server) and started and answered `/health` with no network.
 
 ## 2. Upgrading from v0.95.x → v0.95.2
 

@@ -6,9 +6,12 @@ settings are in [UPGRADING.md](../UPGRADING.md) (section numbers below). Work
 through it top to bottom and write down the result of every check.
 
 **Status of this page.** Every change it names is merged on main, and each was
-re-checked against the merged code and its test (RELEASE-PREP-2). Nothing here has
-been run against a v0.97.0 release build, and nothing has been run in a container,
-with Helm or in Kubernetes (**pending e2e VM**). The multi-replica procedure was run
+re-checked against the merged code and its test (RELEASE-PREP-2). The upgrade path was
+run on the published v0.97.0-rc.2 release artifacts on 2026-11-25 (UPGRADE-VERIFY-1;
+v0.97.0 is the same code): the refused configurations of section 1.3, the two-hop path from
+v0.95.3 on SQLite and PostgreSQL, and `helm upgrade` from chart 0.96.3 with an external
+PostgreSQL on kind (UPGRADING §1a lists what ran). A rolling upgrade of several
+v0.96.x pods in Kubernetes is still **pending e2e VM**. The multi-replica procedure was run
 natively on one PostgreSQL database with a v0.96.1 binary and a current server
 (`scripts/e2e/mixed_version_test.go`), not on separate hosts or pods. The
 single-node procedure is the one `scripts/drills/upgrade.sh` rehearses on SQLite and
@@ -90,9 +93,13 @@ deviation. Fix refusals before the real start. (Run it after the binary swap in 
   "Upgrading Docker Compose from v0.96.x").
 - **Helm:** no value was renamed or removed. `helm template` / `helm upgrade --dry-run`
   with your values and the new chart first. Use `--reset-then-reuse-values`, not plain
-  `--reuse-values` (§2, §5). The chart's default is one server replica; more than one is allowed
-  now, and the render fails unless the keys volume is `ReadWriteMany` and `singleWriter` is false
-  (rendering and a multi-pod install: **pending e2e VM**).
+  `--reuse-values` (§2, §5). The chart's default is one server replica (chart 0.96.x cannot run
+  more). More than one replica needs Secret mode (`server.keysSecret.*`, `server.keysPersistence.enabled=false`,
+  [multi-replica-keys.md](../multi-replica-keys.md)) and `singleWriter` false; the render fails
+  otherwise, a `ReadWriteMany` keys volume included. With an external PostgreSQL on `verify-full`, add
+  `externalDatabase.caSecret.name` (or `sslRootCert`) to the same `helm upgrade`: chart 0.96.3
+  has neither value, and without a CA the upgrade fails at render. Run on kind with the rc.2
+  chart: the render refusals above, two replicas in Secret mode, scaling to one, to zero and back.
 - **Reverse proxy or load balancer in front of the server:** if it terminates TLS and talks to the
   server directly, list it in `server.http.trusted_proxies` (Helm `server.trustedProxies`) so
   cookies are `Secure` and HSTS is sent (§6p).
@@ -119,8 +126,10 @@ deviation. Fix refusals before the real start. (Run it after the binary swap in 
 The procedure below is the one #3364 (HA-READY-1) wrote into SELF_HOSTING.md ("Running more
 than one replica"). It was run natively with one v0.96.1 and one current server on one
 PostgreSQL database (`scripts/e2e/mixed_version_test.go`, `e2e` build tag, re-run for this
-page; CI does not run it yet). The Kubernetes version, with Helm and several pods, is
-**pending e2e VM**.
+page; CI does not run it yet). A rolling upgrade of several v0.96.x pods in Kubernetes is
+**pending e2e VM**: the 0.96.x chart cannot run several replicas, and a hand-scaled
+deployment needs a `ReadWriteMany` keys volume with a working `flock`. What did run on kind (rc.2
+chart, Secret mode): two replicas, scaling to one and to zero and back (UPGRADING §1a).
 
 1. Section 1 complete. Back up. Confirm every replica has an identical configuration and the
    same key set, and that `single_writer` is off.
@@ -162,7 +171,9 @@ replaces it (UPGRADING §6q). That is expected, not a fault.
   lowered, so the refusal stays; do not edit the epoch by hand. PostgreSQL triggers protect the two
   cases from v0.96.x replicas that are still running during a rollout. Checked with a real v0.96.1
   binary against a migrated PostgreSQL database (`mixed_version_test.go`) and, on SQLite, by a unit
-  test over the compiled-in constants. A v0.96.x container or Helm release is **pending e2e VM**.
+  test over the compiled-in constants. On Helm (kind, 2026-11-25), `helm rollback` of a release
+  upgraded to rc.2 back to chart 0.96.3 started the 0.96.3 pod, which refused with exactly that
+  message and left the data untouched; `helm upgrade` to rc.2 afterwards started normally.
 - **The old config.** The previous release refuses a config file that has a key it does not know,
   so restore the config file that matches the binary you roll back to.
 - **Keys.** Do not run a DEK or KEK rotation until the upgrade is accepted; a rotation changes the
