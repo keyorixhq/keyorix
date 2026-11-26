@@ -1,0 +1,1 @@
+internal/fuzzutil/egressref	none	-	V7-GAP-1 (gapv7-1/egress-site-inventory): independent reference model for the site-wiring egress fuzz targets (one destination address in ten encodings, link-local/private verdicts derived from the raw octets without netutil); imported only by _test.go files, no production import, no auth, storage or network surface	test-helper
