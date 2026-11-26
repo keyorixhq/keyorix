@@ -208,7 +208,7 @@ dial guard. Redirects: `refused` = `CheckRedirect` returns an error or `ErrUseLa
 | S19 | `internal/rotation/awsiam.go`, `gcpsa.go`, `azure_sdk.go` | E12 | C | no | none (SDK constant endpoints) | n/a | none needed |
 | S20 | `internal/rotation/postgres.go`, `mysql.go`, `mongodb.go`, `redis.go` | E12 | O (`dsn_env`) | no | none for private networks (the target is the operator's own database); MySQL and RESP responses are bounded by `netutil.MySQLGuardDialer` / `RESPGuardDialer` | n/a | response-bound fuzzers only |
 | S21 | `internal/dynamic/postgres.go`, `mysql.go`, `mongodb.go`, `redis.go` | E13 | P (`admin_dsn`) | **yes** (project admin) | netutil, private tier, every dial, opt-out `allow_private_network`; `mongodb+srv` targets pre-validated | n/a | `FuzzAdminDSNHostSSRFGuard`, `FuzzSSRFGuardDifferential`, `FuzzDSNHostsCoverDriverHosts`, `FuzzEgressDialEnforcement`; table tests `internal/dynamic/egress_guard_test.go` |
-| S22 | `internal/dynamic/kubernetes.go` | E13 | P (`api_server` inside `admin_dsn`) | **yes** (project admin) | register-time host check only; **no dial-time guard** | refused | none. Finding F1 (tracked privately) |
+| S22 | `internal/dynamic/kubernetes.go` | E13 | P (`api_server` inside `admin_dsn`) | **yes** (project admin) | register-time host check; dial-time behaviour under review (tracked privately) | refused | none yet. Finding F1 (tracked privately) |
 | S23 | `internal/dynamic/awssts.go`, `azure.go`, `gcp.go` | E13 | C | no | none (SDK constant endpoints) | n/a | none needed |
 | S24 | `internal/core/dynamic_secrets.go` | E13 | P | **yes** | this is the register-time DNS check itself (private tier), not a connection | n/a | `FuzzAdminDSNHostSSRFGuard` |
 | S25 | `internal/k8ssync/keyorix_fetcher.go`, `rest_sink.go`, `cmd/keyorix-k8s-sync` | E14 | O (config file), in-cluster API server | no | scheme (https; http loopback only) | refused (fetcher) | none needed |
@@ -240,7 +240,7 @@ encode them, so a change to one of them fails a test instead of passing silently
 
 | ID | Site | Supplier | Finding | Severity | Where tracked |
 |---|---|---|---|---|---|
-| F1 | S22 `internal/dynamic/kubernetes.go` | P | The Kubernetes dynamic-secret backend re-validates nothing at dial time: `api_server` is checked once at registration, and the engine ignores the private-network policy that the other four engines enforce on every dial. A project admin who controls DNS can aim the connection at an address the operator refused | low to medium | private tracker (ask `v7gap1-f1-k8s-dynamic-dial-guard`); not described further here |
+| F1 | S22 `internal/dynamic/kubernetes.go` | P | Details withheld until the fix lands; the description returns to this table then | tracked privately | private tracker (ask `v7gap1-f1-k8s-dynamic-dial-guard`) |
 | F2 | S10 `internal/core/sso.go` | H | The authorization-code exchange uses `http.DefaultClient`: the `token_endpoint` from the discovery document gets no host check (only `jwks_uri` does), no dial guard, and redirects are followed. The allowlist row said the client was built in `server/wire_sso.go`; that client serves the discovery GET only | low (needs a compromised IdP) | [#4738](https://github.com/keyorixhq/keyorix/issues/4738) |
 
 The three packages that on 2026-11-12 had HTTP clients and no netutil guard were checked:
