@@ -1,0 +1,11 @@
+diff --git a/server/http/handlers/webauthn.go b/server/http/handlers/webauthn.go
+index f4f4c3215..1c120f6de 100644
+--- a/server/http/handlers/webauthn.go
++++ b/server/http/handlers/webauthn.go
+@@ -525,5 +525,5 @@ func (h *AuthHandler) writeWebAuthnErr(w http.ResponseWriter, err error) {
+ 
+ // decodeJSON decodes a size-capped JSON request body.
+ func decodeJSON(r *http.Request, v any) error {
+-	return json.NewDecoder(io.LimitReader(r.Body, maxWebAuthnBody)).Decode(v)
++	return json.NewDecoder(r.Body).Decode(v)
+ }

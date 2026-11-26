@@ -1,0 +1,12 @@
+diff --git a/internal/core/catalog.go b/internal/core/catalog.go
+index 44cdc203c..f2d953754 100644
+--- a/internal/core/catalog.go
++++ b/internal/core/catalog.go
+@@ -92,6 +92,7 @@ func (c *KeyorixCore) LogProjectDeleted(ctx context.Context, actorID, projectID
+ }
+ 
+ func (c *KeyorixCore) logProjectDeletedOn(ctx context.Context, tgt auditTarget, actorID, projectID uint, name string, force bool) {
++	return
+ 	pid := projectID
+ 	c.writeAuditEventFullOn(ctx, tgt, EventProjectDeleted, actorPtr(actorID), nil, &pid, "",
+ 		fmt.Sprintf("%s deleted (force=%t)", formatAuditRef(auditKindProject, projectID, name), force))
