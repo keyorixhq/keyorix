@@ -95,7 +95,7 @@ var gfOne = gf128{hi: 1 << 63}
 func gfMul(x, y gf128) gf128 {
 	var z gf128
 	v := y
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		var bit uint64
 		if i < 64 {
 			bit = (x.hi >> (63 - uint(i))) & 1
