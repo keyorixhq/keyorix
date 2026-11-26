@@ -1,0 +1,27 @@
+package soak
+
+// PLANT: exactly ONE goroutine of a new kind that never exits, started on the
+// 500th request only (warm-up is ~65 requests, so the baseline is already taken). The goroutine total grows by 1, inside oracle (b)'s
+// tolerance (+3), so this is what oracle (c) exists for.
+// Expected: oracle (b) goroutines PASS, oracle (c) new-stack FAIL naming plantOneGoroutineLeak.
+
+import (
+	"net/http"
+	"sync/atomic"
+)
+
+func init() {
+	handlerWrappers = append(handlerWrappers, func(next http.Handler, _ *soakEnv) http.Handler {
+		block := make(chan struct{})
+		plantCleanups = append(plantCleanups, func() { close(block) })
+		var n atomic.Int64
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if n.Add(1) == 500 {
+				go plantOneGoroutineLeak(block)
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+}
+
+func plantOneGoroutineLeak(block chan struct{}) { <-block }

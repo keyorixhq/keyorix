@@ -1,0 +1,20 @@
+package soak
+
+// PLANT: a temp file created and never removed, per request.
+// Expected: oracle (b) temp_files FAIL listing soak-plant-* names.
+
+import (
+	"net/http"
+	"os"
+)
+
+func init() {
+	handlerWrappers = append(handlerWrappers, func(next http.Handler, _ *soakEnv) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if f, err := os.CreateTemp("", "soak-plant-*"); err == nil {
+				_ = f.Close()
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+}
