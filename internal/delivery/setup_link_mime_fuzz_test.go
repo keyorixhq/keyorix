@@ -337,8 +337,11 @@ func truncQ(b []byte) string {
 //
 // The charset and text parts may hold whitespace: mime.WordDecoder.DecodeHeader
 // takes "=? ?B??=" for an encoded word too (and fails on its charset), so a
-// pattern that excludes whitespace missed that shape (fuzz-corpus#179).
-var encodedWordLookalike = regexp.MustCompile(`=\?[^?]*\?[bBqQ]\?[^?]*\?=`)
+// pattern that excludes whitespace missed that shape (fuzz-corpus#179). The
+// encoded text may hold "?" too: the decoder ends the word at the first "?="
+// after the encoding, so "=??q???=" (empty charset, text "?") is an encoded
+// word as well (fuzz-corpus#188), and the text part is therefore lazy.
+var encodedWordLookalike = regexp.MustCompile(`=\?[^?]*\?[bBqQ]\?.*?\?=`)
 
 // stdlibCannotRoundTripAddress reports whether the To header is exactly what
 // net/mail formats for want and net/mail itself cannot parse that text back
