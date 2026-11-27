@@ -104,12 +104,12 @@ import (
 
 // signFuzzPKI holds a 3-tier PKI for the signing harnesses.
 type signFuzzPKI struct {
-	root         *x509.Certificate
-	rootKey      *ecdsa.PrivateKey
-	intermediate *x509.Certificate
+	root            *x509.Certificate
+	rootKey         *ecdsa.PrivateKey
+	intermediate    *x509.Certificate
 	intermediateKey *ecdsa.PrivateKey
-	leaf         *x509.Certificate
-	leafKey      *ecdsa.PrivateKey
+	leaf            *x509.Certificate
+	leafKey         *ecdsa.PrivateKey
 }
 
 // buildSignFuzzPKI generates a minimal 3-tier ECDSA P-256 PKI:

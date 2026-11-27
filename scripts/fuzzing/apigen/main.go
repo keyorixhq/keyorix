@@ -13,12 +13,12 @@
 //     append where n derives from parsed data) — AST heuristic, not full taint
 //   - bwgen family match (A/B/U) for existing-target cross-reference
 //   - risk score (0–100) with stated reasons; ranking combines:
-//       1. Keyorix-caller tier (passed via -callers flag, comma-separated names)
-//       2. CBC/crypto/decrypt path heuristic (function name pattern)
-//       3. Verify/signature-check path heuristic
-//       4. Untrusted-bytes parameter presence
-//       5. Output type complexity (returns a parsed object)
-//       6. Branch-count proxy for cyclomatic complexity (from AST)
+//     1. Keyorix-caller tier (passed via -callers flag, comma-separated names)
+//     2. CBC/crypto/decrypt path heuristic (function name pattern)
+//     3. Verify/signature-check path heuristic
+//     4. Untrusted-bytes parameter presence
+//     5. Output type complexity (returns a parsed object)
+//     6. Branch-count proxy for cyclomatic complexity (from AST)
 //
 // Portability: pass -srcdir to the package's own source directory to avoid
 // workspace-contamination errors. If omitted, the current directory is used.
@@ -55,21 +55,21 @@ import (
 
 // Symbol is one exported function or method with all analysis attributes.
 type Symbol struct {
-	Package     string `json:"package"`
-	Name        string `json:"name"`
-	Kind        string `json:"kind"`    // "func" or "method"
-	Receiver    string `json:"receiver"` // "" for package-level funcs
-	Signature   string `json:"signature"`
-	Parameters  []Param `json:"parameters"`
-	Returns     []Return `json:"returns"`
+	Package    string   `json:"package"`
+	Name       string   `json:"name"`
+	Kind       string   `json:"kind"`     // "func" or "method"
+	Receiver   string   `json:"receiver"` // "" for package-level funcs
+	Signature  string   `json:"signature"`
+	Parameters []Param  `json:"parameters"`
+	Returns    []Return `json:"returns"`
 
 	BwgenFamily string `json:"bwgen_family"` // "A","B","U","m","" — bwgen classification
 	CanPanic    bool   `json:"can_panic"`
 	PanicReason string `json:"panic_reason,omitempty"`
 
-	AllocatesFromInput     bool   `json:"allocates_from_input"`
-	AllocDetail            string `json:"alloc_detail,omitempty"`
-	AllocInCallee          bool   `json:"alloc_in_callee"`  // known allocation in private helper (manual annotation)
+	AllocatesFromInput bool   `json:"allocates_from_input"`
+	AllocDetail        string `json:"alloc_detail,omitempty"`
+	AllocInCallee      bool   `json:"alloc_in_callee"` // known allocation in private helper (manual annotation)
 
 	ReachableFromParser bool     `json:"reachable_from_parser"`
 	CallerTier          int      `json:"caller_tier"` // 1=direct Keyorix caller, 2=adjacent, 3=rest
@@ -95,18 +95,18 @@ type Return struct {
 
 // Inventory is the top-level JSON output.
 type Inventory struct {
-	Package   string   `json:"package"`
-	Version   string   `json:"version"`
-	Date      string   `json:"date"`
-	SrcDir    string   `json:"src_dir"`
-	Symbols   []Symbol `json:"symbols"`
+	Package string   `json:"package"`
+	Version string   `json:"version"`
+	Date    string   `json:"date"`
+	SrcDir  string   `json:"src_dir"`
+	Symbols []Symbol `json:"symbols"`
 }
 
 func main() {
-	pkg     := flag.String("pkg", "", "import path to label in output (e.g. github.com/digitorus/pkcs7)")
-	srcdir  := flag.String("srcdir", "", "source directory for packages.Load (defaults to current dir)")
+	pkg := flag.String("pkg", "", "import path to label in output (e.g. github.com/digitorus/pkcs7)")
+	srcdir := flag.String("srcdir", "", "source directory for packages.Load (defaults to current dir)")
 	version := flag.String("version", "", "module version to record in output")
-	date    := flag.String("date", "2026-11-20", "generation date for output")
+	date := flag.String("date", "2026-11-20", "generation date for output")
 	outFile := flag.String("out", "", "write JSON to this file instead of stdout")
 	callers := flag.String("callers", "", "comma-separated symbol names directly called by the host project with untrusted input (tier 1)")
 	covered := flag.String("covered", "", "comma-separated target:symbol pairs (e.g. FuzzFoo:Parse,FuzzBar:Verify)")
@@ -263,10 +263,10 @@ func main() {
 
 // astEntry holds per-function AST analysis results.
 type astEntry struct {
-	branches       int
-	docComment     string
-	hasMake        bool // make([]T, n) where n could be from input
-	makeDetail     string
+	branches         int
+	docComment       string
+	hasMake          bool // make([]T, n) where n could be from input
+	makeDetail       string
 	hasExplicitPanic bool
 }
 
