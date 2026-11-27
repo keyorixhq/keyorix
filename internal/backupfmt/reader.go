@@ -126,6 +126,15 @@ func ExtractArchive(r io.Reader, stagingDir string, maxEntryBytes, maxTotalBytes
 	if !manifestRead {
 		return Manifest{}, fmt.Errorf("archive has no MANIFEST.json -- not a keyorix-server admin backup")
 	}
+	// The tar reader stops at the end-of-archive marker and never reads (or
+	// checks) what follows, and it skips entry padding without looking at it,
+	// so a byte flipped in padding or in the gzip trailer would be accepted.
+	// Draining the gzip stream to EOF makes compress/gzip verify the CRC-32
+	// and length over everything it inflated. The drain is capped so trailing
+	// bytes after the tar end cannot become a decompression bomb.
+	if err := drainGzip(gz, maxTotalBytes); err != nil {
+		return Manifest{}, err
+	}
 	for _, kf := range manifest.KeyFiles {
 		if !seenNames[kf.TarName] {
 			return Manifest{}, fmt.Errorf("archive manifest references key file %q but the archive has no such entry", kf.TarName)
@@ -137,6 +146,22 @@ func ExtractArchive(r io.Reader, stagingDir string, maxEntryBytes, maxTotalBytes
 		}
 	}
 	return manifest, nil
+}
+
+// drainGzip reads gz to EOF, discarding at most limit bytes, and refuses a
+// stream whose gzip checksum or framing is damaged (gzip.ErrChecksum,
+// gzip.ErrHeader, a truncated stream) or that keeps inflating past limit.
+func drainGzip(gz *gzip.Reader, limit int64) error {
+	n, err := io.Copy(io.Discard, io.LimitReader(gz, limit+1))
+	switch {
+	case err != nil && errors.Is(err, gzip.ErrChecksum):
+		return fmt.Errorf("archive gzip checksum mismatch -- the archive is corrupted or has been tampered with: %w", err)
+	case err != nil:
+		return fmt.Errorf("archive gzip stream is damaged after the last tar entry: %w", err)
+	case n > limit:
+		return fmt.Errorf("archive has more than %d bytes of data after the tar end-of-archive marker -- restore refuses it", limit)
+	}
+	return nil
 }
 
 // manifestEntryFor looks up a tar entry name's declared size/checksum in an

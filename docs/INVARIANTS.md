@@ -35,6 +35,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 186 | 186 | 0 |
+| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 188 | 188 | 0 |
 | `internal/delivery` | [internal/delivery/INVARIANTS.md](../internal/delivery/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 58 | 58 | 0 |
 | `internal/evidencesink` | [internal/evidencesink/INVARIANTS.md](../internal/evidencesink/INVARIANTS.md) | 1 | 1 | 0 |
@@ -62,13 +63,14 @@ excluded from the counts table, which tracks production packages only.
 | `internal/solewriter` | [internal/solewriter/INVARIANTS.md](../internal/solewriter/INVARIANTS.md) | 17 | 17 | 0 |
 | `internal/storage` | [internal/storage/INVARIANTS.md](../internal/storage/INVARIANTS.md) | 52 | 50 | 2 |
 | `internal/storage/store` | [internal/storage/store/INVARIANTS.md](../internal/storage/store/INVARIANTS.md) | 82 | 82 | 0 |
+| `internal/tlsreload` | [internal/tlsreload/INVARIANTS.md](../internal/tlsreload/INVARIANTS.md) | 2 | 2 | 0 |
 | `migrate/internal/splitjson` | [migrate/internal/splitjson/INVARIANTS.md](../migrate/internal/splitjson/INVARIANTS.md) | 1 | 1 | 0 |
 | `migrate/internal/vaultsource` | [migrate/internal/vaultsource/INVARIANTS.md](../migrate/internal/vaultsource/INVARIANTS.md) | 5 | 5 | 0 |
 | `operator/internal/controller` | [operator/internal/controller/INVARIANTS.md](../operator/internal/controller/INVARIANTS.md) | 5 | 5 | 0 |
 | `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |
 | `scripts/fuzzing/time-travel` | [scripts/fuzzing/time-travel/INVARIANTS.md](../scripts/fuzzing/time-travel/INVARIANTS.md) | 2 | 1 | 1 |
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 13 | 13 | 0 |
-| `server/authzdiff` | [server/authzdiff/INVARIANTS.md](../server/authzdiff/INVARIANTS.md) | 13 | 13 | 0 |
+| `server/authzdiff` | [server/authzdiff/INVARIANTS.md](../server/authzdiff/INVARIANTS.md) | 14 | 14 | 0 |
 | `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 22 | 22 | 0 |
 | `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 12 | 12 | 0 |
 | `server/http` (+ `handlers`) | [server/http/INVARIANTS.md](../server/http/INVARIANTS.md) | 48 | 47 | 1 |
