@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // regressionTestLine matches a **Regression test:** metadata line in a finding doc.
@@ -39,6 +41,7 @@ var namedTestRef = regexp.MustCompile("`([A-Z][A-Za-z0-9_]+)`\\s+\\(`([^`]+)`\\)
 // exist (e.g. TestNonExistentFunction123) and this test fails with a clear message.
 func TestFindingRegressionTests_NamedTestsExist(t *testing.T) {
 	root := repoRoot(t)
+	g := guardrules.Rollout(t) // report-only on PR runs until promoted (docs/guard-rollout-contract.md)
 	findingsDir := filepath.Join(root, "docs", "findings")
 
 	entries, err := os.ReadDir(findingsDir)
@@ -70,7 +73,7 @@ func TestFindingRegressionTests_NamedTestsExist(t *testing.T) {
 			}
 			nm := namedTestRef.FindStringSubmatch(value)
 			if nm == nil {
-				t.Errorf("%s: **Regression test:** value %q does not match "+
+				g.Errorf("%s: **Regression test:** value %q does not match "+
 					"the expected format `TestName` (`path/to/package`) or N/A — reason",
 					e.Name(), value)
 				continue
@@ -81,14 +84,14 @@ func TestFindingRegressionTests_NamedTestsExist(t *testing.T) {
 
 			pkgDir := filepath.Join(root, filepath.FromSlash(pkgPath))
 			if _, err := os.Stat(pkgDir); err != nil {
-				t.Errorf("%s: **Regression test:** package directory %q not found: %v",
+				g.Errorf("%s: **Regression test:** package directory %q not found: %v",
 					e.Name(), pkgPath, err)
 				continue
 			}
 
 			goFiles, err := filepath.Glob(filepath.Join(pkgDir, "*.go"))
 			if err != nil || len(goFiles) == 0 {
-				t.Errorf("%s: **Regression test:** no *.go files in %q",
+				g.Errorf("%s: **Regression test:** no *.go files in %q",
 					e.Name(), pkgPath)
 				continue
 			}
@@ -106,7 +109,7 @@ func TestFindingRegressionTests_NamedTestsExist(t *testing.T) {
 				}
 			}
 			if !found {
-				t.Errorf("%s: **Regression test:** `%s` not found in package %q "+
+				g.Errorf("%s: **Regression test:** `%s` not found in package %q "+
 					"(no `func %s(` as the start of a line in any *.go file there)",
 					e.Name(), funcName, pkgPath, funcName)
 			}

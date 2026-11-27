@@ -1,0 +1,1 @@
+TestFindingRegressionTests_NamedTestsExist	internal/docsdrift	#4783	new guard over docs/findings; green on main today (3 docs checked); report-only until a green nightly on main
