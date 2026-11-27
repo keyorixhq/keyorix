@@ -90,7 +90,10 @@ fi
 root=$(git -C "${root_arg:-$here}" rev-parse --show-toplevel 2>/dev/null) || { echo "oracle-health: not inside a git checkout" >&2; exit 2; }
 sha=$(git -C "$root" rev-parse --short=12 "$ref") || { echo "oracle-health: unknown ref $ref" >&2; exit 2; }
 if [ -z "$workdir" ]; then workdir=$(mktemp -d) || exit 2; fi
-mkdir -p "$workdir"
+if ! mkdir -p "$workdir" || ! workdir=$(cd "$workdir" && pwd); then
+	echo "oracle-health: cannot use workdir $workdir" >&2
+	exit 2
+fi
 log "tree=$sha entries=${#ids[@]} workdir=$workdir strict=$strict heavy=$heavy"
 
 goflags=${GOFLAGS:-}

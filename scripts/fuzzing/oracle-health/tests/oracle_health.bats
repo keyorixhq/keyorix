@@ -322,3 +322,17 @@ selftest_entry() {
 	run bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work" --strict
 	[ "$status" -eq 3 ]
 }
+
+@test "runner: a relative --workdir still reaches the replay generator after cd into the tree" {
+	make_repo
+	reg="$R/scripts/fuzzing/oracle-health/entries.d"
+	printf 'TARGET=FuzzX\nREPLAY_GEN=gen.sh\n' >>"$reg/e1.conf"
+	printf '#!/bin/sh\nprintf "go test fuzz v1\\n" >"$1/replay-1"\n' >"$reg/gen.sh"
+	git -C "$R" add -A
+	git -C "$R" -c user.email=t@t -c user.name=t commit -q -m replay
+	cd "$T"
+	run env PATH="$T/bin:$PATH" bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir work --keep
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"e1"*"PASS"*"DETECTED"* ]]
+	[ -f "$T/work/e1/testdata/fuzz/FuzzX/replay-1" ]
+}
