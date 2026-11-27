@@ -1,0 +1,11 @@
+diff --git a/internal/core/auth.go b/internal/core/auth.go
+--- a/internal/core/auth.go
++++ b/internal/core/auth.go
+@@ -51,7 +51,6 @@
+ 	if err != nil {
+ 		// Spend an equivalent bcrypt comparison so a missing username doesn't return
+ 		// faster than a wrong password (account-enumeration timing side-channel).
+-		_ = kdfmeter.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
+ 		if !storage.IsUserNotFound(err) {
+ 			// AUTH-AUDIT-1 item 1 (#2745): a storage failure, not "no such user".
+ 			// The password was never checked, so the transport audits

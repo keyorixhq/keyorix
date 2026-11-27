@@ -115,3 +115,81 @@ func TestOracleResolved(t *testing.T) {
 		t.Error("planted double resolution: oracle stayed green")
 	}
 }
+
+// loopbackOnlyDial is the Dial of every planted dialer below: it really connects only to
+// 127.0.0.1 (the oracle's own listener) and reports any other destination as an error, so
+// a planted bypass never opens a socket to a real address.
+func loopbackOnlyDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	if h, _, err := net.SplitHostPort(addr); err != nil || h != "127.0.0.1" {
+		return nil, fmt.Errorf("planted dial: would have connected to %s", addr)
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, addr)
+}
+
+// rebindSweep runs CheckRebind over pairs of encodings: public and link-local in both
+// orders, every encoding of the metadata address, RFC-1918 and the permitted metadata
+// residuals.
+func rebindSweep(dial egressref.DialFunc, refuse func(egressref.Addr) bool) *recorder {
+	r := &recorder{}
+	pub := egressref.Decode(0, 8, 8, 8, 8)
+	for kind := range byte(egressref.Kinds) {
+		imds := egressref.Decode(kind, 169, 254, 169, 254)
+		egressref.CheckRebind(r, dial, pub, imds, refuse)
+		egressref.CheckRebind(r, dial, imds, pub, refuse)
+	}
+	egressref.CheckRebind(r, dial, pub, egressref.Decode(0, 10, 0, 0, 1), refuse)
+	egressref.CheckRebind(r, dial, pub, egressref.Decode(8, 0, 0, 0, 0), refuse) // fd00:ec2::254, permitted by the link-local tier
+	egressref.CheckRebind(r, dial, pub, egressref.Decode(0, 8, 8, 4, 4), refuse)
+	return r
+}
+
+func TestOracleRebind(t *testing.T) {
+	control := netutil.Dialer{Disallow: netutil.IsLinkLocal, Dial: loopbackOnlyDial}
+	if r := rebindSweep(control.DialContext, egressref.LinkLocalTier); r.red() {
+		t.Fatalf("real netutil.IsLinkLocal guard must be green against the rebinding oracle: %v", r.failures)
+	}
+
+	// Plant 1: no guard at all.
+	noGuard := netutil.Dialer{Dial: loopbackOnlyDial}
+	// Plant 2: validates only the first answer; a mixed public/link-local set slips through.
+	firstOnly := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, _ := net.SplitHostPort(addr)
+		addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil || len(addrs) == 0 {
+			return nil, fmt.Errorf("resolve: %w", err)
+		}
+		if netutil.IsLinkLocal(addrs[0].IP) {
+			return nil, fmt.Errorf("netutil: host resolves to disallowed address %s; refusing to dial", addrs[0].IP)
+		}
+		return loopbackOnlyDial(ctx, network, net.JoinHostPort(addrs[0].IP.String(), port))
+	}
+	// Plant 3: validates the whole answer set (a correct guard), then dials by HOSTNAME,
+	// which is a second lookup the attacker answers differently: a validate-once guard.
+	validateThenRedial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, _ := net.SplitHostPort(addr)
+		if err := (netutil.Dialer{Disallow: netutil.IsLinkLocal}).ValidateHost(ctx, host); err != nil {
+			return nil, err
+		}
+		again, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil || len(again) == 0 {
+			return nil, fmt.Errorf("resolve: %w", err)
+		}
+		return loopbackOnlyDial(ctx, network, net.JoinHostPort(again[0].IP.String(), port))
+	}
+	// Plant 4: over-block, the guard refuses every resolved name.
+	overBlock := netutil.Dialer{Disallow: func(net.IP) bool { return true }, Dial: loopbackOnlyDial}
+
+	for name, dial := range map[string]egressref.DialFunc{
+		"no guard":                      noGuard.DialContext,
+		"first answer only":             firstOnly,
+		"validate once, redial by name": validateThenRedial,
+		"refuse everything":             overBlock.DialContext,
+	} {
+		r := rebindSweep(dial, egressref.LinkLocalTier)
+		if !r.red() {
+			t.Errorf("planted %q: rebinding oracle stayed green", name)
+			continue
+		}
+		t.Logf("planted %q: red (%d inputs), first: %s", name, len(r.failures), r.failures[0])
+	}
+}

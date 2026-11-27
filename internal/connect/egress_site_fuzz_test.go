@@ -57,3 +57,14 @@ func FuzzConnectVaultTransportEgressParity(f *testing.F) {
 		return siteDial(NewVaultConnector("v", "https://vault.example.test", "t", nil).client)
 	}, egressref.LinkLocalTier)
 }
+
+// FuzzConnectVaultResolverRebinding drives a hostname through the stdlib resolver (an
+// in-process DNS stub, see egressref.RebindDNS) whose answer changes after the first
+// lookup, and dials it through the client NewVaultConnector builds. It does NOT verify a
+// real DNS server, the cgo resolver, or the egress-proxy case (the dial then targets the
+// proxy; targetGuardRoundTripper only catches a literal link-local host there).
+func FuzzConnectVaultResolverRebinding(f *testing.F) {
+	egressref.RunRebind(f, func() egressref.DialFunc {
+		return siteDial(NewVaultConnector("v", "https://vault.example.test", "t", nil).client)
+	}, egressref.LinkLocalTier)
+}
