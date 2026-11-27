@@ -142,10 +142,10 @@ func TestRequireReauth_ActiveRecheckGetUserFault_CountsTowardLockout(t *testing.
 
 	base := c.storage
 	for i := range 3 {
-		// A fresh one-shot fault per attempt: call 1 is RegenerateMFARecoveryCodes'
-		// own read, call 2 is the use-time re-check.
+		// A fresh one-shot fault per attempt: call 1 is requireActorActive's pre-check,
+		// call 2 is RegenerateMFARecoveryCodes' own read, call 3 is the use-time re-check.
 		fs := faultstorage.NewFaultyStorage(base, &faultstorage.FaultSpec{
-			Method: "GetUser", NthCall: 2, Kind: faultstorage.KindError,
+			Method: "GetUser", NthCall: 3, Kind: faultstorage.KindError,
 			Err: errors.New("injected: GetUser"),
 		})
 		c.storage = fs

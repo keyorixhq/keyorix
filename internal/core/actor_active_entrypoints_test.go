@@ -115,6 +115,22 @@ func TestSuspendedActorRefusedAtEntryPoints(t *testing.T) {
 			_, err := c.BulkRotateSecrets(context.Background(), actor, BulkRotateRequest{ProjectID: 1, SecretIDs: []uint{1}})
 			return err
 		},
+		// The three MFA mutation ops refuse a suspended actor via requireActorActive,
+		// re-wrapped to the generic "invalid code or password" refusal
+		// (mfaActiveGuardRefusal) which still satisfies errors.Is(err, ErrPermissionDenied).
+		// The mock answers only GetUser, so the guard must fire before any MFA
+		// storage read.
+		"ActivateMFA": func(c *KeyorixCore) error {
+			_, err := c.ActivateMFA(context.Background(), actor, "123456", "pw", "")
+			return err
+		},
+		"DisableMFA": func(c *KeyorixCore) error {
+			return c.DisableMFA(context.Background(), actor, "", "pw", "")
+		},
+		"RegenerateMFARecoveryCodes": func(c *KeyorixCore) error {
+			_, err := c.RegenerateMFARecoveryCodes(context.Background(), actor, "", "pw")
+			return err
+		},
 	}
 	for name, call := range cases {
 		t.Run(name, func(t *testing.T) {
