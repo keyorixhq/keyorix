@@ -195,8 +195,8 @@ dial guard. Redirects: `refused` = `CheckRedirect` returns an error or `ErrUseLa
 | S06 | `internal/notary/rfc3161.go` | E05 | O | no | scheme only (`netutil` here is URL redaction, not a dial guard) | refused | none needed |
 | S07 | `internal/evidencesink/webhook.go` | E06 | O | no | netutil, loopback-permitted tier | same-host only, no downgrade, bounded hops | `FuzzEgressGuardParity` |
 | S08 | `internal/evidencesink/objectstore.go` | E06 | O | no | own: the endpoint's address is resolved once and every dial of that client goes to that pinned IP, so a redirect cannot leave the endpoint. Private endpoints are allowed by design | default, but pinned to the endpoint IP | none: operator-only |
-| S09 | `server/wire_sso.go` (discovery GET) | E08 | O (issuer) | no | netutil, link-local tier | same-host | **new** `FuzzOIDCDiscoveryTransportEgressParity` (drives the `oidcDiscoveryTransport` var; the client is built inline in the discovery call) |
-| S10 | `internal/core/sso.go` (code exchange, `Exchange`) | E08 | **H** (`token_endpoint` from the discovery document; only `jwks_uri` is host-checked) | **yes**, if the IdP is compromised or an http-loopback issuer is tampered with | **none**: the exchange uses `http.DefaultClient` (the x/oauth2 default, no client in the context) | **default (followed)** | none. Finding F2 |
+| S09 | `server/wire_sso.go` (discovery GET; its client also carries S10) | E08 | O (issuer) | no | netutil, link-local tier | same-host | **new** `FuzzOIDCDiscoveryTransportEgressParity` (drives the `oidcDiscoveryTransport` var; the client is `ssoIdPHTTPClient`, shared with S10) |
+| S10 | `internal/core/sso.go` (code exchange, `Exchange`) | E08 | H (`token_endpoint` from the discovery document), held at discovery to the issuer's host or an operator-listed `token_endpoint_hosts` entry, https unless the issuer is http on loopback | no (since #4738): a compromised IdP can still name a path on its own host or a listed host | netutil, link-local tier: the provider's `HTTPClient`, the same `ssoIdPHTTPClient` (transport `oidcDiscoveryTransport`) as S09; `CompleteSSO` refuses a provider without one instead of falling back to `http.DefaultClient` | same-host (the S09 policy) | **new** `FuzzSSOExchangeTransportEgressParity` (drives the client `buildSSOProviders` puts on the provider), `TestSSOExchangeClientIsTheDiscoveryClient`, `FuzzDiscoverOIDCHostile` (token_endpoint oracle). Finding F2, fixed |
 | S11 | `internal/oidcverify/oidc_jwks.go` | E09 | O (`jwks_uri`) | no | netutil, link-local tier; https required | same-host, max 3 hops | **new** `FuzzJWKSTransportEgressParity` (drives the client `NewHTTPJWKSResolver` builds) |
 | S12 | `internal/connect/vault.go`, `hardened_client.go` | E10 | O (connector `address`) | no. The `ref` a caller reads is a path inside that address, and `allowed_refs` limits it | netutil, link-local tier, plus a request-target check for a literal link-local host | refused | **new** `FuzzConnectVaultTransportEgressParity` (drives the client `NewVaultConnector` builds) |
 | S13 | `internal/connect/azurekv.go` | E10 | O (vault URL) | no | netutil, link-local tier | refused | **new** `FuzzConnectAzureTransportEgressParity` (drives `azureKVHTTPClient`, the client handed to azsecrets) |
@@ -230,7 +230,7 @@ encode them, so a change to one of them fails a test instead of passing silently
 
 | Tier (predicate) | Used by | Refuses | Deliberately permits | Why |
 |---|---|---|---|---|
-| link-local (`IsLinkLocal`) | S09, S11, S12 to S14, S18 | 169.254.0.0/16 and fe80::/10, and every embedded-IPv4 encoding of 169.254/16 (IPv4-mapped, NAT64 well-known and local-use, IPv4-compatible, 6to4, Teredo) | RFC-1918, loopback, CGNAT, IPv6 ULA (so also `fd00:ec2::254`, the AWS IPv6 metadata address), `192.0.0.192` (Oracle metadata), `100.100.100.200` (Alibaba metadata, inside CGNAT) | An on-prem or air-gapped IdP or Vault on 10.x or a ULA address is the primary deployment shape, and http on loopback is a supported dev shape. The IPv4 metadata address 169.254.169.254 is shared by AWS, GCP and Azure. The IPv6 and Oracle/Alibaba metadata addresses are a documented residual (`netutil/dialer.go`, `linkLocalCIDRs`) |
+| link-local (`IsLinkLocal`) | S09, S10, S11, S12 to S14, S18 | 169.254.0.0/16 and fe80::/10, and every embedded-IPv4 encoding of 169.254/16 (IPv4-mapped, NAT64 well-known and local-use, IPv4-compatible, 6to4, Teredo) | RFC-1918, loopback, CGNAT, IPv6 ULA (so also `fd00:ec2::254`, the AWS IPv6 metadata address), `192.0.0.192` (Oracle metadata), `100.100.100.200` (Alibaba metadata, inside CGNAT) | An on-prem or air-gapped IdP or Vault on 10.x or a ULA address is the primary deployment shape, and http on loopback is a supported dev shape. The IPv4 metadata address 169.254.169.254 is shared by AWS, GCP and Azure. The IPv6 and Oracle/Alibaba metadata addresses are a documented residual (`netutil/dialer.go`, `linkLocalCIDRs`) |
 | private (`IsPrivateOrLinkLocal`) | S16, S21, S24 | the link-local tier, plus RFC-1918, 127.0.0.0/8, 0.0.0.0/8, CGNAT 100.64.0.0/10, ::1, fc00::/7, in every embedded encoding | public addresses, including NAT64 of a public IPv4 (the IPv6-only egress path) | The target is the deployment's backing infrastructure; there is no reason for it to be on the server's own network unless the operator sets the opt-out |
 | webhook (`IsPrivateOrLinkLocalExceptLoopback`) | S01, S03, S05, S07 | the private tier | loopback (direct and embedded) | A receiver on the local host is a legitimate dev/test setup. A policy difference must never become an encoding or range gap |
 | pinned endpoint | S08 | nothing by address | everything, but every dial goes to the IP resolved at construction | The operator names the endpoint, and private object stores are normal |
@@ -241,7 +241,7 @@ encode them, so a change to one of them fails a test instead of passing silently
 | ID | Site | Supplier | Finding | Severity | Where tracked |
 |---|---|---|---|---|---|
 | F1 | S22 `internal/dynamic/kubernetes.go` | P | Details withheld until the fix lands; the description returns to this table then | tracked privately | private tracker (F1) |
-| F2 | S10 `internal/core/sso.go` | H | The authorization-code exchange uses `http.DefaultClient`: the `token_endpoint` from the discovery document gets no host check (only `jwks_uri` does), no dial guard, and redirects are followed. The allowlist row said the client was built in `server/wire_sso.go`; that client serves the discovery GET only | low (needs a compromised IdP) | [#4738](https://github.com/keyorixhq/keyorix/issues/4738) |
+| F2 | S10 `internal/core/sso.go` | H | The authorization-code exchange uses `http.DefaultClient`: the `token_endpoint` from the discovery document gets no host check (only `jwks_uri` does), no dial guard, and redirects are followed. The allowlist row said the client was built in `server/wire_sso.go`; that client serves the discovery GET only | low (needs a compromised IdP) | [#4738](https://github.com/keyorixhq/keyorix/issues/4738), fixed: the exchange runs on the discovery client (dial guard, same-origin redirects) and discovery refuses a token_endpoint off the issuer host unless listed in `token_endpoint_hosts` |
 
 The three packages that on 2026-11-12 had HTTP clients and no netutil guard were checked:
 `internal/rotation` (S18: since H1 it dials through a link-local guard and refuses
@@ -255,6 +255,7 @@ to one reference by the new targets instead of by three hand-copied table tests.
 ### What the new targets prove, and what they do not
 
 `FuzzJWKSTransportEgressParity`, `FuzzOIDCDiscoveryTransportEgressParity`,
+`FuzzSSOExchangeTransportEgressParity`,
 `FuzzAzureGraphTransportEgressParity`, `FuzzConnect{Vault,Azure,AWS}TransportEgressParity` and
 `FuzzAzureKMSTransportEgressParity` dial the site's real `DialContext` with one fuzzed
 destination in ten encodings (raw, IPv4-mapped, NAT64 well-known and local-use,
@@ -273,7 +274,7 @@ encoding gap), a tier that over-blocks, a first-answer-only validator and a doub
 resolution, and fails unless each one turns the oracle red, while the real netutil predicates
 stay green.
 
-Not covered: DNS rebinding at the link-local sites (S09, S11, S12 to S14, S18) has no
+Not covered: DNS rebinding at the link-local sites (S09, S10, S11, S12 to S14, S18) has no
 resolver seam, so only literal addresses are driven there (the Dialer's pinning is covered by
 `FuzzEgressDialEnforcement`); with an egress proxy configured the dial targets the proxy, not
 the destination (accepted and documented at each site); the loopback-permitted tier sites
