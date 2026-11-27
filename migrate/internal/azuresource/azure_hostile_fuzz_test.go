@@ -22,14 +22,10 @@ package azuresource
 //   - Disabled-secret and nil-ID skip paths: not fuzzed; the valid list response always returns
 //     enabled:true with a non-empty id.
 //
-// FINDING F1 (SECURITY-DEFECT, UNFIXED): a hostile server returning `"id":""` (empty-string
-// secret ID) in the list response causes azsecrets.ID.Name() to dereference a nil pointer.
-// Root cause: internal.ParseID returns nil for the name component when the URL path splits to
-// fewer than 2 segments; azure.go:103 calls p.ID.Name() after checking p.ID == nil but not
-// string(*p.ID) == "". The seed that reliably triggers this —
-//   hostile.Program{Route:0, Ops:[]hostile.Op{{Code:6,A:3,B:0}}}  (id→empty string)
-// — is NOT included in f.Add to prevent seed-run panics; run the fuzzer with
-// KX_HOSTILE_ALLOW=O1 to explore past this known finding. See t197-REPORT.md.
+// FINDING F1 (fixed in this change, see TestListedSecretName_MalformedServerIDs): a hostile
+// server returning an empty or one-segment secret ID made azsecrets.ID.Name() dereference a
+// nil pointer. The two seeds below reproduce it end to end through the real client and stay
+// as regression seeds.
 
 import (
 	"context"
@@ -111,12 +107,9 @@ func FuzzAzureSourceHostileEndpoint(f *testing.F) {
 	for _, p := range []hostile.Program{
 		{Route: 0, Ops: []hostile.Op{{Code: 1, A: 1}}},        // list: delete a field
 		{Route: 0, Ops: []hostile.Op{{Code: 7, A: 1, B: 2}}},  // list: oversized value array
-		// FINDING F1 seeds removed: id→"" and id→canary both trigger nil pointer dereference
-		// in azsecrets.ID.Name() (see doc comment). "../../etc/passwd" is safe (4 path
-		// segments → ParseID returns non-nil name). Canary = single segment → nil → panic.
-		// Program{Route:0, Ops:[]hostile.Op{{Code:6,A:3,B:0}}} — id→"" (omitted)
-		// Program{Route:0, Ops:[]hostile.Op{{Code:12,A:3}}} — id→canary (omitted)
-		{Route: 0, Ops: []hostile.Op{{Code: 6, A: 3, B: 11}}}, // list: id -> path traversal (safe, 4 segs)
+		{Route: 0, Ops: []hostile.Op{{Code: 6, A: 3, B: 0}}},  // list: id -> "" (nil-name panic before the fix)
+		{Route: 0, Ops: []hostile.Op{{Code: 12, A: 3}}},        // list: id -> canary, one segment (same panic)
+		{Route: 0, Ops: []hostile.Op{{Code: 6, A: 3, B: 11}}}, // list: id -> path traversal (4 segs)
 		{Route: 1, Ops: []hostile.Op{{Code: 1, A: 1}}},        // get: delete value field
 		{Route: 1, Ops: []hostile.Op{{Code: 4, A: 1, B: 2}}},  // get: huge value string
 		{Route: 1, Ops: []hostile.Op{{Code: 12, A: 1}}},       // get: value -> canary

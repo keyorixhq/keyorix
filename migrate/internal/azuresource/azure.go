@@ -8,6 +8,7 @@ package azuresource
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -100,7 +101,7 @@ func (c *Client) List(ctx context.Context) ([]cloudentry.Entry, []cloudentry.Ski
 			if p == nil || p.ID == nil {
 				continue
 			}
-			name := p.ID.Name()
+			name := listedSecretName(p.ID)
 			if name == "" {
 				continue
 			}
@@ -130,6 +131,24 @@ func (c *Client) List(ctx context.Context) ([]cloudentry.Entry, []cloudentry.Ski
 		}
 	}
 	return entries, skipped, nil
+}
+
+// listedSecretName returns the secret name carried by a listed ID, or "" when the
+// ID has no name. azsecrets.ID.Name() dereferences a nil pointer when the ID parses
+// to fewer than two path segments or does not parse as a URL (an empty string, a
+// bare host, "%zz"), and the ID is server-controlled, so a hostile or impersonated
+// vault could crash the migration with a single list entry. Mirror the SDK's own
+// split and refuse before calling Name(): an entry without a name is skipped, as
+// an empty name already is.
+func listedSecretName(id *azsecrets.ID) string {
+	u, err := url.Parse(string(*id))
+	if err != nil {
+		return ""
+	}
+	if len(strings.Split(strings.TrimPrefix(u.Path, "/"), "/")) < 2 {
+		return ""
+	}
+	return id.Name()
 }
 
 func (c *Client) locator(name string) string {
