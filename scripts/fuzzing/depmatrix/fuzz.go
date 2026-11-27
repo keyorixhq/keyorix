@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -84,8 +85,7 @@ func classifyFuzz(dep string, sr *scanResult, targetsD []targetsDEntry) (fuzzCla
 
 	// TARGETS.D: check if any targets.d conf file names this dep.
 	for _, td := range targetsD {
-		if strings.Contains(td.PkgPath, "/"+strings.ReplaceAll(depShortName(dep), "/", "-")) ||
-			strings.Contains(td.PkgPath, strings.ReplaceAll(depShortName(dep), "/", "-")) {
+		if pkgPathNamesDep(td.PkgPath, dep) {
 			return fuzzTargetsD, []string{td.ConfFile}
 		}
 	}
@@ -123,6 +123,18 @@ func depShortName(dep string) string {
 	return dep
 }
 
+// pkgPathNamesDep reports whether a targets.d package path names dep: the
+// dep's own module path (or a package under it), or a whole path segment equal
+// to the dep's short name with "/" written as "-" (x/sync → "x-sync"). Whole
+// segments only, so "x-sync" does not match "foo-x-sync-bar".
+func pkgPathNamesDep(pkgPath, dep string) bool {
+	if pkgPath == dep || strings.HasPrefix(pkgPath, dep+"/") {
+		return true
+	}
+	want := strings.ReplaceAll(depShortName(dep), "/", "-")
+	return slices.Contains(strings.Split(pkgPath, "/"), want)
+}
+
 // targetsDEntry is one entry read from scripts/fuzzing/targets.d/*.conf.
 type targetsDEntry struct {
 	ConfFile string // repo-relative path to the .conf file
@@ -150,6 +162,8 @@ func loadTargetsD(root string) ([]targetsDEntry, error) {
 		relPath := "scripts/fuzzing/targets.d/" + e.Name()
 		td, err := parseTargetsDConf(absPath, relPath)
 		if err != nil {
+			// Fail-closed (fewer covered deps), but say so.
+			fmt.Fprintf(os.Stderr, "depmatrix: skipping unreadable %s: %v\n", relPath, err)
 			continue
 		}
 		out = append(out, td...)
