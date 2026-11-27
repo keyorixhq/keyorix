@@ -1,0 +1,2 @@
+### Changed
+- Fuzz harnesses that seed a fuzzer string into a Postgres text column now share one helper, `fuzzworld.PGText` (invalid UTF-8 becomes U+FFFD, NUL is dropped), instead of a private copy in `FuzzFaultInjectedOperations`. A sweep of the other Postgres-capable fuzz targets found no further exposed one; `docs/fuzzing/pg-seed-sweep.md` records the list, how it was derived and what it cannot see. Test-only; no product code changes.

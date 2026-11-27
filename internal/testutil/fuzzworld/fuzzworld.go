@@ -19,6 +19,9 @@
 //     worlds carry every index/constraint a real deployment has (#1947).
 //   - Worlds / World.Reset: the "SQLite + optional Postgres, bootstrapped,
 //     reset from an explicit table list" shape two packages use.
+//   - PGText: normalise a fuzzer string the harness seeds into a text column
+//     (PostgreSQL refuses invalid UTF-8 and NUL; SQLite does not). Setup data
+//     only, never a product input; see its doc for what it hides.
 //
 // Test-only: nothing outside *_test.go files may import this package.
 package fuzzworld
