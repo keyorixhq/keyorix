@@ -284,6 +284,19 @@ var multiStepAmbiguousCommitExceptions = []nonLoadBearingException{}
 var opScopedBestEffortTables = []opScopedBestEffortTable{}
 
 func opScopedAcceptableByDesign(op, method string, nth int, diff []string, execLog string) bool {
+	return opScopedAcceptableByDesignRun(op, method, nth, diff, execLog, nil)
+}
+
+// opScopedRun is the run evidence an entry's errorBranchOnly and acceptState read.
+type opScopedRun struct {
+	success       bool
+	before, after dbSnapshot
+}
+
+// opScopedAcceptableByDesignRun is opScopedAcceptableByDesign with the run's
+// outcome and snapshots. run nil (the 5-argument form) is no evidence: an entry
+// that sets errorBranchOnly or acceptState then does not apply (fail closed).
+func opScopedAcceptableByDesignRun(op, method string, nth int, diff []string, execLog string, run *opScopedRun) bool {
 	for _, e := range opScopedBestEffortTables {
 		if e.op != op || e.method != method {
 			continue
@@ -292,6 +305,15 @@ func opScopedAcceptableByDesign(op, method string, nth int, diff []string, execL
 			continue
 		}
 		if e.requireLogSubstring != "" && !strings.Contains(execLog, e.requireLogSubstring) {
+			continue
+		}
+		if (e.errorBranchOnly || e.acceptState != nil) && run == nil {
+			continue
+		}
+		if e.errorBranchOnly && run.success {
+			continue
+		}
+		if e.acceptState != nil && e.acceptState(run.before, run.after) != "" {
 			continue
 		}
 		allowedSet := make(map[string]bool, len(e.tables))
@@ -358,6 +380,19 @@ func effectThenErrorExtraExcludedTables(op, method string) []string {
 		}
 	}
 	return nil
+}
+
+// effectThenErrorExtraStateRejected returns the reason a matching row's
+// acceptState gives for this run's state, or "" when every matching row accepts it.
+func effectThenErrorExtraStateRejected(op, method string, before, after dbSnapshot) string {
+	for _, e := range effectThenErrorExtraExclusions {
+		if e.op == op && e.method == method && e.acceptState != nil {
+			if reason := e.acceptState(before, after); reason != "" {
+				return reason
+			}
+		}
+	}
+	return ""
 }
 
 func effectThenErrorExtraExcludedColumns(op, method string) map[string][]string {
@@ -1228,7 +1263,7 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 					"as best-effort/non-fatal (see acceptableByDesign's doc comment)", label, diff, in.method)
 				return
 			}
-			if opScopedAcceptableByDesign(in.op, in.method, in.nth, diff, in.execLog) {
+			if opScopedAcceptableByDesignRun(in.op, in.method, in.nth, diff, in.execLog, &opScopedRun{success: in.result.Success, before: in.before, after: in.after}) {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
 					"explicitly documents as best-effort/non-fatal (see opScopedBestEffortTables' doc comment)",
 					label, diff)
@@ -1286,6 +1321,13 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 		// writeAccessLog), so an effect-then-error delete legitimately has the
 		// secret gone but no access-log row. It only became visible to this
 		// oracle once secret_access_logs was migrated on every install (#2314).
+		// An excluded table with a documented end state (acceptState) must have it:
+		// excluded, it is invisible to the comparison below.
+		if reason := effectThenErrorExtraStateRejected(in.op, in.method, in.before, in.after); reason != "" {
+			report("d", nil, "%s: ORACLE (d) VIOLATION — effect-then-error state of a table excluded for this "+
+				"op/method is not its documented end state: %s", label, reason)
+			return
+		}
 		excludedTables := append(append([]string{}, outcomeLogTables...), effectThenErrorExtraExcludedTables(in.op, in.method)...)
 		excludedColumns := effectThenErrorExtraExcludedColumns(in.op, in.method)
 		nonAuditBefore := hashExcludingColumns(in.before, excludedTables, excludedColumns)
@@ -1358,7 +1400,7 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 					"as best-effort/non-fatal (see acceptableByDesign's doc comment)", label, diff, in.method)
 				return
 			}
-			if opScopedAcceptableByDesign(in.op, in.method, in.nth, diff, in.execLog) {
+			if opScopedAcceptableByDesignRun(in.op, in.method, in.nth, diff, in.execLog, &opScopedRun{success: in.result.Success, before: in.before, after: in.after}) {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
 					"explicitly documents as best-effort/non-fatal (see opScopedBestEffortTables' doc comment)",
 					label, diff)
