@@ -15,11 +15,16 @@ upstream-reportable, independent of Keyorix's own response handling.
 - `azure/` — Azure `azsecrets` Key Vault client over azcore's pipeline (retry +
   bearer-token challenge-authentication). Target: `FuzzAzureGetSecret`. Serves TLS
   because azcore refuses to attach a bearer token over plaintext http.
-- `oapiruntime/` — `github.com/oapi-codegen/runtime/types` (pinned v1.7.0,
-  `cli/go.mod`): the four custom JSON/text marshal types (`Email`, `Date`,
-  `Duration`, `File`) reached via `encoding/json` reflection from
-  `cli/internal/apiclient/types.gen.go`'s `openapi_types.Email` fields when a
-  generated `Parse*Response` function unmarshals a hostile server's response body.
+- `oapiruntime/` — `github.com/oapi-codegen/runtime/types` (v1.9.0, the version
+  root, `cli/go.mod` and `migrate/go.mod` require; a test keeps them equal): the
+  four custom JSON/text marshal types (`Email`, `Date`, `Duration`, `File`). Only
+  `Email` is reachable from shipped code, via `encoding/json` reflection from
+  `cli/internal/apiclient/types.gen.go`'s five `openapi_types.Email` fields when a
+  generated `Parse*Response` function unmarshals a hostile server's response body;
+  the other three are library-hardening targets. Input is capped at 64KB (a cap,
+  not an allocation measurement). Round-trip of quoted Email local parts is NOT
+  guaranteed upstream (#4797): the oracle tolerates exactly that class and
+  `repro_email_quoted_localpart_test.go` pins it.
   **No loopback server** — pure `[]byte → value` parsing calls, fed directly.
   Targets: `FuzzOapiRuntimeEmail`, `FuzzOapiRuntimeDate`,
   `FuzzOapiRuntimeDuration`, `FuzzOapiRuntimeFile`. Note: the DEPMATRIX1 gap

@@ -1,95 +1,126 @@
 package oapiruntime
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// TestOraclePanic_RedGreen validates the panic oracle (class (a)) red and green:
-// a deliberately panicking fn must surface a non-empty panicMsg (RED), and a
-// normally-returning fn must not (GREEN). This proves the recover() guard in
-// runOp fires on a real panic.
+// Each test drives the same helper the fuzz body calls: RED with a planted
+// defect, GREEN with the real upstream method.
+
+// TestOraclePanic_RedGreen validates the panic oracle (class (a)).
 func TestOraclePanic_RedGreen(t *testing.T) {
 	// RED: planted panic must be caught and reported.
-	panicMsg, timedOut, _ := runOp("test-panic", func() error {
+	r := runOpResult("test-panic", func() error {
 		panic("planted panic for oracle validation")
 	})
-	if timedOut {
-		t.Fatal("unexpected timeout in planted-panic case")
-	}
-	if panicMsg == "" {
-		t.Fatal("panic oracle GREEN on a planted panic — expected panicMsg to be non-empty")
+	if opViolation(r) == "" || !strings.Contains(opViolation(r), "PANIC") {
+		t.Fatalf("panic oracle GREEN on a planted panic: %+v", r)
 	}
 
-	// GREEN: a fn that returns normally must produce an empty panicMsg.
-	panicMsg2, timedOut2, _ := runOp("test-normal", func() error {
+	// GREEN: a fn that returns normally must produce no violation.
+	r = runOpResult("test-normal", func() error { return nil })
+	if v := opViolation(r); v != "" {
+		t.Fatalf("panic oracle RED on a normal return: %q", v)
+	}
+}
+
+// TestOracleHang_RedGreen validates the hang oracle (class (a)) with a short
+// watchdog: a blocked fn must time out (RED), a prompt fn must not (GREEN).
+func TestOracleHang_RedGreen(t *testing.T) {
+	old := opWatchdog
+	opWatchdog = 50 * time.Millisecond
+	t.Cleanup(func() { opWatchdog = old })
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) }) // lets the planted goroutine exit
+	r := runOpResult("test-hang", func() error {
+		<-release
 		return nil
 	})
-	if timedOut2 {
-		t.Fatal("unexpected timeout in normal-return case")
+	if !r.timedOut {
+		t.Fatal("hang oracle GREEN on a planted hang: timedOut=false")
 	}
-	if panicMsg2 != "" {
-		t.Fatalf("panic oracle RED on a normal return — panicMsg=%q", panicMsg2)
+	if !strings.HasPrefix(opViolation(r), "HANG") {
+		t.Fatalf("hang oracle verdict = %q, want HANG prefix", opViolation(r))
+	}
+
+	r = runOpResult("test-prompt", func() error { return nil })
+	if r.timedOut || opViolation(r) != "" {
+		t.Fatalf("hang oracle RED on a prompt fn: %+v", r)
 	}
 }
 
-// TestOracleIdempotence_RedGreen validates the idempotence oracle (class (b))
-// by exercising the complete round-trip chain on a known-good input (GREEN) and
-// verifying the predicate that would trigger t.Fatalf detects a divergence (RED).
-//
-// GREEN: a valid JSON-encoded email must round-trip losslessly through
-//
-//	UnmarshalJSON → MarshalJSON → UnmarshalJSON → same value.
-//
-// RED: we construct two Email values that differ and confirm the idempotence
-// predicate (e1 != e2) is true, proving that the t.Fatalf branch in
-// FuzzOapiRuntimeEmail is structurally reachable when two round-trip values differ.
+// TestOracleIdempotence_RedGreen validates the Email and Date round-trip
+// oracles through the helpers the fuzz bodies call.
 func TestOracleIdempotence_RedGreen(t *testing.T) {
-	// GREEN: drive the full Email idempotence chain (same logic as FuzzOapiRuntimeEmail).
-	validJSON := []byte(`"user@example.com"`)
+	validEmail := []byte(`"user@example.com"`)
+	validDate := []byte(`"2024-01-15"`)
 
-	var e1 openapi_types.Email
-	r := runOpResult("Email.UnmarshalJSON", func() error {
-		return e1.UnmarshalJSON(validJSON)
-	})
-	if r.panicMsg != "" || r.err != nil {
-		t.Fatalf("GREEN setup: UnmarshalJSON(%q) failed: panicMsg=%q err=%v", validJSON, r.panicMsg, r.err)
+	// GREEN: the real upstream methods round-trip valid input.
+	if v := emailRoundTripViolation(validEmail, realEmailMarshal); v != "" {
+		t.Fatalf("GREEN Email: violation on valid round-trip: %s", v)
 	}
-
-	var marshaled []byte
-	rm := runOpResult("Email.MarshalJSON", func() error {
-		var merr error
-		marshaled, merr = e1.MarshalJSON()
-		return merr
-	})
-	if rm.panicMsg != "" || rm.err != nil {
-		t.Fatalf("GREEN setup: MarshalJSON failed: panicMsg=%q err=%v", rm.panicMsg, rm.err)
+	if v := dateRoundTripViolation(validDate, realDateMarshal); v != "" {
+		t.Fatalf("GREEN Date: violation on valid round-trip: %s", v)
 	}
 
-	var e2 openapi_types.Email
-	r2 := runOpResult("Email.UnmarshalJSON(remarshaled)", func() error {
-		return e2.UnmarshalJSON(marshaled)
-	})
-	if r2.panicMsg != "" || r2.err != nil {
-		t.Fatalf("GREEN: re-UnmarshalJSON(%q) failed: panicMsg=%q err=%v", marshaled, r2.panicMsg, r2.err)
+	// RED: a marshaler that changes the value must be reported as a divergence.
+	badEmail := func(openapi_types.Email) ([]byte, error) { return []byte(`"other@x.com"`), nil }
+	if v := emailRoundTripViolation(validEmail, badEmail); !strings.Contains(v, "IDEMPOTENCE BROKEN") || !strings.Contains(v, "differ") {
+		t.Fatalf("RED Email: differing value not reported: %q", v)
 	}
-	if e1 != e2 {
-		t.Fatalf("GREEN: idempotence oracle triggered on a valid round-trip: e1=%q e2=%q", e1, e2)
+	// RED: a marshaler whose output no longer parses.
+	garbageEmail := func(openapi_types.Email) ([]byte, error) { return []byte(`42`), nil }
+	if v := emailRoundTripViolation(validEmail, garbageEmail); !strings.Contains(v, "re-UnmarshalJSON failed") {
+		t.Fatalf("RED Email: unparseable re-marshal not reported: %q", v)
 	}
-
-	// RED: prove the idempotence predicate detects a divergence. We hand-construct
-	// two Email values that differ; the oracle predicate (e1 != e2) would evaluate
-	// true, triggering t.Fatalf in the fuzz body. Here we assert the predicate
-	// directly instead of calling t.Fatalf, since this test itself must pass.
-	eA := openapi_types.Email("foo@bar.com")
-	eB := openapi_types.Email("baz@qux.com")
-	if eA == eB {
-		t.Fatal("RED setup: test emails must differ — invariant broken")
+	badDate := func(openapi_types.Date) ([]byte, error) { return []byte(`"2000-02-29"`), nil }
+	if v := dateRoundTripViolation(validDate, badDate); !strings.Contains(v, "IDEMPOTENCE BROKEN") || !strings.Contains(v, "differ") {
+		t.Fatalf("RED Date: differing value not reported: %q", v)
 	}
-	if !(eA != eB) {
-		// This can never be reached, but it validates the predicate form used in the
-		// fuzz body is structurally correct (compiler rejects a tautology in tests).
-		t.Fatal("RED: idempotence predicate did not detect differing Email values")
+	garbageDate := func(openapi_types.Date) ([]byte, error) { return []byte(`42`), nil }
+	if v := dateRoundTripViolation(validDate, garbageDate); !strings.Contains(v, "re-UnmarshalJSON failed") {
+		t.Fatalf("RED Date: unparseable re-marshal not reported: %q", v)
 	}
 }
+
+// TestOracleEmailMarshalFailure_RedGreen validates the M1 rule: a MarshalJSON
+// error after a successful UnmarshalJSON is a violation, except the pinned
+// quoted-local-part class (#4797).
+func TestOracleEmailMarshalFailure_RedGreen(t *testing.T) {
+	failing := func(openapi_types.Email) ([]byte, error) { return nil, errPlanted }
+
+	// RED: an ordinary address whose marshal fails is not the known class.
+	if v := emailRoundTripViolation([]byte(`"user@example.com"`), failing); !strings.Contains(v, "IDEMPOTENCE BROKEN") {
+		t.Fatalf("RED: marshal failure on a plain address not reported: %q", v)
+	}
+	// GREEN (tolerated): the real upstream failure on a quoted local part.
+	for _, in := range []string{`"\"a b\"@example.com"`, `"\"a@b\"@x.com"`} {
+		if v := emailRoundTripViolation([]byte(in), realEmailMarshal); v != "" {
+			t.Fatalf("GREEN: known upstream class %s reported: %s", in, v)
+		}
+	}
+	// The tolerance predicate itself: true for the class, false for a valid
+	// address and for garbage.
+	for in, want := range map[string]bool{
+		`a b@example.com`:  true,
+		`a@b@x.com`:        true,
+		`user@example.com`: false,
+		`nonsense`:         false,
+		``:                 false,
+	} {
+		if got := emailNeedsQuotedLocalPart(openapi_types.Email(in)); got != want {
+			t.Fatalf("emailNeedsQuotedLocalPart(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+type plantedError string
+
+func (e plantedError) Error() string { return string(e) }
+
+const errPlanted = plantedError("planted marshal failure")
