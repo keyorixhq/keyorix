@@ -8,6 +8,10 @@
 #
 # Usage: oracle-health.sh [--list] [--only id[,id...]] [--heavy] [--strict]
 #                         [--ref REF] [--workdir DIR] [--tsv FILE] [--keep]
+#                         [--root DIR] [--entries DIR]
+#   --root     repo to test (default: the checkout this script lives in); a Go repo
+#              such as dashdiag works the same way, patches apply to that tree
+#   --entries  registry directory (default: entries.d next to this script)
 #   --list     print the registry and exit
 #   --only     run just these entries
 #   --heavy    include entries marked HEAVY=1 (minutes; meant for the nightly host)
@@ -28,9 +32,11 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$here/lib.sh"
 entries="$here/entries.d"
 
-only="" heavy=0 strict=0 ref=HEAD workdir="" tsv="" keep=0 list=0
+only="" heavy=0 strict=0 ref=HEAD workdir="" tsv="" keep=0 list=0 root_arg=""
 while [ $# -gt 0 ]; do
 	case $1 in
+	--root) root_arg=$2; shift ;;
+	--entries) entries=$2; shift ;;
 	--list) list=1 ;;
 	--only) only=$2; shift ;;
 	--heavy) heavy=1 ;;
@@ -39,7 +45,7 @@ while [ $# -gt 0 ]; do
 	--workdir) workdir=$2; shift ;;
 	--tsv) tsv=$2; shift ;;
 	--keep) keep=1 ;;
-	-h | --help) sed -n '2,22p' "${BASH_SOURCE[0]}"; exit 0 ;;
+	-h | --help) sed -n '2,27p' "${BASH_SOURCE[0]}"; exit 0 ;;
 	*) echo "oracle-health: unknown argument $1" >&2; exit 2 ;;
 	esac
 	shift
@@ -76,7 +82,8 @@ if [ $list = 1 ]; then
 	exit 0
 fi
 
-root=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null) || { echo "oracle-health: not inside a git checkout" >&2; exit 2; }
+root=$(git -C "${root_arg:-$here}" rev-parse --show-toplevel 2>/dev/null) || { echo "oracle-health: not inside a git checkout" >&2; exit 2; }
+[ -d "$entries" ] || { echo "oracle-health: no registry directory $entries" >&2; exit 2; }
 sha=$(git -C "$root" rev-parse --short=12 "$ref") || { echo "oracle-health: unknown ref $ref" >&2; exit 2; }
 if [ -z "$workdir" ]; then workdir=$(mktemp -d) || exit 2; fi
 mkdir -p "$workdir"
@@ -106,7 +113,7 @@ make_tree() {
 		log "worktree $dir"
 	else
 		made+=("$dir")
-		mkdir -p "$dir" && git -C "$root" archive "$ref" | tar -x --exclude='.claude' -C "$dir" || return 1
+		mkdir -p "$dir" && git -C "$root" archive "$ref" | tar -x --exclude='.claude' --exclude='.mcp.json' -C "$dir" || return 1
 		log "export $dir (git worktree unavailable here)"
 		return 0
 	fi

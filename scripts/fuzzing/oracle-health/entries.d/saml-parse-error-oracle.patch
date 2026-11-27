@@ -1,0 +1,12 @@
+diff --git a/internal/saml/provider.go b/internal/saml/provider.go
+--- a/internal/saml/provider.go
++++ b/internal/saml/provider.go
+@@ -270,7 +270,7 @@
+ 		} else {
+ 			log.Printf("saml: provider %q: response validation failed: %v", p.name, err)
+ 		}
+-		return nil, errInvalidSAMLResponse
++		return nil, err
+ 	}
+ 	// The library binds Subject.NameID by local name only; confirm the identifier it
+ 	// authenticated is the one our namespace-strict parse found.

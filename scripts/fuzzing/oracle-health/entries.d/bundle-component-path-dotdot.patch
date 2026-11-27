@@ -1,0 +1,12 @@
+diff --git a/pkg/bundleverify/bundleverify.go b/pkg/bundleverify/bundleverify.go
+--- a/pkg/bundleverify/bundleverify.go
++++ b/pkg/bundleverify/bundleverify.go
+@@ -146,7 +146,7 @@
+ // escape/absolute shapes (Windows UNC-style paths become absolute-looking only after
+ // filepath.ToSlash + path.Clean run; this re-check catches that regardless of platform).
+ func isUnsafeCleanComponentPath(clean string) bool {
+-	return clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/")
++	return clean == "." || clean == ".." || strings.HasPrefix(clean, "/")
+ }
+
+ // BuildManifest walks srcDir and pins every regular file (by relative path) with its

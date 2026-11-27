@@ -1,0 +1,30 @@
+diff --git a/internal/backupfmt/reader.go b/internal/backupfmt/reader.go
+--- a/internal/backupfmt/reader.go
++++ b/internal/backupfmt/reader.go
+@@ -77,7 +77,7 @@
+ 		// attacker-controlled here: the manifest is not signature-verified
+ 		// until after extraction. Refuse absolute paths and any ".." escape
+ 		// before anything is written (tar-slip; Session P, 2026-09-29).
+-		if !filepath.IsLocal(hdr.Name) {
++		if false {
+ 			return Manifest{}, fmt.Errorf(
+ 				"archive entry %q is not a safe relative path (absolute path or path traversal) -- restore refuses it", hdr.Name)
+ 		}
+@@ -184,7 +184,7 @@
+ // signature-verified). ExtractArchive already refuses a non-local name; the
+ // check is repeated here so stageFile stays safe for any future caller.
+ func stageFile(stagingDir, name string, data []byte) error {
+-	if !filepath.IsLocal(name) {
++	if false {
+ 		return fmt.Errorf("refusing to stage %q: not a safe relative path", name)
+ 	}
+ 	dest := filepath.Join(stagingDir, name)
+@@ -205,7 +205,7 @@
+ // and refusals are readCapped's; a refused entry leaves no staged file.
+ func stageEntry(tr io.Reader, stagingDir, name string, declaredSize int64, declaredSHA256 string,
+ 	maxTotalBytes int64, totalRead *int64) (err error) {
+-	if !filepath.IsLocal(name) {
++	if false {
+ 		return fmt.Errorf("refusing to stage %q: not a safe relative path", name)
+ 	}
+ 	dest := filepath.Join(stagingDir, name)
