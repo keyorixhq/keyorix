@@ -1,0 +1,13 @@
+diff --git a/internal/core/connect.go b/internal/core/connect.go
+--- a/internal/core/connect.go
++++ b/internal/core/connect.go
+@@ -623,9 +623,6 @@
+ // be vulnerable to, mirroring the guard on prefixAllowed for the coarser allowed_refs
+ // check.
+ func refMatches(pattern, ref string) bool {
+-	if ports.RefHasDotSegment(ref) {
+-		return false
+-	}
+ 	if !strings.ContainsAny(pattern, "*?[") {
+ 		if pattern == "" {
+ 			return true // empty pattern = connector-wide grant

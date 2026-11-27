@@ -1,0 +1,5 @@
+### Testing
+- **DNS rebinding is now fuzzed at the six link-local egress sites.** Six new test-only fuzz targets (`FuzzOIDCDiscoveryResolverRebinding`, `FuzzJWKSResolverRebinding`, `FuzzConnect{Vault,Azure,AWS}ResolverRebinding`, `FuzzAzureGraphResolverRebinding`) dial each site's real transport at a hostname served by an in-process DNS stub behind `net.DefaultResolver` that answers a fuzzed address pair first and 169.254.169.254 afterwards. They check that a mixed answer set is refused whole, that a permitted dial connects to the validated address and not the later one, and that the guard resolves once per dial. The shared oracle is `egressref.CheckRebind`, red-proofed against a planted no-guard dialer, a first-answer-only validator, a validate-once guard that redials by name, and an over-blocking guard. No product code changed.
+
+### Documentation
+- `docs/security/egress-inventory.md`: the coverage column and the "not covered" paragraph now record the rebinding targets and what they do not verify (a real DNS server, the cgo resolver, the egress-proxy case).
