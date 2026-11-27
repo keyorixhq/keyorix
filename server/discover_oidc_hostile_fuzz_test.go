@@ -130,7 +130,10 @@ func FuzzDiscoverOIDCHostile(f *testing.F) {
 		{200, "", []byte(`null`)},
 		{200, "", nil},
 	} {
-		f.Add(s.status, s.loc, s.body)
+		// The fuzz body serves HTTP 200+st%400, so a seed's status is stored as
+		// its offset from 200. Before #4738 the literal was passed through, and
+		// every "200" seed was served as 400: no seed reached the oracle.
+		f.Add(s.status-200, s.loc, s.body)
 	}
 
 	f.Fuzz(func(t *testing.T, st uint16, loc string, doc []byte) {
