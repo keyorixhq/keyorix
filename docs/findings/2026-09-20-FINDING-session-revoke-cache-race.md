@@ -16,6 +16,7 @@ tests: `TestSessionRevoke_ConcurrentRevokeDoesNotResurrectCachedAuth`,
 (`server/http/session_cache_chokepoint_test.go`), and
 `FuzzConcurrentOpsLinearizable` (`server/http/concurrent_linearizable_fuzz_test.go`,
 landed in this PR with 13 archived crashers as seed corpus).
+**Regression test:** `TestSessionRevoke_ConcurrentRevokeDoesNotResurrectCachedAuth` (`server/http`)
 **Severity: Medium.** See "Severity" below.
 
 ## Summary
