@@ -108,6 +108,10 @@ func generate(root string) ([]DepRow, string, error) {
 		return nil, "", fmt.Errorf("scanRepo: %w", err)
 	}
 
+	if sr.skipped > 0 {
+		fmt.Fprintf(os.Stderr, "depmatrix: %d go files/dirs could not be read or parsed and were skipped (a skipped importer can hide a gap)\n", sr.skipped)
+	}
+
 	// 4. Load targets.d conf files.
 	targetsD, err := loadTargetsD(root)
 	if err != nil {

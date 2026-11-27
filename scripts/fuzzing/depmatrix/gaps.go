@@ -19,6 +19,10 @@
 // WHAT THE CHECKS DO NOT VERIFY:
 //   - That an exempted dependency is actually safe; the reason is prose.
 //   - That a fuzz target covering a dependency is any good (see the README).
+//   - That a WRAPPED dependency is reached by its fuzz target: WRAPPED is
+//     counted as covered on import evidence alone (a fuzz file imports an own
+//     package whose non-test files import the dependency), with no proof the
+//     fuzzed path calls into it.
 //   - Anything about versions or import counts: the checks deliberately ignore
 //     them so a dependency bump or an extra import of a known module cannot
 //     fail them.
