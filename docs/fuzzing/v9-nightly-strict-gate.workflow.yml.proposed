@@ -1,0 +1,120 @@
+# Proposed workflow: FuzzOpenAPIStateful nightly strict gate
+#
+# NOT under .github/workflows/ — this is a proposal only. Enabling it
+# requires a maintainer decision: a ~15 runner-minute nightly job on a
+# CI-runner-constrained repo. See docs/fuzzing/v9-status.md for context.
+#
+# WHAT THIS GATES:
+#   Oracle 1 (no undeclared 5xx) in STRICT MODE (KEYORIX_OSF_STRICT=1):
+#   a well-formed request returning an undeclared 5xx is fatal, not just logged.
+#   The committed waiver list (osKnownUndeclared5xx) keeps the job green for
+#   already-documented defects (OPENAPI-STATEFUL-7/1/9/10 tracked in #4132);
+#   only a NEW undeclared-5xx regression triggers a failure.
+#
+#   Oracles 2-7 are always fatal (not strict-mode gated) and also run here.
+#   TestOSFErrorMapperCensus and TestOSFDenialExistenceCensus (oracles 6/7's
+#   deterministic proving tests) run first, without the -fuzz flag, so a
+#   census failure is immediately distinguishable from a fuzzer finding.
+#
+# WHY SCHEDULED CRON, NOT MERGE QUEUE:
+#   Fuzzing is non-deterministic and slow (~5 min fuzz time + build). Adding it
+#   to the merge queue would increase queue latency for every PR by ~12-15 min.
+#   The oracle-1 regressions this gate catches are handler classification bugs
+#   (a core error that maps to 500 instead of 4xx) — the kind that arrives with
+#   a new feature, so a nightly run against main catches it within one day.
+#   Oracles 2-5 already gate the merge queue via ci.yml's test-suite leg
+#   (which runs `go test ./server/http/...` including the seed corpus).
+#
+# RUNNER-MINUTE COST (estimated):
+#   - actions/checkout + go setup (cached): ~1 min
+#   - go test -run census (no compile needed after setup-go cache): ~30s
+#   - go test -fuzz 300s (seed corpus replay + 5 min new coverage): ~6-7 min
+#   Total per night: ~8-10 runner-minutes on ubuntu-24.04.
+#   At GitHub's standard rate that is negligible. The scheduling concern for
+#   this repo is PEAK MERGE-QUEUE load (02:00-05:00 UTC); a nightly job outside
+#   that window does not compete. 09:43 UTC is the proposed slot.
+#
+# WHAT IT DOES NOT VERIFY (documented per "ask of any mechanism"):
+#   - Only oracle 1 changes behaviour under strict mode; oracles 2-7 are
+#     always fatal regardless of this env var.
+#   - The 5-minute fuzz window explores new coverage probabilistically.
+#     It does NOT enumerate every code path; a defect reachable only through
+#     a rare multi-step interaction may not be found in any single 5-minute run.
+#   - osKnownUndeclared5xx waivers silence the documented defects — a handler
+#     whose ENTIRE error surface is waived cannot trigger a failure even if a
+#     genuinely NEW error class is added to the same handler. The waiver is
+#     per-(opID,princ,code,bodyContains) match, not per-operation global.
+#   - The run uses SQLite (the in-process backend). Postgres-specific error
+#     codes (e.g. constraint classes that differ between drivers) are not
+#     exercised.
+#   - New operations added to openapi.yaml but not yet covered by the seed
+#     pools (osSeedWorld) will be called with absent-id parameters; a handler
+#     that maps "not found on a seeded id" differently from "not found on an
+#     unseeded id" may not be reached.
+
+name: FuzzOpenAPIStateful strict gate (nightly)
+
+on:
+  schedule:
+    # 09:43 UTC nightly, off the round minute and clear of this repo's other
+    # nightly slots (trivy 09:17, pg-race-tests 08:27, sonarcloud 08:07,
+    # docker-publish 08:21, guard-nightly 07:53, e2e-nightly 07:13, etc.).
+    - cron: '43 9 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: osf-strict-gate
+  cancel-in-progress: false
+
+jobs:
+  osf-strict-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Run the deterministic census tests first. A failure here identifies a
+      # specific handler/oracle violation without needing to interpret fuzzer
+      # output. The census covers ALL 310 operations; the fuzzer samples them.
+      - name: Oracle 6/7 census (deterministic, all operations)
+        run: |
+          go test -run 'TestOSFErrorMapperCensus|TestOSFDenialExistenceCensus' \
+            -v -count=1 ./server/http/ 2>&1 \
+            | tee /tmp/osf-census.log
+          grep -E '^(--- FAIL|FAIL|panic)' /tmp/osf-census.log && exit 1 || true
+
+      # Run FuzzOpenAPIStateful in strict mode. KEYORIX_OSF_STRICT=1 makes
+      # oracle 1 fatal for well-formed requests returning an undeclared 5xx.
+      # -fuzztime 300s = 5 minutes of fuzzing; replays the seed corpus first.
+      - name: FuzzOpenAPIStateful strict (5 min, oracles 1-7)
+        env:
+          KEYORIX_OSF_STRICT: "1"
+        run: |
+          go test -run '^$' -fuzz 'FuzzOpenAPIStateful' -fuzztime 300s \
+            -parallel 2 ./server/http/ 2>&1 \
+            | tee /tmp/osf-strict.log
+          grep -E '^(--- FAIL|FAIL|panic)' /tmp/osf-strict.log && exit 1 || true
+
+  alert:
+    needs: [osf-strict-gate]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open, update or close the alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+        run: ./scripts/ci/failure-issue.sh "$OUTCOME" "Nightly FuzzOpenAPIStateful strict gate is failing"

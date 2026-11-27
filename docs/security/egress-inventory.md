@@ -195,16 +195,16 @@ dial guard. Redirects: `refused` = `CheckRedirect` returns an error or `ErrUseLa
 | S06 | `internal/notary/rfc3161.go` | E05 | O | no | scheme only (`netutil` here is URL redaction, not a dial guard) | refused | none needed |
 | S07 | `internal/evidencesink/webhook.go` | E06 | O | no | netutil, loopback-permitted tier | same-host only, no downgrade, bounded hops | `FuzzEgressGuardParity` |
 | S08 | `internal/evidencesink/objectstore.go` | E06 | O | no | own: the endpoint's address is resolved once and every dial of that client goes to that pinned IP, so a redirect cannot leave the endpoint. Private endpoints are allowed by design | default, but pinned to the endpoint IP | none: operator-only |
-| S09 | `server/wire_sso.go` (discovery GET; its client also carries S10) | E08 | O (issuer) | no | netutil, link-local tier | same-host | **new** `FuzzOIDCDiscoveryTransportEgressParity` (drives the `oidcDiscoveryTransport` var; the client is `ssoIdPHTTPClient`, shared with S10) |
+| S09 | `server/wire_sso.go` (discovery GET; its client also carries S10) | E08 | O (issuer) | no | netutil, link-local tier | same-host | **new** `FuzzOIDCDiscoveryTransportEgressParity` (drives the `oidcDiscoveryTransport` var; the client is `ssoIdPHTTPClient`, shared with S10); rebinding: `FuzzOIDCDiscoveryResolverRebinding` (stubbed stdlib resolver, same transport var) |
 | S10 | `internal/core/sso.go` (code exchange, `Exchange`) | E08 | H (`token_endpoint` from the discovery document), held at discovery to the issuer's host or an operator-listed `token_endpoint_hosts` entry, https unless the issuer is http on loopback | no (since #4738): a compromised IdP can still name any port and path on its own host or a listed host (RFC-1918 and loopback reachable by design; for an http-loopback dev issuer, any loopback port) | netutil, link-local tier: the provider's `HTTPClient`, the same `ssoIdPHTTPClient` (transport `oidcDiscoveryTransport`) as S09; `CompleteSSO` refuses a provider without one instead of falling back to `http.DefaultClient` | same-host (the S09 policy) | **new** `FuzzSSOExchangeTransportEgressParity` (drives the client `buildSSOProviders` puts on the provider), `TestSSOExchangeClientIsTheDiscoveryClient`, `FuzzDiscoverOIDCHostile` (token_endpoint oracle). Finding F2, fixed |
-| S11 | `internal/oidcverify/oidc_jwks.go` | E09 | O (`jwks_uri`) | no | netutil, link-local tier; https required | same-host, max 3 hops | **new** `FuzzJWKSTransportEgressParity` (drives the client `NewHTTPJWKSResolver` builds) |
-| S12 | `internal/connect/vault.go`, `hardened_client.go` | E10 | O (connector `address`) | no. The `ref` a caller reads is a path inside that address, and `allowed_refs` limits it | netutil, link-local tier, plus a request-target check for a literal link-local host | refused | **new** `FuzzConnectVaultTransportEgressParity` (drives the client `NewVaultConnector` builds) |
-| S13 | `internal/connect/azurekv.go` | E10 | O (vault URL) | no | netutil, link-local tier | refused | **new** `FuzzConnectAzureTransportEgressParity` (drives `azureKVHTTPClient`, the client handed to azsecrets) |
-| S14 | `internal/connect/awssm.go` | E10 | O (region, from the SDK endpoint rules); an ARN in a caller's `ref` does not choose the endpoint | no | netutil, link-local tier | refused | **new** `FuzzConnectAWSTransportEgressParity` (drives `awsSMHTTPClient`, the client installed in the SDK) |
+| S11 | `internal/oidcverify/oidc_jwks.go` | E09 | O (`jwks_uri`) | no | netutil, link-local tier; https required | same-host, max 3 hops | **new** `FuzzJWKSTransportEgressParity` (drives the client `NewHTTPJWKSResolver` builds); rebinding: `FuzzJWKSResolverRebinding` |
+| S12 | `internal/connect/vault.go`, `hardened_client.go` | E10 | O (connector `address`) | no. The `ref` a caller reads is a path inside that address, and `allowed_refs` limits it | netutil, link-local tier, plus a request-target check for a literal link-local host | refused | **new** `FuzzConnectVaultTransportEgressParity` (drives the client `NewVaultConnector` builds); rebinding: `FuzzConnectVaultResolverRebinding` |
+| S13 | `internal/connect/azurekv.go` | E10 | O (vault URL) | no | netutil, link-local tier | refused | **new** `FuzzConnectAzureTransportEgressParity` (drives `azureKVHTTPClient`, the client handed to azsecrets); rebinding: `FuzzConnectAzureResolverRebinding` |
+| S14 | `internal/connect/awssm.go` | E10 | O (region, from the SDK endpoint rules); an ARN in a caller's `ref` does not choose the endpoint | no | netutil, link-local tier | refused | **new** `FuzzConnectAWSTransportEgressParity` (drives `awsSMHTTPClient`, the client installed in the SDK); rebinding: `FuzzConnectAWSResolverRebinding` |
 | S15 | `internal/connect/gcpsm.go` | E10 | C | no | none (gRPC to the SDK's constant endpoint); size caps only | n/a | none needed |
 | S16 | `internal/crypto/azurekms/azurekms.go` | E11 | O (`kms_key_id`, host must end in an Azure Key Vault suffix) | no | netutil, private tier (loopback refused too), resolver seam `azureKMSResolve` | default (followed); every hop is re-dialed through the guard | **new** `FuzzAzureKMSTransportEgressParity`, `FuzzAzureKMSResolverRebinding` |
 | S17 | `internal/crypto/awskms`, `gcpkms` | E11 | C | no | none (SDK constant endpoints) | n/a | none needed |
-| S18 | `internal/rotation/azure.go` (Microsoft Graph) | E12 | C (hard-coded Graph host) | no | netutil, link-local tier (a hostile redirect or proxy is the only route in) | refused | **new** `FuzzAzureGraphTransportEgressParity` |
+| S18 | `internal/rotation/azure.go` (Microsoft Graph) | E12 | C (hard-coded Graph host) | no | netutil, link-local tier (a hostile redirect or proxy is the only route in) | refused | **new** `FuzzAzureGraphTransportEgressParity`; rebinding: `FuzzAzureGraphResolverRebinding` |
 | S19 | `internal/rotation/awsiam.go`, `gcpsa.go`, `azure_sdk.go` | E12 | C | no | none (SDK constant endpoints) | n/a | none needed |
 | S20 | `internal/rotation/postgres.go`, `mysql.go`, `mongodb.go`, `redis.go` | E12 | O (`dsn_env`) | no | none for private networks (the target is the operator's own database); MySQL and RESP responses are bounded by `netutil.MySQLGuardDialer` / `RESPGuardDialer` | n/a | response-bound fuzzers only |
 | S21 | `internal/dynamic/postgres.go`, `mysql.go`, `mongodb.go`, `redis.go` | E13 | P (`admin_dsn`) | **yes** (project admin) | netutil, private tier, every dial, opt-out `allow_private_network`; `mongodb+srv` targets pre-validated | n/a | `FuzzAdminDSNHostSSRFGuard`, `FuzzSSRFGuardDifferential`, `FuzzDSNHostsCoverDriverHosts`, `FuzzEgressDialEnforcement`; table tests `internal/dynamic/egress_guard_test.go` |
@@ -274,12 +274,45 @@ encoding gap), a tier that over-blocks, a first-answer-only validator and a doub
 resolution, and fails unless each one turns the oracle red, while the real netutil predicates
 stay green.
 
-Not covered: DNS rebinding at the link-local sites (S09, S10, S11, S12 to S14, S18) has no
-resolver seam, so only literal addresses are driven there (the Dialer's pinning is covered by
-`FuzzEgressDialEnforcement`); with an egress proxy configured the dial targets the proxy, not
-the destination (accepted and documented at each site); the loopback-permitted tier sites
-(S01, S03, S05, S07) are covered at the predicate level and by table tests, not by a
-transport-level fuzz target.
+DNS rebinding at the link-local sites. None of S09, S11, S12 to S14 and S18 has a resolver
+field on its `netutil.Dialer` (only S16 does, `azureKMSResolve`), so their rebinding targets
+(`FuzzOIDCDiscoveryResolverRebinding`, `FuzzJWKSResolverRebinding`,
+`FuzzConnect{Vault,Azure,AWS}ResolverRebinding`, `FuzzAzureGraphResolverRebinding`) go through
+the one seam every one of them shares, the standard library's `net.DefaultResolver`:
+`egressref.RebindDNS` installs a Go resolver whose connection is an in-process DNS server, so
+the site's real `DialContext` resolves through the real stdlib resolver code. The server
+answers the first A and AAAA lookup with a fuzzed pair of addresses (ten encodings each) and
+every later lookup with 169.254.169.254. The oracle (`egressref.CheckRebind`) requires:
+
+- the whole first answer set is refused when the link-local tier refuses any address in it
+  (a mixed public/link-local answer), whatever the order;
+- when the set is permitted (served as loopback, so the connect lands on a listener the
+  oracle owns and nothing leaves the machine), the connection is to the validated address and
+  never to the later answer;
+- exactly one A and one AAAA query per dial, so no second lookup sits between validation and
+  connect (zero would mean the stub is not in the path, and fails too).
+
+What these targets do not verify: a real DNS server or network resolution, the cgo resolver,
+`/etc/hosts` and search-domain handling (the name is rooted), a site configured with an egress
+proxy, or over-blocking of a legitimate public address in the rebinding case (the set a
+permitted pair is served as is loopback; the parity targets judge public addresses on
+literals). The stub replaces a process-global variable, so these targets must not run in
+parallel with a test that resolves names. S16 keeps its own seam-based
+`FuzzAzureKMSResolverRebinding`, which drives a pre-cancelled context and therefore cannot
+check where a permitted dial connects.
+
+Red proof of the rebinding oracle is `TestOracleRebind` in
+`internal/fuzzutil/egressref/egressref_test.go`: the real guard is green across the sweep, and
+a planted no-guard dialer, a first-answer-only validator, a validate-once guard that redials by
+hostname (second lookup, connection to the rebound address) and an over-blocking guard each turn
+it red for their own reason.
+
+Not covered: with an egress proxy configured the dial targets the proxy, not the destination
+(accepted and documented at each site); the loopback-permitted tier sites (S01, S03, S05, S07)
+are covered at the predicate level and by table tests, not by a transport-level fuzz target;
+S22 (finding F1) has no guard to fuzz yet. S10 (the SSO code exchange) runs on the S09 client
+and is driven by `FuzzSSOExchangeTransportEgressParity`; the rebinding target drives the shared
+transport variable, not the exchange client itself.
 
 ## Needs coordinator
 

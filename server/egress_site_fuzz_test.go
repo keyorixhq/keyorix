@@ -23,8 +23,9 @@ func FuzzOIDCDiscoveryTransportEgressParity(f *testing.F) {
 // buildSSOProviders builds it from a discovery document, not the transport
 // variable. A provider built with another client, or with a transport that lost
 // the guard, turns this red. Not covered: the redirect policy (see
-// TestSSOExchangeClientIsTheDiscoveryClient) and DNS rebinding (no resolver seam
-// at the link-local sites, see docs/security/egress-inventory.md).
+// TestSSOExchangeClientIsTheDiscoveryClient) and DNS rebinding against the exchange
+// client itself (FuzzOIDCDiscoveryResolverRebinding drives the transport variable;
+// see docs/security/egress-inventory.md).
 func FuzzSSOExchangeTransportEgressParity(f *testing.F) {
 	p := buildSSOExchangeTestProvider(f)
 	tr, ok := p.HTTPClient.Transport.(*http.Transport)
@@ -33,5 +34,15 @@ func FuzzSSOExchangeTransportEgressParity(f *testing.F) {
 	}
 	egressref.Run(f, "server.ssoIdPHTTPClient(exchange)",
 		func() egressref.DialFunc { return tr.DialContext },
+		egressref.LinkLocalTier)
+}
+
+// FuzzOIDCDiscoveryResolverRebinding drives a hostname through the stdlib resolver (an
+// in-process DNS stub, see egressref.RebindDNS) whose answer changes after the first
+// lookup, and dials it through oidcDiscoveryTransport. It does NOT verify a real DNS
+// server, the cgo resolver, or the egress-proxy case, and it drives the transport
+// variable, not the inline client of the discovery call.
+func FuzzOIDCDiscoveryResolverRebinding(f *testing.F) {
+	egressref.RunRebind(f, func() egressref.DialFunc { return oidcDiscoveryTransport.DialContext },
 		egressref.LinkLocalTier)
 }
