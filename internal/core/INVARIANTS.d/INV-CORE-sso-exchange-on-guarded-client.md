@@ -4,8 +4,8 @@
   (`errSSONoExchangeClient`), never left to x/oauth2's `http.DefaultClient` fallback. The
   wiring (`server/wire_sso.go` `buildSSOProviders`) sets it to `ssoIdPHTTPClient`, the
   discovery client: `oidcDiscoveryTransport` (netutil link-local dial guard) and
-  `noDiscoveryCrossOriginRedirect` (same origin, no https downgrade, at most 3 requests), so
-  a 307 cannot resend the code, PKCE verifier and client credentials to another origin. At
+  `noDiscoveryCrossOriginRedirect` (same host and port, never https to http, at most 3 requests),
+  so a 307 cannot resend the code, PKCE verifier and client credentials to another host or port. At
   discovery the `token_endpoint` must be on the issuer's host or a host listed in
   `sso.providers[].token_endpoint_hosts`, and https unless the issuer is http on loopback
   (`validateTokenEndpoint`). Why: #4738 (V7-GAP-1 egress inventory, finding F2): the
@@ -15,12 +15,17 @@
   `TestSSOTokenExchangeCrossOriginRedirectNotFollowed` (real discovery → `buildSSOProviders`
   → `BeginSSO` → `CompleteSSO`; assert a second listener receives nothing; red on the
   pre-fix code), `TestSSOTokenExchangeSameOriginControl` (green control),
-  `TestSSOExchangeClientIsTheDiscoveryClient` (transport identity and redirect verdicts
-  equal to discovery's), `FuzzSSOExchangeTransportEgressParity` (the built client's dial
+  `TestSSOExchangeClientIsTheDiscoveryClient` (transport identity, explicit redirect
+  verdicts), `TestValidateTokenEndpoint` (listed hosts, scheme, userinfo, empty host),
+  `internal/core` `TestCompleteSSO_RefusesProviderWithoutExchangeClient` (nil client: refused,
+  token endpoint receives nothing), `FuzzSSOExchangeTransportEgressParity` (the built client's dial
   hook against `internal/fuzzutil/egressref`), `FuzzDiscoverOIDCHostile` (token_endpoint
   host and scheme oracle). **Not covered**: a dial to a real link-local address end to end
   (no test can listen there; the fuzz target reads the guard's refusal with a cancelled
   context); DNS rebinding of the issuer's own host to a link-local address is refused by the
-  dial guard but has no resolver seam to drive it; an operator-listed host is trusted as
-  listed; the `authorization_endpoint` is not host-checked (the server never dials it, the
+  dial guard but has no resolver seam to drive it; a compromised IdP can still name any port
+  and path on its own host or a listed host (RFC-1918 and loopback are reachable by design, so for an
+  http-loopback dev issuer that is any loopback port); an operator-listed host is trusted as listed;
+  the link-local tier permits the non-link-local metadata addresses listed in the egress inventory
+  (`fd00:ec2::254`, Oracle, Alibaba); the `authorization_endpoint` is not host-checked (the server never dials it, the
   browser is redirected there); with an egress proxy the dial targets the proxy.

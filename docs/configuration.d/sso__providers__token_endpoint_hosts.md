@@ -26,5 +26,8 @@ sso:
 ```
 
 The code exchange itself runs on the same guarded client as discovery: it never dials
-a link-local (cloud metadata) address and follows a redirect only within the same
-origin, without downgrading https.
+169.254.0.0/16 or fe80::/10 directly (including the shared cloud metadata address
+169.254.169.254) and follows a redirect only to the same host and port, never from https
+to http. That tier does not cover every metadata address (for example AWS's IPv6
+`fd00:ec2::254`), and with an egress proxy the guard applies to the proxy; see
+`docs/security/egress-inventory.md`.

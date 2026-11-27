@@ -50,7 +50,7 @@ var oidcDiscoveryTransport = func() *http.Transport {
 // ssoIdPHTTPClient is the one client for every server-side request to an OIDC
 // identity provider: the discovery GET and the authorization-code exchange
 // (#4738). Both get oidcDiscoveryTransport's link-local dial guard and the
-// same-origin, no-downgrade, bounded redirect policy. Before #4738 the exchange
+// same host:port, never https->http, bounded redirect policy. Before #4738 the exchange
 // carried no client in its context, so x/oauth2 used http.DefaultClient: no dial
 // guard, and up to 10 redirects followed, including a 307 that resends the POST
 // (code, PKCE verifier, client credentials) to another origin.
@@ -123,7 +123,7 @@ func discoverOIDC(issuer string, tokenEndpointHosts ...string) (*oidcDiscovery, 
 // it, it only redirects the browser there.
 func validateTokenEndpoint(raw string, iss *url.URL, extraHosts []string) error {
 	tok, err := url.Parse(raw)
-	if err != nil || tok.Host == "" {
+	if err != nil || tok.Hostname() == "" {
 		return fmt.Errorf("discovery token_endpoint is invalid")
 	}
 	switch {
@@ -137,6 +137,9 @@ func validateTokenEndpoint(raw string, iss *url.URL, extraHosts []string) error 
 		return nil
 	}
 	for _, h := range extraHosts {
+		if strings.TrimSpace(h) == "" {
+			continue
+		}
 		if strings.EqualFold(host, strings.TrimSpace(h)) {
 			return nil
 		}
@@ -172,14 +175,14 @@ func noDiscoveryCrossOriginRedirect(req *http.Request, via []*http.Request) erro
 		return nil
 	}
 	if len(via) >= maxDiscoveryRedirects {
-		return fmt.Errorf("discovery: refusing redirect after %d hops", len(via))
+		return fmt.Errorf("sso idp: refusing redirect after %d hops", len(via))
 	}
 	prev := via[len(via)-1].URL
 	if !strings.EqualFold(req.URL.Host, prev.Host) {
-		return fmt.Errorf("discovery: refusing cross-host redirect to %q", req.URL.Host)
+		return fmt.Errorf("sso idp: refusing cross-host redirect to %q", req.URL.Host)
 	}
 	if prev.Scheme == "https" && req.URL.Scheme != "https" {
-		return fmt.Errorf("discovery: refusing scheme downgrade to %q", req.URL.Scheme)
+		return fmt.Errorf("sso idp: refusing scheme downgrade to %q", req.URL.Scheme)
 	}
 	return nil
 }

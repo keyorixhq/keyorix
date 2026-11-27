@@ -3,7 +3,8 @@ package main
 // #4738 wiring guard: the client the OIDC code exchange runs on is the discovery
 // client (same transport, same redirect policy), so the two cannot drift apart
 // silently. The dial side is fuzzed by FuzzSSOExchangeTransportEgressParity; this
-// test pins the transport identity and the redirect verdicts. It does not prove
+// test pins the transport identity and the redirect verdicts (explicit, not
+// compared with the discovery function, which is the same function). It does not prove
 // that CompleteSSO uses the client (sso_exchange_egress_test.go does, by effect).
 
 import (
@@ -63,30 +64,58 @@ func TestSSOExchangeClientIsTheDiscoveryClient(t *testing.T) {
 		return out
 	}
 	for _, tc := range []struct {
-		to  string
-		via []*http.Request
+		to    string
+		via   []*http.Request
+		allow bool
 	}{
-		{"https://idp.example.com/b", via("https://idp.example.com/a")},
-		{"https://idp.example.com:8443/b", via("https://idp.example.com/a")},
-		{"http://127.0.0.1:2222/b", via("http://127.0.0.1:1111/a")},
-		{"https://other.example.com/b", via("https://idp.example.com/a")},
-		{"http://idp.example.com/b", via("https://idp.example.com/a")},
-		{"http://169.254.169.254/latest", via("http://127.0.0.1:1111/token")},
-		{"https://idp.example.com/c", via("https://idp.example.com/a", "https://idp.example.com/b")},
-		{"https://idp.example.com/d", via("https://idp.example.com/a", "https://idp.example.com/b", "https://idp.example.com/c")},
+		{"https://idp.example.com/b", via("https://idp.example.com/a"), true},
+		{"https://IDP.example.com/b", via("https://idp.example.com/a"), true},
+		{"https://idp.example.com:8443/b", via("https://idp.example.com/a"), false},
+		{"http://127.0.0.1:2222/b", via("http://127.0.0.1:1111/a"), false},
+		{"https://other.example.com/b", via("https://idp.example.com/a"), false},
+		{"http://idp.example.com/b", via("https://idp.example.com/a"), false},
+		{"http://169.254.169.254/latest", via("http://127.0.0.1:1111/token"), false},
+		{"https://idp.example.com/c", via("https://idp.example.com/a", "https://idp.example.com/b"), true},
+		{"https://idp.example.com/d", via("https://idp.example.com/a", "https://idp.example.com/b", "https://idp.example.com/c"), false},
 	} {
-		got := c.CheckRedirect(mk(tc.to), tc.via) == nil
-		want := noDiscoveryCrossOriginRedirect(mk(tc.to), tc.via) == nil
-		if got != want {
-			t.Errorf("redirect to %s after %d hop(s): exchange allows=%v, discovery allows=%v", tc.to, len(tc.via), got, want)
+		if got := c.CheckRedirect(mk(tc.to), tc.via) == nil; got != tc.allow {
+			t.Errorf("redirect to %s after %d request(s): allowed=%v, want %v", tc.to, len(tc.via), got, tc.allow)
 		}
 	}
-	// The verdicts above only compare the two; pin the ones that matter so an
-	// equally permissive pair is not green.
-	if c.CheckRedirect(mk("http://127.0.0.1:2222/b"), via("http://127.0.0.1:1111/a")) == nil {
-		t.Error("exchange client follows a redirect to another port of the same host")
-	}
-	if c.CheckRedirect(mk("http://169.254.169.254/latest"), via("http://127.0.0.1:1111/token")) == nil {
-		t.Error("exchange client follows a redirect to the metadata address")
+}
+
+// TestValidateTokenEndpoint covers the discovery-time rule, including the
+// operator-listed hosts the end-to-end tests do not configure.
+func TestValidateTokenEndpoint(t *testing.T) {
+	httpsIss, _ := url.Parse("https://iss.example")
+	httpIss, _ := url.Parse("http://127.0.0.1:9")
+	for _, tc := range []struct {
+		name  string
+		iss   *url.URL
+		tok   string
+		list  []string
+		allow bool
+	}{
+		{"issuer host", httpsIss, "https://iss.example/token", nil, true},
+		{"issuer host, other port", httpsIss, "https://ISS.example:8443/token", nil, true},
+		{"other host, unlisted", httpsIss, "https://tok.example/t", nil, false},
+		{"listed host", httpsIss, "https://tok.example/t", []string{"tok.example"}, true},
+		{"listed host, padded entry", httpsIss, "https://tok.example/t", []string{" tok.example "}, true},
+		{"listed host over http", httpsIss, "http://tok.example/t", []string{"tok.example"}, false},
+		{"https issuer, http loopback endpoint", httpsIss, "http://127.0.0.1/t", []string{"127.0.0.1"}, false},
+		{"http loopback issuer, http same host", httpIss, "http://127.0.0.1:10/t", nil, true},
+		{"http loopback issuer, http metadata", httpIss, "http://169.254.169.254/t", []string{"169.254.169.254"}, false},
+		{"userinfo trick", httpsIss, "https://iss.example@evil.example/t", nil, false},
+		{"empty hostname vs empty entry", httpsIss, "https://:443/t", []string{""}, false},
+		{"opaque", httpsIss, "https:iss.example", nil, false},
+		{"scheme", httpsIss, "ftp://iss.example/t", nil, false},
+		{"listed URL never matches", httpsIss, "https://tok.example/t", []string{"https://tok.example"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateTokenEndpoint(tc.tok, tc.iss, tc.list)
+			if (err == nil) != tc.allow {
+				t.Fatalf("validateTokenEndpoint(%q, %v) = %v, want allowed=%v", tc.tok, tc.list, err, tc.allow)
+			}
+		})
 	}
 }
