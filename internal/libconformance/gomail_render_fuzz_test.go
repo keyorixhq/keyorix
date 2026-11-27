@@ -98,6 +98,21 @@ var foldingWS = regexp.MustCompile(`[ \t]+`)
 
 func normFolding(s string) string { return strings.TrimSpace(foldingWS.ReplaceAllString(s, " ")) }
 
+// xmailStdlibCannotRoundTripAddress reports whether the To header is exactly what net/mail
+// formats for want and net/mail itself cannot parse that text back (golang/go#80592). It is
+// false for any header the standard library can read, and for any header that differs from
+// the library's own rendering.
+func xmailStdlibCannotRoundTripAddress(want *mail.Address, header string) bool {
+	if want == nil || !strings.Contains(want.Name, `\`) {
+		return false
+	}
+	if header != want.String() {
+		return false
+	}
+	_, err := mail.ParseAddress(header)
+	return err != nil
+}
+
 func checkGoMailRender(t *testing.T, rcpt, subject, body string, build goMailBuilder) {
 	t.Helper()
 	baseline := renderGoMail(t, build, "a@example.com", "s", "b")
@@ -153,6 +168,15 @@ func checkGoMailRender(t *testing.T, rcpt, subject, body string, build goMailBui
 
 	// O2 address.
 	tos, err := msg.Header.AddressList("To")
+	if err != nil && xmailStdlibCannotRoundTripAddress(wantRcpt, msg.Header.Get("To")) {
+		// golang/go#80592: net/mail.Address.String Q-encodes a display name holding a
+		// backslash with the backslash left raw, which AddressList then rejects. The header
+		// is exactly what the standard library itself formats, so this is its defect, not
+		// go-mail's. Only this exact shape is waived; O1 still pins the header set. Same
+		// waiver as stdlibCannotRoundTripAddress in internal/delivery/setup_link_mime_fuzz_test.go
+		// (keep the two in step).
+		tos, err = []*mail.Address{wantRcpt}, nil
+	}
 	if err != nil || len(tos) != 1 || tos[0].Address != wantRcpt.Address || tos[0].Name != wantRcpt.Name {
 		t.Fatalf("O2 ADDRESS: To header %q parses to %v (err %v), want exactly %#v", msg.Header.Get("To"), tos, err, *wantRcpt)
 	}
