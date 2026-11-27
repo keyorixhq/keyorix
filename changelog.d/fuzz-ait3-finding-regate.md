@@ -1,4 +1,4 @@
-### Fuzzing
+### Testing
 
 - **Finding re-fuzz gate (AI-T3).** `scripts/fuzzing/finding-regate/regate.py`
   maps a git diff to KFZ findings whose fuzz targets cover the changed packages,
