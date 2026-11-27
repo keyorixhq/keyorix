@@ -22,8 +22,8 @@ What it does and checks:
    row, per table, for every table (the script prints the count: `all 80 tables equal`
    at the time of writing). The checksum reads columns through `database/sql`
    and normalises the SQLite/PostgreSQL type differences, so it is independent of the
-   backup format. Not compared, by design: `secret_nodes.cache_epoch` and three
-   `system_metadata` keys (listed in `scripts/migrate/migratecheck/main.go`).
+   backup format. Not compared, by design: `secret_nodes.cache_epoch` and four
+   `system_metadata` keys the target writes itself (listed in `scripts/migrate/migratecheck/main.go`).
 4. **The migrated instance works**: restore's own `verify-audit` says VALID; the chain
    also verifies against the checkpoint exported from SQLite before the move (no new
    genesis: the only new event is `admin.restore_completed`); the source's head row keeps
@@ -48,6 +48,11 @@ What it does and checks:
    run again (with `--overwrite-existing` when the refusal says the killed restore's empty
    schema is still there), and it ends with tables equal to the source and a VALID chain.
    Finally the SQLite source still starts.
+7. **Refusals**: a restore into a PostgreSQL database that already holds a migration is
+   refused (from an instance with no keys and from one that holds them) and leaves every
+   table unchanged and no key file installed; a restore with a wrong master password is
+   refused before the target is touched (no schema, no key file, no journal); a target that
+   already holds its own key set is refused and keeps its `dek.key`.
 
 ```sh
 # three databases: A (migration target), B (target of the kill legs), C (any database the
@@ -62,9 +67,35 @@ The last line is `SQLITE -> POSTGRESQL MIGRATION CHECK PASSED`. Environment:
 build this checkout), `DRILL_KEEP=1` (keep the work area).
 
 What it does **not** cover: the container variants (`docker compose`, Helm) are pending a
-run on the e2e VM; a PostgreSQL target that already holds data; very large databases (this run
-is sized for tens of thousands of rows; for millions of rows see
-[backup-restore-scale.md](backup-restore-scale.md) and `scripts/migrate/scale-check.sh`).
+run on the e2e VM; `--overwrite-existing` against a target that holds real data (the script
+only uses it to replace the empty schema a killed restore leaves); a refusal because the target
+holds a different key set is only exercised together with its non-empty schema, so it does not
+isolate the key check; very large databases (this run is sized for tens of thousands of rows;
+for millions of rows see [backup-restore-scale.md](backup-restore-scale.md) and
+`scripts/migrate/scale-check.sh`).
+
+## Verified matrix
+
+Run of `scripts/migrate/sqlite-to-pg-check.sh` with the real `keyorix-server` and `keyorix`
+binaries built from main at commit `f990effc93f3051a15ddf89e7d1595a9c7f0ada1`, against a
+local PostgreSQL (native, no containers); result `SQLITE -> POSTGRESQL MIGRATION CHECK PASSED`.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Row counts and checksums per table, SQLite vs PostgreSQL | all 80 tables equal | 28 non-empty tables, about 10,280 rows, 10,066 audit events |
+| Secrets decrypt to the same plaintext (keys moved) | pass | 3 secrets, secret 1 at its latest of 3 versions, secret 4 with 2 versions |
+| Users, roles, shares, group, MFA, break-glass, machine tokens | identical | counts and checksums equal; both MFA users log in; the revoked token is still rejected |
+| Suspended and soft-deleted secrets | unchanged | value reads refused; the deleted one stays in the trash |
+| Dynamic-secret config | pass | its encrypted admin DSN decrypts with the migrated keys and a credential is issued |
+| `keyorix audit verify` on PostgreSQL | VALID | also VALID against the checkpoint exported before the move (no new genesis) |
+| Audit chain continues | pass | head row keeps its entry hash; the first new event chains onto it; the chain still verifies after the server ran |
+| Retention anchor and schema epoch | preserved | anchor byte-identical; schema epoch equal on both sides and to the binary's |
+| Rollback | pass | the SQLite file is byte-identical after the restore and the source still starts and verifies |
+| PostgreSQL back to SQLite | pass | all 80 tables equal; chain VALID against the first checkpoint; same logins and secrets |
+| `kill -9` during restore (while migrating, while loading rows) | pass, 4 legs | no key file installed, no row committed; a re-run is refused until `--recover`; both recoveries finish with equal tables |
+| Non-empty target | refused | tables unchanged, no key file installed |
+| Wrong master password | refused | no schema, no key file, no journal |
+| Container and Helm variants | pending e2e VM | not run |
 
 ## Findings fixed by this check
 
