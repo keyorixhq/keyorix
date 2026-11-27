@@ -109,6 +109,13 @@ func startStallMonitor() {
 	})
 }
 
+// init makes the process's first runtime/metrics read at package load. That first
+// read builds the runtime's metric table (~10 KiB); made lazily by the stall
+// monitor's baseline sample, it landed inside the measured window of the first
+// guarded input and failed tiny seeds' alloc budgets
+// (INV-FUZZUTIL-first-guard-call-allocates-nothing-extra).
+func init() { metrics.Read(newHeapSamples()) }
+
 func newHeapSamples() []metrics.Sample {
 	return []metrics.Sample{{Name: "/gc/heap/allocs:bytes"}, {Name: "/cpu/classes/gc/total:cpu-seconds"}}
 }
