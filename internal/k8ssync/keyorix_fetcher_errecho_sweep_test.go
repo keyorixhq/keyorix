@@ -157,7 +157,7 @@ func TestKeyorixFetcher_ErrorSitesVsServerControlledBytes(t *testing.T) {
 	for _, tc := range cases {
 		for _, via := range []string{"FetchWithExpiry", "Fetch"} {
 			t.Run(tc.name+"/"+via, func(t *testing.T) {
-				base := tc.raw
+				var base string
 				if tc.raw != "" {
 					base = rawServer(t, tc.raw)
 				} else {
