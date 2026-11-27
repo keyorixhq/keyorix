@@ -43,7 +43,7 @@ require (
 	github.com/klauspost/compress v1.20.4
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/nicksnyder/go-i18n/v2 v2.7.0
-	github.com/oapi-codegen/runtime v1.7.0
+	github.com/oapi-codegen/runtime v1.9.0
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
