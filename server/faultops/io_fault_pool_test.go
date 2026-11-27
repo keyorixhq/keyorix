@@ -343,7 +343,11 @@ func (c *ioConn) dropBackend(ctx context.Context) bool {
 	if err := c.tx.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
 		return false
 	}
-	if c.p.admin.Exec("SELECT pg_terminate_backend(?)", pid).Error != nil {
+	// The timeout form (PostgreSQL 14+; CI runs 16) waits until the backend has
+	// exited, so the faulted statement or COMMIT cannot still reach a live backend.
+	// false means it did not exit in time: the caller simulates the drop.
+	var terminated bool
+	if c.p.admin.Raw("SELECT pg_terminate_backend(?, 5000)", pid).Scan(&terminated).Error != nil || !terminated {
 		return false
 	}
 	c.p.mu.Lock()

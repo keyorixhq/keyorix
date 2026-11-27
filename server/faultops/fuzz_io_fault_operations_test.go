@@ -23,7 +23,10 @@ package faultops
 //	   when the faulted statement is itself an audit write (best-effort by design,
 //	   see best_effort_tables_entry_logauditevent_test.go), for a sticky ENOSPC/EIO
 //	   (it fails the audit write too) and for an op listed in knownUnauditedOperations.
-//	R3 no canary (secret value) in any log line the operation wrote.
+//	R3 no canary (secret value) in the standard-library log output the operation
+//	   wrote (log.SetOutput around op.Execute; slog only while its default handler is
+//	   the log bridge). Direct stderr writes are not captured, and log.SetOutput is
+//	   process-global: after an R4 timeout the abandoned goroutine keeps capturing.
 //	R4 a hang guard: the whole operation finishes within ioFaultInputDeadline.
 //
 // What it does NOT verify: the text of any error, a power cut or a torn page (that
@@ -33,7 +36,9 @@ package faultops
 // cleanup), so the single-fault state oracles are applied to it only for oracle (c)
 // on a sticky EIO authz read; R1, R3 and R4 always are. They are not applied to a
 // credential flow (login, MFA, WebAuthn, setup consume) at all: the #2880 by-design
-// rows decide a faulted storage method, not a driver-level fault.
+// rows decide a faulted storage method, not a driver-level fault. So a disk that
+// stays full has no success-after-failed-write state oracle. Not red-proved: oracle
+// (c) on a sticky EIO, R4 (hang) and R1's same-op re-run.
 // A fault that lands on a different statement than predicted (a detached goroutine
 // interleaving) is judged by the same oracles against the method it was attributed
 // to; that costs precision, not soundness, because every oracle compares real state.
