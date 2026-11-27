@@ -13,16 +13,19 @@ package gcpsource
 // Oracles (what each does NOT verify):
 //   - NO-PANIC: the Go fuzzer catches panics directly (no hostile.Harness goroutine here);
 //     a panic from the production code or the iterator is a test failure.
-//   - NO-HANG: a 2 s context deadline bounds the List call. Does NOT bound CPU within the
-//     deadline, nor assert the pristine path is fast.
-//   - VALUE-LEAK: the fuzz-decoded secret payload value must not appear in any
-//     non-static Skipped.Reason or Entry.Field (a JSON object key, never the value).
+//   - NO-HANG: not asserted. The fake never blocks and ignores ctx, so the 2 s deadline passed
+//     to List bounds nothing here; a loop in List itself would only surface as the go test
+//     -timeout.
+//   - VALUE-LEAK: the fuzz-decoded secret payload value must not appear in List's error, nor
+//     in any non-static Skipped.Reason or Entry.Field (a JSON object key, never the value).
+//     The error check is skipped when the payload is a substring of the error templates plus
+//     the quoted name (structural, as for locators). Logs are not captured: gcp.go does not log.
 //     The value itself may appear in Entry.Value — that is the import, not a leak.
 //     Locator checks (Entry.Locator, Skipped.Locator) are skipped when the payload appears
 //     anywhere in the structurally-expected locator ("gcp-secret-manager:fuzz-proj/" + name).
 //     This covers: payload = substring of name, payload = substring of static prefix (e.g. "a"
 //     in "manager"), or payload spanning the "/" separator and the name start (e.g. "/0" in
-//     "/0000"). All are EXPECTED-DIFFERENCEs documented in t197-REPORT.md.
+//     "/0000"). These are expected, not leaks.
 //     Skipped.Reason is always one of the four known static strings (see gcpKnownReasons);
 //     the payload check is skipped for those to avoid false positives for short fuzz payloads
 //     that coincidentally appear in static text (e.g. "a" in "disabled").
@@ -36,6 +39,7 @@ package gcpsource
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -200,7 +204,7 @@ func FuzzGCPSourceHostileList(f *testing.F) {
 		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 
-		entries, skipped, _ := c.List(ctx)
+		entries, skipped, errList := c.List(ctx)
 
 		// VALUE-LEAK: the payload bytes must never appear in Skipped.Reason, Locator, or Field.
 		// Entry.Value may equal the payload — that is the intended import, not a leak.
@@ -215,9 +219,15 @@ func FuzzGCPSourceHostileList(f *testing.F) {
 		// VALUE-LEAK. Build the expected locator from known parts and use that as the guard.
 		// This introduces a blind spot: a defect that appends the value to the static prefix
 		// (e.g. locator = template + name + value) is missed only if value is a substring
-		// of the template itself — a narrow and accepted corner-case documented in REPORT.md.
+		// of the template itself — a narrow and accepted corner case.
 		expectedLocator := "gcp-secret-manager:fuzz-proj/" + sc.name
 		skipLocator := strings.Contains(expectedLocator, payloadStr)
+		if errList != nil {
+			errStructural := "gcp-secret-manager: list secrets: get latest version metadata for access : " + fmt.Sprintf("%q", sc.name)
+			if !strings.Contains(errStructural, payloadStr) && strings.Contains(errList.Error(), payloadStr) {
+				t.Fatalf("VALUE-LEAK: List error %q contains the payload value", errList)
+			}
+		}
 		for _, sk := range skipped {
 			// gcpKnownReasons: the four static skip reasons from gcp.go. Short fuzz payloads
 			// (e.g. "a") coincidentally appear in these strings — guard against false positives

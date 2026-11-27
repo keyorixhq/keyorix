@@ -3,13 +3,14 @@ package accessplan
 // determinism_fuzz_test.go: FuzzAccessPlanBuild is the determinism + no-panic target for the
 // pure-transformation Build function. Build is network-free — it takes already-read Vault
 // policy and role data and returns a Plan — so there is no hostile HTTP server here. The oracle
-// that fits is DETERMINISM: the same BuildInput passed to Build twice must produce byte-
-// identical Plan.Items slices. Any non-deterministic map iteration in the resolution chain
+// that fits is DETERMINISM: the same BuildInput passed to Build twice must produce deeply
+// equal Plans. Any non-deterministic map iteration in the resolution chain
 // (PathMapper.Resolve, compactUnmappable, roleName) would be detected quickly by the seed corpus.
 //
 // Oracles (what each does NOT verify):
 //   - NO-PANIC: the Go fuzzer catches panics from the production code directly.
-//   - DETERMINISM: Build(in, mapper, issuer) called twice must return the same Plan.Items.
+//   - DETERMINISM: Build(in, mapper, issuer) called twice must return deeply equal Plans
+//     (reflect.DeepEqual: every Item field, slices in emitted order).
 //     Does NOT verify the CORRECTNESS of any individual item (whether the proposed permissions
 //     are truly a subset of what the Vault policy allowed — that is ADR-114's scope-monotone
 //     property, which the existing ScopeWidening and SMT model export tests cover).
@@ -21,9 +22,7 @@ package accessplan
 //   - Reconcile / Apply: downstream of Build; separate code with its own tests.
 
 import (
-	"fmt"
-	"sort"
-	"strings"
+	"reflect"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/migrate/internal/healthscan"
@@ -66,36 +65,6 @@ func fuzzDecodeCaps(b byte) []string {
 		{"create"},
 	}
 	return all[int(b)%len(all)]
-}
-
-// fuzzItemKey serialises one Item to a stable string for the DETERMINISM oracle.
-func fuzzItemKey(it Item) string {
-	perms := make([]string, len(it.ProposedPermissions))
-	copy(perms, it.ProposedPermissions)
-	sort.Strings(perms)
-	implied := make([]string, len(it.ImpliedAccess))
-	copy(implied, it.ImpliedAccess)
-	sort.Strings(implied)
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%d|%s|%s|%s",
-		it.Kind, it.Outcome, it.SourceRef, it.Category,
-		strings.Join(perms, ","),
-		it.ProposedProjectID, it.ProposedEnvironmentID,
-		it.ProposedIdentityType, it.ProposedOIDCIssuer,
-		strings.Join(implied, ","),
-	)
-}
-
-// fuzzPlanEqual reports whether two Plans have identical items in the same order.
-func fuzzPlanEqual(a, b Plan) bool {
-	if len(a.Items) != len(b.Items) {
-		return false
-	}
-	for i := range a.Items {
-		if fuzzItemKey(a.Items[i]) != fuzzItemKey(b.Items[i]) {
-			return false
-		}
-	}
-	return true
 }
 
 func FuzzAccessPlanBuild(f *testing.F) {
@@ -148,7 +117,7 @@ func FuzzAccessPlanBuild(f *testing.F) {
 		p2 := Build(in, mapper, "")
 
 		// DETERMINISM: both calls with identical input must produce identical output.
-		if !fuzzPlanEqual(p1, p2) {
+		if !reflect.DeepEqual(p1, p2) {
 			t.Fatalf("DETERMINISM: Build(path1=%q path2=%q caps=%d) produced different plans:\np1 items: %+v\np2 items: %+v",
 				path1, path2, capsB, p1.Items, p2.Items)
 		}
