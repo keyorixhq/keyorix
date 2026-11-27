@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"time"
 
@@ -54,5 +55,21 @@ func closeAuditForwarder(coreService *core.KeyorixCore) {
 	type closer interface{ Close() }
 	if cl, ok := coreService.AuditForwarder().(closer); ok {
 		cl.Close()
+	}
+}
+
+// closeStorageOnShutdown closes the core's storage after everything that writes
+// to it has stopped (deferred first in main, so it runs last): on Postgres it
+// stops the background jobs CreateStorage started and releases the
+// connections. A storage without Close is left alone.
+func closeStorageOnShutdown(coreService *core.KeyorixCore) {
+	closeStorageIfCloser(coreService.Storage())
+}
+
+func closeStorageIfCloser(st any) {
+	if c, ok := st.(io.Closer); ok {
+		if err := c.Close(); err != nil {
+			log.Printf("closing storage on shutdown: %v", err)
+		}
 	}
 }

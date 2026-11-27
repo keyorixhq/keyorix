@@ -59,6 +59,14 @@ const (
 	kleakInputLen   = 64 // the attacker input is the (op,killAt,state) tuple, not bytes; disk is judged in absolute mode
 	kleakArchive    = "kl.tar.gz"
 	kleakMinNeedle  = 16 // never scan for a key shorter than this (avoid trivial matches)
+
+	// kleakDiskCeilingFloor is the least absolute disk_bytes ceiling the meter
+	// gets. The ceiling is calibrated from the benign runs' disk growth, but a run
+	// that closes its storage checkpoints the SQLite WAL and so can SHRINK the tree
+	// (negative growth): the calibration then yields no ceiling at all and the
+	// meter silently stops guarding. Real key rotation moves tens of KiB; a leak
+	// worth catching is orders of magnitude above this.
+	kleakDiskCeilingFloor = 1 << 20
 )
 
 // kleakOps is the KL1 op set: the two operations that change on-disk key
@@ -337,6 +345,11 @@ func kleakCalibrate(t *testing.T, w *pcrashWorld) resguard.Budget {
 	}
 	b := resguard.Calibrate("keylifecycle_crash", costs, resguard.DefaultFactor)
 	b.KeepOnly("disk_bytes")
+	mb := b.Meters["disk_bytes"]
+	if mb.AbsMax < kleakDiskCeilingFloor {
+		mb.AbsMax = kleakDiskCeilingFloor
+		b.Meters["disk_bytes"] = mb
+	}
 	b.UseAbsolute("disk_bytes")
 	return b
 }

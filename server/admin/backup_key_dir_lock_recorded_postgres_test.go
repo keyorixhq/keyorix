@@ -46,7 +46,7 @@ func TestAdminBackup_Postgres_RecordedDatabaseKeyDirLock_ExcludesKeyRotation(t *
 	cfg, err := loadConfig()
 	require.NoError(t, err)
 	require.False(t, cfg.Storage.Encryption.KeyDirLockIsDatabase())
-	_, err = storage.NewStorageFactory().CreateStorage(cfg)
+	_, err = createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	backupExclusive = false
 

@@ -323,6 +323,9 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// ADR-112: a boot that enforced enable_file_permission_check (checks passed, nothing
 	// softened) or require_mfa ratchets this deployment to enforced for that key for good.
 	recordADR112Markers(cfg)
+	// Deferred before the flushes below so it runs after every one of them: the
+	// storage must outlive everything that still writes to it.
+	defer closeStorageOnShutdown(coreService)
 	// #G56: flush/close the SIEM audit forwarder (if configured) on shutdown — it
 	// queues events in memory (worker.go's Deliver is non-blocking, async), and
 	// nothing would otherwise call Close() to drain that queue before the process

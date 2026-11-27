@@ -130,7 +130,7 @@ func TestAdminBackupRestore_AfterSecretPurge_SQLite(t *testing.T) {
 	configPathFlag = writeBackupRestoreTestConfig(t, srcDir, filepath.Join(srcDir, "secrets.db"))
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	st, err := storage.NewStorageFactory().CreateStorage(srcCfg)
+	st, err := createStorageClosedAtCleanup(t, srcCfg)
 	require.NoError(t, err)
 	srcDB, err := storage.OpenGormDB(srcCfg)
 	require.NoError(t, err)
@@ -178,7 +178,7 @@ func TestAdminBackupRestore_AfterSecretPurge_Postgres(t *testing.T) {
 	configPathFlag = writePostgresBackupRestoreTestConfig(t, srcDir, srcDSN)
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	st, err := storage.NewStorageFactory().CreateStorage(srcCfg)
+	st, err := createStorageClosedAtCleanup(t, srcCfg)
 	require.NoError(t, err)
 	srcDB := pgAdminRawOpen(t, srcDSN)
 
