@@ -43,8 +43,6 @@ excluded from the counts table, which tracks production packages only.
 | `internal/fuzzutil/boundedwork` | [internal/fuzzutil/boundedwork/INVARIANTS.md](../internal/fuzzutil/boundedwork/INVARIANTS.md) | 5 | 5 | 0 |
 | `internal/fuzzutil/complexity` | [internal/fuzzutil/complexity/INVARIANTS.md](../internal/fuzzutil/complexity/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 2 | 2 | 0 |
-| `internal/fuzzutil/resguard` | [internal/fuzzutil/resguard/INVARIANTS.md](../internal/fuzzutil/resguard/INVARIANTS.md) | 8 | 8 | 0 |
-| `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/fuzzutil/resguard` | [internal/fuzzutil/resguard/INVARIANTS.md](../internal/fuzzutil/resguard/INVARIANTS.md) | 9 | 9 | 0 |
 | `internal/i18n` | [internal/i18n/INVARIANTS.md](../internal/i18n/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/identity` | [internal/identity/INVARIANTS.md](../internal/identity/INVARIANTS.md) | 1 | 1 | 0 |
