@@ -1,0 +1,17 @@
+[Unit]
+Description=Nightly Keyorix oracle-health run
+
+[Timer]
+# 03:40 local: after the 01:00-05:00 cross-replica rig has had its start and
+# before the working day; the wrapper's gate (bench lock, temperature, load,
+# memory, shm) is what actually protects a busy host, not the clock. Check
+# `systemctl list-timers` for what else fires near this time.
+OnCalendar=*-*-* 03:40:00
+RandomizedDelaySec=20min
+# A night missed because the host was off is made up at the next boot. The gate
+# still applies to the catch-up run, so a boot into a busy host skips (and
+# counts toward the stale alert) instead of piling onto it.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

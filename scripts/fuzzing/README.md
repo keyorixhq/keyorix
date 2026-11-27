@@ -175,8 +175,13 @@ DashDiag entries live in `oracle-health/dashdiag.d/`; run them with
 A harness behind a `//go:build linux` tag cannot run on a Mac: such an entry needs the
 pve01 or e2e host.
 
+**Nightly on pve01**: `oracle-health/nightly/` holds the wrapper (host gate, ff-only
+dedicated clone, `--heavy --strict`, dated logs, one ntfy alert per entry per day), its
+systemd service/timer and an EnvironmentFile example; install and limits in
+`docs/fuzzing/oracle-health-nightly.md`.
+
 Pure parts are tested by `bats oracle-health/tests`
-(stubbed `go`). **Maintenance**: `PLANT-STALE` after a refactor means re-cut the patch;
+(stubbed `go`; the nightly wrapper has its own bats file there). **Maintenance**: `PLANT-STALE` after a refactor means re-cut the patch;
 `pg-upgrade-unlock-stop` depends on the number of write statements of the newest
 upgrade source (the unlock is statement N+1): when it reports MISSED after a
 migration step is added, probe `FuzzUpgradePGInterrupted` with the newest source index

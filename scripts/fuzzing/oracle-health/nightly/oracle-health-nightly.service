@@ -1,0 +1,31 @@
+[Unit]
+Description=Keyorix oracle-health nightly (do the fuzz harnesses still catch their planted defects?)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# A dedicated unprivileged user that owns the clone and state dirs. It must be
+# able to search the directory of the host lock (see the env example) and hold a
+# superuser Postgres role via the DSN in the EnvironmentFile.
+User=oracle-health
+EnvironmentFile=/etc/oracle-health-nightly/env
+ExecStart=/opt/oracle-health-nightly/keyorix/scripts/fuzzing/oracle-health/nightly/oracle-health-nightly.sh
+
+# The wrapper's own hard timeout (OHN_TIMEOUT_SECS, 3h) fires first; this is the
+# backstop for a hung fetch or a wedged shutdown.
+TimeoutStartSec=3h30m
+TimeoutStopSec=2m
+
+# pve01 is shared. Nice 10 and GOMAXPROCS=2 (set by the wrapper) keep the suite
+# polite; MemoryMax is a clean OOM kill instead of host-wide swapping. Note the
+# tmpfs scratch trees under /dev/shm are charged to this cgroup too.
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=12G
+
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
