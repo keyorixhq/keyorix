@@ -20,3 +20,13 @@ func FuzzAzureGraphTransportEgressParity(f *testing.F) {
 		},
 		egressref.LinkLocalTier)
 }
+
+// FuzzAzureGraphResolverRebinding drives a hostname through the stdlib resolver (an
+// in-process DNS stub, see egressref.RebindDNS) whose answer changes after the first
+// lookup, and dials it through the same client. It does NOT verify a real DNS server,
+// the cgo resolver, or the egress-proxy case (the dial then targets the proxy).
+func FuzzAzureGraphResolverRebinding(f *testing.F) {
+	egressref.RunRebind(f, func() egressref.DialFunc {
+		return azureGraphHTTPClient().Transport.(*http.Transport).DialContext
+	}, egressref.LinkLocalTier)
+}
