@@ -99,7 +99,28 @@ func suspendedAdminCoreCase(t *testing.T, spec opSpec, tg tgt, arg byte) (out re
 	lg := newLeg(t, layerCore)
 	defer lg.close()
 	lg.applyVariation(t, defaultVariation)
-	if !(model{lg.db}).allowed(&admin, spec.req(lg.fx, tg, arg)) || patRefusesUngatedWrite(t, lg.fx, spec, &admin) {
+	req := spec.req(lg.fx, tg, arg)
+	// MFA ops (requireActorActive since PR #4779): the fixture admin has neither a
+	// pending enrolment nor MFA enabled, so model.allowed would return false and the
+	// case would be skipped. Pre-seed the minimum account state this op's model
+	// requires in this leg's private DB, so the admin is in the model's domain — the
+	// leg is then suspended before the core call, which must still refuse it via
+	// requireActorActive. (The TOTP secret is never validated here: requireActorActive
+	// fires first.)
+	if req.pendingMFARequired {
+		if e := lg.db.Exec("INSERT INTO mfa_secrets (user_id, secret_enc, activated) VALUES (?, ?, ?)", admin.userID, "JBSWY3DPEHPK3PXP", false).Error; e != nil {
+			t.Fatalf("seed pending MFA enrolment for admin: %v", e)
+		}
+	}
+	if req.mfaRequired {
+		if e := lg.db.Exec("UPDATE users SET mfa_enabled = ? WHERE id = ?", true, admin.userID).Error; e != nil {
+			t.Fatalf("seed mfa_enabled for admin: %v", e)
+		}
+		if e := lg.db.Exec("INSERT INTO mfa_secrets (user_id, secret_enc, activated) VALUES (?, ?, ?)", admin.userID, "JBSWY3DPEHPK3PXP", true).Error; e != nil {
+			t.Fatalf("seed active MFA secret for admin: %v", e)
+		}
+	}
+	if !(model{lg.db}).allowed(&admin, req) || patRefusesUngatedWrite(t, lg.fx, spec, &admin) {
 		return result{}, false
 	}
 	// Direct write: SuspendUser's last-admin guard refuses suspending the only
