@@ -262,3 +262,77 @@ EOF
 	run env -u KEYORIX_TEST_PG_DSN PATH="$T/bin:$PATH" bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work" --strict
 	[ "$status" -eq 3 ]
 }
+
+@test "runner: a relative --entries path is resolved before the plant is applied" {
+	make_repo
+	O="$T/other"
+	mkdir -p "$O" "$T/reg"
+	printf 'package a\n\nvar Guard = true\n' >"$O/a.go"
+	cp "$R/scripts/fuzzing/oracle-health/entries.d/e1.conf" "$T/reg/d1.conf"
+	cp "$R/scripts/fuzzing/oracle-health/entries.d/e1.patch" "$T/reg/d1.patch"
+	git -C "$O" init -q
+	git -C "$O" add -A
+	git -C "$O" -c user.email=t@t -c user.name=t commit -q -m base
+	cd "$T"
+	run env PATH="$T/bin:$PATH" bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work" --root other --entries reg
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"d1"*"PASS"*"DETECTED"* ]]
+	[[ "$output" != *"PLANT-STALE"* ]]
+}
+
+@test "runner: --list refuses a registry directory that does not exist" {
+	make_repo
+	run bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --list --entries "$T/nope"
+	[ "$status" -eq 2 ]
+	[[ "$output" == *"no registry directory"* ]]
+}
+
+# selftest_entry <cmd> <marker>: replace the registry with one self-test entry.
+selftest_entry() {
+	rm -f "$R"/scripts/fuzzing/oracle-health/entries.d/*
+	printf 'KIND=selftest\nCMD=%s\nMARKERS=%s\n' "$1" "$2" >"$R/scripts/fuzzing/oracle-health/entries.d/s1.conf"
+	git -C "$R" add -A
+	git -C "$R" -c user.email=t@t -c user.name=t commit -q -m selftest
+}
+
+@test "runner: a self-test that passes with its marker is DETECTED" {
+	make_repo
+	selftest_entry "printf -- '--- PASS: TestWanted (0.00s)\nPASS\n'" "--- PASS: TestWanted"
+	run bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"s1"*"DETECTED"* ]]
+}
+
+@test "runner: a self-test that passes without its marker is WRONG-MARKER" {
+	make_repo
+	selftest_entry "printf -- '--- PASS: TestOther (0.00s)\nPASS\n'" "--- PASS: TestWanted"
+	run bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work"
+	[ "$status" -eq 1 ]
+	[[ "$output" == *"WRONG-MARKER"*"self-test passed without: --- PASS: TestWanted"* ]]
+	[[ "$output" != *"DETECTED"* ]]
+}
+
+@test "runner: a self-test with a skipped test is SKIP, not DETECTED, exit 3 under --strict" {
+	make_repo
+	selftest_entry "printf -- '--- PASS: TestWanted (0.00s)\n--- SKIP: TestVectors (0.00s)\n    x_test.go:1: vectors not downloaded\nPASS\n'" "--- PASS: TestWanted"
+	run bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"s1"*"SKIP"*"self-test skipped: TestVectors"* ]]
+	[[ "$output" != *"DETECTED"* ]]
+	run bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work" --strict
+	[ "$status" -eq 3 ]
+}
+
+@test "runner: a relative --workdir still reaches the replay generator after cd into the tree" {
+	make_repo
+	reg="$R/scripts/fuzzing/oracle-health/entries.d"
+	printf 'TARGET=FuzzX\nREPLAY_GEN=gen.sh\n' >>"$reg/e1.conf"
+	printf '#!/bin/sh\nprintf "go test fuzz v1\\n" >"$1/replay-1"\n' >"$reg/gen.sh"
+	git -C "$R" add -A
+	git -C "$R" -c user.email=t@t -c user.name=t commit -q -m replay
+	cd "$T"
+	run env PATH="$T/bin:$PATH" bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir work --keep
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"e1"*"PASS"*"DETECTED"* ]]
+	[ -f "$T/work/e1/testdata/fuzz/FuzzX/replay-1" ]
+}

@@ -51,6 +51,11 @@ while [ $# -gt 0 ]; do
 	shift
 done
 
+# Resolve the registry once: plants and replay generators are used after `cd "$tree"`,
+# where a relative --entries path no longer points anywhere.
+[ -d "$entries" ] || { echo "oracle-health: no registry directory $entries" >&2; exit 2; }
+entries=$(cd "$entries" && pwd) || exit 2
+
 log() {
 	local line
 	line="$(date -u +%Y-%m-%dT%H:%M:%SZ) oracle-health: $*"
@@ -83,10 +88,12 @@ if [ $list = 1 ]; then
 fi
 
 root=$(git -C "${root_arg:-$here}" rev-parse --show-toplevel 2>/dev/null) || { echo "oracle-health: not inside a git checkout" >&2; exit 2; }
-[ -d "$entries" ] || { echo "oracle-health: no registry directory $entries" >&2; exit 2; }
 sha=$(git -C "$root" rev-parse --short=12 "$ref") || { echo "oracle-health: unknown ref $ref" >&2; exit 2; }
 if [ -z "$workdir" ]; then workdir=$(mktemp -d) || exit 2; fi
-mkdir -p "$workdir"
+if ! mkdir -p "$workdir" || ! workdir=$(cd "$workdir" && pwd); then
+	echo "oracle-health: cannot use workdir $workdir" >&2
+	exit 2
+fi
 log "tree=$sha entries=${#ids[@]} workdir=$workdir strict=$strict heavy=$heavy"
 
 goflags=${GOFLAGS:-}
@@ -207,7 +214,17 @@ for id in "${ids[@]}"; do
 			run_go "$tree" "$plog"; rc=$?
 			planted=$(oh_classify_run "$rc" "$plog")
 			case $planted in
-			PASS) planted=DETECTED ;;
+			PASS)
+				# A green self-test counts only when the tests it names ran and passed,
+				# and none of them skipped part of the planted coverage.
+				if ! oh_markers_match "$plog" "$OH_MARKERS"; then
+					planted=WRONGFAIL; why="self-test passed without: $OH_MARKERS"
+				elif skipped=$(grep -m1 -E '^[[:space:]]*--- SKIP' "$plog"); then
+					planted=SKIP; why="self-test skipped: $(echo "$skipped" | sed -E 's/^[[:space:]]*--- SKIP: //' | cut -c1-80)"
+				else
+					planted=DETECTED
+				fi
+				;;
 			FAIL) planted=PASS; why="self-test failed: see $plog" ;;
 			esac
 			log "$id: self-test $planted (rc=$rc)"

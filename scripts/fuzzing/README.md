@@ -160,12 +160,18 @@ a plant says nothing about the harness: try a sweep of generated inputs first, a
 call the harness blind when a plant that does violate the invariant stays green.
 `KIND=selftest` entries wrap a planted-defect test that already lives in the package
 (the defect is a stand-in inside the test, not a product patch): they show the family in
-the registry and run the red-proof on the nightly host, nothing more.
+the registry and run the red-proof on the nightly host, nothing more. A green self-test
+is `DETECTED` only when every `MARKERS` string (name each planted-defect test) is in
+the log; without it it is `WRONG-MARKER`, and a green run in which any test logged
+`--- SKIP` is `SKIP`, so a self-test whose inputs are missing cannot count as a
+red-proof. Example: the Wycheproof AEAD/Ed25519/RSA plants need the git-ignored
+vectors, so they are the HEAVY entry `wycheproof-planted-vectors`, which fetches them.
 
 **Other repositories**: `--root DIR` points the runner at another git checkout (its own
 `go.mod`, patches apply to that tree) and `--entries DIR` at another registry. The
 DashDiag entries live in `oracle-health/dashdiag.d/`; run them with
-`oracle-health.sh --root <dashdiag clone> --entries scripts/fuzzing/oracle-health/dashdiag.d`.
+`oracle-health.sh --root <dashdiag clone> --entries scripts/fuzzing/oracle-health/dashdiag.d`
+(relative paths are resolved before the runner changes directory).
 A harness behind a `//go:build linux` tag cannot run on a Mac: such an entry needs the
 pve01 or e2e host.
 
