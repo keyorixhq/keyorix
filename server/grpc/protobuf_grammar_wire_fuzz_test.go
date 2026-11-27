@@ -353,7 +353,7 @@ func FuzzGRPCProtobufGrammarWireInvariants(f *testing.F) {
 		f.Add([]byte{byte(i), 0})
 	}
 	// Seeds exercising wire mutation kinds: one entry per mutation kind on method 0.
-	for k := wireMutNone; k < wireMutNumKinds; k++ {
+	for k := range wireMutNumKinds {
 		f.Add([]byte{0, byte(k)})
 	}
 
