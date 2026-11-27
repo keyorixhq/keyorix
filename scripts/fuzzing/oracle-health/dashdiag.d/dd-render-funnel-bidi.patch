@@ -1,0 +1,8 @@
+diff --git a/internal/output/sanitize.go b/internal/output/sanitize.go
+--- a/internal/output/sanitize.go
++++ b/internal/output/sanitize.go
+@@ -63,3 +63,3 @@
+ 		0x061C: // ALM
+-		return true
++		return false
+ 	}

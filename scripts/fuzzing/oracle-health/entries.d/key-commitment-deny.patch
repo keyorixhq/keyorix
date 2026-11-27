@@ -1,0 +1,21 @@
+diff --git a/internal/encryption/keymanager_lifecycle.go b/internal/encryption/keymanager_lifecycle.go
+--- a/internal/encryption/keymanager_lifecycle.go
++++ b/internal/encryption/keymanager_lifecycle.go
+@@ -498,7 +498,7 @@
+ // bytes the earlier cipher.NewGCM code built by hand (FIPS-GCM-NONCE-1: Go's
+ // FIPS 140-3 mode refuses a caller-supplied GCM nonce).
+ func wrapKey(plainKey, kek []byte) ([]byte, error) {
+-	block, err := aes.NewCipher(kek)
++	block, err := aes.NewCipher(make([]byte, 32))
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+ 	}
+@@ -514,7 +514,7 @@
+
+ // unwrapKey decrypts a wrapped key using AES-256-GCM with kek.
+ func unwrapKey(wrapped, kek []byte) ([]byte, error) {
+-	block, err := aes.NewCipher(kek)
++	block, err := aes.NewCipher(make([]byte, 32))
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+ 	}

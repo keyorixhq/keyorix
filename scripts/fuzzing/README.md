@@ -152,7 +152,24 @@ write the conf, run `oracle-health.sh --only <id>`. If the seed corpus is green 
 plant, the harness is blind (or the plant is not the invariant): replay a specific
 input, and if only a generated input trips it, say so in the conf and open an issue.
 If it cannot be planted deterministically in about 90 s, it is not an entry: list it
-as a leftover with the reason. Pure parts are tested by `bats oracle-health/tests`
+as a leftover with the reason. Two ways a plant turns out not to be one: it removes a
+layer that another layer repeats (`internal/backupfmt` checks an entry name in three
+places, so the plant drops all three), or it breaks the harness's own positive control
+(a verifier that hashes a prefix rejects the genuine file too). A green result on such
+a plant says nothing about the harness: try a sweep of generated inputs first, and only
+call the harness blind when a plant that does violate the invariant stays green.
+`KIND=selftest` entries wrap a planted-defect test that already lives in the package
+(the defect is a stand-in inside the test, not a product patch): they show the family in
+the registry and run the red-proof on the nightly host, nothing more.
+
+**Other repositories**: `--root DIR` points the runner at another git checkout (its own
+`go.mod`, patches apply to that tree) and `--entries DIR` at another registry. The
+DashDiag entries live in `oracle-health/dashdiag.d/`; run them with
+`oracle-health.sh --root <dashdiag clone> --entries scripts/fuzzing/oracle-health/dashdiag.d`.
+A harness behind a `//go:build linux` tag cannot run on a Mac: such an entry needs the
+pve01 or e2e host.
+
+Pure parts are tested by `bats oracle-health/tests`
 (stubbed `go`). **Maintenance**: `PLANT-STALE` after a refactor means re-cut the patch;
 `pg-upgrade-unlock-stop` depends on the number of write statements of the newest
 upgrade source (the unlock is statement N+1): when it reports MISSED after a

@@ -158,6 +158,22 @@ EOF
 	done
 }
 
+@test "conf: every committed dashdiag entry parses and has its patch and replay" {
+	for f in "$HERE"/dashdiag.d/*.conf; do
+		oh_parse_conf "$f"
+		id=$(basename "$f" .conf)
+		[ -f "$HERE/dashdiag.d/${OH_PATCH:-$id.patch}" ]
+		[ -z "${OH_REPLAY_GEN:-}" ] || [ -f "$HERE/dashdiag.d/$OH_REPLAY_GEN" ]
+	done
+}
+
+@test "conf: every committed entry with REPLAY_GEN has its generator" {
+	for f in "$HERE"/entries.d/*.conf; do
+		oh_parse_conf "$f"
+		[ -z "${OH_REPLAY_GEN:-}" ] || [ -f "$HERE/entries.d/$OH_REPLAY_GEN" ]
+	done
+}
+
 # ---- the runner end to end, with a stubbed go -------------------------------
 
 make_repo() {
@@ -209,6 +225,32 @@ EOF
 	run env PATH="$T/bin:$PATH" bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work"
 	[ "$status" -eq 1 ]
 	[[ "$output" == *"PLANT-STALE"* ]]
+}
+
+@test "runner: --root and --entries test another repository with its own registry" {
+	make_repo
+	O="$T/other"
+	mkdir -p "$O" "$T/reg"
+	printf 'package a\n\nvar Guard = true\n' >"$O/a.go"
+	cp "$R/scripts/fuzzing/oracle-health/entries.d/e1.conf" "$T/reg/d1.conf"
+	cp "$R/scripts/fuzzing/oracle-health/entries.d/e1.patch" "$T/reg/d1.patch"
+	rm -f "$R"/scripts/fuzzing/oracle-health/entries.d/e1.*
+	git -C "$O" init -q
+	git -C "$O" add -A
+	git -C "$O" -c user.email=t@t -c user.name=t commit -q -m base
+	run env PATH="$T/bin:$PATH" bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work" --root "$O" --entries "$T/reg"
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"d1"*"PASS"*"DETECTED"* ]]
+	[ -z "$(git -C "$O" status --porcelain)" ]
+	run env STUB_BLIND=1 PATH="$T/bin:$PATH" bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work" --root "$O" --entries "$T/reg"
+	[ "$status" -eq 1 ]
+	[[ "$output" == *"MISSED"* ]]
+}
+
+@test "runner: a registry directory that does not exist is a usage error" {
+	make_repo
+	run env PATH="$T/bin:$PATH" bash "$R/scripts/fuzzing/oracle-health/oracle-health.sh" --workdir "$T/work" --entries "$T/nope"
+	[ "$status" -eq 2 ]
 }
 
 @test "runner: an entry needing Postgres is SKIP without a DSN, exit 3 under --strict" {
