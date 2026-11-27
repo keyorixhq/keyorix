@@ -19,7 +19,7 @@ internal/connect/hardened_client.go	E10	Shared hardened transport for the Vault 
 internal/connect/vault.go	E10	HashiCorp Vault connector (build tag !novault)
 internal/core/alert_escalation.go	E03	Webhook/Slack POST of an escalated anomaly alert to an admin-created notification channel
 internal/core/dynamic_secrets.go	E13	DNS lookup of an admin-supplied dynamic-secret target host to refuse private addresses
-internal/core/sso.go	E08	OAuth2 code exchange with the configured SSO identity provider (client built in server/wire_sso.go)
+internal/core/sso.go	E08	OAuth2 code exchange with the configured SSO identity provider; no client is put in the exchange context, so x/oauth2 uses http.DefaultClient (finding F2, #4738); the discovery client built in server/wire_sso.go is a separate, guarded one
 internal/crypto/awskms/awskms.go	E11	AWS KMS wrap/unwrap of the KEK, key_provider.type aws-kms (build tag !noaws)
 internal/crypto/azurekms/azurekms.go	E11	Azure Key Vault wrap/unwrap of the KEK, key_provider.type azure-kms (build tag !noazure)
 internal/crypto/gcpkms/gcpkms.go	E11	GCP KMS wrap/unwrap of the KEK, key_provider.type gcp-kms (build tag !nogcp)

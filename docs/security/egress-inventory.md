@@ -159,6 +159,127 @@ not checked: the last column is reviewed prose.
 | `tools/oraclehealth/runner.go` | `Env.goCmd` | EXEC-LOCAL-ONLY | `nice -n N go test` against a mutated working copy, for the fuzz-oracle mutation tool. Development tool, not a release artifact and not imported by shipped code | Fixed `nice`/`go`; the arguments are the tool's own subcommands and flags | Only through the Go toolchain's own module download, if the module cache is cold; no Keyorix code connects |
 | `server/http/handlers/contracttest/exercising_tests_exist.go` | `realTestNames` | EXEC-LOCAL-ONLY | `go test -list` in the handlers package, for a test that checks test names. Test helper: not imported by any shipped package | Fixed arguments; the `go` binary is `runtime.GOROOT()` or the `go` found on `PATH` | Only through the Go toolchain's own module download, if the module cache is cold; no Keyorix code connects |
 
+## Per-site inventory: who supplies the destination, what guards it (V7-GAP-1)
+
+The class table above says what Keyorix can connect to. This section is one row per
+outbound site (or per family of identical sites) and answers the SSRF question: **who
+supplies the host, is there a guard in front of the dial, and are redirects followed**. It is
+reviewed prose, derived by reading each site; the file list behind it is the allowlist, which
+`TestEgressSitesAreInventoried` keeps complete. A site not in this table is a defect in this
+table, not a licence.
+
+Destination supplier, from least to most attacker-reachable:
+
+| Code | Supplier | Reachable by |
+|---|---|---|
+| C | compiled constant (a cloud SDK's own endpoint) | nobody |
+| O | operator config file or environment | instance operator only |
+| U | the person running a CLI/operator/tool | that person |
+| P | stored per-project setting written through the API | a project admin (below instance admin) |
+| H | a third-party response (discovery document, redirect, returned endpoint) | whoever controls or can tamper with that upstream |
+
+Guard column: `netutil` = `netutil.Dialer` re-validating every dial (resolve, check every
+answer, dial the pinned IP); tier names are in "Intentional differences" below. `own` = a
+documented package-local policy. `scheme` = https required (http only for loopback) with no
+dial guard. Redirects: `refused` = `CheckRedirect` returns an error or `ErrUseLastResponse`;
+`same-host` = only a same-origin, non-downgrading hop; `default` = Go's default (follow up to
+10).
+
+| # | Site (file) | Class | Supplier | Attacker-influenced | Guard in front of the dial | Redirects | Fuzz/differential coverage |
+|---|---|---|---|---|---|---|---|
+| S01 | `internal/notifychan/webhook.go`, `chat.go`, `secure_transport.go` | E02 | O | no | netutil, loopback-permitted tier, resolver seam `lookupIPAddr` | same-host only, no downgrade, bounded hops | `FuzzWebhookSSRFGuard`, `FuzzSSRFGuardDifferential` |
+| S02 | `internal/notifychan/email.go`, `internal/delivery/smtp.go` (E07) | E02, E07 | O (SMTP host). The recipient address is user data, the relay host is not | no | none: SMTP host is operator config; TLS mode checked (`tls=none` needs an env opt-in) | n/a | none needed: nothing attacker-chosen reaches the dial |
+| S03 | `internal/core/alert_escalation.go` | E03 | P (channel URL, stored) | **yes** (anyone allowed to create a notification channel) | netutil, loopback-permitted tier, per-send re-validation, resolver seam `channelLookupIPAddr` | refused (`noEscalationRedirect`) | `FuzzSSRFGuardDifferential` (predicate), table tests `alert_escalation_ssrf_sendtime_test.go`, `alert_escalation_redirect_ssrf_test.go`; no dial-wiring fuzz |
+| S04 | `internal/core/notification_channels.go` | E03 | P | **yes** | create/update-time check with the private tier; the dial itself is S03 | n/a | `FuzzSSRFGuardDifferential` |
+| S05 | `internal/audit/siem/forwarder.go` | E04 | O | no | own policy on purpose (loopback permitted, same predicate as the webhook tier) via `netutil.Dialer` | same-host only, no downgrade, bounded hops | `FuzzEgressGuardParity`, `FuzzSSRFGuardDifferential` |
+| S06 | `internal/notary/rfc3161.go` | E05 | O | no | scheme only (`netutil` here is URL redaction, not a dial guard) | refused | none needed |
+| S07 | `internal/evidencesink/webhook.go` | E06 | O | no | netutil, loopback-permitted tier | same-host only, no downgrade, bounded hops | `FuzzEgressGuardParity` |
+| S08 | `internal/evidencesink/objectstore.go` | E06 | O | no | own: the endpoint's address is resolved once and every dial of that client goes to that pinned IP, so a redirect cannot leave the endpoint. Private endpoints are allowed by design | default, but pinned to the endpoint IP | none: operator-only |
+| S09 | `server/wire_sso.go` (discovery GET) | E08 | O (issuer) | no | netutil, link-local tier | same-host | **new** `FuzzOIDCDiscoveryTransportEgressParity` (drives the `oidcDiscoveryTransport` var; the client is built inline in the discovery call) |
+| S10 | `internal/core/sso.go` (code exchange, `Exchange`) | E08 | **H** (`token_endpoint` from the discovery document; only `jwks_uri` is host-checked) | **yes**, if the IdP is compromised or an http-loopback issuer is tampered with | **none**: the exchange uses `http.DefaultClient` (the x/oauth2 default, no client in the context) | **default (followed)** | none. Finding F2 |
+| S11 | `internal/oidcverify/oidc_jwks.go` | E09 | O (`jwks_uri`) | no | netutil, link-local tier; https required | same-host, max 3 hops | **new** `FuzzJWKSTransportEgressParity` (drives the client `NewHTTPJWKSResolver` builds) |
+| S12 | `internal/connect/vault.go`, `hardened_client.go` | E10 | O (connector `address`) | no. The `ref` a caller reads is a path inside that address, and `allowed_refs` limits it | netutil, link-local tier, plus a request-target check for a literal link-local host | refused | **new** `FuzzConnectVaultTransportEgressParity` (drives the client `NewVaultConnector` builds) |
+| S13 | `internal/connect/azurekv.go` | E10 | O (vault URL) | no | netutil, link-local tier | refused | **new** `FuzzConnectAzureTransportEgressParity` (drives `azureKVHTTPClient`, the client handed to azsecrets) |
+| S14 | `internal/connect/awssm.go` | E10 | O (region, from the SDK endpoint rules); an ARN in a caller's `ref` does not choose the endpoint | no | netutil, link-local tier | refused | **new** `FuzzConnectAWSTransportEgressParity` (drives `awsSMHTTPClient`, the client installed in the SDK) |
+| S15 | `internal/connect/gcpsm.go` | E10 | C | no | none (gRPC to the SDK's constant endpoint); size caps only | n/a | none needed |
+| S16 | `internal/crypto/azurekms/azurekms.go` | E11 | O (`kms_key_id`, host must end in an Azure Key Vault suffix) | no | netutil, private tier (loopback refused too), resolver seam `azureKMSResolve` | default (followed); every hop is re-dialed through the guard | **new** `FuzzAzureKMSTransportEgressParity`, `FuzzAzureKMSResolverRebinding` |
+| S17 | `internal/crypto/awskms`, `gcpkms` | E11 | C | no | none (SDK constant endpoints) | n/a | none needed |
+| S18 | `internal/rotation/azure.go` (Microsoft Graph) | E12 | C (hard-coded Graph host) | no | netutil, link-local tier (a hostile redirect or proxy is the only route in) | refused | **new** `FuzzAzureGraphTransportEgressParity` |
+| S19 | `internal/rotation/awsiam.go`, `gcpsa.go`, `azure_sdk.go` | E12 | C | no | none (SDK constant endpoints) | n/a | none needed |
+| S20 | `internal/rotation/postgres.go`, `mysql.go`, `mongodb.go`, `redis.go` | E12 | O (`dsn_env`) | no | none for private networks (the target is the operator's own database); MySQL and RESP responses are bounded by `netutil.MySQLGuardDialer` / `RESPGuardDialer` | n/a | response-bound fuzzers only |
+| S21 | `internal/dynamic/postgres.go`, `mysql.go`, `mongodb.go`, `redis.go` | E13 | P (`admin_dsn`) | **yes** (project admin) | netutil, private tier, every dial, opt-out `allow_private_network`; `mongodb+srv` targets pre-validated | n/a | `FuzzAdminDSNHostSSRFGuard`, `FuzzSSRFGuardDifferential`, `FuzzDSNHostsCoverDriverHosts`, `FuzzEgressDialEnforcement`; table tests `internal/dynamic/egress_guard_test.go` |
+| S22 | `internal/dynamic/kubernetes.go` | E13 | P (`api_server` inside `admin_dsn`) | **yes** (project admin) | register-time host check; see F1 | refused | none yet. Finding F1 (tracked privately) |
+| S23 | `internal/dynamic/awssts.go`, `azure.go`, `gcp.go` | E13 | C | no | none (SDK constant endpoints) | n/a | none needed |
+| S24 | `internal/core/dynamic_secrets.go` | E13 | P | **yes** | this is the register-time DNS check itself (private tier), not a connection | n/a | `FuzzAdminDSNHostSSRFGuard` |
+| S25 | `internal/k8ssync/keyorix_fetcher.go`, `rest_sink.go`, `cmd/keyorix-k8s-sync` | E14 | O (config file), in-cluster API server | no | scheme (https; http loopback only) | refused (fetcher) | none needed |
+| S26 | `operator/internal/keyorix/client.go` | E15 | **P-like** (a `KeyorixSecret` custom resource names the server) | **yes** (any tenant who can create the resource) | own: the server must be https and in the operator's `--allowed-servers` list (empty list rejects every resource) | refused | `FuzzValidateServer` (operator module) |
+| S27 | `cli/internal/apiclient/*`, `cli/cmd/client.go` | E16 | U | no | none: the user chooses the server | refused | hostile-server fuzzers (`FuzzCLIHostileServer`) |
+| S28 | `internal/mcp/keyorix.go` | E17 | O (`KEYORIX_URL`) | no | scheme | refused | none needed |
+| S29 | `migrate/internal/vaultsource`, `awssource`, `azuresource`, `gcpsource`, `healthscan`, `httpsafe`, `apiclient` | E18 | U (flags of the operator running the tool) | no | none: response-size cap (`httpsafe`) and redirect refusal only. A hostile source can be reached, by design, because the operator names it | refused (`httpsafe.RefuseRedirect`, vault `ErrUseLastResponse`) | `FuzzVaultSourceHostileWalk`, `FuzzAWSSourceHostileEndpoint` |
+| S30 | `internal/netutil/*`, `internal/notifychan/secure_transport.go` | E19 | n/a | n/a | the guards themselves | n/a | `FuzzEgressDialEnforcement`, `FuzzIPv4EmbeddingSSRFParity` |
+| S31 | `internal/storage`, `internal/auditverify`, `internal/serverguard`, `internal/solewriter`, `server/admin/restore*.go` | E01 | O | no | none: the operator's own database | n/a | none needed |
+
+Nothing else in the allowlist opens a connection to a destination an attacker can choose.
+The `DEV` rows are not shipped (see above).
+
+### Intentional differences between the guard tiers
+
+These are policy choices, each one deliberate and documented at the predicate in
+`internal/netutil/dialer.go`. The new site-wiring targets and `internal/fuzzutil/egressref`
+encode them, so a change to one of them fails a test instead of passing silently.
+
+| Tier (predicate) | Used by | Refuses | Deliberately permits | Why |
+|---|---|---|---|---|
+| link-local (`IsLinkLocal`) | S09, S11, S12 to S14, S18 | 169.254.0.0/16 and fe80::/10, and every embedded-IPv4 encoding of 169.254/16 (IPv4-mapped, NAT64 well-known and local-use, IPv4-compatible, 6to4, Teredo) | RFC-1918, loopback, CGNAT, IPv6 ULA (so also `fd00:ec2::254`, the AWS IPv6 metadata address), `192.0.0.192` (Oracle metadata), `100.100.100.200` (Alibaba metadata, inside CGNAT) | An on-prem or air-gapped IdP or Vault on 10.x or a ULA address is the primary deployment shape, and http on loopback is a supported dev shape. The IPv4 metadata address 169.254.169.254 is shared by AWS, GCP and Azure. The IPv6 and Oracle/Alibaba metadata addresses are a documented residual (`netutil/dialer.go`, `linkLocalCIDRs`) |
+| private (`IsPrivateOrLinkLocal`) | S16, S21, S24 | the link-local tier, plus RFC-1918, 127.0.0.0/8, 0.0.0.0/8, CGNAT 100.64.0.0/10, ::1, fc00::/7, in every embedded encoding | public addresses, including NAT64 of a public IPv4 (the IPv6-only egress path) | The target is the deployment's backing infrastructure; there is no reason for it to be on the server's own network unless the operator sets the opt-out |
+| webhook (`IsPrivateOrLinkLocalExceptLoopback`) | S01, S03, S05, S07 | the private tier | loopback (direct and embedded) | A receiver on the local host is a legitimate dev/test setup. A policy difference must never become an encoding or range gap |
+| pinned endpoint | S08 | nothing by address | everything, but every dial goes to the IP resolved at construction | The operator names the endpoint, and private object stores are normal |
+| allow-list | S26 | every server not in `--allowed-servers` | the listed servers only | The operator holds cluster-wide Secret read; a tenant must not be able to aim it |
+
+### Findings
+
+| ID | Site | Supplier | Finding | Severity | Where tracked |
+|---|---|---|---|---|---|
+| F1 | S22 `internal/dynamic/kubernetes.go` | P | Details withheld until the fix lands; the description returns to this table then | tracked privately | private tracker (F1) |
+| F2 | S10 `internal/core/sso.go` | H | The authorization-code exchange uses `http.DefaultClient`: the `token_endpoint` from the discovery document gets no host check (only `jwks_uri` does), no dial guard, and redirects are followed. The allowlist row said the client was built in `server/wire_sso.go`; that client serves the discovery GET only | low (needs a compromised IdP) | [#4738](https://github.com/keyorixhq/keyorix/issues/4738) |
+
+The three packages that on 2026-11-12 had HTTP clients and no netutil guard were checked:
+`internal/rotation` (S18: since H1 it dials through a link-local guard and refuses
+redirects; the URL is a compiled constant), `internal/delivery` (S02: an SMTP relay named by
+the operator; no URL is attacker-influenced), and `migrate/internal/httpsafe` (S29: an
+operator-run tool whose source endpoints are named by its user; redirect refusal and size
+cap are the whole policy and that is by design). None is a finding. The copy-pasted
+`netutil.Dialer{Disallow: netutil.IsLinkLocal}` construction at S09, S11 and S18 is now held
+to one reference by the new targets instead of by three hand-copied table tests.
+
+### What the new targets prove, and what they do not
+
+`FuzzJWKSTransportEgressParity`, `FuzzOIDCDiscoveryTransportEgressParity`,
+`FuzzAzureGraphTransportEgressParity`, `FuzzConnect{Vault,Azure,AWS}TransportEgressParity` and
+`FuzzAzureKMSTransportEgressParity` dial the site's real `DialContext` with one fuzzed
+destination in ten encodings (raw, IPv4-mapped, NAT64 well-known and local-use,
+IPv4-compatible, 6to4, Teredo, `fe80::` with a zone suffix, ULA including `fd00:ec2::254`,
+public IPv6) and compare the guard's refusal with a reference computed from the octets in
+`internal/fuzzutil/egressref`, with no call into netutil. The context is cancelled before the
+dial, so no socket is opened: a refusal is read from the guard's own error, and an address
+the guard lets through ends in a cancelled-context error. `FuzzAzureKMSResolverRebinding`
+drives a hostname through a resolver stub that changes its answer after the first call and
+checks that a mixed public/private answer set is refused whole and that the guard resolves
+once per dial.
+
+Red proof of every oracle is `internal/fuzzutil/egressref/egressref_test.go`: it runs the
+same probes against a planted no-guard dialer, a stdlib-only classifier (the pre-#1937
+encoding gap), a tier that over-blocks, a first-answer-only validator and a double
+resolution, and fails unless each one turns the oracle red, while the real netutil predicates
+stay green.
+
+Not covered: DNS rebinding at the link-local sites (S09, S11, S12 to S14, S18) has no
+resolver seam, so only literal addresses are driven there (the Dialer's pinning is covered by
+`FuzzEgressDialEnforcement`); with an egress proxy configured the dial targets the proxy, not
+the destination (accepted and documented at each site); the loopback-permitted tier sites
+(S01, S03, S05, S07) are covered at the predicate level and by table tests, not by a
+transport-level fuzz target.
+
 ## Needs coordinator
 
 Nothing in the table is on by default and aimed at a third party, so there is nothing to

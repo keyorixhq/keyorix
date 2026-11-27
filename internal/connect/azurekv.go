@@ -77,16 +77,23 @@ func (c *AzureKeyVaultConnector) client(ctx context.Context) (azSecretGetter, er
 	// machine-derived the way awsBaseTransport is.
 	cl, err := azsecrets.NewClient(c.vaultURL, cred, &azsecrets.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
-			Transport: &http.Client{
-				Transport:     newAzureHardenedTransport(azureBaseTransport()),
-				CheckRedirect: refuseRedirect,
-			},
+			Transport: azureKVHTTPClient(),
 		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("azure-key-vault: new client: %w", err)
 	}
 	return cl, nil
+}
+
+// azureKVHTTPClient is the *http.Client client() hands to azsecrets. It is a
+// function of its own so FuzzConnectAzureTransportEgressParity dials through the
+// exact client this backend uses, not a re-built copy of its transport.
+func azureKVHTTPClient() *http.Client {
+	return &http.Client{
+		Transport:     newAzureHardenedTransport(azureBaseTransport()),
+		CheckRedirect: refuseRedirect,
+	}
 }
 
 func (c *AzureKeyVaultConnector) GetSecret(ctx context.Context, ref string) (string, error) {
