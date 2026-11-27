@@ -32,7 +32,7 @@ services:
     # SMOKE-FLAKE-3: pinned by tag@digest (index digest from docker.io, 2026-10-24, via
     # `docker buildx imagetools inspect docker.io/postgres:15-alpine`). Bumping the tag
     # requires re-fetching the digest from UPSTREAM docker.io, never from a mirror.
-    image: postgres:15-alpine@sha256:a8e042598834300dfaa17a54f695b87b7f25d3490433bbbe2ef3bffbb9747f24
+    image: postgres:15-alpine@sha256:e18480a22d6e48f4d816a6696769b1ec09ac73a824c5649e49c7d8b684913f3d
     restart: unless-stopped
     environment:
       POSTGRES_DB: keyorix

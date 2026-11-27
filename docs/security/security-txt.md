@@ -48,11 +48,15 @@ there was considered and rejected:
 
 ## Renewal
 
-`Expires` is set about six months out. Renew it at least 30 days before it
-lapses: bump `Expires` (never more than one year ahead), republish the file, and
-note the new date in the commit message. `deploy/security_txt_test.go` fails when
-the date is in the past or more than 366 days ahead, so a missed renewal shows up
-in CI rather than in a researcher's scanner. It logs a warning from 60 days out.
+`Expires` is set just under one year out (RFC 9116: less than a year). Renew it
+at least 30 days before it lapses: bump `Expires` (never more than one year
+ahead), republish the file, and note the new date in the commit message.
+`deploy/security_txt_test.go` fails when the date is in the past or more than 366
+days ahead and logs a warning from 60 days out. `scripts/check-security-txt-expiry.sh`
+fails when `Expires` has passed or is less than 30 days away (`MIN_DAYS`). It is
+meant for a scheduled job, not every PR: a calendar-dependent check on every PR
+would turn the whole merge queue red on one day
+(`docs/guard-rollout-contract.md`).
 
 ## Not included, on purpose
 
