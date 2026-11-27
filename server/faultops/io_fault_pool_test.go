@@ -217,6 +217,12 @@ func (p *ioFaultPool) attribute(query string, commit, audit bool) ioAttribution 
 		buf := make([]byte, 16<<10)
 		fmt.Fprintf(os.Stderr, "IOFAULT-STACK method=%q\n%s\n", a.method, buf[:runtime.Stack(buf, false)])
 	}
+	// On PostgreSQL the audit flusher takes the chain advisory lock as the FIRST
+	// statement of its batch transaction, before audit_events is written, so the
+	// transaction is not yet flagged as an audit write: recognise the flusher itself.
+	if !audit && a.method == "" && auditFlusherOnStack() {
+		audit = true
+	}
 	if audit && (a.method == "" || (commit && a.method == "WithTransaction")) {
 		// A statement of the audit append that no storage method issued (the chain-tail
 		// read of the audit writer), or the COMMIT of a transaction that writes
@@ -270,6 +276,25 @@ func storageMethodOnStack() string {
 		}
 		if !more {
 			return ""
+		}
+	}
+}
+
+// auditFlusherOnStack reports whether the calling goroutine is inside the audit
+// chain writer (the detached flusher's batch commit), recognised by a store
+// function whose name carries "Audit".
+func auditFlusherOnStack() bool {
+	pcs := make([]uintptr, 64)
+	n := runtime.Callers(3, pcs)
+	frames := runtime.CallersFrames(pcs[:n])
+	const marker = "/internal/storage/store.(*LocalStorage)."
+	for {
+		fr, more := frames.Next()
+		if i := strings.Index(fr.Function, marker); i >= 0 && strings.Contains(fr.Function[i+len(marker):], "Audit") {
+			return true
+		}
+		if !more {
+			return false
 		}
 	}
 }
