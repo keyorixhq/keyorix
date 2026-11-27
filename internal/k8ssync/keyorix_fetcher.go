@@ -436,7 +436,7 @@ func (f *KeyorixFetcher) loadEnvironmentsLocked(ctx context.Context) error {
 		// honest answer. Taking either id could read a secret from an environment the
 		// operator did not name; refuse the whole list instead.
 		if _, dup := m[e.Name]; dup {
-			return fmt.Errorf("list environments in project %d: environment %q is listed more than once", f.projectID, e.Name)
+			return fmt.Errorf("list environments in project %d: an environment is listed more than once", f.projectID)
 		}
 		m[e.Name] = e.ID
 	}
