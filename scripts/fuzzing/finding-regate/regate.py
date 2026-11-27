@@ -98,7 +98,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true",
                    help="print matched findings without running tests")
     p.add_argument("--registered-seeds", metavar="FILE",
-                   help="JSON map {finding_id: [seed_path, ...]}")
+                   help="JSON map {finding_id: [seed_path, ...]}. Without it, a "
+                        "target with no committed seeds gets only the burst, "
+                        "silently; with it, a missing seed is an error")
     p.add_argument("-v", "--verbose", action="store_true",
                    help="print full go test output on failure")
     return p

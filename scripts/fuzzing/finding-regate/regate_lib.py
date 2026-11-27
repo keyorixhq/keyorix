@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -281,13 +282,14 @@ GoTestRunner = Callable[[list[str], str], tuple[int, str]]
 
 
 def _default_runner(cmd: list[str], cwd: str) -> tuple[int, str]:
+    # GOCACHE, GOMODCACHE and TMPDIR are the caller's business: go uses its own
+    # defaults unless the calling environment sets them.
     env = os.environ.copy()
-    env.setdefault("GOCACHE", "/mnt/data/wave8/ait3/gocache")
-    env.setdefault("GOMODCACHE", "/mnt/data/wave8/ait3/gomod")
-    env.setdefault("TMPDIR", "/mnt/data/wave8/ait3/tmp")
     env["GOMAXPROCS"] = "2"
+    # Lower the priority when nice exists; run unwrapped otherwise.
+    prefix = ["nice", "-n", "10"] if shutil.which("nice") else []
     result = subprocess.run(
-        ["nice", "-n", "10"] + cmd,
+        prefix + cmd,
         capture_output=True, text=True,
         cwd=cwd, env=env,
     )
@@ -306,14 +308,30 @@ def replay_seed(
     run_flag = f"^{re.escape(target.func)}$/{re.escape(seed_name)}"
     cmd = ["go", "test", "-run", run_flag, "-v", "."]
     rc, out = runner(cmd, pkg_dir)
-    ok = rc == 0
+    # go test -run exits 0 with "no tests to run" when the pattern matches
+    # nothing (renamed func, package without the target), so rc == 0 alone
+    # would pass vacuously. Require the subtest's own PASS line.
+    pass_line = re.compile(
+        rf"^\s*--- PASS: {re.escape(target.func)}/{re.escape(seed_name)}(\s|$)",
+        re.MULTILINE,
+    )
+    if rc != 0:
+        ok, error_msg = False, f"exit {rc}"
+    elif not pass_line.search(out):
+        ok = False
+        error_msg = (
+            f"exit 0 but no '--- PASS: {target.func}/{seed_name}' line in the "
+            "output: the seed was not replayed (func renamed or removed?)"
+        )
+    else:
+        ok, error_msg = True, ""
     return RunResult(
         finding_id="",
         target=target,
         seed_name=seed_name,
         ok=ok,
         output=out,
-        error_msg="" if ok else f"exit {rc}",
+        error_msg=error_msg,
     )
 
 
