@@ -395,8 +395,9 @@ third-party-library bug with no Keyorix code change, a process-only finding), us
 ```
 
 `TestFindingRegressionTests_NamedTestsExist` (`internal/docsdrift`) verifies every
-doc that carries this field: it confirms the named function exists in the stated
-package. It does **not** verify the test passes (CI's job) or that the test actually
+doc that carries this field: every named `Test…`/`Fuzz…` function must exist in the
+stated package, an N/A must give a reason, and a near-miss spelling of the field is an
+error. It does **not** verify the test passes (CI's job) or that the test actually
 exercises the specific bug (the author's job). This is a traceability aid, not an
 automatic test generator — a human still writes the assertions.
 
@@ -404,9 +405,11 @@ automatic test generator — a human still writes the assertions.
 were cross-filed to the keyorix-private fuzz-corpus registry. Omit for internal Keyorix
 findings (the common case).
 
-Finding docs that predate this requirement carry no `**Regression test:**` field and are
-silently skipped by the checker. Do not retroactively add the field to every old doc —
-only add it when you have a verified test name to put there.
+Every FINDING doc dated 2026-11-27 or later (by its filename) must carry exactly one
+`**Regression test:**` line; the checker fails one that does not. Older FINDING docs
+without the field are grandfathered (skipped and counted in the test log). Do not
+retroactively add the field to every old doc — only add it when you have a verified
+test name to put there.
 
 ## Closing a security fix
 

@@ -32,25 +32,29 @@ not higher or lower.
 
 <!-- HOW TO USE THIS TEMPLATE
 
-**Regression test** is REQUIRED. Two forms:
+**Regression test** is REQUIRED: a FINDING doc dated 2026-11-27 or later must
+carry exactly one such line, spelled exactly as above (bold, colon inside the
+bold). Two forms:
 
   `TestFunctionName` (`path/to/package`)
 
     Use when a deterministic test proves the bug is fixed and will stay fixed.
     path/to/package is the Go package's directory relative to the repo root
     (e.g. `server/http`, `internal/core`, `internal/encryption`). The function
-    name must match a `func TestFunctionName(` or `func FuzzFunctionName(` in
-    that package. The checker TestFindingRegressionTests_NamedTestsExist
-    (internal/docsdrift) verifies this — it confirms the function exists in the
-    stated package; it does NOT verify the test passes or covers the specific bug.
-    That is CI's job.
+    must be a `func TestFunctionName(t *testing.T)` or
+    `func FuzzFunctionName(f *testing.F)` in that package. Several tests may be
+    named on the one line; each is checked. The checker
+    TestFindingRegressionTests_NamedTestsExist (internal/docsdrift) verifies
+    this — it confirms the function exists in the stated package; it does NOT
+    verify the test passes or covers the specific bug. That is CI's job.
 
   N/A — <reason>
 
     Use when no deterministic test applies: a third-party-library containment
     with no Keyorix code change (the SAML nil-deref finding is an example), a
     docs-only or process finding, or a finding whose test requires a Postgres
-    race that cannot be encoded deterministically. State the reason explicitly.
+    race that cannot be encoded deterministically. State the reason explicitly:
+    a bare N/A without "— <reason>" fails the checker.
 
 **KFZ id** is OPTIONAL. Include it only for findings that originated in, or were
 cross-filed to, the private fuzz-corpus registry (keyorix-private). Omit the

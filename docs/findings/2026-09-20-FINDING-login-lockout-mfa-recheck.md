@@ -3,6 +3,7 @@
 Date: 2026-09-20
 Status: F1 investigated, found already closed in current `main` (evidence
 below, no code change). F2 confirmed real, FIXED in this PR.
+
 **Regression test:** `TestLogin_ConcurrentBurst_RateLimitBoundsCredentialChecks` (`server/http/handlers`) — F2 only; F1 has no code change and no regression test.
 
 ## F1: does `Login`'s MFA branch skip the lockout re-check the non-MFA branch does?
