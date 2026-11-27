@@ -99,7 +99,7 @@ func loadGapExemptions(root string) ([]gapExemption, error) {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".tsv") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, ent.Name()))
+		data, err := os.ReadFile(filepath.Join(dir, ent.Name())) // #nosec G304 -- developer tool: dir is docs/fuzz/dep-fuzz.d under the repo root, names come from os.ReadDir of that same directory
 		if err != nil {
 			return nil, err
 		}
