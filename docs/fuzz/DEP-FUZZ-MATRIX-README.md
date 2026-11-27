@@ -4,23 +4,41 @@ This document explains how to regenerate the dependency-to-fuzz-coverage matrix,
 defines the REACH and FUZZ classes, and states explicitly what the matrix does
 and does not verify.
 
-## Regeneration
+## Regeneration (on demand; the matrix is not committed)
 
 ```sh
 go run ./scripts/fuzzing/depmatrix
 ```
 
-This regenerates both output files:
-- `docs/fuzz/DEP-FUZZ-MATRIX.md` — human-readable table
-- `docs/fuzz/dep-fuzz-matrix.json` — machine-readable JSON (schema version 1)
+This writes two files under `.scratch/depmatrix/` (git-ignored):
+- `DEP-FUZZ-MATRIX.md` — human-readable table
+- `dep-fuzz-matrix.json` — machine-readable JSON (schema version 1)
 
-After regenerating, commit both output files and manually review
-`docs/fuzz/DEP-FUZZ-GAPS.md` to see whether any UNTRUSTED+NONE rows changed.
+Every column is derived from the go.mod files, the imports and
+`scripts/fuzzing/targets.d`, so nothing derived is committed: a committed copy
+goes stale on every dependency bump or new import. Use `-out-md` / `-out-json`
+to write elsewhere (for a nightly artifact).
 
-The stale-check test (`TestDepFuzzMatrixNotStale` in
-`scripts/fuzzing/depmatrix/depmatrix_test.go`) fails if the committed JSON
-diverges from a fresh regeneration. Run after any change to go.mod, fuzz
-targets, or repo imports.
+## The gap guard (what is committed and tested)
+
+The one thing a person decides is why a dependency that is reachable from
+untrusted input (`UNTRUSTED`) has no fuzz target (`NONE`) yet, and until when.
+That is a fragment, one file per module: `docs/fuzz/dep-fuzz.d/<module with "/"
+replaced by "__">.tsv` holding one row, `module<TAB>expires<TAB>reason`
+(YYYY-MM-DD; lines starting with `#` are comments).
+
+`scripts/fuzzing/depmatrix/depmatrix_test.go` derives the live matrix and fails
+when
+
+- an `UNTRUSTED` + `NONE` dependency has no fragment (add a fuzz target or a
+  fragment);
+- a fragment names a dependency that is no longer an open gap (fuzzed, removed
+  or no longer reachable; delete the fragment);
+- two fragments name one module; or
+- a fragment's expiry is malformed, or (nightly run only) has passed.
+
+It reads only each row's module, reach and fuzz columns, so a version bump, a
+changed import count or a new import of a known module cannot fail it.
 
 ## REACH classes
 
@@ -48,11 +66,11 @@ It does not evaluate runtime wiring or build tags.
 - Every direct dependency in every `go.mod` under the repo root is listed.
 - Each dep's REACH class is derived from actual import-graph data (non-test `.go` files).
 - Each dep's FUZZ class is derived from actual `func FuzzXxx` declarations and import lists.
-- `TestDepFuzzMatrixNotStale` fails (red) when the committed JSON diverges from
-  a fresh run, ensuring the matrix is kept current.
-- `TestDepFuzzMatrix_GoModAddGoesRed` proves that adding a new direct dep to
-  `go.mod` causes the stale-check to fire: `parseGoModDirect` detects the new
-  require line, so the regenerated rows differ from the committed file.
+- `TestDepFuzzGaps_*` fail when an untrusted-reachable, unfuzzed dependency has
+  no exemption fragment, or when an exemption is stale or duplicated; they are
+  calibrated on synthetic rows (known-good and planted violations).
+- `TestDepFuzzMatrix_GoModAddGoesRed` proves a new direct `require` line is
+  parsed, which is the input the gap guard depends on.
 
 ## What the matrix does NOT verify
 

@@ -8,8 +8,8 @@
 // Flags:
 //
 //	-root string    repo root directory (default: auto-detected from $PWD or ../../..)
-//	-out-md string  output path for the markdown matrix (default: docs/fuzz/DEP-FUZZ-MATRIX.md)
-//	-out-json string output path for the JSON matrix  (default: docs/fuzz/dep-fuzz-matrix.json)
+//	-out-md string  output path for the markdown matrix (default: .scratch/depmatrix/DEP-FUZZ-MATRIX.md)
+//	-out-json string output path for the JSON matrix  (default: .scratch/depmatrix/dep-fuzz-matrix.json)
 //
 // WHAT THE PROGRAM SCANS:
 //
@@ -43,8 +43,8 @@ import (
 func main() {
 	var root, outMD, outJSON string
 	flag.StringVar(&root, "root", "", "repo root (default: auto-detect from cwd)")
-	flag.StringVar(&outMD, "out-md", "docs/fuzz/DEP-FUZZ-MATRIX.md", "output markdown path (relative to root)")
-	flag.StringVar(&outJSON, "out-json", "docs/fuzz/dep-fuzz-matrix.json", "output JSON path (relative to root)")
+	flag.StringVar(&outMD, "out-md", ".scratch/depmatrix/DEP-FUZZ-MATRIX.md", "output markdown path (relative to root; .scratch/ is git-ignored, the matrix is generated, not committed)")
+	flag.StringVar(&outJSON, "out-json", ".scratch/depmatrix/dep-fuzz-matrix.json", "output JSON path (relative to root; .scratch/ is git-ignored)")
 	flag.Parse()
 
 	if root == "" {
@@ -200,7 +200,7 @@ func manualNote(mod string) string {
 		"github.com/googleapis/gax-go/v2": "manual: gRPC retry/transport layer for GCP SDKs; reached via fuzz/thirdparty/gcpkms (uses real KMS client)",
 		// prometheus is only used as metrics reporter; not fed untrusted input.
 		"github.com/prometheus/client_golang": "manual: metrics-only; no untrusted input reaches Prometheus call sites",
-		"github.com/prometheus/client_model":   "manual: metrics model types only; no untrusted input",
+		"github.com/prometheus/client_model":  "manual: metrics model types only; no untrusted input",
 		// porcupine is a linearizability checker used in tests only.
 		"github.com/anishathalye/porcupine": "manual: test-only linearizability checker; not in production binary",
 		// keyorix-sdks is our own SDK; classified as own code, not third-party.

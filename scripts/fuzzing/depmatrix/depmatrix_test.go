@@ -1,44 +1,49 @@
-// depmatrix_test.go — tests that the committed matrix is fresh and complete.
+// depmatrix_test.go — tests for the dependency gap guard.
 //
-// Two tests:
+// The matrix is generated on demand and not committed (see gaps.go), so there
+// is no staleness test. What is checked instead:
 //
-//  1. TestDepFuzzMatrixNotStale: regenerates the matrix from source and
-//     byte-compares to the committed docs/fuzz/dep-fuzz-matrix.json.
-//     Fails when the committed file is out of date.
+//   - TestDepFuzzGaps_EveryOpenGapIsExempt: every REACH=UNTRUSTED, FUZZ=NONE
+//     dependency in the live derivation has a fragment under docs/fuzz/dep-fuzz.d.
+//   - TestDepFuzzGaps_NoStaleOrDuplicateExemption: every fragment names a
+//     dependency that is still an open gap, and no module has two fragments.
+//   - TestDepFuzzGapExemptionsNotExpired: the dates parse (and, in the nightly
+//     run, have not passed), through guardrules.CheckExpiry; no test reads the
+//     clock.
+//   - TestCheckGaps_Calibration and TestCheckGaps_IgnoresVersionAndImportCount:
+//     the comparison fires on planted violations and stays green on a known-good
+//     case, on synthetic rows, so they do not depend on the repository.
+//   - TestParseGapExemption: the fragment parser.
+//   - TestDepFuzzMatrix_GoModAddGoesRed: a new direct require line is parsed.
 //
-//  2. TestDepFuzzMatrix_GoModAddGoesRed: red/green proof that the stale-check
-//     detects a newly-added direct dependency. It writes a copy of go.mod with
-//     a fake require line to a temp directory and runs generate() against it;
-//     the new module must appear in the rows list.
+// The two live guards walk every go.mod and .go file, so they report through
+// guardrules.Rollout (docs/guard-rollout.d rows) until promoted.
 //
 // WHAT THESE TESTS DO NOT VERIFY:
 //   - That fuzz targets compile or exercise the dependency correctly.
-//   - That REACH/FUZZ classifications are semantically accurate (they test for
-//     staleness, not correctness of the heuristics).
-//   - That indirect (// indirect) dependencies are present in the matrix
-//     (only direct deps are tracked).
+//   - That REACH/FUZZ classifications are semantically accurate.
+//   - Indirect dependencies (only direct requires are tracked).
+//   - That an exemption's reason is true.
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
-// findRepoRootForTest walks up from the test binary's location to find the repo root.
+// findRepoRootForTest walks up from the package directory to the repo root.
 func findRepoRootForTest(t *testing.T) string {
 	t.Helper()
-	// The test binary runs from the package dir; walk up until we find go.mod
-	// with the keyorix root module declaration.
 	dir, err := filepath.Abs(".")
 	if err != nil {
 		t.Fatalf("cannot determine cwd: %v", err)
 	}
 	for {
-		candidate := filepath.Join(dir, "go.mod")
-		mp := goModModulePath(candidate)
-		if mp == "github.com/keyorixhq/keyorix" {
+		if goModModulePath(filepath.Join(dir, "go.mod")) == "github.com/keyorixhq/keyorix" {
 			return dir
 		}
 		parent := filepath.Dir(dir)
@@ -49,89 +54,167 @@ func findRepoRootForTest(t *testing.T) string {
 	}
 }
 
-// TestDepFuzzMatrixNotStale regenerates the matrix and byte-compares to the
-// committed docs/fuzz/dep-fuzz-matrix.json. Run after any change that might
-// affect deps or fuzz coverage.
-func TestDepFuzzMatrixNotStale(t *testing.T) {
+// liveGaps derives the matrix from the working tree and loads the fragments.
+func liveGaps(t *testing.T) ([]DepRow, []gapExemption) {
+	t.Helper()
 	root := findRepoRootForTest(t)
-
-	rows, rootMod, err := generate(root)
+	rows, _, err := generate(root)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
-
-	matrix := MatrixJSON{
-		SchemaVersion: "1",
-		RootModule:    rootMod,
-		Counts:        buildCounts(rows),
-		Rows:          rows,
-	}
-	fresh, err := json.MarshalIndent(matrix, "", "  ")
+	ex, err := loadGapExemptions(root)
 	if err != nil {
-		t.Fatalf("marshal: %v", err)
+		t.Fatalf("load exemptions: %v", err)
 	}
-	fresh = append(fresh, '\n')
+	return rows, ex
+}
 
-	committedPath := filepath.Join(root, "docs", "fuzz", "dep-fuzz-matrix.json")
-	committed, err := os.ReadFile(committedPath)
-	if err != nil {
-		t.Fatalf("read committed matrix: %v", err)
-	}
-
-	if string(fresh) != string(committed) {
-		t.Errorf("committed docs/fuzz/dep-fuzz-matrix.json is stale\n" +
-			"regenerate with: go run ./scripts/fuzzing/depmatrix\n" +
-			"then commit the updated docs/fuzz/dep-fuzz-matrix.json and docs/fuzz/DEP-FUZZ-MATRIX.md")
+func TestDepFuzzGaps_EveryOpenGapIsExempt(t *testing.T) {
+	g := guardrules.Rollout(t)
+	rows, ex := liveGaps(t)
+	for _, m := range checkGaps(rows, ex).Unexempted {
+		g.Errorf("%s is reachable from untrusted input and has no fuzz target. "+
+			"Add a fuzz target, or write %s/%s (module, expiry YYYY-MM-DD, reason; tab-separated)",
+			m, gapDir, gapFileName(m))
 	}
 }
 
-// TestDepFuzzMatrix_GoModAddGoesRed proves that adding a new direct dependency
-// to go.mod causes TestDepFuzzMatrixNotStale to fail: the new module appears
-// in the regenerated rows but not in the committed file.
-//
-// Red proof: a fake module "example.com/fake-dep-goesred" is injected into a
-// temporary copy of go.mod; generate() must include it in the rows.
-// Green proof: without the injection, the module must NOT appear in the rows.
+func TestDepFuzzGaps_NoStaleOrDuplicateExemption(t *testing.T) {
+	g := guardrules.Rollout(t)
+	rows, ex := liveGaps(t)
+	f := checkGaps(rows, ex)
+	for _, m := range f.Stale {
+		g.Errorf("%s/%s exempts %s, which is not an untrusted-and-unfuzzed dependency any more "+
+			"(fuzzed, no longer required, or no longer reachable); delete the fragment",
+			gapDir, gapFileName(m), m)
+	}
+	for _, m := range f.Duplicate {
+		g.Errorf("%s is exempted by more than one fragment", m)
+	}
+}
+
+func TestDepFuzzGapExemptionsNotExpired(t *testing.T) {
+	_, ex := liveGaps(t)
+	for _, e := range ex {
+		guardrules.CheckExpiry(t, guardrules.Expiry{
+			Source:  e.Source,
+			Key:     e.Module,
+			Expires: e.Expires,
+			Note:    e.Reason,
+		})
+	}
+}
+
+// row builds a synthetic matrix row for the calibration tests.
+func row(module, reach, fuzz, version string, importCount int) DepRow {
+	return DepRow{Module: module, Version: version, ImportCount: importCount, Reach: reach, Fuzz: fuzz}
+}
+
+func exempt(module string) gapExemption {
+	return gapExemption{Module: module, Expires: "2099-01-01", Reason: "test", Source: gapDir + "/" + gapFileName(module)}
+}
+
+func TestCheckGaps_Calibration(t *testing.T) {
+	const untrusted, none, direct = "UNTRUSTED", "NONE", "DIRECT"
+	tests := []struct {
+		name                         string
+		rows                         []DepRow
+		ex                           []gapExemption
+		unexempted, stale, duplicate []string
+	}{
+		{name: "known-good: gap is exempt, fuzzed and tooling rows need nothing",
+			rows: []DepRow{
+				row("a/gap", untrusted, none, "v1", 1),
+				row("b/fuzzed", untrusted, direct, "v1", 2),
+				row("c/tooling", "TOOLING", none, "v1", 1),
+			},
+			ex: []gapExemption{exempt("a/gap")}},
+		{name: "red: new untrusted unfuzzed dependency without a fragment",
+			rows:       []DepRow{row("a/new", untrusted, none, "v1", 1)},
+			unexempted: []string{"a/new"}},
+		{name: "red: exemption left behind after the dependency got a fuzz target",
+			rows:  []DepRow{row("a/gap", untrusted, direct, "v1", 1)},
+			ex:    []gapExemption{exempt("a/gap")},
+			stale: []string{"a/gap"}},
+		{name: "red: exemption for a module that is gone",
+			ex:    []gapExemption{exempt("a/removed")},
+			stale: []string{"a/removed"}},
+		{name: "red: two fragments for one module",
+			rows:      []DepRow{row("a/gap", untrusted, none, "v1", 1)},
+			ex:        []gapExemption{exempt("a/gap"), exempt("a/gap")},
+			duplicate: []string{"a/gap"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := checkGaps(tc.rows, tc.ex)
+			if strings.Join(got.Unexempted, ",") != strings.Join(tc.unexempted, ",") ||
+				strings.Join(got.Stale, ",") != strings.Join(tc.stale, ",") ||
+				strings.Join(got.Duplicate, ",") != strings.Join(tc.duplicate, ",") {
+				t.Errorf("got %+v, want unexempted=%v stale=%v duplicate=%v", got, tc.unexempted, tc.stale, tc.duplicate)
+			}
+		})
+	}
+}
+
+// TestCheckGaps_IgnoresVersionAndImportCount pins the property that made the
+// old snapshot comparison fail every dependency-bump pull request: a different
+// version or import count must not change the findings.
+func TestCheckGaps_IgnoresVersionAndImportCount(t *testing.T) {
+	before := []DepRow{row("a/gap", "UNTRUSTED", "NONE", "v1.0.0", 1), row("b/ok", "UNTRUSTED", "DIRECT", "v1.0.0", 1)}
+	after := []DepRow{row("a/gap", "UNTRUSTED", "NONE", "v9.9.9", 40), row("b/ok", "UNTRUSTED", "DIRECT", "v2.0.0", 7)}
+	ex := []gapExemption{exempt("a/gap")}
+	if a, b := checkGaps(before, ex), checkGaps(after, ex); len(a.Unexempted)+len(a.Stale)+len(b.Unexempted)+len(b.Stale) != 0 {
+		t.Errorf("version or import-count change altered the findings: before=%+v after=%+v", a, b)
+	}
+}
+
+func TestParseGapExemption(t *testing.T) {
+	good := "# comment\nexample.com/m/v2\t2027-01-31\twhy\n"
+	if e, err := parseGapExemption(gapFileName("example.com/m/v2"), []byte(good)); err != nil ||
+		e.Module != "example.com/m/v2" || e.Expires != "2027-01-31" || e.Reason != "why" {
+		t.Fatalf("good fragment: %+v, %v", e, err)
+	}
+	bad := map[string]string{
+		"no row":          "# only a comment\n",
+		"two rows":        "a\t2027-01-01\tr\nb\t2027-01-01\tr\n",
+		"two fields":      "a\t2027-01-01\n",
+		"empty reason":    "a\t2027-01-01\t \n",
+		"wrong file name": "other\t2027-01-01\tr\n",
+	}
+	for name, content := range bad {
+		if _, err := parseGapExemption(gapFileName("a"), []byte(content)); err == nil {
+			t.Errorf("%s: parsed without error", name)
+		}
+	}
+}
+
+// TestDepFuzzMatrix_GoModAddGoesRed proves a new direct require line is parsed,
+// which is the input the gap guard depends on.
 func TestDepFuzzMatrix_GoModAddGoesRed(t *testing.T) {
 	root := findRepoRootForTest(t)
-
 	const fakeModule = "example.com/fake-dep-goesred"
 	const fakeLine = "\trequire example.com/fake-dep-goesred v0.0.0-00010101000000-000000000000\n"
 
-	// --- Green proof: fakeModule must NOT be present without injection ---
 	rowsClean, _, err := generate(root)
 	if err != nil {
 		t.Fatalf("generate (clean): %v", err)
 	}
 	for _, r := range rowsClean {
 		if r.Module == fakeModule {
-			t.Fatalf("green proof failed: %q found in clean matrix (unexpected)", fakeModule)
+			t.Fatalf("green proof failed: %q found in the clean matrix", fakeModule)
 		}
 	}
-
-	// --- Red proof: inject fake require into a temp go.mod copy ---
-	// Write the patched go.mod into a temp dir that mirrors the repo layout.
-	// generate() reads the real filesystem; we cannot swap go.mod in place.
-	// Instead, we directly call parseGoModDirect on the patched content and
-	// confirm the fake dep is returned — this is the unit that TestDepFuzzMatrixNotStale
-	// depends on (collectDirectDeps → parseDirectDepsFile → parseGoModDirect).
 	origData, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil {
 		t.Fatalf("read go.mod: %v", err)
 	}
-	patched := string(origData) + fakeLine
-
-	// goModRel doesn't affect module detection, only the GoMod field on the row.
-	deps := parseGoModDirect(patched, "go.mod")
 	found := false
-	for _, d := range deps {
+	for _, d := range parseGoModDirect(string(origData)+fakeLine, "go.mod") {
 		if d.Module == fakeModule {
 			found = true
-			break
 		}
 	}
 	if !found {
-		t.Errorf("red proof failed: %q not detected in patched go.mod content — "+
-			"TestDepFuzzMatrixNotStale would NOT go red on a new direct dep", fakeModule)
+		t.Errorf("red proof failed: %q not detected in patched go.mod content", fakeModule)
 	}
 }

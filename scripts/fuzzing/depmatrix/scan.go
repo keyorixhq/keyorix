@@ -156,8 +156,8 @@ func scanFile(fset *token.FileSet, absPath, relPath string, res *scanResult) err
 	pkgDir := filepath.ToSlash(filepath.Dir(relPath))
 
 	// Collect imports, split into external modules and own-module packages.
-	var extMods []string   // external module-path prefixes imported by this file
-	var ownPkgs []string   // own-module package paths imported by this file
+	var extMods []string // external module-path prefixes imported by this file
+	var ownPkgs []string // own-module package paths imported by this file
 	for _, imp := range f.Imports {
 		p := strings.Trim(imp.Path.Value, `"`)
 		if p == "C" {

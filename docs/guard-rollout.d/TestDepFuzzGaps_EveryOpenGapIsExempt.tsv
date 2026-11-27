@@ -1,0 +1,1 @@
+TestDepFuzzGaps_EveryOpenGapIsExempt	scripts/fuzzing/depmatrix	#4776	new repo-wide guard: every untrusted-reachable, unfuzzed direct dependency needs a docs/fuzz/dep-fuzz.d fragment; compares the live derivation, ignores versions and import counts

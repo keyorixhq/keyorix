@@ -1,0 +1,1 @@
+github.com/aws/aws-sdk-go-v2/service/iam	2027-02-28	Used by internal/rotation for dynamic-secret rotation (AWS IAM users). IAM response decoding is done inside the AWS SDK; influencing it needs MITM on the AWS endpoint or a compromised AWS account. fuzz/thirdparty/aws covers the broader SDK. Suggested: extend it with IAM ListUsers/CreateUser response bodies.
