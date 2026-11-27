@@ -72,7 +72,7 @@ const maxInputBytes = 64 * 1024
 
 // runOp runs fn in a goroutine with recover(), reporting any panic via
 // panicMsg. The 5s watchdog sets timedOut.
-func runOp(label string, fn func() error) (err error, panicMsg string, timedOut bool) {
+func runOp(label string, fn func() error) (panicMsg string, timedOut bool, err error) {
 	done := make(chan struct{})
 	go func() {
 		defer func() {
@@ -85,9 +85,9 @@ func runOp(label string, fn func() error) (err error, panicMsg string, timedOut 
 	}()
 	select {
 	case <-done:
-		return err, panicMsg, false
+		return panicMsg, false, err
 	case <-time.After(5 * time.Second):
-		return nil, "", true
+		return "", true, nil
 	}
 }
 
@@ -100,7 +100,7 @@ type opResult struct {
 }
 
 func runOpResult(label string, fn func() error) opResult {
-	err, panicMsg, timedOut := runOp(label, fn)
+	panicMsg, timedOut, err := runOp(label, fn)
 	return opResult{err: err, panicMsg: panicMsg, timedOut: timedOut}
 }
 

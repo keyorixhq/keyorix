@@ -12,7 +12,7 @@ import (
 // runOp fires on a real panic.
 func TestOraclePanic_RedGreen(t *testing.T) {
 	// RED: planted panic must be caught and reported.
-	_, panicMsg, timedOut := runOp("test-panic", func() error {
+	panicMsg, timedOut, _ := runOp("test-panic", func() error {
 		panic("planted panic for oracle validation")
 	})
 	if timedOut {
@@ -23,7 +23,7 @@ func TestOraclePanic_RedGreen(t *testing.T) {
 	}
 
 	// GREEN: a fn that returns normally must produce an empty panicMsg.
-	_, panicMsg2, timedOut2 := runOp("test-normal", func() error {
+	panicMsg2, timedOut2, _ := runOp("test-normal", func() error {
 		return nil
 	})
 	if timedOut2 {
