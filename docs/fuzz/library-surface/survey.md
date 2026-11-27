@@ -57,7 +57,7 @@ They are confirmed here as the foundation for each category below.
 | Tool | Location | What it does | Confirmed |
 |------|----------|-------------|-----------|
 | `resguard` | `internal/fuzzutil/resguard/` | Bounded memory + time guard (`fuzzutil.Guard`); wraps `testing.T.Fatalf`; used by all three existing pkcs7 harnesses | YES |
-| `boundedwork.go` | `internal/fuzzutil/boundedwork.go` | CPU/clock primitives for bounded-work assertions | YES |
+| `boundedwork.go` | `internal/fuzzutil/boundedwork/boundedwork.go` | CPU/clock primitives for bounded-work assertions | YES |
 | `libconformance` harness style | `internal/libconformance/` | Differential harness pattern with known-class allowlist; `EXPECTED-DIFFERENCE.md` and `differential_expected_difference_test.go` define the template | YES |
 | `bwgen` | `scripts/fuzzing/bwgen/` | Type-scanner that emits bounded-work and round-trip targets for exported funcs matching simple shapes (A/B/U); pkcs7 is already in `sweep-pkgs.txt`; uses `golang.org/x/tools/go/packages` + `go/types` | YES |
 | `reachgen` | `scripts/fuzzing/reachgen/` | Offline call-graph tool that ranks third-party exported funcs Keyorix calls on untrusted input; produces RANKED-TOP40.md; uses `go/packages` + intra-procedural taint | YES |
@@ -69,7 +69,7 @@ They are confirmed here as the foundation for each category below.
 **Notes on names from the task brief:**
 - `internal/boundedworksweep` — not a Go package; the concept maps to `bwgen`
   (`scripts/fuzzing/bwgen/`) and the `boundedwork.go` file in `internal/fuzzutil/`.
-- `scripts/fuzzing/depmatrix` — no such directory found.  The closest match is
+- the dependency-matrix directory under scripts/fuzzing (named "depmatrix" in the task) — no such directory found at survey time.  The closest match is
   `reachgen`'s RANKED-TOP40.md output (call-site-weighted dependency matrix).
   If this is a planned artifact, it needs a TODO-ISSUE.
 - `Corobix fuzz-runner.sh` — the actual tool is `keyorixhq/fuzz-harness`

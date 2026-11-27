@@ -151,6 +151,7 @@ scripts/e2e/sdkdiff/minimize.go (os.WriteFile)	file_write	scripts/e2e/sdkdiff	2
 scripts/e2e/sdkdiff/seed.go (os.WriteFile)	file_write	scripts/e2e/sdkdiff	2
 scripts/e2e/sdkdiff/server.go (os.Create)	file_write	scripts/e2e/sdkdiff	1
 scripts/e2e/sdkdiff/server.go (os.WriteFile)	file_write	scripts/e2e/sdkdiff	2
+scripts/fuzzing/apigen/main.go (os.WriteFile)	file_write	scripts/fuzzing/apigen	1
 scripts/fuzzing/autofuzzgen/main.go (os.WriteFile)	file_write	scripts/fuzzing/autofuzzgen	2
 scripts/fuzzing/bwgen/main.go (os.WriteFile)	file_write	scripts/fuzzing/bwgen	2
 scripts/fuzzing/configcompat/oracle.go (os.WriteFile)	file_write	scripts/fuzzing/configcompat	1

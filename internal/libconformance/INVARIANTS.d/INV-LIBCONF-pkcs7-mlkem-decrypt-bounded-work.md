@@ -11,6 +11,6 @@
   panic in the ML-KEM parsing path is directly reachable from pkcs7.Parse →
   p7.Decrypt.  Positive control: the seed envelope must decrypt successfully
   before fuzzing starts; a failing positive control aborts the harness, making
-  the ML-KEM path visible.  Guards: `FuzzPKCS7DecryptMLKEM768` (LS3,
+  the ML-KEM path visible.  Guard: `FuzzPKCS7DecryptMLKEM768` (LS3,
   ML-KEM-768 path) and `FuzzPKCS7DecryptMLKEM1024` (LS6, ML-KEM-1024 path),
   both in `internal/libconformance`.
