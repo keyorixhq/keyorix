@@ -47,6 +47,11 @@ type scanResult struct {
 	// modPaths is the set of all module paths found in the repo's go.mod files.
 	// Used to distinguish "own" packages from external ones.
 	ownModules []string
+
+	// skipped counts .go files and directories the walk could not read or
+	// parse. A skipped importer can only lower REACH (hide a gap), so the
+	// count is reported in the run summary.
+	skipped int
 }
 
 // fuzzTarget describes one file that declares at least one func FuzzXxx.
@@ -67,7 +72,7 @@ type fuzzFn struct {
 var skipDirsDepmatrix = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true,
 	"dist": true, "build": true, ".next": true,
-	".claude": true,
+	".claude": true, ".scratch": true, "testdata": true,
 }
 
 const maxFileSizeDepmatrix = 4 << 20 // 4 MiB
@@ -99,6 +104,7 @@ func scanRepo(root string, goModPaths []string) (*scanResult, error) {
 
 	err = filepath.WalkDir(rootAbs, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			res.skipped++
 			return nil
 		}
 		if d.IsDir() {
@@ -113,6 +119,7 @@ func scanRepo(root string, goModPaths []string) (*scanResult, error) {
 		}
 		info, e := d.Info()
 		if e != nil || info.Size() > maxFileSizeDepmatrix {
+			res.skipped++
 			return nil
 		}
 		rel, _ := filepath.Rel(rootAbs, path)
@@ -142,6 +149,7 @@ func scanRepo(root string, goModPaths []string) (*scanResult, error) {
 func scanFile(fset *token.FileSet, absPath, relPath string, res *scanResult) error {
 	src, err := os.ReadFile(absPath) // #nosec G304 -- developer tool scans repo source
 	if err != nil {
+		res.skipped++
 		return nil
 	}
 	// Skip files with the //go:build ignore constraint quickly.
@@ -150,7 +158,8 @@ func scanFile(fset *token.FileSet, absPath, relPath string, res *scanResult) err
 	}
 	f, err := parser.ParseFile(fset, absPath, src, parser.SkipObjectResolution)
 	if err != nil {
-		return nil // skip unparseable files (build-tag fragments, etc.)
+		res.skipped++ // unparseable files (build-tag fragments, etc.)
+		return nil
 	}
 	isTest := strings.HasSuffix(relPath, "_test.go")
 	pkgDir := filepath.ToSlash(filepath.Dir(relPath))
