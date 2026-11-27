@@ -26,7 +26,7 @@ package grpc_test
 //     (stream-client-error) malformed wire bytes → server codes.Internal is
 //     a HARDENING finding (same class as HARDENING-1 in PBG1 for unary RPCs).
 //     (stream-bounded) stream for unauthorized caller must close within
-//     streamPerCallTimeout.
+//     streamDeniedTimeout.
 //
 //  3. ResGuard heap oracle — both fuzzers use resguard.Probe to measure
 //     per-input allocation. When AllocBytes/inputLen exceeds
@@ -42,7 +42,7 @@ package grpc_test
 //     deferred"). Routing through one shared mechanism (authorizeScopedTarget)
 //     helps structurally but timing is not measured here.
 //   - Long-lived authorized stream behavior — the stream is cancelled after
-//     streamPerCallTimeout for every caller, so event delivery after the initial
+//     streamPerCallTimeout (admin) or streamDeniedTimeout (denied callers), so event delivery after the initial
 //     auth/setup window is not exercised.
 //   - Per-frame re-authorization in StreamAuditLogs (the reauthorizeAuditStream
 //     ticker is not reached within the timeout window).
@@ -82,6 +82,12 @@ const knownNonExistingID = uint32(999999)
 // verify no crash/data-leak occurs during setup. The stream is cancelled when
 // this timeout fires.
 const streamPerCallTimeout = 2 * time.Second
+
+// streamDeniedTimeout bounds the zero-grant and unauthenticated calls. A denied
+// stream closes within milliseconds, so this is only a hang detector; it is much
+// longer than streamPerCallTimeout so a loaded fuzz host cannot turn a slow
+// rejection into a false STREAM-HUNG.
+const streamDeniedTimeout = 10 * time.Second
 
 // allocAmplificationThreshold is the per-byte allocation ratio above which the
 // resguard oracle logs a RESOURCE-AMP finding. 10000 means 10 KB of server-side
@@ -351,9 +357,9 @@ func invokeStreamRaw(
 //
 // ADR-096 §4 (gRPC rule): a caller without global permission gets
 // codes.PermissionDenied for both "exists but denied" and "does not exist" —
-// the same code and message regardless of which case happened. A
-// PermissionDenied vs NotFound difference leaks resource existence and is
-// classified as VULNERABILITY.
+// the same code regardless of which case happened. The oracle compares status
+// codes only, not messages. A PermissionDenied vs NotFound difference leaks
+// resource existence and is classified as VULNERABILITY.
 //
 // ResGuard heap oracle: measures per-input allocation via resguard.Probe.
 // When AllocBytes/inputLen > allocAmplificationThreshold, logs RESOURCE-AMP.
@@ -525,7 +531,7 @@ func FuzzGRPCExistenceOracle(f *testing.F) {
 //	(stream-client-error) malformed wire bytes → server codes.Internal is a
 //	HARDENING finding (HARDENING-2 for streaming; not fatal).
 //	(stream-bounded) unauthorized caller stream must close within
-//	streamPerCallTimeout; DeadlineExceeded for the zero-grant caller is fatal.
+//	streamDeniedTimeout; DeadlineExceeded for the zero-grant caller is fatal.
 //	(stream-amp) allocation oracle (same as FuzzGRPCExistenceOracle).
 //
 // WHAT THIS DOES NOT VERIFY: see file header.
@@ -589,13 +595,13 @@ func FuzzGRPCStreamingRPCs(f *testing.F) {
 		cost := rg.Measure(len(program), func() {
 			// Zero-grant identity.
 			drain()
-			cctx1, cancel1 := context.WithTimeout(context.Background(), streamPerCallTimeout)
+			cctx1, cancel1 := context.WithTimeout(context.Background(), streamDeniedTimeout)
 			defer cancel1()
 			zeroFrames, zeroErr = invokeStreamRaw(cctx1, ew.conn, m, rawBytes, ew.zeroGrantTok)
 			drain()
 
 			// Unauthenticated identity.
-			cctx2, cancel2 := context.WithTimeout(context.Background(), streamPerCallTimeout)
+			cctx2, cancel2 := context.WithTimeout(context.Background(), streamDeniedTimeout)
 			defer cancel2()
 			unauthFrames, unauthErr = invokeStreamRaw(cctx2, ew.conn, m, rawBytes, "")
 			drain()
@@ -647,12 +653,12 @@ func FuzzGRPCStreamingRPCs(f *testing.F) {
 
 		// Oracle stream-bounded: the zero-grant caller's stream must close
 		// promptly. DeadlineExceeded means the server did not reject the
-		// unauthorized caller within streamPerCallTimeout.
+		// unauthorized caller within streamDeniedTimeout.
 		zeroCode := status.Code(zeroErr)
 		if zeroCode == codes.DeadlineExceeded {
 			t.Fatalf("STREAM-HUNG op=%s zero-grant mutKind=%d: "+
 				"stream exceeded %s deadline — server should reject unauthorized caller immediately",
-				m.key(), k, streamPerCallTimeout)
+				m.key(), k, streamDeniedTimeout)
 		}
 
 		// Oracle stream-amp: heap amplification.
