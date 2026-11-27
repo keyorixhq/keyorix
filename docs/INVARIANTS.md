@@ -72,6 +72,7 @@ excluded from the counts table, which tracks production packages only.
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 13 | 13 | 0 |
 | `server/authzdiff` | [server/authzdiff/INVARIANTS.md](../server/authzdiff/INVARIANTS.md) | 18 | 18 | 0 |
 | `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 22 | 22 | 0 |
+| `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 14 | 14 | 0 |
 | `server/authzdiff` | [server/authzdiff/INVARIANTS.md](../server/authzdiff/INVARIANTS.md) | 14 | 14 | 0 |
 | `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 23 | 23 | 0 |
 | `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 12 | 12 | 0 |
