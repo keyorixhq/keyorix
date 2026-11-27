@@ -62,8 +62,7 @@ func triage191AuditCount(s dbSnapshot) int { return len(s.Tables["AuditEvent"].R
 //   - it writes 0 audit events: the best-effort audit append (a WRITE) also hit
 //     the sticky ENOSPC and was swallowed — the loss IS explained by the fault
 func Test_Triage191_ApplyUnderStickyENOSPC_AuthenticatesAndDropsAudit(t *testing.T) {
-	ref, w, pool := newIOFaultTestWorlds(t)
-	_ = ref
+	_, w, pool := newIOFaultTestWorlds(t)
 	ctx := context.Background()
 	op := triage191ApplyOp(t)
 
@@ -146,50 +145,84 @@ func Test_Triage191_ApplyUnderStickyENOSPC_AuthenticatesAndDropsAudit(t *testing
 	t.Logf("VERDICT Q1: authenticated via liveness read-fallback (NOT fail-open); Q2: best-effort audit append lost to the SAME sticky disk (loss explained by the fault)")
 }
 
+// triage191CacheHitRefusal is refuseUnverifiedCacheHit's fixed answer
+// (server/middleware/auth.go): the cache-hit re-check could not be completed.
+const triage191CacheHitRefusal = "authentication temporarily unavailable, please retry"
+
 // Test_Triage191_ApplyUnderStickyEIO_FailsClosed is the fail-OPEN control: a
 // sticky EIO fails reads too, so the liveness read-fallback cannot answer and the
 // middleware MUST refuse (503, INV-MW-cache-hit-recheck-fails-closed). This is the
 // evidence the ENOSPC success is correct authentication, not a fail-open: when the
-// liveness answer is genuinely unknown, the request is refused.
+// liveness answer is genuinely unknown, the request is refused BY THE MIDDLEWARE.
+//
+// "Refused" alone would not tell the two apart: a fail-open middleware would pass
+// the request on and the handler's own template read would then fail under the same
+// sticky EIO. So the at=1 case requires the middleware's own 503 and fixed message,
+// and the at=2 case (the liveness read succeeds, a later statement fails) shows that
+// a refusal from past the middleware does NOT carry that message, i.e. the at=1
+// assertion discriminates.
+//
+// What it does NOT verify: a cold cache (the slow-path ValidateSessionToken read,
+// covered by the middleware's own tests), a PAT or machine token (other cache-hit
+// branches), PostgreSQL unless KEYORIX_TEST_PG_DSN is set.
 func Test_Triage191_ApplyUnderStickyEIO_FailsClosed(t *testing.T) {
-	ref, w, pool := newIOFaultTestWorlds(t)
-	_ = ref
-	ctx := context.Background()
-	op := triage191ApplyOp(t)
+	for _, tc := range []struct {
+		name         string
+		at           int
+		wantMWRefuse bool
+	}{
+		{"liveness-read-faulted", 1, true},
+		{"later-statement-faulted", 2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, w, pool := newIOFaultTestWorlds(t)
+			ctx := context.Background()
+			op := triage191ApplyOp(t)
 
-	w.resetForReuse(t, nil)
-	state, err := op.Setup(ctx, w)
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	if r, err := op.Execute(ctx, w, state); err != nil || !r.Success {
-		t.Fatalf("warm-up apply failed: %v %s", err, r.Detail)
-	}
-	drainAllBackgroundGoroutines()
+			w.resetForReuse(t, nil)
+			state, err := op.Setup(ctx, w)
+			if err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+			if r, err := op.Execute(ctx, w, state); err != nil || !r.Success {
+				t.Fatalf("warm-up apply failed: %v %s", err, r.Detail)
+			}
+			drainAllBackgroundGoroutines()
 
-	pool.Arm(&ioFault{kind: ioEIOBefore, at: 1, sticky: true})
-	res, err := op.Execute(ctx, w, state)
-	fired, attr := pool.Fired()
-	pool.Disarm()
-	drainAllBackgroundGoroutines()
-	if err != nil {
-		t.Fatalf("faulted apply returned a transport error: %v", err)
+			pool.Arm(&ioFault{kind: ioEIOBefore, at: tc.at, sticky: true})
+			res, err := op.Execute(ctx, w, state)
+			fired, attr := pool.Fired()
+			pool.Disarm()
+			drainAllBackgroundGoroutines()
+			if err != nil {
+				t.Fatalf("faulted apply returned a transport error: %v", err)
+			}
+			t.Logf("sticky-EIO@%d apply: fired=%v success=%v method=%q detail=%s", tc.at, fired, res.Success, attr.method, res.Detail)
+			if !fired {
+				t.Fatalf("the EIO fault never fired at statement %d", tc.at)
+			}
+			if res.Success {
+				t.Fatalf("FAIL-OPEN: a sticky EIO at statement %d yielded a SUCCESS (%s)", tc.at, res.Detail)
+			}
+			mwRefused := strings.HasPrefix(res.Detail, "HTTP 503:") && strings.Contains(res.Detail, triage191CacheHitRefusal)
+			if tc.wantMWRefuse {
+				if attr.method != "GetSessionAuthLiveness" {
+					t.Fatalf("expected statement 1 attributed to GetSessionAuthLiveness (cache-hit liveness read), got %q: cache not warm, reproduction not valid", attr.method)
+				}
+				if !mwRefused {
+					t.Fatalf("FAIL-OPEN: the liveness read failed and the fallback could not answer, but the middleware did not refuse with its 503 %q; the request got past it: %s", triage191CacheHitRefusal, res.Detail)
+				}
+				return
+			}
+			if attr.method == "GetSessionAuthLiveness" {
+				t.Fatalf("control invalid: statement %d is still the liveness read", tc.at)
+			}
+			if mwRefused {
+				t.Fatalf("control invalid: a fault past the liveness read still produced the middleware's refusal (%s), so the at=1 assertion cannot discriminate", res.Detail)
+			}
+		})
 	}
-	t.Logf("sticky-EIO apply: fired=%v success=%v method=%q detail=%s", fired, res.Success, attr.method, res.Detail)
-	if !fired {
-		t.Fatalf("the EIO fault never fired at statement 1")
-	}
-	if attr.method != "GetSessionAuthLiveness" {
-		t.Fatalf("expected statement 1 attributed to GetSessionAuthLiveness, got %q", attr.method)
-	}
-	// Fail-closed: the liveness answer is unknown (reads fail), so the request is refused.
-	if res.Success {
-		t.Fatalf("FAIL-OPEN: a sticky EIO on the liveness read yielded a SUCCESS (%s) — the cache-hit re-check did not fail closed", res.Detail)
-	}
-	if !strings.Contains(res.Detail, "503") {
-		t.Logf("note: refusal was %s (expected a 503 storage_unavailable); still a refusal, not a success", res.Detail)
-	}
-	t.Logf("VERDICT Q1: sticky EIO (reads fail) => request REFUSED => path is fail-closed, not fail-open")
+	t.Logf("VERDICT Q1: sticky EIO on the liveness read => refused by the auth middleware (503) => fail-closed, not fail-open")
 }
 
 // Test_Triage191_R2OraclePremiseInvalidUnderSticky is the oracle-artefact proof.
@@ -226,12 +259,19 @@ func Test_Triage191_R2OraclePremiseInvalidUnderSticky(t *testing.T) {
 	if seed == nil {
 		t.Fatalf("could not build seed for %q", triage191ApplyOpKey)
 	}
-	_, findings, notEval := runIOCase(t, ref, w, pool, seed, nil)
-	t.Logf("GREEN (full harness on seed %x): notEvaluated=%q findings=%v", seed, notEval, findings)
+	out, findings, notEval := runIOCase(t, ref, w, pool, seed, nil)
+	t.Logf("GREEN (full harness on seed %x): fired=%v success=%v attr=%s#%d notEvaluated=%q findings=%v",
+		seed, out.fired, out.success, out.attr.method, out.attr.nth, notEval, findings)
 	for _, f := range findings {
 		if strings.Contains(f, "R2 VIOLATION") {
 			t.Fatalf("the live harness surfaced an R2 violation for the sticky seed — the !stickyDisk gate is not suppressing it: %s", f)
 		}
+	}
+	// No R2 finding means nothing unless the case really reached the shape CI saw:
+	// evaluated, fired on the cache-hit liveness read, and reported success.
+	if notEval != "" || !out.fired || !out.success || out.attr.method != "GetSessionAuthLiveness" {
+		t.Fatalf("GREEN is vacuous: the seed did not reproduce the #191 shape (notEvaluated=%q fired=%v success=%v attr=%q)",
+			notEval, out.fired, out.success, out.attr.method)
 	}
 	t.Logf("VERDICT: R2 premise invalid under a sticky fault; the live harness's !stickyDisk gate already suppresses it => harness/oracle ARTEFACT")
 }
