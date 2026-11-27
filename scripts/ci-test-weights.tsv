@@ -269,7 +269,7 @@ internal/encryption	TestRotateKEKPassphrase_NoPendingFilesLeft	3.5
 internal/encryption	TestDEKEpoch_Postgres_StartupLiftsStaleFence	3.3
 internal/encryption	TestDEKCreatedAt_Postgres_StartupLiftKeepsTheOldDEKsTime	3.2
 internal/encryption	TestDEKEpoch_Postgres_StartRecordsRotationProtocol	3.2
-internal/encryption	TestDEKEpoch_SQLiteUnchanged	3.2
+internal/encryption	TestDEKEpoch_SQLiteBootSeedsAndRotationKeepsEpoch	3.2
 internal/oidcverify	TestHTTPJWKSResolver_CapsKeyCount	11.5
 internal/storage/store	*	0.0988
 internal/storage/store	TestLastUserActivity_SQLiteBoundedPlan	65.6

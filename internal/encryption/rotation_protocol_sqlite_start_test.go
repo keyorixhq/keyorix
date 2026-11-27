@@ -11,9 +11,10 @@ import (
 )
 
 // KEY-ROTATION-TAILS-NOV-1 item 3: a SQLite server start records the rotation
-// protocol (StartDEKEpochGuard), as a PostgreSQL one does, without starting
-// the epoch guard; it never lowers a newer recorded value, and a database it
-// served refuses a rotation by an older binary.
+// protocol (StartDEKEpochGuard), as a PostgreSQL one does, without starting a
+// watcher; it never lowers a newer recorded value, and a database it served
+// refuses a rotation by an older binary. Since SQLITE-DEK-EPOCH-1 the same start
+// also seeds the DEK epoch (boot-time check only).
 func TestStartDEKEpochGuard_SQLiteRecordsRotationProtocol(t *testing.T) {
 	db := fuzzworld.OpenSQLite(t, "file:"+filepath.Join(t.TempDir(), "p.db"), 1)
 	fuzzworld.Bootstrap(t, db)
@@ -33,8 +34,14 @@ func TestStartDEKEpochGuard_SQLiteRecordsRotationProtocol(t *testing.T) {
 	if svc.DEKEpochGuardRunning() || released {
 		t.Fatalf("guard running=%v released=%v on SQLite, want neither", svc.DEKEpochGuardRunning(), released)
 	}
-	if v, found := epochValue(t, db); found {
-		t.Fatalf("a SQLite start wrote a DEK epoch %q", v)
+	// Since SQLITE-DEK-EPOCH-1 a SQLite start seeds the epoch to this DEK's
+	// fingerprint (boot-time check only, no watcher).
+	fp, err := svc.DEKFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, found := epochValue(t, db); !found || v != fp {
+		t.Fatalf("a SQLite start recorded epoch %q (found=%v), want this DEK's fingerprint %q", v, found, fp)
 	}
 
 	newer := strconv.Itoa(dekRotationProtocol + 1)

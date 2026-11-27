@@ -6,14 +6,16 @@
   started at most `dekEpochMaxStaleness` ago matched; `RotateDEKWithSweep` fences the epoch
   (`rotating:<old>`), waits `dekEpochFenceWait` (> `dekEpochMaxStaleness`), holds every swept
   table in SHARE ROW EXCLUSIVE mode for the sweep, and compare-and-sets the epoch to the new DEK in the
-  sweep's own transaction, lifting the fence on failure. Decrypt is never fenced. SQLite is
-  untouched. Why: #3337 (a replica on another host with the old `dek.key` kept writing under
-  the retired DEK). Guard: `dek_epoch_postgres_test.go` (pg-gated:
+  sweep's own transaction, lifting the fence on failure. Decrypt is never fenced. This watcher /
+  fence machinery is PostgreSQL only — on SQLite (single node) no watcher runs and no fence is
+  taken; its own boot-time epoch check is a separate invariant
+  ([[INV-ENCRYPTION-sqlite-dek-epoch-at-boot]]). Why: #3337 (a replica on another host with the
+  old `dek.key` kept writing under the retired DEK). Guard: `dek_epoch_postgres_test.go` (pg-gated:
   `TestDEKEpoch_Postgres_RunningReplicaFencedByRotationElsewhere`, `_FailedRotationLiftsFence`,
   `_StartupLiftsStaleFence`, `_SeedRefusedForStaleDEK`, `_RotateRefusedFromStaleHost`,
   `_FenceLiftedDuringRotation_RollsBack`, `_SweepWaitsForInFlightWriter`), `dek_epoch_test.go`
-  (`TestDEKEpoch_SQLiteUnchanged`, `TestDEKEpochWatch_AllowWrite`,
-  `TestSweptModels_MatchSweptFields`), end to end
+  (`TestDEKEpoch_SQLiteBootSeedsAndRotationKeepsEpoch` confirms no watcher runs on SQLite,
+  `TestDEKEpochWatch_AllowWrite`, `TestSweptModels_MatchSweptFields`), end to end
   `server/dek_epoch_cross_replica_postgres_test.go` (pg-gated). **Not covered**: a write
   encrypted before its replica saw the fence whose INSERT starts more than
   `dekEpochFenceWait - dekEpochMaxStaleness` later while the presence guard is also bypassed;
