@@ -88,9 +88,11 @@ type goMailBuilder func(rcpt, subject, body string) (*gomail.Msg, error)
 // (a malformed encoded word); mime.WordDecoder will attempt to parse it and may fail
 // (e.g. "mime: unhandled charset """). That failure is not an injection — the oracle
 // comment explicitly says "which may decode it or, for an unknown charset, fail to.
-// Neither is an injection, so O3 does not judge it." `[^?]*` (not `[^?\s]*`) covers
-// the encoded-text field so that malformed variants like `=??q? ?=` are skipped too.
-var xmailEncodedWordLookalike = regexp.MustCompile(`=\?[^?]*\?[bBqQ]\?[^?]*\?=`)
+// Neither is an injection, so O3 does not judge it." The encoded-text field is `.*?` (not
+// `[^?]*`): mime.WordDecoder ends the word at the first "?=", so '?' inside the text is
+// legal and malformed variants like `=??q? ?=` and `=??q???=` are skipped too
+// (fuzz-corpus#198, same fix as the setup-link MIME oracle, keyorix#4746).
+var xmailEncodedWordLookalike = regexp.MustCompile(`=\?[^?]*\?[bBqQ]\?.*?\?=`)
 
 var foldingWS = regexp.MustCompile(`[ \t]+`)
 
