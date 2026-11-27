@@ -127,5 +127,5 @@ gap by this matrix.
 
 ---
 
-See [DEP-FUZZ-MATRIX.md](DEP-FUZZ-MATRIX.md) for the full matrix.
+The full matrix is generated into `.scratch/depmatrix/DEP-FUZZ-MATRIX.md` and is not committed.
 See [DEP-FUZZ-MATRIX-README.md](DEP-FUZZ-MATRIX-README.md) for class definitions.

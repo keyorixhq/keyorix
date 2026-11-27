@@ -53,7 +53,7 @@ func gapFileName(module string) string {
 // a different module than the file claims.
 func parseGapExemption(name string, data []byte) (gapExemption, error) {
 	var rows []string
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimRight(line, "\r")
 		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue

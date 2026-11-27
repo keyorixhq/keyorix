@@ -313,10 +313,7 @@ func modulePrefix(importPath string) string {
 // isStdlib reports whether an import path is from the Go standard library.
 // Standard library packages have no dot in the first path element.
 func isStdlib(p string) bool {
-	first := p
-	if idx := strings.Index(p, "/"); idx >= 0 {
-		first = p[:idx]
-	}
+	first, _, _ := strings.Cut(p, "/")
 	return !strings.Contains(first, ".")
 }
 

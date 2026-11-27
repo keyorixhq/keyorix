@@ -23,7 +23,6 @@ package main
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -182,27 +181,4 @@ func parseTargetsDConf(absPath, relPath string) ([]targetsDEntry, error) {
 		})
 	}
 	return out, nil
-}
-
-// fuzzTargetInDir loads fuzz targets from a directory tree and returns
-// a summary of which directories contain fuzz targets.
-// This is used only for diagnostics; the main coverage is in sr.fuzzTargets.
-func fuzzTargetDirsInRepo(root string) (map[string]bool, error) {
-	dirs := map[string]bool{}
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		if skipDirsDepmatrix[filepath.Base(filepath.Dir(path))] {
-			return nil
-		}
-		if !strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		rel = filepath.ToSlash(rel)
-		dirs[filepath.ToSlash(filepath.Dir(rel))] = true
-		return nil
-	})
-	return dirs, err
 }
