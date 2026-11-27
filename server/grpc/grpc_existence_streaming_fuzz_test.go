@@ -10,11 +10,11 @@ package grpc_test
 //     (uint32, field name == "id"), the oracle calls that RPC as the zero-grant
 //     identity twice — once with a known-existing resource ID, once with a
 //     known-non-existing ID (999999) — and requires BOTH to return the SAME
-//     gRPC error code. A PermissionDenied vs NotFound difference is an ADR-096
-//     violation (the caller can distinguish "this resource exists" from "this
-//     resource doesn't exist"). Also checked for the unauthenticated caller
-//     (auth interceptor must reject before ID lookup; both must return
-//     Unauthenticated).
+//     gRPC error code and message. Any difference is an ADR-096 violation (the
+//     caller can distinguish "this resource exists" from "this resource doesn't
+//     exist"). Also checked for the unauthenticated caller (auth interceptor
+//     must reject before ID lookup; both must get the same Unauthenticated
+//     answer).
 //
 //  2. FuzzGRPCStreamingRPCs — streaming RPC harness (server-streaming):
 //     grammar-generated request + wire mutations sent to StreamAuditLogs
@@ -25,8 +25,8 @@ package grpc_test
 //     (stream-no-panic) no panic-shaped error code/message for any caller.
 //     (stream-client-error) malformed wire bytes → server codes.Internal is
 //     a HARDENING finding (same class as HARDENING-1 in PBG1 for unary RPCs).
-//     (stream-bounded) stream for unauthorized caller must close within
-//     streamDeniedTimeout.
+//     (stream-bounded) stream for a zero-grant or unauthenticated caller must
+//     close within streamDeniedTimeout.
 //
 //  3. ResGuard heap oracle — both fuzzers use resguard.Probe to measure
 //     per-input allocation. When AllocBytes/inputLen exceeds
@@ -54,6 +54,7 @@ import (
 	"context"
 	"io"
 	"sort"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -73,7 +74,7 @@ import (
 )
 
 // knownNonExistingID is a uint32 ID that is definitely not a seeded resource
-// ID in a fresh SQLite world (all seeded IDs are <= 10 in a fresh world).
+// ID in a fresh SQLite world (seeded IDs are small sequence numbers).
 const knownNonExistingID = uint32(999999)
 
 // streamPerCallTimeout bounds one streaming RPC call. Shorter than perCallTimeout
@@ -201,6 +202,49 @@ func existenceCodeClass(c codes.Code) string {
 		return "UNAUTH"
 	default:
 		return "OTHER:" + c.String()
+	}
+}
+
+// existenceDiff compares the answers a caller got for a known-existing id and
+// for the known-non-existing id. It returns "" when both carry the same gRPC code
+// AND the same status message, and a description of the difference otherwise.
+// Any difference, including OK vs NotFound and a message-only difference, tells
+// the caller an existing id from a missing one (ADR-096 §4), so the oracle treats
+// every difference as fatal. The two calls use the same body and the same caller
+// and nothing is mutated in between, so a known id of the wrong resource type
+// does not exist for that RPC either and must get the same answer.
+func existenceDiff(existsErr, missingErr error) string {
+	es, ms := status.Convert(existsErr), status.Convert(missingErr)
+	if es.Code() == ms.Code() && es.Message() == ms.Message() {
+		return ""
+	}
+	return "existing id → " + existenceCodeClass(es.Code()) + " " + strconv.Quote(es.Message()) +
+		", missing id → " + existenceCodeClass(ms.Code()) + " " + strconv.Quote(ms.Message())
+}
+
+// TestExistenceDiff pins what the existence oracle treats as a leak: every
+// planted difference must be reported and an identical answer must not be.
+func TestExistenceDiff(t *testing.T) {
+	denied := status.Error(codes.PermissionDenied, "insufficient permissions")
+	cases := []struct {
+		name          string
+		exists, miss  error
+		wantDifferent bool
+	}{
+		{"identical denial", denied, denied, false},
+		{"both ok", nil, nil, false},
+		{"denied vs not found", denied, status.Error(codes.NotFound, "not found"), true},
+		{"ok vs not found", nil, status.Error(codes.NotFound, "not found"), true},
+		{"denied vs invalid argument", denied, status.Error(codes.InvalidArgument, "bad id"), true},
+		{"same code, message only differs", denied, status.Error(codes.PermissionDenied, "secret 999999 not found"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := existenceDiff(tc.exists, tc.miss)
+			if (got != "") != tc.wantDifferent {
+				t.Fatalf("existenceDiff = %q, wantDifferent=%v", got, tc.wantDifferent)
+			}
+		})
 	}
 }
 
@@ -352,14 +396,16 @@ func invokeStreamRaw(
 //
 // For every unary RPC whose request descriptor has a primary uint32 "id" field,
 // the oracle checks that a zero-grant identity gets the SAME gRPC error code
-// for a known-existing resource ID and the known-non-existing ID (999999). An
-// unauthenticated caller is also required to get the same code for both IDs.
+// AND message for a known-existing resource ID and the known-non-existing ID
+// (999999). An unauthenticated caller is held to the same rule.
 //
-// ADR-096 §4 (gRPC rule): a caller without global permission gets
-// codes.PermissionDenied for both "exists but denied" and "does not exist" —
-// the same code regardless of which case happened. The oracle compares status
-// codes only, not messages. A PermissionDenied vs NotFound difference leaks
-// resource existence and is classified as VULNERABILITY.
+// ADR-096 §4 (gRPC rule): a caller without global permission gets the same
+// answer for "exists but denied" and "does not exist". Any difference in code
+// or message (existenceDiff) between the two calls leaks resource existence
+// and is fatal. The known IDs are users, projects, environments and secrets whose
+// numbers collide, so for a given RPC the "existing" id is often of the wrong
+// resource type; it then does not exist for that RPC and must get the same
+// answer as 999999, so the comparison is still sound.
 //
 // ResGuard heap oracle: measures per-input allocation via resguard.Probe.
 // When AllocBytes/inputLen > allocAmplificationThreshold, logs RESOURCE-AMP.
@@ -406,10 +452,11 @@ func FuzzGRPCExistenceOracle(f *testing.F) {
 		return
 	}
 
-	// Seeds: all method × knownID combinations so that every (method, resource
-	// type) pair is covered at least once. For 29 methods × 4 IDs = 116 seeds.
-	// Covering all combinations ensures the red-proof (planted defect) exercises
-	// at least one seed where the method type matches the knownID type.
+	// Seeds: every method × knownID combination (29 methods × 4 IDs at the time
+	// of writing). The known IDs are not typed per resource, so a combination
+	// is a genuine exists/missing pair only when the ID's type matches the
+	// RPC's resource; the other combinations compare two missing ids.
+	// Covering all combinations makes sure the matching ones are seeded.
 	for i := range len(idMethods) {
 		for j := range len(ew.knownIDs) {
 			f.Add([]byte{byte(i), byte(j)})
@@ -439,20 +486,20 @@ func FuzzGRPCExistenceOracle(f *testing.F) {
 		}
 
 		// Measure the allocation cost of the two zero-grant existence calls.
-		var existsCode, nonExistsCode codes.Code
+		var existsErr, nonExistsErr error
 		cost := rg.Measure(len(program), func() {
 			drain()
 
 			// Call 1: known-existing resource ID.
 			cctx1, cancel1 := context.WithTimeout(context.Background(), perCallTimeout)
 			defer cancel1()
-			existsCode, _ = invokeWithID(cctx1, ew.conn, m, buildFresh(), idField, knownExistingID, ew.zeroGrantTok)
+			_, existsErr = invokeWithID(cctx1, ew.conn, m, buildFresh(), idField, knownExistingID, ew.zeroGrantTok)
 			drain()
 
 			// Call 2: known-non-existing resource ID.
 			cctx2, cancel2 := context.WithTimeout(context.Background(), perCallTimeout)
 			defer cancel2()
-			nonExistsCode, _ = invokeWithID(cctx2, ew.conn, m, buildFresh(), idField, knownNonExistingID, ew.zeroGrantTok)
+			_, nonExistsErr = invokeWithID(cctx2, ew.conn, m, buildFresh(), idField, knownNonExistingID, ew.zeroGrantTok)
 			drain()
 		})
 
@@ -466,50 +513,34 @@ func FuzzGRPCExistenceOracle(f *testing.F) {
 		}
 
 		// Oracle: existence leak for zero-grant identity.
-		// ADR-096 §4: for a caller without global permission, both "exists but
-		// denied" and "does not exist" must return codes.PermissionDenied.
-		if existsCode != nonExistsCode {
-			existsClass := existenceCodeClass(existsCode)
-			nonExistsClass := existenceCodeClass(nonExistsCode)
-
-			if (existsCode == codes.PermissionDenied && nonExistsCode == codes.NotFound) ||
-				(existsCode == codes.NotFound && nonExistsCode == codes.PermissionDenied) {
-				t.Fatalf("EXISTENCE-ORACLE VIOLATION op=%s zero-grant: "+
-					"id=%d→%s id=%d→%s — ADR-096 §4 violation: "+
-					"zero-grant caller can probe resource existence by comparing error codes",
-					m.key(), knownExistingID, existsClass, knownNonExistingID, nonExistsClass)
-			}
-
-			// Other code differences (not PermissionDenied/NotFound): logged but not fatal.
-			// These can legitimately occur when knownExistingID is the wrong type for this
-			// RPC (e.g., GetSecret called with a project ID → NotFound for wrong type, same
-			// NotFound for 999999 → no meaningful difference). The fuzzer explores many
-			// combinations; only PermissionDenied vs NotFound is an ADR-096 violation.
-			t.Logf("EXISTENCE-CANDIDATE op=%s zero-grant: id=%d→%s id=%d→%s — codes differ (not PermissionDenied/NotFound; likely wrong resource type)",
-				m.key(), knownExistingID, existsClass, knownNonExistingID, nonExistsClass)
+		// ADR-096 §4: a caller without global permission must not be able to tell
+		// an existing id from a missing one. Both calls use the same body and
+		// caller, so ANY difference in code or message is a leak (see existenceDiff).
+		if diff := existenceDiff(existsErr, nonExistsErr); diff != "" {
+			t.Fatalf("EXISTENCE-ORACLE VIOLATION op=%s zero-grant: id=%d vs id=%d: %s — ADR-096 §4 violation: "+
+				"zero-grant caller can probe resource existence by comparing the answers",
+				m.key(), knownExistingID, knownNonExistingID, diff)
 		}
 
 		// Oracle: unauthenticated caller existence leak.
 		// The auth interceptor must reject BEFORE any resource lookup; both IDs
-		// must therefore return the same code (Unauthenticated).
+		// must therefore get the same code and message (Unauthenticated).
 		{
 			drain()
 			cctx3, cancel3 := context.WithTimeout(context.Background(), perCallTimeout)
 			defer cancel3()
-			unauthExistsCode, _ := invokeWithID(cctx3, ew.conn, m, buildFresh(), idField, knownExistingID, "")
+			_, unauthExistsErr := invokeWithID(cctx3, ew.conn, m, buildFresh(), idField, knownExistingID, "")
 			drain()
 
 			cctx4, cancel4 := context.WithTimeout(context.Background(), perCallTimeout)
 			defer cancel4()
-			unauthNonExistsCode, _ := invokeWithID(cctx4, ew.conn, m, buildFresh(), idField, knownNonExistingID, "")
+			_, unauthNonExistsErr := invokeWithID(cctx4, ew.conn, m, buildFresh(), idField, knownNonExistingID, "")
 			drain()
 
-			if unauthExistsCode != unauthNonExistsCode {
-				t.Fatalf("EXISTENCE-ORACLE VIOLATION op=%s unauthenticated: "+
-					"id=%d→%s id=%d→%s — auth interceptor must reject before ID lookup; "+
-					"both calls must return the same code",
-					m.key(), knownExistingID, existenceCodeClass(unauthExistsCode),
-					knownNonExistingID, existenceCodeClass(unauthNonExistsCode))
+			if diff := existenceDiff(unauthExistsErr, unauthNonExistsErr); diff != "" {
+				t.Fatalf("EXISTENCE-ORACLE VIOLATION op=%s unauthenticated: id=%d vs id=%d: %s — "+
+					"auth interceptor must reject before ID lookup; both calls must get the same code and message",
+					m.key(), knownExistingID, knownNonExistingID, diff)
 			}
 		}
 	})
@@ -531,7 +562,8 @@ func FuzzGRPCExistenceOracle(f *testing.F) {
 //	(stream-client-error) malformed wire bytes → server codes.Internal is a
 //	HARDENING finding (HARDENING-2 for streaming; not fatal).
 //	(stream-bounded) unauthorized caller stream must close within
-//	streamDeniedTimeout; DeadlineExceeded for the zero-grant caller is fatal.
+//	streamDeniedTimeout; DeadlineExceeded for the zero-grant or the
+//	unauthenticated caller is fatal.
 //	(stream-amp) allocation oracle (same as FuzzGRPCExistenceOracle).
 //
 // WHAT THIS DOES NOT VERIFY: see file header.
@@ -651,13 +683,18 @@ func FuzzGRPCStreamingRPCs(f *testing.F) {
 			}
 		}
 
-		// Oracle stream-bounded: the zero-grant caller's stream must close
-		// promptly. DeadlineExceeded means the server did not reject the
-		// unauthorized caller within streamDeniedTimeout.
+		// Oracle stream-bounded: a denied caller's stream must close promptly.
+		// DeadlineExceeded means the server did not reject the zero-grant or the
+		// unauthenticated caller within streamDeniedTimeout.
 		zeroCode := status.Code(zeroErr)
 		if zeroCode == codes.DeadlineExceeded {
 			t.Fatalf("STREAM-HUNG op=%s zero-grant mutKind=%d: "+
 				"stream exceeded %s deadline — server should reject unauthorized caller immediately",
+				m.key(), k, streamDeniedTimeout)
+		}
+		if status.Code(unauthErr) == codes.DeadlineExceeded {
+			t.Fatalf("STREAM-HUNG op=%s unauthenticated mutKind=%d: "+
+				"stream exceeded %s deadline — server should reject unauthenticated caller immediately",
 				m.key(), k, streamDeniedTimeout)
 		}
 
