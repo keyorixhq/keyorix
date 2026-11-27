@@ -9,5 +9,5 @@ func init() {
 	// exists, closed, in every outcome, so it matches neither the pre-fault state nor the
 	// reference's active lease; it is left out of oracle (d)'s comparison. The audit rows
 	// are compared separately by the rest of oracle (d), as for every op.
-	registerEffectThenErrorExclusion("post_dynamic_secrets_configs_id_issue_logauditevent", effectThenErrorExclusion{op: "REST POST /api/v1/dynamic-secrets/configs/{id}/issue", method: "LogAuditEvent", tables: []string{"DynamicSecretLease"}})
+	registerEffectThenErrorExclusion("post_dynamic_secrets_configs_id_issue_logauditevent", effectThenErrorExclusion{op: "REST POST /api/v1/dynamic-secrets/configs/{id}/issue", method: "LogAuditEvent", tables: []string{"DynamicSecretLease"}, acceptState: issueLeaseAbortedState})
 }
