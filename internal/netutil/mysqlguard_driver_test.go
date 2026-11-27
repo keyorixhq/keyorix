@@ -9,6 +9,8 @@ import (
 	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- seeded, reproducible test-input generator, not a secret
 	"net"
 	"runtime"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -174,7 +176,58 @@ func myRunDriver(t *testing.T, guarded, maria bool, shape string, reply [][]byte
 
 func (r myDriverRun) harmful() bool { return r.panicked != nil || r.allocMiB > 64 }
 
+// myDriverHasTruncatedErrorFix reports whether the go-sql-driver/mysql linked into this
+// test binary is >= v1.10.2 (upstream #1858). ok is false when the version cannot be
+// read or parsed (no build info, a pseudo-version or a replace), so callers skip rather
+// than guess.
+func myDriverHasTruncatedErrorFix() (fixed, ok bool) {
+	bi, found := debug.ReadBuildInfo()
+	if !found {
+		return false, false
+	}
+	for _, d := range bi.Deps {
+		if d.Path != "github.com/go-sql-driver/mysql" {
+			continue
+		}
+		if d.Replace != nil {
+			return false, false
+		}
+		// Only a plain release "vX.Y.Z" counts: a pre-release or pseudo-version has a
+		// "-" suffix and its position relative to v1.10.2 is not knowable from the string.
+		parts := strings.Split(strings.TrimPrefix(d.Version, "v"), ".")
+		if len(parts) != 3 {
+			return false, false
+		}
+		var v [3]int
+		for i, p := range parts {
+			n, err := strconv.Atoi(p)
+			if err != nil {
+				return false, false
+			}
+			v[i] = n
+		}
+		return v[0] > 1 || (v[0] == 1 && (v[1] > 10 || (v[1] == 10 && v[2] >= 2))), true
+	}
+	return false, false
+}
+
 func myOKPkt(status uint16) []byte { return []byte{0, 0, 0, byte(status), byte(status >> 8), 0, 0} }
+
+// TestMySQLDriverVersionReadable keeps the truncated-error calibration below from
+// skipping silently: the version must be readable from the test binary's build info,
+// and must agree with go.mod's pin (a plain release, no replace).
+func TestMySQLDriverVersionReadable(t *testing.T) {
+	fixed, ok := myDriverHasTruncatedErrorFix()
+	if !ok {
+		t.Fatal("go-sql-driver/mysql release version not readable from build info (replace directive or pseudo-version?): the truncated-error calibration would be skipped")
+	}
+	bi, _ := debug.ReadBuildInfo()
+	for _, d := range bi.Deps {
+		if d.Path == "github.com/go-sql-driver/mysql" {
+			t.Logf("go-sql-driver/mysql %s: truncated-error fix (#1858) present=%v", d.Version, fixed)
+		}
+	}
+}
 
 // TestMySQLGuardAgreesWithDriver checks the guard against the pinned driver itself,
 // not against a model of it: every reply the guard lets through must leave the real
@@ -223,21 +276,26 @@ func TestMySQLGuardAgreesWithDriver(t *testing.T) {
 		}
 	}
 
-	// A truncated error ({0xff, 0x15}) used to be harmful unguarded; upstream
-	// go-sql-driver/mysql#1858 (v1.10.2) made the driver return ErrMalformPkt for it.
-	// The pinned driver is >= v1.10.2, so it must NOT be harmful unguarded. If this
-	// fails, the driver was downgraded or regressed: move the case back to the harmful
-	// table above. The guard still refuses it (defence in depth for older drivers).
+	// A truncated error ({0xff, 0x15}) is harmful to an unguarded driver before
+	// go-sql-driver/mysql v1.10.2 (upstream #1858: the driver now returns ErrMalformPkt
+	// for it). The guard refuses it on every driver version (defence in depth), so this
+	// test must agree with both 1.10.1 and 1.10.2: the guarded run is always asserted,
+	// and the unguarded calibration follows the driver version the test binary was built
+	// with. If the version cannot be read the calibration is skipped, not guessed.
 	// The count cases above stay harmful: upstream #1866 (readColumns sized from the
 	// announced count) is still open.
 	for _, shape := range myQueryShapes {
 		t.Run("truncated error/"+shape, func(t *testing.T) {
 			reply := [][]byte{{0xff, 0x15}}
-			r := myRunDriver(t, false, false, shape, reply)
-			if r.harmful() {
-				t.Fatalf("unguarded driver is harmful on a truncated error (panic %v, %d MiB, err %v): expected the go-sql-driver/mysql#1858 fix (>= v1.10.2)", r.panicked, r.allocMiB, r.err)
+			if fixed, ok := myDriverHasTruncatedErrorFix(); ok {
+				r := myRunDriver(t, false, false, shape, reply)
+				if r.harmful() == fixed {
+					t.Fatalf("calibration: unguarded driver harmful=%v (panic %v, %d MiB, err %v), want %v for go-sql-driver/mysql fixed-in-1.10.2=%v", r.harmful(), r.panicked, r.allocMiB, r.err, !fixed, fixed)
+				}
+			} else {
+				t.Log("go-sql-driver/mysql version not readable from build info: unguarded calibration skipped")
 			}
-			r = myRunDriver(t, true, false, shape, reply)
+			r := myRunDriver(t, true, false, shape, reply)
 			if r.harmful() {
 				t.Fatalf("through the guard: panic %v, allocated %d MiB", r.panicked, r.allocMiB)
 			}
