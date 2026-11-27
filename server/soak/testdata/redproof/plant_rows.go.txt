@@ -1,0 +1,40 @@
+package soak
+
+// PLANT: an unclosed sql.Rows on requests 501-504 (after the baseline). database/sql keeps the
+// connection checked out until Rows.Close, so the pool never gets it back. Capped
+// at 4 (of 8) so the run keeps working and the failure is attributable.
+// Expected: oracle (b) db_in_use FAIL.
+
+import (
+	"database/sql"
+	"net/http"
+	"sync"
+	"sync/atomic"
+)
+
+func init() {
+	handlerWrappers = append(handlerWrappers, func(next http.Handler, env *soakEnv) http.Handler {
+		var n atomic.Int64
+		var mu sync.Mutex
+		var held []*sql.Rows
+		plantCleanups = append(plantCleanups, func() {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, r := range held {
+				_ = r.Close()
+			}
+		})
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if c := n.Add(1); c > 500 && c <= 504 { // after warm-up: the baseline is taken by now
+				// No context, no Next, no Close: the leak.
+				rows, err := env.sqlDB.Query("SELECT 1") //nolint:rowserrcheck,sqlclosecheck // the plant
+				if err == nil {
+					mu.Lock()
+					held = append(held, rows)
+					mu.Unlock()
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+}

@@ -1,0 +1,10 @@
+diff --git a/internal/backupfmt/manifest_sign.go b/internal/backupfmt/manifest_sign.go
+--- a/internal/backupfmt/manifest_sign.go
++++ b/internal/backupfmt/manifest_sign.go
+@@ -70,5 +70,5 @@
+ 	mac := hmac.New(sha256.New, key)
+ 	mac.Write(canon)
+ 	got := hex.EncodeToString(mac.Sum(nil))
+-	return hmac.Equal([]byte(got), []byte(want))
++	return len(want) >= len(got) && hmac.Equal([]byte(got), []byte(want[:len(got)]))
+ }

@@ -131,6 +131,15 @@ type opScopedBestEffortTable struct {
 	// the real oracle and fails if the entry is dead. Empty for the entries that
 	// predate it (ORPHAN-2): they are not covered by that staleness check.
 	pinnedKinds []faultstorage.FaultKind
+	// errorBranchOnly restricts this exemption to a reported ERROR (oracle (a)'s
+	// error branch): a SUCCESS that diverges in these tables is not the documented
+	// shape and stays a violation.
+	errorBranchOnly bool
+	// acceptState, when set, is the documented end state of the exempted tables:
+	// it returns "" when the run's before/after snapshots have that shape and a
+	// reason otherwise, and the exemption applies only on "". Without it the
+	// exemption accepts any content of its tables.
+	acceptState func(before, after dbSnapshot) string
 }
 
 // effectThenErrorExclusion is one row of effectThenErrorExtraExclusions
@@ -144,6 +153,11 @@ type effectThenErrorExclusion struct {
 	// of that table before it's hashed. A table named here does NOT also need
 	// to be named in `tables` -- the two are independent, applied together.
 	columns map[string][]string
+	// acceptState, when set, is the documented end state of the excluded tables
+	// (same contract as opScopedBestEffortTable.acceptState). Oracle (d) reports a
+	// violation when it returns a reason, before it compares the rest of the state:
+	// an excluded table is otherwise invisible to (d).
+	acceptState func(before, after dbSnapshot) string
 }
 
 // The three tables below are empty today; they are registries too so the next

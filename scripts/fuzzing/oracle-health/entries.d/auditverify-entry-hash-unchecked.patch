@@ -1,0 +1,12 @@
+diff --git a/internal/auditverify/verify.go b/internal/auditverify/verify.go
+--- a/internal/auditverify/verify.go
++++ b/internal/auditverify/verify.go
+@@ -521,7 +521,7 @@
+ 				result.ChainedEvents, result.UnchainedLegacyEvents = chainedEvents, unchained
+ 				return nil
+ 			}
+-			if ComputeEntryHash(e, e.PrevHash) != e.EntryHash {
++			if ComputeEntryHash(e, e.PrevHash) != e.EntryHash && false {
+ 				id := e.ID
+ 				result.FirstBrokenID = &id
+ 				if ComputeEntryHashPre1452(e, e.PrevHash) == e.EntryHash {

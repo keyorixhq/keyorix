@@ -204,7 +204,6 @@ func TestMySQLGuardAgreesWithDriver(t *testing.T) {
 		{"short 0xfe", false, false, [][]byte{{0xfe, 1, 0, 0, 0}}},
 		{"more results then short 0xfe", false, true, [][]byte{myOKPkt(0x0008), {0xfe, 1, 0, 0, 0}}},
 		{"mariadb count without metadata flag", true, false, [][]byte{{0x01}}},
-		{"truncated error", false, false, [][]byte{{0xff, 0x15}}},
 	}
 	for _, tc := range harmful {
 		for _, shape := range myQueryShapes {
@@ -222,6 +221,30 @@ func TestMySQLGuardAgreesWithDriver(t *testing.T) {
 				}
 			})
 		}
+	}
+
+	// A truncated error ({0xff, 0x15}) used to be harmful unguarded; upstream
+	// go-sql-driver/mysql#1858 (v1.10.2) made the driver return ErrMalformPkt for it.
+	// The pinned driver is >= v1.10.2, so it must NOT be harmful unguarded. If this
+	// fails, the driver was downgraded or regressed: move the case back to the harmful
+	// table above. The guard still refuses it (defence in depth for older drivers).
+	// The count cases above stay harmful: upstream #1866 (readColumns sized from the
+	// announced count) is still open.
+	for _, shape := range myQueryShapes {
+		t.Run("truncated error/"+shape, func(t *testing.T) {
+			reply := [][]byte{{0xff, 0x15}}
+			r := myRunDriver(t, false, false, shape, reply)
+			if r.harmful() {
+				t.Fatalf("unguarded driver is harmful on a truncated error (panic %v, %d MiB, err %v): expected the go-sql-driver/mysql#1858 fix (>= v1.10.2)", r.panicked, r.allocMiB, r.err)
+			}
+			r = myRunDriver(t, true, false, shape, reply)
+			if r.harmful() {
+				t.Fatalf("through the guard: panic %v, allocated %d MiB", r.panicked, r.allocMiB)
+			}
+			if !r.rejected {
+				t.Fatalf("the guard did not refuse the reply (err %v)", r.err)
+			}
+		})
 	}
 
 	// Random response heads: OK chains with random status and length encodings, cut at
