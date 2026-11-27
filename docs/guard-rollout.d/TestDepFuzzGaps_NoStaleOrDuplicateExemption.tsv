@@ -1,0 +1,1 @@
+TestDepFuzzGaps_NoStaleOrDuplicateExemption	scripts/fuzzing/depmatrix	#4778	new repo-wide guard: a docs/fuzz/dep-fuzz.d fragment must name a dependency that is still an untrusted-reachable, unfuzzed gap, and each module has one fragment
