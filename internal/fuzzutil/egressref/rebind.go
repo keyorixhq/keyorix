@@ -94,7 +94,7 @@ func (s *RebindDNS) serve(c net.Conn) {
 	if err != nil {
 		return
 	}
-	_, _ = c.Write(binary.BigEndian.AppendUint16(nil, uint16(len(out)))) //nolint:gosec // a DNS message is far below 64 KiB
+	_, _ = c.Write(binary.BigEndian.AppendUint16(nil, uint16(len(out)))) // #nosec G115 -- a DNS message is far below 64 KiB
 	_, _ = c.Write(out)
 }
 
