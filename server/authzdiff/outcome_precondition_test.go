@@ -17,7 +17,7 @@ import (
 
 var accountStateOps = []string{
 	"mfa.activate", "mfa.disable", "mfa.recovery-codes.regenerate",
-	"impersonation.end", "webauthn.deleteCredential",
+	"impersonation.end", "webauthn.deleteCredential", "mfa.enroll",
 }
 
 // TestRestOutcomePreconditionFailed: only a 400 carrying a precondition message
