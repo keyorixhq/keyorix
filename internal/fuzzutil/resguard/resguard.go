@@ -82,6 +82,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/fuzzutil"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/complexity"
 )
 
@@ -216,6 +217,10 @@ func New(tb testing.TB, opts Options) *Probe {
 	if opts.SlowWall <= 0 {
 		opts.SlowWall = defaultSlowWall
 	}
+	// Build fuzzutil.Guard's one-time state (stall monitor, pooled runner and
+	// timer) now, so the first measured input that calls Guard is not charged for
+	// it (INV-FUZZUTIL-first-guard-call-allocates-nothing-extra).
+	fuzzutil.Prime()
 	return &Probe{opts: opts, drift: newDrift()}
 }
 

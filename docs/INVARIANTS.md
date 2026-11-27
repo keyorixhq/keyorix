@@ -39,6 +39,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 58 | 58 | 0 |
 | `internal/evidencesink` | [internal/evidencesink/INVARIANTS.md](../internal/evidencesink/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/faultstorage` | [internal/faultstorage/INVARIANTS.md](../internal/faultstorage/INVARIANTS.md) | 3 | 3 | 0 |
+| `internal/fuzzutil` | [internal/fuzzutil/INVARIANTS.md](../internal/fuzzutil/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/fuzzutil/boundedwork` | [internal/fuzzutil/boundedwork/INVARIANTS.md](../internal/fuzzutil/boundedwork/INVARIANTS.md) | 5 | 5 | 0 |
 | `internal/fuzzutil/complexity` | [internal/fuzzutil/complexity/INVARIANTS.md](../internal/fuzzutil/complexity/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/fuzzutil/grammar` | [internal/fuzzutil/grammar/INVARIANTS.md](../internal/fuzzutil/grammar/INVARIANTS.md) | 1 | 1 | 0 |

@@ -78,6 +78,25 @@ func Guard(fatalf func(format string, args ...any), label string, fn func()) {
 	}
 }
 
+// Prime builds Guard's one-time per-process state now: the stall monitor and one
+// pooled runner and timer. A cost oracle (resguard.New) calls it before its first
+// measured input, so that setup is not charged to whichever input happens to make
+// the process's first Guard call (INV-FUZZUTIL-first-guard-call-allocates-nothing-extra).
+// It pools TWO runners and timers: sync.Pool keeps the first Put in the calling
+// P's private slot, which a Get on another P cannot reach, and the second in the
+// shared slot, which any P can steal. Each fuzz input runs on a fresh goroutine
+// that may land on another P than the one Prime ran on. Safe to call more than
+// once; later calls reuse what is pooled.
+func Prime() {
+	startStallMonitor()
+	r1, r2 := getRunner(), getRunner()
+	putRunner(r1)
+	putRunner(r2)
+	t1, t2 := getTimer(GuardTimeout), getTimer(GuardTimeout)
+	putTimer(t1)
+	putTimer(t2)
+}
+
 // runnerCore is what the runner goroutine references; runner (the handle callers
 // hold and the pool stores) is separate so that a handle dropped by the pool can
 // be collected, which triggers a cleanup that ends the goroutine.
