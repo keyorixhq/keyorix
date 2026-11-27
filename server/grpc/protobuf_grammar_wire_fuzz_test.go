@@ -123,7 +123,7 @@ func invokeRaw(ctx context.Context, conn *grpc.ClientConn, m grpcMethod, rawByte
 type wireMutKind uint8
 
 const (
-	wireMutNone         wireMutKind = iota // no mutation: send the valid marshaled bytes
+	wireMutNone          wireMutKind = iota // no mutation: send the valid marshaled bytes
 	wireMutWrongType                        // first tag's wire type is replaced with an incompatible one
 	wireMutTruncate                         // message truncated mid-varint
 	wireMutLargeLen                         // a length-delimited field gets a huge length prefix
@@ -131,7 +131,7 @@ const (
 	wireMutInvalidUTF8                      // a string field gets \xFF\xFE bytes appended
 	wireMutConflictOneof                    // two oneof members appended to the message
 	wireMutRawJunk                          // random high-bit bytes appended
-	wireMutNumKinds     wireMutKind = iota
+	wireMutNumKinds      wireMutKind = iota
 )
 
 // expectedDecodeError reports whether this mutation reliably makes the wire
