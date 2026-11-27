@@ -11,9 +11,9 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | invitations | 4 | 4 | 0 | 0 |
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
-| secrets | 43 | 35 | 10 | 10 |
+| secrets | 43 | 36 | 10 | 10 |
 | other | 128 | 34 | 22 | 11 |
-| **total** | **212** | **110** | **47** | **36** |
+| **total** | **212** | **111** | **47** | **36** |
 
 ## groups
 
@@ -112,7 +112,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [x] `REST GET /api/v1/secrets/{id}` — secret.value.byid, secret.read.env
 - [x] `REST GET /api/v1/secrets/{id}/certificate` — secret.certificate
 - [x] `REST PATCH /api/v1/secrets/{id}/auto-rotate` — secret.autorotate
-- [ ] `REST PATCH /api/v1/secrets/{id}/classification` — model: restricted-classification gate rules are not in the reference model
+- [x] `REST PATCH /api/v1/secrets/{id}/classification` — secret.classify
 - [x] `REST PATCH /api/v1/secrets/{id}/description` — secret.description
 - [x] `REST PATCH /api/v1/secrets/{id}/retention` — secret.retention
 - [x] `REST POST /api/v1/projects/{id}/secrets/bulk-delete` — bulk.delete
