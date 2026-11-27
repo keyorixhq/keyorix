@@ -258,7 +258,7 @@ func setupSource(t *testing.T, backend, pgBaseDSN string, program []byte) *round
 	configPathFlag = cfgPath
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	store, err := storage.NewStorageFactory().CreateStorage(cfg)
+	store, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 
 	gdb, err := storage.OpenGormDB(cfg)

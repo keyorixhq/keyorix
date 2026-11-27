@@ -14,7 +14,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage"
 )
 
 func TestClearStaleSaltPending_Postgres_RefusalAuditedThenCleared(t *testing.T) {
@@ -28,7 +27,7 @@ func TestClearStaleSaltPending_Postgres_RefusalAuditedThenCleared(t *testing.T) 
 	configPathFlag = writePostgresBackupRestoreTestConfig(t, dir, dsn)
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(cfg)
+	_, err = createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	oldExclusive := backupExclusive
 	backupExclusive = false // the default live backup, under the presence lock

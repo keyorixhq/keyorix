@@ -8,6 +8,7 @@ package encryptionops
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -40,6 +41,18 @@ func openAuditKeyChange(cfg *config.Config, svc *encryption.Service) (*auditKeyC
 	c := core.NewKeyorixCore(st)
 	c.SetAuditCheckpointKey(key, kid)
 	return &auditKeyChange{core: c}, nil
+}
+
+// close releases the database opened by openAuditKeyChange (on Postgres it stops
+// the background jobs CreateStorage started). Call it once prepare and complete
+// are done; safe on the keyless value, which opened nothing.
+func (a *auditKeyChange) close() {
+	if a.core == nil {
+		return
+	}
+	if c, ok := a.core.Storage().(io.Closer); ok {
+		_ = c.Close()
+	}
 }
 
 // prepare is the encryption.AuditKeyChangePrepare callback.

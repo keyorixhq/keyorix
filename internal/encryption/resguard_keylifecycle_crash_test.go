@@ -59,6 +59,14 @@ const (
 	kleakInputLen   = 64 // the attacker input is the (op,killAt,state) tuple, not bytes; disk is judged in absolute mode
 	kleakArchive    = "kl.tar.gz"
 	kleakMinNeedle  = 16 // never scan for a key shorter than this (avoid trivial matches)
+
+	// kleakDiskCeilingFloor is the least absolute disk_bytes ceiling the meter
+	// gets. The ceiling is calibrated from the benign runs' disk growth, but a run
+	// that closes its storage checkpoints the SQLite WAL and so can SHRINK the tree
+	// (negative growth): the calibration then yields no ceiling at all and the
+	// meter silently stops guarding. Real key rotation moves tens of KiB; a leak
+	// worth catching is orders of magnitude above this.
+	kleakDiskCeilingFloor = 1 << 20
 )
 
 // kleakOps is the KL1 op set: the two operations that change on-disk key
@@ -337,8 +345,26 @@ func kleakCalibrate(t *testing.T, w *pcrashWorld) resguard.Budget {
 	}
 	b := resguard.Calibrate("keylifecycle_crash", costs, resguard.DefaultFactor)
 	b.KeepOnly("disk_bytes")
+	if b.Meters["disk_bytes"].AbsMax <= 0 {
+		// No ceiling at all (every benign run shrank the tree): floor it, so the
+		// meter keeps guarding. A small positive ceiling is kept as calibrated, so a
+		// RESGUARD_CALIBRATE=1 regeneration is never loosened by the floor.
+		kleakFloorDiskCeiling(&b)
+	}
 	b.UseAbsolute("disk_bytes")
 	return b
+}
+
+// kleakFloorDiskCeiling raises the disk_bytes ceiling to kleakDiskCeilingFloor
+// when it is below it. TestResguardKeyLeakRedGreen applies it to its freshly
+// calibrated budget so the benign run there is not judged against a near-zero
+// ceiling; the committed fuzz budget is not floored this way.
+func kleakFloorDiskCeiling(b *resguard.Budget) {
+	mb := b.Meters["disk_bytes"]
+	if mb.AbsMax < kleakDiskCeilingFloor {
+		mb.AbsMax = kleakDiskCeilingFloor
+		b.Meters["disk_bytes"] = mb
+	}
 }
 
 func TestResguardKeyLeakCalibrate(t *testing.T) {
@@ -372,6 +398,7 @@ func TestResguardKeyLeakRedGreen(t *testing.T) {
 	}
 	w := pcrashWorldFor(t)
 	b := kleakCalibrate(t, w)
+	kleakFloorDiskCeiling(&b)
 	probe := resguard.New(t, resguard.Options{SampleEvery: 1})
 	cal := w.calibrate(t, kleakOps[0])
 

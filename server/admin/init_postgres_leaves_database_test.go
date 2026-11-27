@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/storage"
 )
 
 // runInitIn runs `admin init <args>` in dir (the process moves into it) and
@@ -103,7 +102,7 @@ func TestAdminInit_PostgresMigratedDatabase_StillAudited(t *testing.T) {
 	t.Setenv("KEYORIX_MASTER_PASSWORD", "test-passphrase-1234")
 	cfg, err := config.Load(cfgPath)
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(cfg) // what `admin migrate` does
+	_, err = createStorageClosedAtCleanup(t, cfg) // what `admin migrate` does
 	require.NoError(t, err)
 
 	code, out := runInitIn(t, dir)

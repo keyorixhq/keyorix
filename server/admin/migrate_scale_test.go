@@ -110,7 +110,7 @@ func newScaleSource(t *testing.T, kind, pgBase string, spec scaleSpec) *scaleEnd
 	e := newScaleEnd(t, kind, pgBase)
 	svc := encryption.NewService(&e.cfg.Storage.Encryption, e.dir)
 	require.NoError(t, svc.Initialize(scaleSeedPassphrase))
-	st, err := storage.NewStorageFactory().CreateStorage(e.cfg) // creates + migrates
+	st, err := createStorageClosedAtCleanup(t, e.cfg) // creates + migrates
 	require.NoError(t, err)
 	t.Cleanup(func() { closeTestStorage(st) })
 	db := e.openDB(t)
@@ -306,7 +306,7 @@ func TestRestoreScale_SQLite_NonEmptyTargetRefusedWithoutFlag(t *testing.T) {
 
 	// The target already runs a deployment: its schema is created, so the file is not empty.
 	dst := newScaleEnd(t, scaleBackendSQLite, "")
-	st, err := storage.NewStorageFactory().CreateStorage(dst.cfg)
+	st, err := createStorageClosedAtCleanup(t, dst.cfg)
 	require.NoError(t, err)
 	closeTestStorage(st)
 	dbPath := filepath.Join(dst.dir, "secrets.db")

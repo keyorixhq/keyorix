@@ -41,7 +41,7 @@ func TestStaleDEKEpochRefused_Postgres(t *testing.T) {
 		configPathFlag = writePostgresBackupRestoreTestConfig(t, dir, bkPgIsolatedDSN(t, base))
 		cfg, err := loadConfig()
 		require.NoError(t, err)
-		if _, err := storage.NewStorageFactory().CreateStorage(cfg); err != nil { // runs migrations
+		if _, err := createStorageClosedAtCleanup(t, cfg); err != nil { // runs migrations
 			t.Fatalf("create storage: %v", err)
 		}
 		gdb, err := storage.OpenGormDB(cfg)

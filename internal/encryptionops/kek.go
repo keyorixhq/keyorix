@@ -79,6 +79,7 @@ func RotateKEKWithConfig(cfg *config.Config, confirm bool, oldSrc, newSrc crypto
 	if err != nil {
 		return err
 	}
+	defer audit.close()
 
 	fmt.Println("Rotating KEK — re-wrapping DEK under new passphrase...")
 	if err := service.RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase, audit.prepare); err != nil {
