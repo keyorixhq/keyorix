@@ -161,8 +161,10 @@ python3 scripts/fuzzing/finding-regate/regate.py \
 |---|---|---|
 | `REGATE_REGISTRY` | (required unless `--registry`) | Path to `registry/findings/` |
 | `GOMAXPROCS` | `2` (forced by runner) | Concurrency cap |
-| `GOCACHE` | `/mnt/data/wave8/ait3/gocache` | Go build cache |
-| `GOMODCACHE` | `/mnt/data/wave8/ait3/gomod` | Go module cache |
+| `GOCACHE`, `GOMODCACHE`, `TMPDIR` | (not set by the runner) | Taken from the calling environment; go's own defaults apply when unset |
+
+The runner runs `go test` under `nice -n 10` when `nice` is on `PATH` and
+without it otherwise.
 
 ---
 
