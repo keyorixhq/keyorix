@@ -1,0 +1,22 @@
+diff --git a/migrate/internal/healthscan/client.go b/migrate/internal/healthscan/client.go
+index d22956025..34d418c57 100644
+--- a/migrate/internal/healthscan/client.go
++++ b/migrate/internal/healthscan/client.go
+@@ -95,7 +95,7 @@ func New(ctx context.Context, cfg Config, warnOut io.Writer) (*Client, error) {
+ 		return nil, err
+ 	}
+ 	hc := httpsafe.Client()
+-	hc.Transport = httpsafe.CappedTransport{Base: &http.Transport{TLSClientConfig: tlsConfig}}
++	hc.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+ 
+ 	c := &Client{
+ 		addr:      strings.TrimRight(cfg.Addr, "/"),
+@@ -276,7 +276,7 @@ func (c *Client) request(ctx context.Context, method, path string) (int, []byte,
+ 	}
+ 	defer resp.Body.Close() //nolint:errcheck
+ 
+-	body, err := io.ReadAll(io.LimitReader(resp.Body, httpsafe.MaxResponseBytes))
++	body, err := io.ReadAll(resp.Body)
+ 	if err != nil {
+ 		return resp.StatusCode, nil, fmt.Errorf("read response: %w", err)
+ 	}

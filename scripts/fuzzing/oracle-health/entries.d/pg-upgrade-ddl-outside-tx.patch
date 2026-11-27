@@ -1,0 +1,14 @@
+diff --git a/internal/storage/factory.go b/internal/storage/factory.go
+index 164720989..80825712d 100644
+--- a/internal/storage/factory.go
++++ b/internal/storage/factory.go
+@@ -123,6 +123,9 @@ func withMigrationLockPooled(db *gorm.DB, isPostgres, xactLock bool, dbPath stri
+ 		if migrationLockHeldHook != nil {
+ 			migrationLockHeldHook()
+ 		}
++		if isPostgres {
++			_ = db.Exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS planted_zz integer").Error
++		}
+ 		err := fn(h)
+ 		if migrationLockWorkDoneHook != nil {
+ 			migrationLockWorkDoneHook()

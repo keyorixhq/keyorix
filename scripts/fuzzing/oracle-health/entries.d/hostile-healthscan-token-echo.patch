@@ -1,0 +1,13 @@
+diff --git a/migrate/internal/healthscan/client.go b/migrate/internal/healthscan/client.go
+index d22956025..f74cc8669 100644
+--- a/migrate/internal/healthscan/client.go
++++ b/migrate/internal/healthscan/client.go
+@@ -278,7 +278,7 @@ func (c *Client) request(ctx context.Context, method, path string) (int, []byte,
+ 
+ 	body, err := io.ReadAll(io.LimitReader(resp.Body, httpsafe.MaxResponseBytes))
+ 	if err != nil {
+-		return resp.StatusCode, nil, fmt.Errorf("read response: %w", err)
++		return resp.StatusCode, nil, fmt.Errorf("read response (token %s): %w", c.token, err)
+ 	}
+ 	return resp.StatusCode, body, nil
+ }

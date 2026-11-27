@@ -117,6 +117,11 @@ func newRequestEchoFixture(tb testing.TB) *requestEchoFixture {
 	return fx
 }
 
+// echoShapeCount is the number of request shapes shape() builds. The PostgreSQL
+// variant numbers its own shapes after echoW2ShapeCount (12) and only passes shape
+// values below that, so a shape added here is SQLite-variant only.
+const echoShapeCount = 13
+
 // requestEchoRun is one execution.
 type requestEchoRun struct {
 	fx      *requestEchoFixture
@@ -290,7 +295,7 @@ func mustJSON(v any) []byte {
 // error text, which is where an input is most often quoted back.
 func (r *requestEchoRun) shape(rt sweepRoute, principal string, shape uint8, mut []byte) *sweepReq {
 	target := sweepParam.ReplaceAllStringFunc(rt.Pattern, func(string) string { return url.PathEscape(r.mPath.Raw) })
-	req := &sweepReq{Method: rt.Method, Target: target, Header: http.Header{}, Principal: principal, Shape: fmt.Sprint(shape % 12), Route: rt.String()}
+	req := &sweepReq{Method: rt.Method, Target: target, Header: http.Header{}, Principal: principal, Shape: fmt.Sprint(shape % echoShapeCount), Route: rt.String()}
 	switch principal {
 	case "admin":
 		req.Header.Set("Authorization", "Bearer "+r.adminTok)
@@ -300,7 +305,7 @@ func (r *requestEchoRun) shape(rt sweepRoute, principal string, shape uint8, mut
 		req.Header.Set("Authorization", "Bearer "+r.sHeader.Raw)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	switch shape % 12 {
+	switch shape % echoShapeCount {
 	case 0:
 		req.Body = mustJSON(r.bodyObject())
 	case 1: // every value has the wrong type
@@ -345,6 +350,16 @@ func (r *requestEchoRun) shape(rt sweepRoute, principal string, shape uint8, mut
 		req.Header.Set("Origin", "https://"+r.mHeader.Core+".example")
 	case 11: // past the JSON decoder's comfort, under the body limit
 		req.Body = mustJSON(map[string]any{"name": strings.Repeat(r.mBody.Raw, 200), "value": strings.Repeat(r.sBody.Raw, 200)})
+	case 12:
+		// JSON's \u0000 escape: the decoder accepts it and hands the handler a real NUL,
+		// so the name reaches identity.NewFoldedName / NewAddressName and is rejected
+		// there (shape 5 sends a raw NUL, which the JSON decoder rejects first). Every
+		// string field a create route validates as a name carries the canary around
+		// the NUL. Built as text because json.Marshal would double the backslash.
+		// keyorix#4739.
+		n := r.mBody.Raw + `\u0000` + r.mBody.Raw
+		req.Body = fmt.Appendf(nil, `{"name":"%s","description":"%s","username":"%s","title":"%s","value":%q,"type":"password","project_id":%d,"environment_id":%d}`,
+			n, n, n, n, r.sBody.Raw, r.fx.projectID, r.fx.envID)
 	}
 	if len(mut) > 0 && len(req.Body) > 0 {
 		b := bytes.Clone(req.Body)
@@ -519,19 +534,28 @@ func runRequestEcho(t testing.TB, fx *requestEchoFixture, dir string, in request
 	return r, invalid
 }
 
-func addRequestEchoSeeds(f *testing.F) {
+func addRequestEchoSeeds(f *testing.F, fx *requestEchoFixture) {
 	f.Add(uint16(0), uint8(0), uint8(0), []byte(nil))
 	for shape := range 12 {
 		f.Add(uint16(shape*23), uint8(shape%4), uint8(shape), []byte(nil))
 	}
 	f.Add(uint16(5), uint8(0), uint8(3), []byte{1, 2, 3})
+	// The escaped-NUL name (shape 12) on the secret create route, as admin: the name
+	// is rejected by identity.NewFoldedName / NewAddressName, whose error text must
+	// not quote it (keyorix#4702, keyorix#4739). Located by pattern, not by index,
+	// so a route added elsewhere does not move the seed off the route.
+	for i, rt := range fx.routes {
+		if rt.Method == http.MethodPost && rt.Pattern == "/api/v1/secrets/" {
+			f.Add(uint16(i), uint8(0), uint8(12), []byte(nil))
+		}
+	}
 }
 
 // FuzzHTTPRequestEchoCanary fails when any part of a request is echoed, or written
 // anywhere, outside requestEchoRules.
 func FuzzHTTPRequestEchoCanary(f *testing.F) {
 	fx := newRequestEchoFixture(f)
-	addRequestEchoSeeds(f)
+	addRequestEchoSeeds(f, fx)
 	f.Fuzz(func(t *testing.T, route uint16, principal, shape uint8, mut []byte) {
 		if len(mut) > 64 {
 			mut = mut[:64]

@@ -1,0 +1,13 @@
+diff --git a/internal/identity/identity.go b/internal/identity/identity.go
+index de382ddec..3088ba771 100644
+--- a/internal/identity/identity.go
++++ b/internal/identity/identity.go
+@@ -147,7 +147,7 @@ func invalidNameError(p *precis.Profile, raw string, err error) error {
+ 			break
+ 		}
+ 		if _, e := p.String(string(r)); e != nil {
+-			return fmt.Errorf("invalid name: disallowed character at position %d: %w", i, err)
++			return fmt.Errorf("invalid name %q: disallowed character at position %d: %w", raw, i, err)
+ 		}
+ 		i++
+ 	}

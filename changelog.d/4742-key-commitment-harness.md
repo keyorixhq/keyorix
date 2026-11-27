@@ -1,0 +1,2 @@
+### Testing
+- **Key-commitment harness for the DEK wrap and the value AEAD.** New fuzz targets and pinned tests in `internal/encryption/key_commitment_fuzz_test.go` show that neither the KEK->DEK wrap nor the secret AEAD is key-committing (a GHASH multi-collision opens under two keys). This is a documented defence-in-depth gap, not reachable below instance admin. The file header lists every AES-GCM seal site in the tree (`INV-ENCRYPTION-no-key-commitment-gap`).
