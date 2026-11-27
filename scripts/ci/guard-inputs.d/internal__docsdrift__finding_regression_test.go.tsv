@@ -1,0 +1,1 @@
+internal/docsdrift/finding_regression_test.go	docs/findings/*.md,!**	AI-T2 (#4784): the **Regression test:** field of every docs/findings/*.md doc must name a Test/Fuzz func that exists in the stated package; FINDING docs dated 2026-11-27 or later must carry it; only docs/findings is read (plus the *.go files of the packages the fields name)
