@@ -11,9 +11,9 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 | invitations | 4 | 4 | 0 | 0 |
 | access requests | 5 | 5 | 0 | 0 |
 | memberships | 5 | 5 | 0 | 0 |
-| secrets | 43 | 36 | 10 | 10 |
-| other | 128 | 34 | 22 | 11 |
-| **total** | **212** | **111** | **47** | **36** |
+| secrets | 43 | 38 | 10 | 10 |
+| other | 128 | 41 | 22 | 11 |
+| **total** | **212** | **120** | **47** | **36** |
 
 ## groups
 
@@ -104,7 +104,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [x] `REST DELETE /api/v1/secrets/{id}` — secret.delete
 - [x] `REST DELETE /api/v1/secrets/{id}/acl/{aclId}` — secret.acl.revoke
 - [x] `REST DELETE /api/v1/secrets/{id}/dependencies/{depId}` — secret.dep.remove
-- [ ] `REST DELETE /api/v1/secrets/{id}/schedule` — model: time-window access schedules are not in the reference model
+- [x] `REST DELETE /api/v1/secrets/{id}/schedule` — secret.schedule.delete
 - [x] `REST DELETE /api/v1/secrets/{id}/self-share` — share.self.remove
 - [x] `REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}` — secret.comment.delete
 - [x] `REST DELETE /api/v1/shares/{id}` — share.revoke
@@ -112,7 +112,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [x] `REST GET /api/v1/secrets/{id}` — secret.value.byid, secret.read.env
 - [x] `REST GET /api/v1/secrets/{id}/certificate` — secret.certificate
 - [x] `REST PATCH /api/v1/secrets/{id}/auto-rotate` — secret.autorotate
-- [x] `REST PATCH /api/v1/secrets/{id}/classification` — secret.classify
+- [x] `REST PATCH /api/v1/secrets/{id}/classification` — secret.classify, secret.classify
 - [x] `REST PATCH /api/v1/secrets/{id}/description` — secret.description
 - [x] `REST PATCH /api/v1/secrets/{id}/retention` — secret.retention
 - [x] `REST POST /api/v1/projects/{id}/secrets/bulk-delete` — bulk.delete
@@ -141,7 +141,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [x] `REST POST /api/v1/secrets/{id}/versions/{versionId}/comments` — secret.comment.add
 - [ ] `REST PUT /api/v1/secret-access-requests/{requestId}` — model: restricted-classification secret-access rules are not in the reference model
 - [x] `REST PUT /api/v1/secrets/{id}` — secret.update
-- [ ] `REST PUT /api/v1/secrets/{id}/schedule` — model: time-window access schedules are not in the reference model
+- [x] `REST PUT /api/v1/secrets/{id}/schedule` — secret.schedule.set
 - [x] `REST PUT /api/v1/secrets/{id}/tags` — secret.tags
 - [x] `REST PUT /api/v1/shares/{id}` — share.update
 
@@ -173,7 +173,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST DELETE /api/v1/auth/sessions/{id}` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
 - [ ] `REST DELETE /api/v1/auth/tokens/expired` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
 - [ ] `REST DELETE /api/v1/auth/tokens/{id}` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
-- [ ] `REST DELETE /api/v1/auth/webauthn/credentials/{id}` — fixture: needs a WebAuthn authenticator
+- [x] `REST DELETE /api/v1/auth/webauthn/credentials/{id}` — webauthn.deleteCredential
 - [ ] `REST DELETE /api/v1/connect/ref-grants/{id}` — fixture: needs a Keyorix Connect connector configured
 - [ ] `REST DELETE /api/v1/environments/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST DELETE /api/v1/folders/{id}` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
@@ -198,7 +198,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST PATCH /api/v1/dynamic-secrets/configs/{id}/enabled` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `REST PATCH /scim/v2/Groups/{id}` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
 - [ ] `REST PATCH /scim/v2/Users/{id}` — design: SCIM token–gated; not in the main FuzzAuthzDiff corpus (covered by TestSCIMStrictSweep standalone sweep — V5EXT4)
-- [ ] `REST POST /api/v1/admin/impersonate` — fixture: needs an impersonation session (deferred to the not-yet list)
+- [x] `REST POST /api/v1/admin/impersonate` — impersonation.start
 - [ ] `REST POST /api/v1/admin/jobs/anomaly-alerts` — design: on-demand job trigger (system.write / alerts.write); outside the requested families; not bound
 - [ ] `REST POST /api/v1/admin/jobs/check-read-quotas` — design: on-demand job trigger (system.write / alerts.write); outside the requested families; not bound
 - [ ] `REST POST /api/v1/admin/jobs/compliance-digest` — design: on-demand job trigger (system.write / alerts.write); outside the requested families; not bound
@@ -215,10 +215,10 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/audit/checkpoint` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/audit/migrate-chain-encoding` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/auth/change-password` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
-- [ ] `REST POST /api/v1/auth/end-impersonation` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
+- [x] `REST POST /api/v1/auth/end-impersonation` — impersonation.end
 - [x] `REST POST /api/v1/auth/mfa/activate` — mfa.activate
 - [x] `REST POST /api/v1/auth/mfa/disable` — mfa.disable
-- [ ] `REST POST /api/v1/auth/mfa/enroll` — structural: BlockWhenImpersonating only; BeginMFAEnrollment requires authEncryptor (unavailable in test mode); covered by TestMFARouteGatesPresent
+- [x] `REST POST /api/v1/auth/mfa/enroll` — mfa.enroll
 - [x] `REST POST /api/v1/auth/mfa/recovery-codes/regenerate` — mfa.recovery-codes.regenerate
 - [x] `REST POST /api/v1/auth/mfa/stepup` — mfa.stepup
 - [ ] `REST POST /api/v1/auth/tokens` — design: self-service on the caller's own account/credentials (no target owned by someone else); not bound
@@ -238,9 +238,9 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [ ] `REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke` — fixture: needs a dynamic-secret backend (database/cloud) configured
 - [ ] `REST POST /api/v1/folders` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/legal-hold` — model: legal-hold rules are not in the reference model
-- [ ] `REST POST /api/v1/mfa-reset-requests` — model: MFA-reset approval rules are not in the reference model
-- [ ] `REST POST /api/v1/mfa-reset-requests/{id}/approve` — model: MFA-reset approval rules are not in the reference model
-- [ ] `REST POST /api/v1/mfa-reset-requests/{id}/cancel` — model: MFA-reset approval rules are not in the reference model
+- [x] `REST POST /api/v1/mfa-reset-requests` — mfaReset.request
+- [x] `REST POST /api/v1/mfa-reset-requests/{id}/approve` — mfaReset.approve
+- [x] `REST POST /api/v1/mfa-reset-requests/{id}/cancel` — mfaReset.cancel
 - [ ] `REST POST /api/v1/notification-channels` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/notifications/read-all` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
 - [ ] `REST POST /api/v1/notifications/{id}/read` — design: outside the families requested for this campaign (groups, projects, machine identities, invitations, access requests, memberships, secrets); not bound
