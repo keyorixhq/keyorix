@@ -33,18 +33,18 @@
 //
 // # Oracles
 //
-//   (a) no-panic / no-hang / bounded alloc
-//       Each op runs in a goroutine with recover(); a panic becomes t.Fatal.
-//       A 5s per-op watchdog catches hangs. Input is capped at 64KB; larger
-//       inputs are skipped (bounded allocation via input cap, not resguard,
-//       because every type delegates to stdlib or has O(n)-at-most allocation).
+//	(a) no-panic / no-hang / bounded alloc
+//	    Each op runs in a goroutine with recover(); a panic becomes t.Fatal.
+//	    A 5s per-op watchdog catches hangs. Input is capped at 64KB; larger
+//	    inputs are skipped (bounded allocation via input cap, not resguard,
+//	    because every type delegates to stdlib or has O(n)-at-most allocation).
 //
-//   (b) idempotence (Email and Date only)
-//       When UnmarshalJSON succeeds, MarshalJSON of the result must not panic,
-//       and UnmarshalJSON of that re-marshaled output must succeed and produce
-//       the same value. This is a correctness property these types claim:
-//       if a parsed Email round-trips to a different Email, two "equal" values
-//       would compare differently on re-normalization.
+//	(b) idempotence (Email and Date only)
+//	    When UnmarshalJSON succeeds, MarshalJSON of the result must not panic,
+//	    and UnmarshalJSON of that re-marshaled output must succeed and produce
+//	    the same value. This is a correctness property these types claim:
+//	    if a parsed Email round-trips to a different Email, two "equal" values
+//	    would compare differently on re-normalization.
 //
 // # What these oracles do NOT verify
 //
@@ -138,8 +138,8 @@ func FuzzOapiRuntimeEmail(f *testing.F) {
 	f.Add([]byte("not json at all"))
 	f.Add([]byte(`null`))
 	f.Add([]byte(`42`))
-	f.Add(longLocalPart)                    // long local-part (DoS-shaped)
-	f.Add([]byte{0x00, 0x01, 0x02})         // NUL bytes as raw binary input
+	f.Add(longLocalPart)                     // long local-part (DoS-shaped)
+	f.Add([]byte{0x00, 0x01, 0x02})          // NUL bytes as raw binary input
 	f.Add([]byte(`"user+test@example.com"`)) // plus-quoted local part
 
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -197,20 +197,20 @@ func FuzzOapiRuntimeEmail(f *testing.F) {
 func FuzzOapiRuntimeDate(f *testing.F) {
 	// Seeds: valid JSON-encoded date strings, text-format dates, edge cases.
 	f.Add([]byte(`"2024-01-15"`))
-	f.Add([]byte(`"2000-02-29"`))  // leap day
-	f.Add([]byte(`"1970-01-01"`))  // epoch
-	f.Add([]byte(`"9999-12-31"`))  // max sane year
-	f.Add([]byte(`"0000-01-01"`))  // zero year
-	f.Add([]byte(`"2024-00-01"`))  // month=0 out of range
-	f.Add([]byte(`"2024-13-01"`))  // month=13 out of range
-	f.Add([]byte(`"2024-01-00"`))  // day=0 out of range
-	f.Add([]byte(`"2024-01-32"`))  // day=32 out of range
+	f.Add([]byte(`"2000-02-29"`)) // leap day
+	f.Add([]byte(`"1970-01-01"`)) // epoch
+	f.Add([]byte(`"9999-12-31"`)) // max sane year
+	f.Add([]byte(`"0000-01-01"`)) // zero year
+	f.Add([]byte(`"2024-00-01"`)) // month=0 out of range
+	f.Add([]byte(`"2024-13-01"`)) // month=13 out of range
+	f.Add([]byte(`"2024-01-00"`)) // day=0 out of range
+	f.Add([]byte(`"2024-01-32"`)) // day=32 out of range
 	f.Add([]byte(`"not-a-date"`))
 	f.Add([]byte(`""`))
 	f.Add([]byte(`null`))
-	f.Add([]byte("2024-01-15"))  // raw text (for UnmarshalText path)
-	f.Add([]byte("2000-02-29"))  // leap day, text
-	f.Add([]byte(""))            // empty text
+	f.Add([]byte("2024-01-15")) // raw text (for UnmarshalText path)
+	f.Add([]byte("2000-02-29")) // leap day, text
+	f.Add([]byte(""))           // empty text
 	f.Add([]byte("not-a-date")) // invalid text
 
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -265,22 +265,22 @@ func FuzzOapiRuntimeDuration(f *testing.F) {
 	// Seeds: valid RFC-3339 duration strings (JSON and text), malformed variants.
 	// ParseDuration expects strings starting with "P".
 	f.Add([]byte(`"P1Y2M3DT4H5M6S"`)) // full duration, JSON
-	f.Add([]byte(`"P2W"`))             // weeks-only, JSON
-	f.Add([]byte(`"PT0S"`))            // zero duration, JSON
-	f.Add([]byte(`"P1Y"`))             // year only, JSON
-	f.Add([]byte(`"PT1.5S"`))          // fractional seconds, JSON
-	f.Add([]byte(`"PT0.5S"`))          // fractional seconds at boundary
-	f.Add([]byte(`"P2W3D"`))           // weeks + days (invalid per grammar), JSON
-	f.Add([]byte(`"P"`))               // P with no component, JSON
+	f.Add([]byte(`"P2W"`))            // weeks-only, JSON
+	f.Add([]byte(`"PT0S"`))           // zero duration, JSON
+	f.Add([]byte(`"P1Y"`))            // year only, JSON
+	f.Add([]byte(`"PT1.5S"`))         // fractional seconds, JSON
+	f.Add([]byte(`"PT0.5S"`))         // fractional seconds at boundary
+	f.Add([]byte(`"P2W3D"`))          // weeks + days (invalid per grammar), JSON
+	f.Add([]byte(`"P"`))              // P with no component, JSON
 	f.Add([]byte(`"not-a-duration"`))
 	f.Add([]byte(`""`))
 	f.Add([]byte(`null`))
 	f.Add([]byte("P1Y2M3DT4H5M6S")) // text format
-	f.Add([]byte("PT1H30M"))         // text: 1h30m
-	f.Add([]byte("P2W"))             // text: weeks-only
-	f.Add([]byte("PT0S"))            // text: zero
-	f.Add([]byte(""))                // empty text
-	f.Add([]byte("PTTTTT"))          // multiple T, invalid
+	f.Add([]byte("PT1H30M"))        // text: 1h30m
+	f.Add([]byte("P2W"))            // text: weeks-only
+	f.Add([]byte("PT0S"))           // text: zero
+	f.Add([]byte(""))               // empty text
+	f.Add([]byte("PTTTTT"))         // multiple T, invalid
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) > maxInputBytes {
