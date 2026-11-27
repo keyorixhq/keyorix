@@ -334,6 +334,15 @@ func FuzzJSONDecodeBoundedWork(f *testing.F) {
 	f.Add(depthObject(9999))
 	f.Add(depthObject(10020))
 	f.Add(bigNumberArray(1 << 20)) // ~1 MiB of "[1,1,1,...]"
+	// 3 MiB generated in-process (nothing large is committed): reaches the
+	// webauthn decodeJSON inner 64 KiB cap. With that cap in place the decode
+	// reads 64 KiB and allocates far below boundedWorkLimit (64 KiB + 64*64 KiB =
+	// 4259840); without it, decoding the whole body into json.RawMessage allocates
+	// about 2.8x the body (~8.4 MB), which exceeds the limit. The 1 MiB seed above
+	// stays under the limit even uncapped (~2.9 MB), and bodies below ~1.5 MiB
+	// cannot trip it, so 3 MiB gives ~2x headroom over the threshold and is still
+	// under the 10 MiB global cap so the outer middleware does not mask it.
+	f.Add(bigNumberArray(3 << 20))
 	f.Add(manyKeysObject(10000))
 	f.Add([]byte(`{"project_id":"A","project_id":"B"}`))              // duplicate security field
 	f.Add([]byte{0xff, 0xfe, 0xfd})                                   // invalid UTF-8, invalid JSON syntax too

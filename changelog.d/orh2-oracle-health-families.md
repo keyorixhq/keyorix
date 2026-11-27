@@ -1,0 +1,3 @@
+### Testing
+
+- **Oracle health, second pass: eleven more keyorix entries and a DashDiag registry.** `scripts/fuzzing/oracle-health/` gains planted-defect entries for key commitment (keyless DEK wrap), the backup manifest signature (prefix compare), backup tar-slip, bundle component path containment, the audit-chain tamper oracle (entry hash not compared) and SAML `ParseResponse` error sanitisation, plus self-test entries for wirefuzz, verifierflip, wycheproof, libconformance and the encryption oracles. The runner takes `--root` and `--entries`, and four DashDiag entries (terminal escape x2, CSV formula, minisign file binding) run through it. Scripts, entries and bats tests only. One harness found blind to its plant: #4750.

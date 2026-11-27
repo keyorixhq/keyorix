@@ -107,6 +107,75 @@ FalseCrashReducer's feasibility triage).
   the reproducer stays private (rig `fuzz-corpus`); see the research module's own
   `rediscovery_test.go`.
 
+## Oracle health (planted-defect suite)
+
+A fuzzer that has gone blind is silent, and silence reads as "nothing left to find".
+`oracle-health/oracle-health.sh` re-runs, on demand, the red-proof every harness had
+once by hand: for each entry it takes a throwaway copy of the tree, runs the harness
+on its seed corpus unmodified (the **control**, must be green), applies the entry's
+**planted-defect patch**, replays the same corpus (deterministic, no fuzzing time)
+and requires a FAIL that contains the entry's **marker** text. Exit 1 if a control is
+red or a harness stays green on its plant. The only older automatic check of this
+kind is the authzdiff self-test (`ci.yml`, job `authzdiff-plants`); it is listed as
+the entry `authzdiff-plants` and not re-implemented.
+
+```
+scripts/fuzzing/oracle-health/oracle-health.sh [--list] [--only id,id] [--heavy] [--strict]
+                                              [--ref REF] [--workdir DIR] [--tsv FILE] [--keep]
+```
+
+Verdicts: `DETECTED` (healthy), `MISSED` (the harness is blind to its plant: a
+finding, file an issue, do not fix the plant), `CONTROL-RED`, `WRONG-MARKER` (failed
+for another reason than the intended oracle), `PLANT-STALE` (the patch no longer
+applies: re-base it), `PLANT-BROKEN` (the plant does not build), `SKIP` (no Postgres,
+heavy entry, harness skipped itself: shown, never counted as a pass; `--strict` makes
+it exit 3), `KNOWN-BLIND` (a filed finding, kept visible; flips to `BLIND-FIXED`,
+which fails, the day the harness sees the plant). The runner never edits the checkout
+it runs from and removes its trees on exit. It is meant for the nightly host
+(pve01); there is deliberately no workflow for it.
+
+**An entry is two files in `oracle-health/entries.d/`** (no shared table):
+`<id>.conf` and `<id>.patch` (a unified diff, product or harness code, the SMALLEST
+change that violates the invariant). The conf is `KEY=VALUE` lines, never evaluated
+by a shell: `PKG`, `RUN` (the `go test -run` pattern: the seed or replay input),
+`MARKERS` (` || `-separated fixed strings, all must appear in the failing output),
+`MODULE_DIR` (`migrate` for that module), `NEEDS` (`none`, `pg`, `pg-superuser`),
+`TARGET` + `REPLAY_GEN` (a script that writes extra corpus files into
+`testdata/fuzz/<TARGET>/` of the copy, for an input too big to commit),
+`PATCH` (share a patch between entries), `KNOWN_BLIND` (issue), `HEAVY=1`,
+`KIND=selftest` + `CMD` (run an existing self-test as-is) and `VERIFIED` (free text:
+when and how it was seen red). `entries.d/*.conf` are the registry; `--list` prints it.
+
+**Adding an entry**: pick the invariant from the harness's own doc comment, write the
+plant, run `go test` on the seed to see red, `git diff <file> > entries.d/<id>.patch`,
+write the conf, run `oracle-health.sh --only <id>`. If the seed corpus is green on the
+plant, the harness is blind (or the plant is not the invariant): replay a specific
+input, and if only a generated input trips it, say so in the conf and open an issue.
+If it cannot be planted deterministically in about 90 s, it is not an entry: list it
+as a leftover with the reason. Two ways a plant turns out not to be one: it removes a
+layer that another layer repeats (`internal/backupfmt` checks an entry name in three
+places, so the plant drops all three), or it breaks the harness's own positive control
+(a verifier that hashes a prefix rejects the genuine file too). A green result on such
+a plant says nothing about the harness: try a sweep of generated inputs first, and only
+call the harness blind when a plant that does violate the invariant stays green.
+`KIND=selftest` entries wrap a planted-defect test that already lives in the package
+(the defect is a stand-in inside the test, not a product patch): they show the family in
+the registry and run the red-proof on the nightly host, nothing more.
+
+**Other repositories**: `--root DIR` points the runner at another git checkout (its own
+`go.mod`, patches apply to that tree) and `--entries DIR` at another registry. The
+DashDiag entries live in `oracle-health/dashdiag.d/`; run them with
+`oracle-health.sh --root <dashdiag clone> --entries scripts/fuzzing/oracle-health/dashdiag.d`.
+A harness behind a `//go:build linux` tag cannot run on a Mac: such an entry needs the
+pve01 or e2e host.
+
+Pure parts are tested by `bats oracle-health/tests`
+(stubbed `go`). **Maintenance**: `PLANT-STALE` after a refactor means re-cut the patch;
+`pg-upgrade-unlock-stop` depends on the number of write statements of the newest
+upgrade source (the unlock is statement N+1): when it reports MISSED after a
+migration step is added, probe `FuzzUpgradePGInterrupted` with the newest source index
+and stops around the old window and move the window in its `.replay.sh`.
+
 ## CI layers
 
 - **Weekly / per-PR**: see `.github/workflows/` (`fuzz*.yml`) — bounded

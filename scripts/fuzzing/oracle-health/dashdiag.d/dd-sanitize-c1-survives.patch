@@ -1,0 +1,8 @@
+diff --git a/internal/output/sanitize.go b/internal/output/sanitize.go
+--- a/internal/output/sanitize.go
++++ b/internal/output/sanitize.go
+@@ -50,3 +50,3 @@
+ func unsafeForTerminal(r rune) bool {
+-	return unicode.IsControl(r) || isBidiFormatting(r)
++	return (unicode.IsControl(r) && r < 0x80) || isBidiFormatting(r)
+ }

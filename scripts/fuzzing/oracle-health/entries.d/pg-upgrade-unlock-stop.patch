@@ -1,0 +1,14 @@
+diff --git a/internal/storage/upgrade_pg_fuzz_test.go b/internal/storage/upgrade_pg_fuzz_test.go
+index 44e13df28..a1e4b086d 100644
+--- a/internal/storage/upgrade_pg_fuzz_test.go
++++ b/internal/storage/upgrade_pg_fuzz_test.go
+@@ -506,7 +506,8 @@ func pgInterruptedMigrate(t testing.TB, dsn string, stopAfter int, hooks pgHooks
+ 	// failure the migration swallowed and then committed is still an interruption,
+ 	// and oracle 6 must compare it.
+ 	n := seen.Load()
+-	return n >= int64(stopAfter) && (bare || merr != nil || n != int64(stopAfter)), nil
++	_ = merr
++	return n >= int64(stopAfter), nil
+ }
+ 
+ // pgRegisterStop arms gdb to fail the stopAfter'th write-class statement and every
