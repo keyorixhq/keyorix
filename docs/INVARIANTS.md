@@ -51,7 +51,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/keyfiles` | [internal/keyfiles/INVARIANTS.md](../internal/keyfiles/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 18 | 18 | 0 |
 | `internal/logging` | [internal/logging/INVARIANTS.md](../internal/logging/INVARIANTS.md) | 3 | 3 | 0 |
-| `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 3 | 3 | 0 |
+| `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/notifychan` | [internal/notifychan/INVARIANTS.md](../internal/notifychan/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 8 | 1 |
 | `internal/restorejournal` | [internal/restorejournal/INVARIANTS.md](../internal/restorejournal/INVARIANTS.md) | 1 | 1 | 0 |
