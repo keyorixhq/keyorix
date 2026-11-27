@@ -629,9 +629,9 @@ func FuzzFaultInjectedOperations(f *testing.F) {
 		// "C"). A long, distinctive prefix makes coincidental substring
 		// collision with ordinary error vocabulary vanishingly unlikely while
 		// still varying meaningfully with the fuzzer's chosen suffix.
-		oldPass := "PASSCANARY-old-" + oldPassIn
-		newPass := "PASSCANARY-new-" + newPassIn
-		canary := "FAULTCANARY-" + secretVal
+		oldPass := "PASSCANARY-old-" + pgText(oldPassIn)
+		newPass := "PASSCANARY-new-" + pgText(newPassIn)
+		canary := "FAULTCANARY-" + pgText(secretVal)
 
 		done := make(chan struct{})
 		go func() {
@@ -643,6 +643,15 @@ func FuzzFaultInjectedOperations(f *testing.F) {
 			t.Fatalf("fault-injected-operations exceeded %s — possible hang", faultOpGuardDeadline)
 		}
 	})
+}
+
+// pgText makes a fuzzer-supplied string storable in a Postgres text column: Postgres
+// rejects invalid UTF-8 (0xad, SQLSTATE 22021) and NUL, which failed the seeding step
+// before any fault was injected (fuzz-corpus#194). Seed data is the harness's own
+// setup, not a product input, so normalising it hides no product behaviour; the
+// normalised value is what every oracle below checks, so the leak checks stay exact.
+func pgText(s string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "")
 }
 
 func runFaultInjectedCase(t *testing.T, dbWorlds []*fuzzworld.World, opSel, seamSel, kindSel, shortWriteK byte, oldPass, newPass, canary string) {
