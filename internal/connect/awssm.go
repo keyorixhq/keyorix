@@ -119,11 +119,18 @@ func (c *AWSSecretsManagerConnector) client(ctx context.Context) (smSecretGetter
 	// hand-copied approximation, so it tracks the SDK's actual tuning
 	// (including its FIPS-mode TLS curve-preference restriction) automatically.
 	return secretsmanager.NewFromConfig(cfg, func(o *secretsmanager.Options) {
-		o.HTTPClient = &http.Client{
-			Transport:     newConnectHardenedTransport(awsBaseTransport()),
-			CheckRedirect: refuseRedirect,
-		}
+		o.HTTPClient = awsSMHTTPClient()
 	}), nil
+}
+
+// awsSMHTTPClient is the *http.Client client() installs in the SDK. It is a
+// function of its own so FuzzConnectAWSTransportEgressParity dials through the
+// exact client this backend uses, not a re-built copy of its transport.
+func awsSMHTTPClient() *http.Client {
+	return &http.Client{
+		Transport:     newConnectHardenedTransport(awsBaseTransport()),
+		CheckRedirect: refuseRedirect,
+	}
 }
 
 // unexpectedSuccessStatusError is returned for a 2xx other than 200. It carries

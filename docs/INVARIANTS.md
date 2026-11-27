@@ -33,7 +33,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/audit/siem` | [internal/audit/siem/INVARIANTS.md](../internal/audit/siem/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 26 | 26 | 0 |
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
-| `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 2 | 2 | 0 |
+| `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 3 | 3 | 0 |
 | `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 185 | 185 | 0 |
 | `internal/delivery` | [internal/delivery/INVARIANTS.md](../internal/delivery/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 57 | 57 | 0 |

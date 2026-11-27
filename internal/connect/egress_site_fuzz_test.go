@@ -4,57 +4,56 @@
 // transport from newConnectHardenedTransport(<backend base>). The guard is the
 // DialContext that function installs; a backend whose constructor passes a bare base
 // transport to its SDK instead would be unguarded and every netutil test would stay
-// green. These targets build the real hardened transport for each backend base and dial
-// through it.
+// green. These targets take the transport from the client each backend really builds
+// (NewVaultConnector's client, azureKVHTTPClient, awsSMHTTPClient) and dial through it,
+// so dropping the hardening at one of those call sites turns its target red as BYPASS.
+// The Azure and AWS targets live in their own build-tagged files.
 //
 // Policy: link-local only, in every encoding (documented residual: fd00:ec2::254 and
 // the other metadata addresses outside 169.254/16 are permitted; netutil/dialer.go).
 package connect
 
 import (
+	"fmt"
+	"net"
 	"net/http"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/egressref"
 )
 
-// hardenedDial unwraps newConnectHardenedTransport's wrapper chain
-// (targetGuardRoundTripper -> sizeCappedRoundTripper -> *http.Transport) to the
-// transport whose DialContext the SDK's connections actually use.
-func hardenedDial(base *http.Transport) egressref.DialFunc {
-	tg, ok := newConnectHardenedTransport(base).(targetGuardRoundTripper)
-	if !ok {
-		panic("newConnectHardenedTransport no longer returns a targetGuardRoundTripper; update this target")
+// siteDial peels the hardened wrapper chain (errorBodyScrubRoundTripper ->
+// targetGuardRoundTripper -> sizeCappedRoundTripper) off a backend client's transport
+// down to the *http.Transport whose DialContext the SDK's connections actually use. A
+// layer that is missing is skipped rather than required: a site that hands its SDK the
+// bare base transport reaches the base's own dialer, and the oracle reports BYPASS.
+func siteDial(c *http.Client) egressref.DialFunc {
+	rt := c.Transport
+	for {
+		switch v := rt.(type) {
+		case errorBodyScrubRoundTripper:
+			rt = v.Transport
+		case targetGuardRoundTripper:
+			rt = v.Transport
+		case sizeCappedRoundTripper:
+			rt = v.Transport
+		case *http.Transport:
+			if v.DialContext == nil {
+				// What net/http itself uses for a nil DialContext.
+				return (&net.Dialer{}).DialContext
+			}
+			return v.DialContext
+		case nil:
+			// http.DefaultTransport, which has no dial guard.
+			return http.DefaultTransport.(*http.Transport).DialContext
+		default:
+			panic(fmt.Sprintf("unknown RoundTripper %T in a Connect client; teach siteDial to unwrap it", rt))
+		}
 	}
-	sc, ok := tg.Transport.(sizeCappedRoundTripper)
-	if !ok {
-		panic("targetGuardRoundTripper no longer wraps a sizeCappedRoundTripper; update this target")
-	}
-	tr, ok := sc.Transport.(*http.Transport)
-	if !ok {
-		panic("sizeCappedRoundTripper no longer wraps an *http.Transport; update this target")
-	}
-	return tr.DialContext
 }
 
 func FuzzConnectVaultTransportEgressParity(f *testing.F) {
 	egressref.Run(f, "connect.vault", func() egressref.DialFunc {
-		return hardenedDial(vaultBaseTransport())
-	}, egressref.LinkLocalTier)
-}
-
-func FuzzConnectAzureTransportEgressParity(f *testing.F) {
-	egressref.Run(f, "connect.azure", func() egressref.DialFunc {
-		return hardenedDial(azureBaseTransport())
-	}, egressref.LinkLocalTier)
-}
-
-func FuzzConnectAWSTransportEgressParity(f *testing.F) {
-	base := awsBaseTransportOrNil()
-	if base == nil {
-		f.Skip("noaws build: no AWS backend transport")
-	}
-	egressref.Run(f, "connect.aws", func() egressref.DialFunc {
-		return hardenedDial(base)
+		return siteDial(NewVaultConnector("v", "https://vault.example.test", "t", nil).client)
 	}, egressref.LinkLocalTier)
 }
