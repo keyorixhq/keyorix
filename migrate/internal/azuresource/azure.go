@@ -7,6 +7,7 @@ package azuresource
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -69,7 +70,7 @@ func (c *Client) client(ctx context.Context) (azAPI, error) {
 	}
 	cl, err := azsecrets.NewClient(c.cfg.VaultURL, cred, &azsecrets.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
-			Transport: httpsafe.Client(),
+			Transport: httpsafe.AzureClient(),
 		},
 	})
 	if err != nil {
@@ -95,7 +96,7 @@ func (c *Client) List(ctx context.Context) ([]cloudentry.Entry, []cloudentry.Ski
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return nil, nil, fmt.Errorf("azure-key-vault: list secrets: %w", err)
+			return nil, nil, statusOnlyError(err, "azure-key-vault: list secrets")
 		}
 		for _, p := range page.Value {
 			if p == nil || p.ID == nil {
@@ -103,6 +104,7 @@ func (c *Client) List(ctx context.Context) ([]cloudentry.Entry, []cloudentry.Ski
 			}
 			name := listedSecretName(p.ID)
 			if name == "" {
+				skipped = append(skipped, cloudentry.Skipped{Locator: c.locator("<unnamed>"), Reason: "listed secret ID has no name"})
 				continue
 			}
 			if c.cfg.NamePrefix != "" && !strings.HasPrefix(name, c.cfg.NamePrefix) {
@@ -151,6 +153,21 @@ func listedSecretName(id *azsecrets.ID) string {
 	return id.Name()
 }
 
+// statusOnlyError wraps an SDK call's error for the caller. An *azcore.ResponseError is
+// reported by its status code only: its Error() text carries the full response body, and a
+// vault, proxy or impersonating endpoint answering with a non-200 status (a 403/5xx echoing
+// the secret, a 203/206 carrying the real body) would otherwise put the secret value into
+// the error keyorix-migrate prints. ErrorCode is left out too: it comes from the
+// x-ms-error-code header or the body, both server-controlled. httpsafe.AzureClient scrubs
+// those bodies as well; this holds even when a caller supplies another transport. Any other
+// error is wrapped unchanged.
+func statusOnlyError(err error, what string) error {
+	if re, ok := errors.AsType[*azcore.ResponseError](err); ok {
+		return fmt.Errorf("%s: unexpected status %d", what, re.StatusCode)
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}
+
 func (c *Client) locator(name string) string {
 	return fmt.Sprintf("azure-key-vault:%s/%s", strings.TrimSuffix(c.cfg.VaultURL, "/"), name)
 }
@@ -161,7 +178,7 @@ func (c *Client) locator(name string) string {
 func (c *Client) readSecret(ctx context.Context, cl azAPI, name, locator string) ([]cloudentry.Entry, *cloudentry.Skipped, error) {
 	out, err := cl.GetSecret(ctx, name, "", nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("azure-key-vault: get %q: %w", name, err)
+		return nil, nil, statusOnlyError(err, fmt.Sprintf("azure-key-vault: get %q", name))
 	}
 
 	// Value != nil alone is not "has a value" -- the same class of bug

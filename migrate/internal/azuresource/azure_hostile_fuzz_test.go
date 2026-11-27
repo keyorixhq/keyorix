@@ -22,6 +22,11 @@ package azuresource
 //   - Disabled-secret and nil-ID skip paths: not fuzzed; the valid list response always returns
 //     enabled:true with a non-empty id.
 //
+// FINDING F2 (fixed in this change, see TestReadSecret_NonOKResponseDoesNotEchoBody): a
+// GetSecret answer with any non-200 status and the secret in its body put the value into
+// List's error, because azcore's ResponseError text prints the body. Seed 552c14b2e113ee80
+// (get route, status 403) is its regression seed.
+//
 // FINDING F1 (fixed in this change, see TestListedSecretName_MalformedServerIDs): a hostile
 // server returning an empty or one-segment secret ID made azsecrets.ID.Name() dereference a
 // nil pointer. The two seeds below reproduce it end to end through the real client and stay
@@ -82,22 +87,17 @@ func azHostileRoutes() []hostile.Route {
 	}
 }
 
-// azHostileClient builds a real azsecrets.Client aimed at the hostile server. The transport
-// wraps httpsafe.CappedTransport around a TLS config that trusts the harness's self-signed
-// certificate. RetryOptions.MaxRetries=0 makes request counts deterministic.
+// azHostileClient builds a real azsecrets.Client aimed at the hostile server, through the
+// production wrapper stack (httpsafe.NewAzureClient: error-body scrub, response cap, redirect
+// refusal) over a TLS config that trusts the harness's self-signed certificate.
+// RetryOptions.MaxRetries=0 makes request counts deterministic.
 func azHostileClient(h *hostile.Harness) (azAPI, error) {
-	transport := httpsafe.CappedTransport{Base: &http.Transport{
-		TLSClientConfig: &tls.Config{RootCAs: h.CertPool()},
-	}}
-	httpClient := &http.Client{
-		Timeout:       httpsafe.ClientTimeout,
-		Transport:     transport,
-		CheckRedirect: httpsafe.RefuseRedirect,
-	}
 	return azsecrets.NewClient(h.URL(), azFakeCred{}, &azsecrets.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
-			Transport: httpClient,
-			Retry:     policy.RetryOptions{MaxRetries: 0},
+			Transport: httpsafe.NewAzureClient(&http.Transport{
+				TLSClientConfig: &tls.Config{RootCAs: h.CertPool(), MinVersion: tls.VersionTLS12},
+			}),
+			Retry: policy.RetryOptions{MaxRetries: 0},
 		},
 	})
 }
