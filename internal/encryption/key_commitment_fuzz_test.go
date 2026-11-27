@@ -89,11 +89,17 @@
 //   - the wrapped DEK has no room for a key id/version, and Metadata.KeyVersion is
 //     not authenticated (pinned, same flip-on-fix rule).
 //
+// KEYCOMMIT-2 adds: oracle (b) as the function kcPartitionViolation (the fuzz target
+// and TestKeyCommitmentPartition_RedProof call the same code; the red-proof plants a
+// keyless AEAD and a key-committing AEAD and runs a stock-GCM control);
+// key_commitment_pqwrap_test.go (pqwrap keyset v1 KEK slot);
+// key_commitment_epoch_db_test.go (the DEK epoch check against a real database).
+//
 // What this does NOT verify: reachability on a live path (that is argued above and
-// in the PR, not tested), pqwrap (keyset v1 and legacy-60), the CLI encrypted
-// export, KMS-wrapped KEK blobs, the DEK epoch check itself against a database
-// (only that the fingerprints differ), multi-block AAD/plaintext cases beyond the
-// fuzzed prefix, or non-12-byte nonces (the real paths reject those).
+// in the PR, not tested), pqwrap legacy-60, the CLI encrypted export, KMS-wrapped
+// KEK blobs (see the provider packages' *_key_binding_test.go), multi-block
+// AAD/plaintext cases beyond the fuzzed prefix, or non-12-byte nonces (the real
+// paths reject those).
 package encryption
 
 import (
@@ -102,6 +108,9 @@ import (
 	"crypto/cipher"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/encryption/aead"
@@ -417,22 +426,110 @@ func FuzzKeyCommitmentPartition(f *testing.F) {
 			// Real DEK unwrap: wrapKey's layout nonce||ct(32)||tag with AAD nil.
 			dekPrefix := make([]byte, 16)
 			copy(dekPrefix, prefixSeed)
-			ct0, tag0, ok := partitioned(t, k1, k2, nonce, nil, dekPrefix)
-			if !ok {
-				return
-			}
-			blob := append(append(append([]byte(nil), nonce...), ct0...), tag0...)
-			dek1, err1 := unwrapKey(blob, k1)
-			dek2, err2 := unwrapKey(blob, k2)
-			if err1 != nil || err2 != nil {
-				panic("GAP CLOSED? unwrapKey rejects a partitioned wrapped DEK: flip this target and " +
-					"TestKeyCommitment_PartitionedCiphertext_DocumentedGap to the deny direction")
-			}
-			if len(dek1) != 32 || len(dek2) != 32 || bytes.Equal(dek1, dek2) {
-				panic("unwrapKey: expected two distinct 32-byte DEKs from one partitioned blob")
+			if v := kcPartitionViolation(t, kcWrapKeyPartitioner(), k1, k2, nonce, dekPrefix); v != "" {
+				panic(v)
 			}
 		})
 	})
+}
+
+// kcPartitioner is the open side of one seal site in the wrapKey layout
+// nonce||ct||tag with AAD nil, for the partition oracle.
+type kcPartitioner struct {
+	name string
+	open func(key, nonce, ct, tag []byte) ([]byte, error)
+}
+
+func kcWrapKeyPartitioner() kcPartitioner {
+	return kcPartitioner{
+		name: "DEK wrap (unwrapKey)",
+		open: func(key, nonce, ct, tag []byte) ([]byte, error) {
+			blob := append(append(append([]byte(nil), nonce...), ct...), tag...)
+			return unwrapKey(blob, key)
+		},
+	}
+}
+
+// kcPartitionViolation is the partition oracle (b). It crafts one (nonce, ct, tag)
+// that stock crypto/cipher GCM opens under both k1 and k2 (a failure there is a
+// harness bug, see partitioned), then requires what AES-GCM does today and what
+// this file records as a documented gap: p opens it under BOTH keys, to two
+// different plaintexts of the ciphertext's length. It returns a non-empty
+// description when that does not hold:
+//   - an open fails: a key binding was added (flip the pins to the deny direction);
+//   - both opens give the same plaintext (or a wrong length): the key does not
+//     enter the decryption, which no GCM-based open can produce for a collision
+//     crafted against two different keys (a planted or broken sealer).
+//
+// It does NOT verify reachability, or what a caller does with the two plaintexts.
+func kcPartitionViolation(t testing.TB, p kcPartitioner, k1, k2, nonce, prefix []byte) string {
+	ct, tag, ok := partitioned(t, k1, k2, nonce, nil, prefix)
+	if !ok {
+		return ""
+	}
+	d1, e1 := p.open(k1, nonce, ct, tag)
+	d2, e2 := p.open(k2, nonce, ct, tag)
+	if e1 != nil || e2 != nil {
+		return fmt.Sprintf("GAP CLOSED? %s rejects a partitioned ciphertext (K1 err=%v, K2 err=%v): "+
+			"flip this target and TestKeyCommitment_PartitionedCiphertext_DocumentedGap to the deny direction", p.name, e1, e2)
+	}
+	if len(d1) != len(ct) || len(d2) != len(ct) || bytes.Equal(d1, d2) {
+		return "NO KEY BINDING: " + p.name + ": one partitioned ciphertext opened under two different keys to the same " +
+			"plaintext (or one of the wrong length): the key does not enter the decryption"
+	}
+	return ""
+}
+
+// TestKeyCommitmentPartition_RedProof shows oracle (b) itself fires, in both
+// directions, and stays quiet on the real wrap and on a stock-GCM reference:
+//   - planted keyless AEAD (open ignores the key): must report NO KEY BINDING;
+//   - planted key-committing AEAD (open refuses every key but K1): must report
+//     GAP CLOSED, the flip-on-fix signal;
+//   - controls: the real unwrapKey and a stock crypto/cipher GCM open must pass.
+func TestKeyCommitmentPartition_RedProof(t *testing.T) {
+	k1, k2 := kcKeyPair([]byte("a"), []byte("b"))
+	nonce := []byte("0123456789ab")
+	prefix := bytes.Repeat([]byte{0x5a}, 16)
+
+	stock := func(key, nonce, ct, tag []byte) ([]byte, error) {
+		blk, err := aes.NewCipher(key)
+		if err != nil {
+			return nil, err
+		}
+		g, err := cipher.NewGCM(blk)
+		if err != nil {
+			return nil, err
+		}
+		return g.Open(nil, nonce, append(append([]byte(nil), ct...), tag...), nil)
+	}
+	keyless := kcPartitioner{name: "planted keyless AEAD", open: func(_, _, ct, _ []byte) ([]byte, error) {
+		return append([]byte(nil), ct...), nil
+	}}
+	committing := kcPartitioner{name: "planted key-committing AEAD", open: func(key, nonce, ct, tag []byte) ([]byte, error) {
+		if !bytes.Equal(key, k1) {
+			return nil, errors.New("planted binding: not the sealing key")
+		}
+		return stock(key, nonce, ct, tag)
+	}}
+
+	for _, c := range []struct {
+		p    kcPartitioner
+		want string // substring of the violation, "" = oracle must stay quiet
+	}{
+		{kcWrapKeyPartitioner(), ""},
+		{kcPartitioner{name: "stock GCM reference", open: stock}, ""},
+		{keyless, "NO KEY BINDING"},
+		{committing, "GAP CLOSED"},
+	} {
+		v := kcPartitionViolation(t, c.p, k1, k2, nonce, prefix)
+		t.Logf("%-32s want=%-14q verdict=%q", c.p.name, c.want, v)
+		switch {
+		case c.want == "" && v != "":
+			t.Errorf("control %s flagged: %s", c.p.name, v)
+		case c.want != "" && !strings.Contains(v, c.want):
+			t.Errorf("red-proof failed: oracle (b) did not report %q for %s (got %q)", c.want, c.p.name, v)
+		}
+	}
 }
 
 // TestKeyCommitment_PartitionedCiphertext_DocumentedGap pins what the real wrap
