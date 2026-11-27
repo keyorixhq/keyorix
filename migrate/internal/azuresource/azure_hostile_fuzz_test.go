@@ -108,17 +108,17 @@ func FuzzAzureSourceHostileEndpoint(f *testing.F) {
 		{Route: 0, Ops: []hostile.Op{{Code: 1, A: 1}}},        // list: delete a field
 		{Route: 0, Ops: []hostile.Op{{Code: 7, A: 1, B: 2}}},  // list: oversized value array
 		{Route: 0, Ops: []hostile.Op{{Code: 6, A: 3, B: 0}}},  // list: id -> "" (nil-name panic before the fix)
-		{Route: 0, Ops: []hostile.Op{{Code: 12, A: 3}}},        // list: id -> canary, one segment (same panic)
+		{Route: 0, Ops: []hostile.Op{{Code: 12, A: 3}}},       // list: id -> canary, one segment (same panic)
 		{Route: 0, Ops: []hostile.Op{{Code: 6, A: 3, B: 11}}}, // list: id -> path traversal (4 segs)
 		{Route: 1, Ops: []hostile.Op{{Code: 1, A: 1}}},        // get: delete value field
 		{Route: 1, Ops: []hostile.Op{{Code: 4, A: 1, B: 2}}},  // get: huge value string
 		{Route: 1, Ops: []hostile.Op{{Code: 12, A: 1}}},       // get: value -> canary
-		{Route: 0, Frame: 3},   // list: truncated body (cl-too-short)
-		{Route: 1, Frame: 3},   // get: truncated body
-		{Route: 1, Fault: 2},   // get: rst-mid-body
-		{Route: 1, Enc: 2},     // get: gzip bomb
-		{Route: 1, Status: 16}, // get: 500 on everything
-		{Route: 0, Redir: 1},   // list: redirect to attacker (SSRF sentinel)
+		{Route: 0, Frame: 3},                                  // list: truncated body (cl-too-short)
+		{Route: 1, Frame: 3},                                  // get: truncated body
+		{Route: 1, Fault: 2},                                  // get: rst-mid-body
+		{Route: 1, Enc: 2},                                    // get: gzip bomb
+		{Route: 1, Status: 16},                                // get: 500 on everything
+		{Route: 0, Redir: 1},                                  // list: redirect to attacker (SSRF sentinel)
 	} {
 		f.Add(hostile.Encode(p))
 	}

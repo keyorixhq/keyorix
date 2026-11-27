@@ -102,18 +102,18 @@ func FuzzAccessPlanBuild(f *testing.F) {
 	// Seeds exercising different PathMapper.Resolve outcomes.
 	for _, s := range []struct {
 		path1, path2 string
-		caps          byte
+		caps         byte
 	}{
-		{"secret/data/team-a/prod/*", "", 0},                              // exact project+env match
-		{"secret/data/team-a/*", "", 0},                                   // project-only (env=0)
-		{"*", "", 5},                                                       // sudo → Unmappable/sudo
-		{"secret/data/no-such-team/prod/*", "", 0},                        // unknown project → Unmappable
-		{"secret/data/team-a/prod/*", "", 2},                              // delete capability
-		{"secret/data/team-a/prod/*", "secret/data/team-b/prod/*", 3},    // two mappable policies
-		{"secret/metadata/team-a/prod/*", "", 0},                          // metadata path → Unmappable/metadata-only
-		{"secret/data/team-a/prod/db-password", "", 0},                   // exact path → Unmappable/narrower
-		{"{{identity.entity.id}}/secret/*", "", 0},                        // templated path
-		{"", "", 0},                                                        // empty path
+		{"secret/data/team-a/prod/*", "", 0},                          // exact project+env match
+		{"secret/data/team-a/*", "", 0},                               // project-only (env=0)
+		{"*", "", 5},                                                  // sudo → Unmappable/sudo
+		{"secret/data/no-such-team/prod/*", "", 0},                    // unknown project → Unmappable
+		{"secret/data/team-a/prod/*", "", 2},                          // delete capability
+		{"secret/data/team-a/prod/*", "secret/data/team-b/prod/*", 3}, // two mappable policies
+		{"secret/metadata/team-a/prod/*", "", 0},                      // metadata path → Unmappable/metadata-only
+		{"secret/data/team-a/prod/db-password", "", 0},                // exact path → Unmappable/narrower
+		{"{{identity.entity.id}}/secret/*", "", 0},                    // templated path
+		{"", "", 0}, // empty path
 	} {
 		f.Add(s.path1, s.path2, s.caps)
 	}
