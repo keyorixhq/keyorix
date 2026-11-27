@@ -75,6 +75,11 @@ const (
 	// Not in namedPrincipalKinds — used only as controlAs for impersonation.end.
 	pkImpersonating principalKind = "impersonating-session"
 
+	// pkMFAResetActor is a global admin with TOTP enrolled and enabled (V5EXT9).
+	// Not in namedPrincipalKinds — used only as controlAs for mfaReset.request and
+	// mfaReset.approve.
+	pkMFAResetActor principalKind = "mfa-reset-actor"
+
 	// pkMFAUser is a user with MFA enrolled and enabled in the fixture (TOTP).
 	// It is the positive control for mfa.stepup (VerifyMFAStepUp), which
 	// requires the caller to have MFA enabled — no other namedPrincipalKind does.
@@ -258,6 +263,23 @@ type fixtures struct {
 	// is the requireReauth proof). The DELETE /auth/webauthn/credentials/{id}
 	// binding targets this row.
 	webAuthnCredentialID uint
+
+	// V5EXT8/9: MFA-reset fixtures.
+	// mfaResetRequestID is a pending request (target=targetUserID, requester=a
+	// non-probed global admin) for mfaReset.cancel — inserted directly, bypassing
+	// RequestMFAReset's requireReauth TOTP gate.
+	mfaResetRequestID uint
+	// mfaResetActorUserID / mfaResetActorTOTPSecret belong to u-v9-mfa-admin-a, a
+	// global admin with TOTP enrolled and enabled, used as pkMFAResetActor (controlAs
+	// for mfaReset.request and mfaReset.approve). The TOTP secret is stored plaintext
+	// (decryptAuthSecret is a passthrough in test mode), same pattern as pkMFAUser.
+	mfaResetActorUserID     uint
+	mfaResetActorTOTPSecret string
+	// mfaResetRequestV9ID is a pending request (requester=u-v9-mfa-admin-b, a second
+	// global admin; target=u-v9-mfa-reset-target) for the mfaReset.approve binding;
+	// pkMFAResetActor (admin A) approves it so dual-control (requester != approver)
+	// always holds.
+	mfaResetRequestV9ID uint
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -868,6 +890,71 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 		return nil, fmt.Errorf("seed: create WebAuthnCredential: %w", err)
 	}
 	fx.webAuthnCredentialID = webauthnCred.ID
+
+	// ---- V5EXT8/9 MFA-reset fixtures ----
+	//
+	// enrollTOTPAdmin creates a global admin with a plaintext TOTP secret seeded
+	// directly (same pattern as pkMFAUser: decryptAuthSecret is a passthrough in
+	// test mode, so loadTOTPSecret reads the base32 back). Login is obtained BEFORE
+	// mfa_enabled is set, mirroring the pkMFAUser/pkMFAEnrollee seed order.
+	enrollTOTPAdmin := func(uname string) (*models.User, string, string, error) {
+		u := mkUser(uname)
+		grant(u.ID, fx.roleIDs["admin"], 0, nil)
+		tok, _ := mustLogin(ctx, c, uname)
+		key, kerr := totp.Generate(totp.GenerateOpts{Issuer: "keyorix-authzdiff-test", AccountName: u.Email})
+		if kerr != nil {
+			return nil, "", "", fmt.Errorf("totp.Generate (%s): %w", uname, kerr)
+		}
+		if e := db.Create(&models.MFASecret{UserID: u.ID, SecretEnc: []byte(key.Secret()), Activated: true}).Error; e != nil {
+			return nil, "", "", fmt.Errorf("create MFASecret (%s): %w", uname, e)
+		}
+		db.Exec("UPDATE users SET mfa_enabled = true WHERE id = ?", u.ID)
+		return u, tok, key.Secret(), nil
+	}
+
+	// mfaReset.cancel: a pending request for targetUserID. The requester is a
+	// dedicated non-probed admin (never a sweep principal) so CancelMFAReset's
+	// self-cancel check never fires. Direct insert bypasses requireReauth.
+	mfaResetRequester := mkUser("u-mfa-reset-requester")
+	grant(mfaResetRequester.ID, fx.roleIDs["admin"], 0, nil)
+	mfaResetReq := models.MFAResetRequest{
+		TargetUserID: fx.targetUserID, RequestedBy: mfaResetRequester.ID,
+		Reason: "fixture: authorized test request", VerifiedBy: "ticket",
+		Evidence: "fixture-ticket-v5ext8", Status: models.MFAResetStatusPending,
+		CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+	}
+	if err := db.Create(&mfaResetReq).Error; err != nil {
+		return nil, fmt.Errorf("seed: create mfa reset request fixture: %w", err)
+	}
+	fx.mfaResetRequestID = mfaResetReq.ID
+
+	// mfaReset.request / mfaReset.approve: two TOTP-enrolled global admins. Admin A
+	// is pkMFAResetActor (the requester/approver positive control); admin B provides
+	// the second eligible approver for RequestMFAReset and is the requester of the
+	// pre-seeded approve target (dual control: A != B).
+	mfaResetActorA, mfaResetActorATok, mfaResetActorASecret, err := enrollTOTPAdmin("u-v9-mfa-admin-a")
+	if err != nil {
+		return nil, fmt.Errorf("seed: %w", err)
+	}
+	fx.mfaResetActorUserID = mfaResetActorA.ID
+	fx.mfaResetActorTOTPSecret = mfaResetActorASecret
+	fx.principals[pkMFAResetActor] = &principal{kind: pkMFAResetActor, userID: mfaResetActorA.ID, token: mfaResetActorATok, username: "u-v9-mfa-admin-a"}
+
+	mfaResetActorB, _, _, err := enrollTOTPAdmin("u-v9-mfa-admin-b")
+	if err != nil {
+		return nil, fmt.Errorf("seed: %w", err)
+	}
+	mfaResetTarget := mkUser("u-v9-mfa-reset-target")
+	mfaResetReqV9 := models.MFAResetRequest{
+		TargetUserID: mfaResetTarget.ID, RequestedBy: mfaResetActorB.ID,
+		Reason: "fixture: authorized test request v9", VerifiedBy: "ticket",
+		Evidence: "fixture-ticket-v5ext9", Status: models.MFAResetStatusPending,
+		CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+	}
+	if err := db.Create(&mfaResetReqV9).Error; err != nil {
+		return nil, fmt.Errorf("seed: create mfa reset request V9: %w", err)
+	}
+	fx.mfaResetRequestV9ID = mfaResetReqV9.ID
 
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the
 	// seeded tokens so the copies are never inside the 60s window.

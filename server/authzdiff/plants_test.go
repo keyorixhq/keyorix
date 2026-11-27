@@ -387,6 +387,30 @@ var plants = append([]plant{
 		op:             "webauthn.deleteCredential",
 		minUnexplained: 2,
 	},
+	{
+		// Stage 4 (V5EXT8): removes the admin-role check from CancelMFAReset. The
+		// router gate (RequirePermission users.write@global) is WEAKER than core's
+		// isGlobalAdminRoleName check (HARDENING-V5EXT8-1). With the core check gone,
+		// the curated pkCustom principal holding users.write@global but no admin role
+		// passes BOTH the route gate AND core, over-allowing what the globalAdminRole
+		// model rule denies: O2:allowed-but-model-denies:REST → "unexplained". The
+		// curated variation {pkCustom, users.write@global} is what exposes it.
+		name: "mfareset-cancel-core-gate-removed",
+		file: "internal/core/mfa_reset.go",
+		anchor: "\tif actorIsMachine || actorID == 0 {\n" +
+			"\t\treturn ErrMFAResetAdminRequired\n" +
+			"\t}\n" +
+			"\trole, err := c.isGlobalAdminRoleName(ctx, actorID)\n" +
+			"\tif err != nil {\n" +
+			"\t\treturn fmt.Errorf(\"check admin role: %w\", err)\n" +
+			"\t}\n" +
+			"\tif role == \"\" {\n" +
+			"\t\treturn ErrMFAResetAdminRequired\n" +
+			"\t}",
+		repl:           "\t_ = actorIsMachine // PLANT: MFA-reset admin-role check removed",
+		op:             "mfaReset.cancel",
+		minUnexplained: 1,
+	},
 }, fixRegressionPlants...)
 
 // fixRegressionPlants revert, one each, the authorization fixes merged after
