@@ -195,12 +195,12 @@ dial guard. Redirects: `refused` = `CheckRedirect` returns an error or `ErrUseLa
 | S06 | `internal/notary/rfc3161.go` | E05 | O | no | scheme only (`netutil` here is URL redaction, not a dial guard) | refused | none needed |
 | S07 | `internal/evidencesink/webhook.go` | E06 | O | no | netutil, loopback-permitted tier | same-host only, no downgrade, bounded hops | `FuzzEgressGuardParity` |
 | S08 | `internal/evidencesink/objectstore.go` | E06 | O | no | own: the endpoint's address is resolved once and every dial of that client goes to that pinned IP, so a redirect cannot leave the endpoint. Private endpoints are allowed by design | default, but pinned to the endpoint IP | none: operator-only |
-| S09 | `server/wire_sso.go` (discovery GET) | E08 | O (issuer) | no | netutil, link-local tier | same-host | **new** `FuzzOIDCDiscoveryTransportEgressParity` |
+| S09 | `server/wire_sso.go` (discovery GET) | E08 | O (issuer) | no | netutil, link-local tier | same-host | **new** `FuzzOIDCDiscoveryTransportEgressParity` (drives the `oidcDiscoveryTransport` var; the client is built inline in the discovery call) |
 | S10 | `internal/core/sso.go` (code exchange, `Exchange`) | E08 | **H** (`token_endpoint` from the discovery document; only `jwks_uri` is host-checked) | **yes**, if the IdP is compromised or an http-loopback issuer is tampered with | **none**: the exchange uses `http.DefaultClient` (the x/oauth2 default, no client in the context) | **default (followed)** | none. Finding F2 |
-| S11 | `internal/oidcverify/oidc_jwks.go` | E09 | O (`jwks_uri`) | no | netutil, link-local tier; https required | same-host, max 3 hops | **new** `FuzzJWKSTransportEgressParity` |
-| S12 | `internal/connect/vault.go`, `hardened_client.go` | E10 | O (connector `address`) | no. The `ref` a caller reads is a path inside that address, and `allowed_refs` limits it | netutil, link-local tier, plus a request-target check for a literal link-local host | refused | **new** `FuzzConnectVaultTransportEgressParity` |
-| S13 | `internal/connect/azurekv.go` | E10 | O (vault URL) | no | netutil, link-local tier | refused | **new** `FuzzConnectAzureTransportEgressParity` |
-| S14 | `internal/connect/awssm.go` | E10 | O (region, from the SDK endpoint rules); an ARN in a caller's `ref` does not choose the endpoint | no | netutil, link-local tier | refused | **new** `FuzzConnectAWSTransportEgressParity` |
+| S11 | `internal/oidcverify/oidc_jwks.go` | E09 | O (`jwks_uri`) | no | netutil, link-local tier; https required | same-host, max 3 hops | **new** `FuzzJWKSTransportEgressParity` (drives the client `NewHTTPJWKSResolver` builds) |
+| S12 | `internal/connect/vault.go`, `hardened_client.go` | E10 | O (connector `address`) | no. The `ref` a caller reads is a path inside that address, and `allowed_refs` limits it | netutil, link-local tier, plus a request-target check for a literal link-local host | refused | **new** `FuzzConnectVaultTransportEgressParity` (drives the client `NewVaultConnector` builds) |
+| S13 | `internal/connect/azurekv.go` | E10 | O (vault URL) | no | netutil, link-local tier | refused | **new** `FuzzConnectAzureTransportEgressParity` (drives `azureKVHTTPClient`, the client handed to azsecrets) |
+| S14 | `internal/connect/awssm.go` | E10 | O (region, from the SDK endpoint rules); an ARN in a caller's `ref` does not choose the endpoint | no | netutil, link-local tier | refused | **new** `FuzzConnectAWSTransportEgressParity` (drives `awsSMHTTPClient`, the client installed in the SDK) |
 | S15 | `internal/connect/gcpsm.go` | E10 | C | no | none (gRPC to the SDK's constant endpoint); size caps only | n/a | none needed |
 | S16 | `internal/crypto/azurekms/azurekms.go` | E11 | O (`kms_key_id`, host must end in an Azure Key Vault suffix) | no | netutil, private tier (loopback refused too), resolver seam `azureKMSResolve` | default (followed); every hop is re-dialed through the guard | **new** `FuzzAzureKMSTransportEgressParity`, `FuzzAzureKMSResolverRebinding` |
 | S17 | `internal/crypto/awskms`, `gcpkms` | E11 | C | no | none (SDK constant endpoints) | n/a | none needed |
@@ -208,7 +208,7 @@ dial guard. Redirects: `refused` = `CheckRedirect` returns an error or `ErrUseLa
 | S19 | `internal/rotation/awsiam.go`, `gcpsa.go`, `azure_sdk.go` | E12 | C | no | none (SDK constant endpoints) | n/a | none needed |
 | S20 | `internal/rotation/postgres.go`, `mysql.go`, `mongodb.go`, `redis.go` | E12 | O (`dsn_env`) | no | none for private networks (the target is the operator's own database); MySQL and RESP responses are bounded by `netutil.MySQLGuardDialer` / `RESPGuardDialer` | n/a | response-bound fuzzers only |
 | S21 | `internal/dynamic/postgres.go`, `mysql.go`, `mongodb.go`, `redis.go` | E13 | P (`admin_dsn`) | **yes** (project admin) | netutil, private tier, every dial, opt-out `allow_private_network`; `mongodb+srv` targets pre-validated | n/a | `FuzzAdminDSNHostSSRFGuard`, `FuzzSSRFGuardDifferential`, `FuzzDSNHostsCoverDriverHosts`, `FuzzEgressDialEnforcement`; table tests `internal/dynamic/egress_guard_test.go` |
-| S22 | `internal/dynamic/kubernetes.go` | E13 | P (`api_server` inside `admin_dsn`) | **yes** (project admin) | register-time host check; dial-time behaviour under review (tracked privately) | refused | none yet. Finding F1 (tracked privately) |
+| S22 | `internal/dynamic/kubernetes.go` | E13 | P (`api_server` inside `admin_dsn`) | **yes** (project admin) | register-time host check; see F1 | refused | none yet. Finding F1 (tracked privately) |
 | S23 | `internal/dynamic/awssts.go`, `azure.go`, `gcp.go` | E13 | C | no | none (SDK constant endpoints) | n/a | none needed |
 | S24 | `internal/core/dynamic_secrets.go` | E13 | P | **yes** | this is the register-time DNS check itself (private tier), not a connection | n/a | `FuzzAdminDSNHostSSRFGuard` |
 | S25 | `internal/k8ssync/keyorix_fetcher.go`, `rest_sink.go`, `cmd/keyorix-k8s-sync` | E14 | O (config file), in-cluster API server | no | scheme (https; http loopback only) | refused (fetcher) | none needed |
@@ -240,7 +240,7 @@ encode them, so a change to one of them fails a test instead of passing silently
 
 | ID | Site | Supplier | Finding | Severity | Where tracked |
 |---|---|---|---|---|---|
-| F1 | S22 `internal/dynamic/kubernetes.go` | P | Details withheld until the fix lands; the description returns to this table then | tracked privately | private tracker (ask `v7gap1-f1-k8s-dynamic-dial-guard`) |
+| F1 | S22 `internal/dynamic/kubernetes.go` | P | Details withheld until the fix lands; the description returns to this table then | tracked privately | private tracker (F1) |
 | F2 | S10 `internal/core/sso.go` | H | The authorization-code exchange uses `http.DefaultClient`: the `token_endpoint` from the discovery document gets no host check (only `jwks_uri` does), no dial guard, and redirects are followed. The allowlist row said the client was built in `server/wire_sso.go`; that client serves the discovery GET only | low (needs a compromised IdP) | [#4738](https://github.com/keyorixhq/keyorix/issues/4738) |
 
 The three packages that on 2026-11-12 had HTTP clients and no netutil guard were checked:
