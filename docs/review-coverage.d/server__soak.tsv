@@ -1,0 +1,1 @@
+server/soak	none	-	PR #4749 (SOAK-1): resource-growth soak harness (goroutine, fd, heap, row-count and temp-file growth oracles) that drives a real in-process server under sustained load. All files are *_test.go: no non-test source in the package, zero non-test callers.	test-helper

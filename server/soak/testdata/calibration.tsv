@@ -1,0 +1,19 @@
+# Slope calibration for oracle (a) (report-only). series <TAB> largest slope per 1000 requests <TAB> note.
+# Measured 2026-11-27 on a SQLite smoke (10000 requests, 2 workers, fitted over the SECOND HALF of the run),
+# five control runs (KEYORIX_SOAK_SEED=1..5) of the final harness on a shared Mac. The reported threshold is
+# 3 x this value + a floor (slopeFloor in oracles_test.go). Re-calibrate on pve01 (README.md) before trusting
+# a long-run WARN: a 30 minute run fits a far longer window than this smoke.
+# goroutines and fds are in-flight counts mid-load, so their slope is noise around zero, not a trend.
+db_open	0.181	max of 5 runs; pool size, noise
+fds	0.313	max of 5 runs; in-flight sockets, noise
+goroutines	0.186	max of 5 runs; in-flight handlers, noise
+heap_inuse	91487	bytes per 1k requests, max of 5 runs (min -155095). Bounded caches still filling: secretMetadataCache caps at 10000 entries per map
+heap_objects	921	max of 5 runs (min -902)
+temp_files	0	no run left a temp file
+rows_audit_events	512.7	append-only by design: about 0.5 audit rows per request
+rows_secret_access_logs	366.9	append-only by design: one row per secret read
+rows_login_attempts	0.022	failed-login bookkeeping, bounded by the per-IP budget the mix respects
+rows_sessions	0	login/logout balanced by the mix
+rows_notifications	0	no run created one
+rows_password_histories	0	no run created one
+rows_rate_limits	0	no run created one

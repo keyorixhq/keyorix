@@ -1,0 +1,40 @@
+package soak
+
+// PLANT: a file descriptor left open on every 20th request. The *os.File stays
+// reachable (kept in a slice), so neither the garbage collector's finalizer nor
+// the sampler's runtime.GC closes it: the shape of a handle parked in a map and
+// never closed. (A dropped *os.File would be closed by its finalizer and is not
+// a lasting leak; a raw fd or a retained handle is.)
+// Expected: oracle (b) fds FAIL.
+
+import (
+	"net/http"
+	"os"
+	"sync"
+	"sync/atomic"
+)
+
+func init() {
+	handlerWrappers = append(handlerWrappers, func(next http.Handler, _ *soakEnv) http.Handler {
+		var n atomic.Int64
+		var mu sync.Mutex
+		var held []*os.File
+		plantCleanups = append(plantCleanups, func() {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, f := range held {
+				_ = f.Close()
+			}
+		})
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if n.Add(1)%20 == 0 {
+				if f, err := os.Open(os.DevNull); err == nil {
+					mu.Lock()
+					held = append(held, f)
+					mu.Unlock()
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+}

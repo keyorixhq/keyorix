@@ -1,0 +1,21 @@
+package soak
+
+// PLANT: one goroutine that never exits, started per request.
+// Expected: oracle (b) goroutines FAIL, naming plantGoroutineLeak as the growing stack.
+// Oracle (c) does NOT fire: the leak starts in warm-up, so its stack is in the baseline
+// (see plant_one_goroutine.go.txt for the case (c) exists for).
+
+import "net/http"
+
+func init() {
+	handlerWrappers = append(handlerWrappers, func(next http.Handler, _ *soakEnv) http.Handler {
+		block := make(chan struct{})
+		plantCleanups = append(plantCleanups, func() { close(block) })
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			go plantGoroutineLeak(block)
+			next.ServeHTTP(w, r)
+		})
+	})
+}
+
+func plantGoroutineLeak(block chan struct{}) { <-block }
