@@ -71,6 +71,10 @@ const (
 	// (accessrequest.withdraw), whose rule no other principal can satisfy.
 	pkRequester principalKind = "requester-A"
 
+	// pkImpersonating is a session started by adminID over targetUserID (V5EXT8/9).
+	// Not in namedPrincipalKinds — used only as controlAs for impersonation.end.
+	pkImpersonating principalKind = "impersonating-session"
+
 	// pkMFAUser is a user with MFA enrolled and enabled in the fixture (TOTP).
 	// It is the positive control for mfa.stepup (VerifyMFAStepUp), which
 	// requires the caller to have MFA enabled — no other namedPrincipalKind does.
@@ -240,6 +244,20 @@ type fixtures struct {
 	// scimGroupID is a pre-provisioned SCIM group for PUT/PATCH/DELETE /scim/v2/Groups/{id}.
 	scimUserID  uint
 	scimGroupID uint
+
+	// V5EXT8/9: impersonation.end fixture.
+	// impersonationEndToken is the plain session token for the impersonation session
+	// (adminID impersonating targetUserID). Used as the token argument to
+	// EndImpersonation in the core leg for all principals, and as bearer for
+	// pkImpersonating (the controlAs positive control for impersonation.end).
+	impersonationEndToken string
+
+	// V5EXT9: WebAuthn credential fixture (webauthn.deleteCredential).
+	// webAuthnCredentialID is the row id of a WebAuthnCredential for pkMFAUser,
+	// inserted directly (placeholder blob; no real passkey crypto — pkMFAUser's TOTP
+	// is the requireReauth proof). The DELETE /auth/webauthn/credentials/{id}
+	// binding targets this row.
+	webAuthnCredentialID uint
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -815,6 +833,41 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	// mfa_enabled stays false: enrollment is pending, not complete.
 	fx.mfaEnrolleeTOTPSecret = mfaEnrolleeKey.Secret()
 	fx.principals[pkMFAEnrollee] = &principal{kind: pkMFAEnrollee, userID: mfaEnrollee.ID, token: mfaEnrolleeTok, username: "p-mfa-enrollee"}
+
+	// ---- V5EXT8/9 impersonation + WebAuthn fixtures ----
+	//
+	// impersonation.end: start a real impersonation session so EndImpersonation has
+	// a valid session to end. adminID impersonates targetUserID. The plain session
+	// token is stored in impersonationEndToken for the core leg (used for all
+	// principals, since coreEnforced=false); pkImpersonating uses it as bearer (the
+	// positive control). The returned session carries the plaintext token; the DB
+	// stores only its SHA-256 hash (model.isImpersonatingSession hashes to match).
+	impersonateSess, _, err := c.StartImpersonation(ctx, fx.adminID, fx.targetUserID, "127.0.0.1")
+	if err != nil {
+		return nil, fmt.Errorf("seed: StartImpersonation for V5EXT8/9: %w", err)
+	}
+	fx.impersonationEndToken = impersonateSess.SessionToken
+	fx.principals[pkImpersonating] = &principal{
+		kind:     pkImpersonating,
+		userID:   fx.targetUserID,
+		token:    impersonateSess.SessionToken,
+		username: "u-target",
+	}
+
+	// webauthn.deleteCredential: a placeholder WebAuthn credential row for pkMFAUser.
+	// The core's requireReauth is satisfied by pkMFAUser's TOTP code
+	// (mfaUserTOTPSecret) — no real passkey crypto is exercised here.
+	webauthnCred := models.WebAuthnCredential{
+		UserID:         fx.principals[pkMFAUser].userID,
+		CredentialID:   []byte("v5ext9-fixture-credential-id"),
+		Name:           "fixture-passkey",
+		CredentialBlob: []byte(`{"id":"djVleHQ5","rawId":"djVleHQ5","type":"public-key"}`),
+		CreatedAt:      time.Now().UTC(),
+	}
+	if err := db.Create(&webauthnCred).Error; err != nil {
+		return nil, fmt.Errorf("seed: create WebAuthnCredential: %w", err)
+	}
+	fx.webAuthnCredentialID = webauthnCred.ID
 
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the
 	// seeded tokens so the copies are never inside the 60s window.

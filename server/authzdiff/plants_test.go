@@ -327,6 +327,66 @@ var plants = append([]plant{
 		op:             "breakglass.review",
 		minUnexplained: 2,
 	},
+	{
+		// Stage 3 (V5EXT8): removes the impersonation.start REST router gate
+		// (RequirePermission("users.impersonate")). core.StartImpersonation performs
+		// no RBAC permission check (core_refusal:"none"; it enforces session-auth and
+		// the admin-rank ceiling only). With the gate gone, non-admin named principals
+		// pass the route and reach requireEqualOrGreaterAdminAuthority, which fails
+		// (fixture u-target holds project_viewer@A and @B; every non-admin lacks @B
+		// coverage) → HTTP 500 → REST=Other. The model (globalPerms:users.impersonate)
+		// denies them → mapping-gap:other-where-model-denies:REST → "unexplained".
+		name: "impersonation-start-rest-gate-removed",
+		file: "server/http/router.go",
+		anchor: "\t\tr.With(customMiddleware.RequirePermission(\"users.impersonate\")).\n" +
+			"\t\t\tPost(\"/admin/impersonate\", impersonationHandler.Start)",
+		repl:           "\t\tr.Post(\"/admin/impersonate\", impersonationHandler.Start) // PLANT: REST gate removed",
+		op:             "impersonation.start",
+		minUnexplained: 3,
+	},
+	{
+		// Stage 3 (V5EXT9): removes the impersonation-session check from
+		// EndImpersonation. Without it, any authenticated user's regular session is
+		// accepted — the handler returns 200 (Allowed). The model
+		// (impersonatingSession:true) denies all non-impersonating sessions →
+		// O2:allowed-but-model-denies:REST → "unexplained". The anchor covers the nil
+		// check and the dereference so the replacement avoids a nil-pointer panic on
+		// the subsequent *session.ImpersonatedBy read.
+		name: "impersonation-end-session-check-removed",
+		file: "internal/core/impersonation.go",
+		anchor: "\tif session.ImpersonatedBy == nil {\n" +
+			"\t\treturn 0, fmt.Errorf(\"not an impersonation session\")\n" +
+			"\t}\n" +
+			"\tadminID := *session.ImpersonatedBy\n",
+		repl: "\tvar adminID uint // PLANT: impersonation session check removed\n" +
+			"\tif session.ImpersonatedBy != nil {\n" +
+			"\t\tadminID = *session.ImpersonatedBy\n" +
+			"\t}\n",
+		op:             "impersonation.end",
+		minUnexplained: 3,
+	},
+	{
+		// Stage 3 (V5EXT9): swallows DeleteWebAuthnCredential's requireReauth error so
+		// a 400/PreconditionFailed becomes a 200 for principals without MFA enabled.
+		// With the error swallowed, the REST leg returns 200 (Allowed) where the model
+		// says PreconditionFailed — an O2:allowed-but-model-precondition-fails
+		// disagreement the strict sweep catches.
+		name: "webauthn-delete-credential-error-swallowed",
+		file: "server/http/handlers/webauthn.go",
+		anchor: "\terr = h.coreService.DeleteWebAuthnCredential(r.Context(), userCtx.UserID, uint(id), proof)\n" +
+			"\th.settleCredentialCheck(r, att, userCtx, \"webauthn_delete\", err)\n" +
+			"\tif err != nil {\n" +
+			"\t\th.writeWebAuthnErr(w, err)\n" +
+			"\t\treturn\n" +
+			"\t}\n" +
+			"\tsendSuccess(w, map[string]any{\"id\": id, \"deleted\": true}, \"Passkey removed.\")\n",
+		repl: "\terr = h.coreService.DeleteWebAuthnCredential(r.Context(), userCtx.UserID, uint(id), proof)\n" +
+			"\th.settleCredentialCheck(r, att, userCtx, \"webauthn_delete\", err)\n" +
+			"\t_ = err // PLANT: Stage 3 — 400 swallowed → 200\n" +
+			"\tsendSuccess(w, map[string]any{\"id\": id, \"deleted\": true}, \"Passkey removed.\")\n",
+		op:             "webauthn.deleteCredential",
+		minUnexplained: 2,
+	},
 }, fixRegressionPlants...)
 
 // fixRegressionPlants revert, one each, the authorization fixes merged after

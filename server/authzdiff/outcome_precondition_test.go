@@ -6,12 +6,19 @@ import (
 	"testing"
 )
 
-// The account-state ops (mfa.activate, mfa.disable, mfa.recovery-codes.regenerate)
-// have no RBAC gate; an unmet precondition is a business-rule 400. These tests
-// pin the PreconditionFailed vocabulary that replaced waiver known-12 (#4525):
+// The account-state ops have no load-bearing RBAC gate for the precondition they
+// carry; an unmet precondition is a business-rule 400. The original three
+// (mfa.activate, mfa.disable, mfa.recovery-codes.regenerate) check the caller's own
+// MFA state; Stage 3 (V5EXT8/9) added impersonation.end (the bearer must be an
+// impersonation session) and webauthn.deleteCredential (the caller must re-auth with
+// a second factor) — both answer a 400 for an unmet caller-state precondition. These
+// tests pin the PreconditionFailed vocabulary that replaced waiver known-12 (#4525):
 // what maps to it, and that every divergence from it is left "unexplained".
 
-var accountStateOps = []string{"mfa.activate", "mfa.disable", "mfa.recovery-codes.regenerate"}
+var accountStateOps = []string{
+	"mfa.activate", "mfa.disable", "mfa.recovery-codes.regenerate",
+	"impersonation.end", "webauthn.deleteCredential",
+}
 
 // TestRestOutcomePreconditionFailed: only a 400 carrying a precondition message
 // is PreconditionFailed; every other status and every other 400 keeps its old
@@ -96,8 +103,9 @@ func TestPreconditionDivergencesAreUnexplained(t *testing.T) {
 }
 
 // TestAccountStateOnlyOnTheMFAOps: requirement.accountState is the only way an
-// op's model says PreconditionFailed, and it is set on exactly the three ops
-// whose handlers answer a business-rule 400. A fourth op using it would move
+// op's model says PreconditionFailed, and it is set on exactly the ops in
+// accountStateOps whose handlers answer a business-rule 400 for an unmet
+// caller-state precondition. An op using it that is NOT in that list would move
 // its outcomes out of Denied without this list noticing.
 func TestAccountStateOnlyOnTheMFAOps(t *testing.T) {
 	_, fx := template(t)
