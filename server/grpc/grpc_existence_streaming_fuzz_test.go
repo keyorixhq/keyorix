@@ -518,14 +518,15 @@ func FuzzGRPCExistenceOracle(f *testing.F) {
 // wire mutations (the same 7 kinds as FuzzGRPCProtobufGrammarWireInvariants).
 //
 // Oracles:
-//   (stream-auth) unauthenticated/zero-grant callers never receive data frames
-//   before the stream closes with an error.
-//   (stream-no-panic) no panic-shaped error code/message for any caller.
-//   (stream-client-error) malformed wire bytes → server codes.Internal is a
-//   HARDENING finding (HARDENING-2 for streaming; not fatal).
-//   (stream-bounded) unauthorized caller stream must close within
-//   streamPerCallTimeout; DeadlineExceeded for the zero-grant caller is fatal.
-//   (stream-amp) allocation oracle (same as FuzzGRPCExistenceOracle).
+//
+//	(stream-auth) unauthenticated/zero-grant callers never receive data frames
+//	before the stream closes with an error.
+//	(stream-no-panic) no panic-shaped error code/message for any caller.
+//	(stream-client-error) malformed wire bytes → server codes.Internal is a
+//	HARDENING finding (HARDENING-2 for streaming; not fatal).
+//	(stream-bounded) unauthorized caller stream must close within
+//	streamPerCallTimeout; DeadlineExceeded for the zero-grant caller is fatal.
+//	(stream-amp) allocation oracle (same as FuzzGRPCExistenceOracle).
 //
 // WHAT THIS DOES NOT VERIFY: see file header.
 func FuzzGRPCStreamingRPCs(f *testing.F) {
@@ -554,7 +555,7 @@ func FuzzGRPCStreamingRPCs(f *testing.F) {
 		f.Add([]byte{byte(i), 0})
 	}
 	// Seeds exercising wire mutation kinds on method 0.
-	for k := wireMutNone; k < wireMutNumKinds; k++ {
+	for k := range wireMutNumKinds {
 		f.Add([]byte{0, byte(k)})
 	}
 
