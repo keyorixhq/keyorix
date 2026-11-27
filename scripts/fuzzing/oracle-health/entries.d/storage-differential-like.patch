@@ -1,0 +1,13 @@
+diff --git a/internal/storage/store/local_secrets.go b/internal/storage/store/local_secrets.go
+index 445437e70..2f34992fd 100644
+--- a/internal/storage/store/local_secrets.go
++++ b/internal/storage/store/local_secrets.go
+@@ -166,7 +166,7 @@ func (ls *LocalStorage) GetProject(ctx context.Context, id uint) (*models.Projec
+ // must never resolve a name to a row that no longer legitimately holds it.
+ func (ls *LocalStorage) GetProjectByName(ctx context.Context, name string) (*models.Project, error) {
+ 	var project models.Project
+-	if err := ls.db.WithContext(ctx).Where("name_folded = ?", identity.FoldProjectName(name)).First(&project).Error; err != nil {
++	if err := ls.db.WithContext(ctx).Where("name LIKE ?", name).First(&project).Error; err != nil {
+ 		if errors.Is(err, gorm.ErrRecordNotFound) {
+ 			return nil, fmt.Errorf("%w", storage.ErrProjectNotFound)
+ 		}
