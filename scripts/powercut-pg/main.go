@@ -54,6 +54,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -180,6 +181,7 @@ func commitAll(st corestorage.Storage, n, workers int, acked func(i int)) {
 
 func runWrite(dsn, acksPath, durability string, n, workers int) {
 	st := openStorage(dsn, durability)
+	defer closeStorage(st)
 	dbCfg := config.DatabaseConfig{AuditDurability: durability}
 	eff := dbCfg.EffectiveAuditDurability("postgres")
 	fmt.Printf("durability_requested=%s durability_effective=%s\n", durability, eff.Level)
@@ -243,6 +245,7 @@ func runVerify(dsn, acksPath string, cutoffNanos int64) {
 	// open). Its start-up migration runs first, a no-op on a schema that
 	// survived the cut. Durability is irrelevant for a read-only verify.
 	st := openStorage(dsn, "strict")
+	defer closeStorage(st)
 	ls, ok := st.(*store.LocalStorage)
 	if !ok {
 		fatalf("unexpected storage type %T", st)
@@ -305,4 +308,12 @@ func runVerify(dsn, acksPath string, cutoffNanos int64) {
 		os.Exit(1)
 	}
 	fmt.Println("RESULT=PASS")
+}
+
+// closeStorage closes st when it can be closed (normal exit only; a power cut
+// is the point of this tool and never reaches it).
+func closeStorage(st any) {
+	if c, ok := st.(io.Closer); ok {
+		_ = c.Close()
+	}
 }

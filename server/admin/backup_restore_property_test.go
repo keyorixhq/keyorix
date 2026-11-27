@@ -154,7 +154,7 @@ func runPropertyRoundTrip(t *testing.T, srcBackend, dstBackend string) {
 	configPathFlag = configureBackendTestDir(t, srcBackend, srcDir, pgBaseDSN)
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(srcCfg) // creates + migrates the source DB
+	_, err = createStorageClosedAtCleanup(t, srcCfg) // creates + migrates the source DB
 	require.NoError(t, err)
 
 	gdb, err := storage.OpenGormDB(srcCfg)

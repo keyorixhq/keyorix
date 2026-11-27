@@ -175,7 +175,7 @@ func migratedGormDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(cfg) // creates and migrates
+	_, err = createStorageClosedAtCleanup(t, cfg) // creates and migrates
 	require.NoError(t, err)
 	gdb, err := storage.OpenGormDB(cfg)
 	require.NoError(t, err)

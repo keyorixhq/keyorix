@@ -47,9 +47,11 @@ func runAdminMigrate(cmd *cobra.Command, args []string) error {
 	defer lock.Release() //nolint:errcheck
 
 	fmt.Println("Applying pending migrations (idempotent — safe to re-run)...")
-	if _, err := storage.NewStorageFactory().CreateStorage(cfg); err != nil {
+	migrated, err := storage.NewStorageFactory().CreateStorage(cfg)
+	if err != nil {
 		return fmt.Errorf("migration failed: %w", err)
 	}
+	closeStorage(migrated) // only needed to run the migrations
 
 	recordAdminAction(cfg, "admin.migrate", "ran `keyorix-server admin migrate` — database migrated successfully", true)
 	return nil

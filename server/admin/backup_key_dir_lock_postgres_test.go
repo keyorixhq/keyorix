@@ -10,7 +10,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/serverguard"
-	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +39,7 @@ func TestAdminBackup_Postgres_DatabaseKeyDirLock_ExcludesKeyRotation(t *testing.
 `, dsn)), 0o600))
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(cfg)
+	_, err = createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	backupExclusive = false
 

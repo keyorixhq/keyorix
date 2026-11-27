@@ -277,7 +277,7 @@ func TestScaleSeed_SQLite_SeedsEverythingChainVerifiesAndDecrypts(t *testing.T) 
 	svc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, dir)
 	require.NoError(t, svc.Initialize(scaleSeedPassphrase))
 	cfgPath, cfg := newSQLiteScaleConfig(t, dir)
-	st, err := storage.NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { closeTestStorage(st) })
 

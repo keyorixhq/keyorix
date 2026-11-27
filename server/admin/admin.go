@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"slices"
@@ -317,7 +318,17 @@ func withUsableStorage(cfg *config.Config, fn func(store corestorage.Storage) er
 	if err != nil {
 		return fmt.Errorf("database not usable: %w", err)
 	}
+	defer closeStorage(st)
 	return fn(st)
+}
+
+// closeStorage releases a storage this command opened: on Postgres it stops the
+// background integrity check CreateStorage started. A storage without Close is
+// left alone.
+func closeStorage(st corestorage.Storage) {
+	if c, ok := st.(io.Closer); ok {
+		_ = c.Close()
+	}
 }
 
 // lockBypass is the failed lock attempt's error when --force let this command

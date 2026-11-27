@@ -234,7 +234,7 @@ func TestAdminBackup_Postgres_RefusedWhileARotationIsPending(t *testing.T) {
 	configPathFlag = writePostgresBackupRestoreTestConfig(t, dir, dsn)
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(cfg)
+	_, err = createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	backupExclusive = false
 
