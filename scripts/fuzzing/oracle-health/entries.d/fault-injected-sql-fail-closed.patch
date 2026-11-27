@@ -1,0 +1,24 @@
+diff --git a/internal/encryption/fault_injected_operations_fuzz_test.go b/internal/encryption/fault_injected_operations_fuzz_test.go
+--- a/internal/encryption/fault_injected_operations_fuzz_test.go
++++ b/internal/encryption/fault_injected_operations_fuzz_test.go
+@@ -442,11 +442,19 @@
+ 		return false
+ 	}
+ 	switch seam {
+-	case "sql:create-node", "sql:create-version", "sql:update-version":
++	case "sql:create-node":
+ 		_ = db.Callback().Create().Before("gorm:before_create").Register(name, func(d *gorm.DB) {
+ 			if match(d.Statement.Dest, seam) {
+ 				recordSeamHit(seam)
+ 				_ = d.AddError(errInjectedFault)
++			}
++		})
++		return func() { _ = db.Callback().Create().Remove(name) }
++	case "sql:create-version", "sql:update-version":
++		_ = db.Callback().Create().After("gorm:after_create").Register(name, func(d *gorm.DB) {
++			if match(d.Statement.Dest, seam) {
++				recordSeamHit(seam)
++				_ = d.AddError(errInjectedFault)
+ 			}
+ 		})
+ 		return func() { _ = db.Callback().Create().Remove(name) }

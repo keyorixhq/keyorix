@@ -1,0 +1,14 @@
+diff --git a/internal/encryption/service_rotation.go b/internal/encryption/service_rotation.go
+--- a/internal/encryption/service_rotation.go
++++ b/internal/encryption/service_rotation.go
+@@ -501,9 +501,7 @@
+ 		log.Printf("[WARN] a DEK rotation committed (new key version %s) but its new DEK is not in this key directory (no %s.pending): leaving the rotation's redo marker for the key directory that holds it. Finish the rotation there (run the admin command again in that directory) and distribute the new key set before starting this server", m.Value, s.keyManager.dekPath)
+ 		return nil
+ 	}
+-	if err := s.keyManager.PromotePendingDEK(); err != nil {
+-		return fmt.Errorf("recover interrupted DEK rotation (promote): %w", err)
+-	}
++	s.CleanPendingDEK()
+ 	if err := db.Where("key = ?", dekRotationPromotePendingKey).Delete(&models.SystemMetadata{}).Error; err != nil {
+ 		return fmt.Errorf("recover interrupted DEK rotation (clear marker): %w", err)
+ 	}
