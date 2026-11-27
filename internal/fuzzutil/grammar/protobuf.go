@@ -143,10 +143,7 @@ func (f *ProtoField) encode() []byte {
 		out = append(out, b[:]...)
 	case ProtoLenDel:
 		payload := f.lendel()
-		declared := len(payload) + f.Mut.LenDelta
-		if declared < 0 {
-			declared = 0
-		}
+		declared := max(len(payload)+f.Mut.LenDelta, 0)
 		out = appendProtoVarint(out, uint64(declared))
 		out = append(out, payload...)
 	case ProtoGroup:
