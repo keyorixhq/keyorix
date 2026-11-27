@@ -78,7 +78,11 @@
 package resguard
 
 import (
+	"fmt"
+	"os"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -107,6 +111,11 @@ type Cost struct {
 	// around fn). Only on-cadence inputs; a slow-promoted input has Sampled
 	// true and AllocSampled false.
 	AllocSampled bool
+	// WindowShared: this input ran while another measured window stayed open past
+	// measureLockWait (INV-RES-measure-windows-serialized), so it was not
+	// serialised; Sampled and AllocSampled are false and its alloc and live-heap
+	// meters are unmeasured, never a measured zero.
+	WindowShared bool
 
 	// Cheap meters (every input). CPU/Threads/OpenFDs are process-wide deltas
 	// and advisory under -parallel>1 (see platform_linux.go caveat).
@@ -196,13 +205,16 @@ const (
 )
 
 // Probe is created once per testing.F (before f.Fuzz) and measures each input.
-// It is NOT safe for concurrent use across workers; create one per worker if
-// the harness runs the body on multiple goroutines (the stock engine runs one
-// body at a time per process, so one Probe per F is correct for -parallel too —
-// -parallel forks processes, not goroutines, for the body).
+// The stock engine runs one body at a time per process (-parallel forks worker
+// processes, not goroutines, for the body), so one Probe per F is correct for
+// -parallel too. Measure may still be called concurrently, on one Probe or across
+// Probes: every Measure in the process holds measureMu for its whole window
+// (INV-RES-measure-windows-serialized). That serialises the windows, not the
+// seams: Options.Net/Clock/Log/DB/KDF are reset and read per window, and a
+// goroutine outside any Measure that uses them still lands in the open one.
 type Probe struct {
 	opts  Options
-	n     int64
+	n     atomic.Int64
 	drift *Drift
 }
 
@@ -224,21 +236,94 @@ func New(tb testing.TB, opts Options) *Probe {
 	return &Probe{opts: opts, drift: newDrift()}
 }
 
+// measureMu serialises every Probe.Measure in the process, so no two measured
+// windows overlap (INV-RES-measure-windows-serialized). alloc_bytes/mallocs are a
+// whole-process ReadMemStats delta and live_heap a whole-process post-GC delta, so
+// without it an input measured while another was running was charged for the
+// other's allocations. What it does NOT exclude: goroutines outside any Measure
+// (the fuzz engine, the stall monitor, a goroutine an earlier input leaked, test
+// code running beside a Measure) still allocate into the open window. It is not
+// re-entrant: fn must not call Measure.
+//
+// A window can also be held forever: a target that calls Measure INSIDE a
+// fuzzutil.Guard closure (the kinopenapi targets do) leaves the hung fn holding
+// measureMu when Guard abandons it on a deadline miss. So Measure never blocks
+// unboundedly: lockMeasure waits at most measureLockWait, then runs the input
+// UNSERIALISED and says so (Cost.WindowShared, alloc and live-heap meters left
+// unmeasured, one stderr line per episode). Later inputs skip the wait while the
+// window stays stuck, and serialisation resumes once its fn returns. A waiter
+// does not wait at all while a guarded fn that fuzzutil.Guard abandoned is still
+// running: its own Guard deadline would otherwise fire first and blame it.
+var (
+	measureMu    sync.Mutex
+	measureStuck atomic.Bool
+	// measureLockWait bounds the wait for another window. A Guard-wrapped call
+	// is abandoned after at most 2·GuardTimeout (deadline plus freeze grace), so a
+	// window still held after that belongs to an abandoned fn. A var so the
+	// package test can shorten it.
+	measureLockWait = 2 * fuzzutil.GuardTimeout
+)
+
+// lockMeasure takes measureMu and reports true, or reports false when another
+// window held it for longer than measureLockWait (or is already known stuck).
+// The wait polls TryLock with time.Sleep, which allocates nothing, so a waiter
+// does not charge its own bookkeeping to the window it is waiting on.
+func lockMeasure() bool {
+	if measureMu.TryLock() {
+		holdMeasure()
+		return true
+	}
+	if measureStuck.Load() {
+		return false
+	}
+	deadline := time.Now().Add(measureLockWait)
+	// In the stock serial fuzz loop a held window with a waiter can only belong to
+	// a guarded fn that Guard abandoned (Measure inside Guard), whether it took
+	// the window before or after Guard gave up on it: while any abandoned fn is
+	// still running, give up at once rather than outwait this input's own Guard
+	// deadline, which would blame this input for the earlier hang.
+	for fuzzutil.AbandonedRunning() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		if measureMu.TryLock() {
+			holdMeasure()
+			return true
+		}
+	}
+	if measureMu.TryLock() { // the holder may have just returned
+		holdMeasure()
+		return true
+	}
+	if measureStuck.CompareAndSwap(false, true) {
+		fmt.Fprintf(os.Stderr, "resguard: another measured window is still open (a guarded fn abandoned inside it, or open for over %s); measuring the following inputs unserialised, with alloc_bytes/mallocs/live_heap NOT measured, until it returns\n", measureLockWait)
+	}
+	return false
+}
+
+// holdMeasure clears the stuck flag for the new holder; measureMu is held.
+func holdMeasure() { measureStuck.Store(false) }
+
 // Measure runs fn once and returns its Cost. inputLen is the size in bytes of
 // the attacker-controlled input the ratios are measured against — NOT the size
 // of any decoded/expanded form, which is exactly what an amplification inflates.
 //
 // fn must drive exactly one input through the code under test. The seams
 // (Options.Net/Clock/Log/DB) are read and reset around fn, so their counts are
-// this input's alone.
+// this input's alone. Concurrent calls run one at a time (measureMu); an input
+// that could not get the window (lockMeasure) comes back with WindowShared set
+// and its alloc and live-heap meters unmeasured.
 func (p *Probe) Measure(inputLen int, fn func()) Cost {
-	n := p.n
-	p.n++
+	serialised := lockMeasure()
+	if serialised {
+		defer measureMu.Unlock()
+	}
+	n := p.n.Add(1) - 1
 	// cadence is the on-schedule expensive sample; expensive may ALSO become
 	// true below when a cheap input turns out slow (slow-wall promotion). Only a
 	// cadence input gets a pre-fn GC baseline, so only it can report a live-heap
 	// DELTA; a promoted input reports LiveHeapAbs for Drift but a 0 delta.
-	cadence := n%int64(p.opts.SampleEvery) == 0
+	// An unserialised input shares the process with another open window, so its
+	// whole-process deltas are not its own: it is never sampled.
+	cadence := serialised && n%int64(p.opts.SampleEvery) == 0
 	expensive := cadence
 
 	p.resetSeams()
@@ -262,7 +347,7 @@ func (p *Probe) Measure(inputLen int, fn func()) Cost {
 		diskBefore = walkDisk(p.opts.TempDir)
 	}
 
-	c := Cost{InputLen: inputLen}
+	c := Cost{InputLen: inputLen, WindowShared: !serialised}
 	if expensive {
 		cc := complexity.Measure(fn) // reuses complexity's exact ReadMemStats delta
 		c.Wall = cc.Wall
@@ -276,7 +361,7 @@ func (p *Probe) Measure(inputLen int, fn func()) Cost {
 		// A cheap input that turned out slow earns the live-heap sample. It does
 		// NOT get an alloc sample: fn ran without complexity.Measure, so the alloc
 		// fields stay unmeasured and AllocSampled stays false.
-		if c.Wall > p.opts.SlowWall {
+		if serialised && c.Wall > p.opts.SlowWall {
 			expensive = true
 		}
 	}
