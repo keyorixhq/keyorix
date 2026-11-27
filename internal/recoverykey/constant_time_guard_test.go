@@ -9,68 +9,105 @@
 //
 // This guard verifies two properties of the Verify function statically:
 //
-//  1. PRESENT: subtle.ConstantTimeCompare appears at least once in the body.
-//  2. ABSENT:  bytes.Equal does not appear anywhere in the body.
+//  1. PRESENT: a call to ConstantTimeCompare qualified by the file's
+//     "crypto/subtle" import appears at least once in the body.
+//  2. ABSENT:  no call to Equal qualified by the file's "bytes" import (or a
+//     bare Equal under a dot-import of "bytes") appears anywhere in the body,
+//     whether or not ConstantTimeCompare is also present.  hmac.Equal is not
+//     flagged.
+//
+// Calls are matched through the file's import table, so an aliased import is
+// still caught.  TestVerifyGuard_CheckerFlagsBytesEqual runs the checker over
+// inline fixture sources and proves it goes red on bytes.Equal next to
+// subtle.ConstantTimeCompare and stays green on hmac.Equal.
 //
 // (string == on the hex string values IS theoretically possible and would also
 // be timing-sensitive; that check is not done here because == appears on
 // non-secret things too and an AST scan without type resolution produces too
 // many false positives.  The design comment and design §6's checklist are the
 // human-readable guards for that form.)
-//
-// Red/green verification (see commit message): temporarily replacing
-// subtle.ConstantTimeCompare([]byte(computed), []byte(storedHash)) == 1 with
-// bytes.Equal([]byte(computed), []byte(storedHash)) in recoverykey.go made
-// TestVerify_UsesConstantTimeCompare fail ("ConstantTimeCompare not found")
-// and TestVerify_DoesNotUseBytesEqual fail ("bytes.Equal found") at the same
-// time; restoring the original made both pass.
 package recoverykey
 
 import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strconv"
 	"testing"
 )
 
-// verifyFuncBody parses recoverykey.go, finds the Verify function, and returns
-// its body for inspection.  Fatals if the file cannot be parsed or the function
-// is not found.
-func verifyFuncBody(t *testing.T) *ast.BlockStmt {
+// parseGuardFile parses path, or src when it is non-nil.
+func parseGuardFile(t *testing.T, path string, src any) *ast.File {
 	t.Helper()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "recoverykey.go", nil, 0)
+	f, err := parser.ParseFile(token.NewFileSet(), path, src, 0)
 	if err != nil {
-		t.Fatalf("parsing recoverykey.go: %v", err)
+		t.Fatalf("parsing %s: %v", path, err)
 	}
+	return f
+}
+
+// funcBody returns the body of funcName in f.  Fatals if the function is not
+// found or has no body.
+func funcBody(t *testing.T, f *ast.File, path, funcName string) *ast.BlockStmt {
+	t.Helper()
 	for _, decl := range f.Decls {
-		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Name.Name == "Verify" {
+		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Name.Name == funcName {
 			if fd.Body == nil {
-				t.Fatal("Verify has no body")
+				t.Fatalf("%s has no body", funcName)
 			}
 			return fd.Body
 		}
 	}
-	t.Fatal("Verify not found in recoverykey.go — rename? update this guard")
+	t.Fatalf("%s not found in %s — rename? update this guard", funcName, path)
 	return nil
 }
 
-// selectorCallExistsInBody reports whether any *ast.CallExpr in body is a
-// selector call whose Sel.Name equals calleeName.
-func selectorCallExistsInBody(body *ast.BlockStmt, calleeName string) bool {
-	found := false
+// qualifiedCalls counts the calls to importPath's function fn inside body,
+// resolving the qualifier through f's import table: pkg.fn() for a plain or
+// aliased import, bare fn() for a dot-import.  A file that does not import
+// importPath has no such calls.
+func qualifiedCalls(f *ast.File, body *ast.BlockStmt, importPath, defaultName, fn string) int {
+	local := ""
+	for _, spec := range f.Imports {
+		if p, err := strconv.Unquote(spec.Path.Value); err == nil && p == importPath {
+			local = defaultName
+			if spec.Name != nil {
+				local = spec.Name.Name
+			}
+			break
+		}
+	}
+	if local == "" || local == "_" {
+		return 0
+	}
+	count := 0
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == calleeName {
-			found = true
-			return false
+		switch fun := call.Fun.(type) {
+		case *ast.SelectorExpr:
+			if x, ok := fun.X.(*ast.Ident); ok && local != "." && x.Name == local && fun.Sel.Name == fn {
+				count++
+			}
+		case *ast.Ident:
+			if local == "." && fun.Name == fn {
+				count++
+			}
 		}
 		return true
 	})
-	return found
+	return count
+}
+
+// comparisonCalls returns the number of subtle.ConstantTimeCompare and
+// bytes.Equal calls in funcName's body.
+func comparisonCalls(t *testing.T, f *ast.File, path, funcName string) (constantTime, bytesEqual int) {
+	t.Helper()
+	body := funcBody(t, f, path, funcName)
+	return qualifiedCalls(f, body, "crypto/subtle", "subtle", "ConstantTimeCompare"),
+		qualifiedCalls(f, body, "bytes", "bytes", "Equal")
 }
 
 // TestVerify_UsesConstantTimeCompare verifies that the Verify function calls
@@ -79,8 +116,7 @@ func selectorCallExistsInBody(body *ast.BlockStmt, calleeName string) bool {
 // primitive, turning Verify into a timing oracle for key-prefix matching.
 func TestVerify_UsesConstantTimeCompare(t *testing.T) {
 	t.Parallel()
-	body := verifyFuncBody(t)
-	if !selectorCallExistsInBody(body, "ConstantTimeCompare") {
+	if ct, _ := comparisonCalls(t, parseGuardFile(t, "recoverykey.go", nil), "recoverykey.go", "Verify"); ct == 0 {
 		t.Error("Verify does not call subtle.ConstantTimeCompare — the hex-digest comparison\n" +
 			"must use a constant-time primitive (recoverykey.go doc comment, design §6's\n" +
 			"adversarial-review checklist item)")
@@ -88,14 +124,58 @@ func TestVerify_UsesConstantTimeCompare(t *testing.T) {
 }
 
 // TestVerify_DoesNotUseBytesEqual verifies that the Verify function does not
-// call bytes.Equal anywhere in its body.  bytes.Equal is the most likely
-// accidental replacement for subtle.ConstantTimeCompare on []byte comparisons.
+// call bytes.Equal anywhere in its body, even next to subtle.ConstantTimeCompare
+// (a variable-time early-out beside the constant-time compare is still an
+// oracle).  hmac.Equal is constant-time and is not flagged.
 func TestVerify_DoesNotUseBytesEqual(t *testing.T) {
 	t.Parallel()
-	body := verifyFuncBody(t)
-	if selectorCallExistsInBody(body, "Equal") {
-		t.Error("Verify calls bytes.Equal (or hmac.Equal) — the hex-digest comparison\n" +
-			"must use subtle.ConstantTimeCompare, not any variable-time primitive.\n" +
-			"(recoverykey.go doc comment, design §6's adversarial-review checklist item)")
+	if _, be := comparisonCalls(t, parseGuardFile(t, "recoverykey.go", nil), "recoverykey.go", "Verify"); be > 0 {
+		t.Errorf("Verify calls bytes.Equal %d time(s) — the hex-digest comparison must use\n"+
+			"subtle.ConstantTimeCompare only, never a variable-time primitive.\n"+
+			"(recoverykey.go doc comment, design §6's adversarial-review checklist item)", be)
+	}
+}
+
+// TestVerifyGuard_CheckerFlagsBytesEqual proves the checker both ways on
+// inline fixture sources: red on bytes.Equal beside subtle.ConstantTimeCompare
+// (plain and aliased import), green on hmac.Equal.
+func TestVerifyGuard_CheckerFlagsBytesEqual(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name           string
+		src            string
+		wantCT, wantBE int
+	}{
+		{
+			name: "bytes.Equal beside ConstantTimeCompare",
+			src: `package x
+import ("bytes"; "crypto/subtle")
+func Verify(a, b []byte) bool { return bytes.Equal(a, b) || subtle.ConstantTimeCompare(a, b) == 1 }`,
+			wantCT: 1, wantBE: 1,
+		},
+		{
+			name: "aliased bytes import",
+			src: `package x
+import (bb "bytes"; "crypto/subtle")
+func Verify(a, b []byte) bool { return bb.Equal(a, b) && subtle.ConstantTimeCompare(a, b) == 1 }`,
+			wantCT: 1, wantBE: 1,
+		},
+		{
+			name: "hmac.Equal is not bytes.Equal",
+			src: `package x
+import ("crypto/hmac"; "crypto/subtle")
+func Verify(a, b []byte) bool { return hmac.Equal(a, b) && subtle.ConstantTimeCompare(a, b) == 1 }`,
+			wantCT: 1, wantBE: 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ct, be := comparisonCalls(t, parseGuardFile(t, "inline-fixture", tc.src), "inline-fixture", "Verify")
+			if ct != tc.wantCT || be != tc.wantBE {
+				t.Errorf("checker counted ConstantTimeCompare=%d bytes.Equal=%d, want %d and %d",
+					ct, be, tc.wantCT, tc.wantBE)
+			}
+		})
 	}
 }

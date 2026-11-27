@@ -1,8 +1,8 @@
 // constant_time_comparison_guard_test.go — INV-CORE-secret-comparisons-use-constant-time.
 //
-// Three functions in internal/core compare secret or bearer-token values and
-// must use a constant-time primitive so the comparison cannot be used as a
-// timing oracle:
+// A reviewed subset of internal/core functions compare secret or bearer-token
+// values and must use a constant-time primitive so the comparison cannot be
+// used as a timing oracle:
 //
 //   - bootstrapSystemLocked (auth_bootstrap.go): compares the caller-supplied
 //     bootstrap token against the server's configured bootstrapToken. A
@@ -18,93 +18,125 @@
 //     credential reuse. A variable-time comparison would let a caller infer
 //     whether a submitted token prefix matches a stored secret.
 //
+//   - rotateSecret (secrets.go): compares the decrypted current secret value
+//     against the rotation's new value for no-op detection. A variable-time
+//     comparison leaks a prefix match against live secret material.
+//
 // For each function this guard verifies two properties:
 //
-//  1. PRESENT: subtle.ConstantTimeCompare appears at least once in the
-//     function body.
-//  2. ABSENT:  bytes.Equal does not appear anywhere in the function body
-//     (the most likely accidental replacement).
+//  1. PRESENT: a call to ConstantTimeCompare qualified by the file's
+//     "crypto/subtle" import appears at least once in the function body.
+//  2. ABSENT:  no call to Equal qualified by the file's "bytes" import (or a
+//     bare Equal under a dot-import of "bytes") appears anywhere in the
+//     function body, whether or not ConstantTimeCompare is also present.
+//     hmac.Equal and time.Time.Equal are not flagged.
+//
+// Calls are matched through the file's import table, so an aliased import
+// (`b "bytes"`) is still caught. TestConstantTimeComparison_CheckerFlagsBytesEqual
+// runs the checker over inline fixture sources and proves it goes red on
+// bytes.Equal next to subtle.ConstantTimeCompare.
 //
 // What it does NOT cover: string-equality (==) comparisons, which a compiler
 // rejects on []byte but permits on string; a future string-based secret
-// comparison would not be caught here.  The properties checked here are
-// necessary but not sufficient for constant-time guarantees in all possible
-// future shapes; the doc comments in each production file describe the full
-// design intent.
-//
-// Red/green verification (see commit message): each test was confirmed to fail
-// when the respective subtle.ConstantTimeCompare call was temporarily replaced
-// with bytes.Equal, and to pass when it was restored.
+// comparison would not be caught here. The entry list is a reviewed subset,
+// not derived: a new secret-comparison site in internal/core is checked only
+// once it is added to constantTimeComparisonEntries. The properties checked
+// here are necessary but not sufficient for constant-time guarantees in all
+// possible future shapes; the doc comments in each production file describe
+// the full design intent.
 //
 // File paths in constantTimeComparisonEntries are relative to the guards/
 // directory (the test's working directory), so they resolve to the actual file
-// under internal/core/ or internal/core/rules/.  Helpers in this file use the
-// path directly without prepending "../", unlike funcBodyCallsHelper which
-// always prepends "../" to a bare name.
+// under internal/core/ or internal/core/rules/.
 package guards
 
 import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strconv"
 	"testing"
 )
 
-// selectorCallExistsAt parses the file at relPath (relative to the test's
-// working directory, i.e. internal/core/guards/), locates funcName, and
-// reports whether any *ast.CallExpr in the function body is a selector call
-// whose Sel.Name equals calleeName.
-func selectorCallExistsAt(t *testing.T, relPath, funcName, calleeName string) bool {
-	t.Helper()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, relPath, nil, 0)
-	if err != nil {
-		t.Fatalf("parsing %s: %v", relPath, err)
-	}
-	var fd *ast.FuncDecl
+// ctFuncInFile returns the declaration of funcName in f, or nil when no such
+// function is declared.
+func ctFuncInFile(f *ast.File, funcName string) *ast.FuncDecl {
 	for _, decl := range f.Decls {
-		if cand, ok := decl.(*ast.FuncDecl); ok && cand.Name.Name == funcName {
-			fd = cand
-			break
+		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Name.Name == funcName {
+			return fd
 		}
 	}
-	if fd == nil {
-		t.Fatalf("function %s not found in %s — rename or file move? update this guard", funcName, relPath)
+	return nil
+}
+
+// ctImportName returns the local name under which f imports importPath:
+// the package's own last path element when unaliased, the alias when
+// aliased, "." for a dot-import, and "" when f does not import it.
+func ctImportName(f *ast.File, importPath, defaultName string) string {
+	for _, spec := range f.Imports {
+		p, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || p != importPath {
+			continue
+		}
+		if spec.Name != nil {
+			return spec.Name.Name
+		}
+		return defaultName
 	}
-	if fd.Body == nil {
-		return false
+	return ""
+}
+
+// ctQualifiedCalls counts the calls to importPath's function fn inside body,
+// resolving the qualifier through f's import table: pkg.fn() for a plain or
+// aliased import, bare fn() for a dot-import. A file that does not import
+// importPath has no such calls.
+func ctQualifiedCalls(f *ast.File, body *ast.BlockStmt, importPath, defaultName, fn string) int {
+	local := ctImportName(f, importPath, defaultName)
+	if local == "" || local == "_" || body == nil {
+		return 0
 	}
-	found := false
-	ast.Inspect(fd.Body, func(n ast.Node) bool {
+	count := 0
+	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == calleeName {
-			found = true
-			return false
+		switch fun := call.Fun.(type) {
+		case *ast.SelectorExpr:
+			if x, ok := fun.X.(*ast.Ident); ok && local != "." && x.Name == local && fun.Sel.Name == fn {
+				count++
+			}
+		case *ast.Ident:
+			if local == "." && fun.Name == fn {
+				count++
+			}
 		}
 		return true
 	})
-	return found
+	return count
 }
 
-// funcExistsAt parses the file at relPath and reports whether a function named
-// funcName is declared in it.  relPath is relative to the test's working
-// directory (internal/core/guards/).
-func funcExistsAt(t *testing.T, relPath, funcName string) bool {
+// ctComparisonCalls reports, for funcName in f, the number of
+// subtle.ConstantTimeCompare calls and the number of bytes.Equal calls.
+func ctComparisonCalls(t *testing.T, f *ast.File, path, funcName string) (constantTime, bytesEqual int) {
 	t.Helper()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, relPath, nil, 0)
+	fd := ctFuncInFile(f, funcName)
+	if fd == nil {
+		t.Fatalf("function %s not found in %s — rename or file move? update this guard", funcName, path)
+	}
+	return ctQualifiedCalls(f, fd.Body, "crypto/subtle", "subtle", "ConstantTimeCompare"),
+		ctQualifiedCalls(f, fd.Body, "bytes", "bytes", "Equal")
+}
+
+// ctParse parses the file at relPath (relative to internal/core/guards/), or
+// src when it is non-nil.
+func ctParse(t *testing.T, relPath string, src any) *ast.File {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), relPath, src, 0)
 	if err != nil {
 		t.Fatalf("parsing %s: %v", relPath, err)
 	}
-	for _, decl := range f.Decls {
-		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Name.Name == funcName {
-			return true
-		}
-	}
-	return false
+	return f
 }
 
 // constantTimeComparisonEntry describes one reviewed secret-comparison site
@@ -118,7 +150,7 @@ type constantTimeComparisonEntry struct {
 
 // constantTimeComparisonEntries is the reviewed set of functions in
 // internal/core that compare secret or bearer-token values.  Each entry is
-// checked for the presence of ConstantTimeCompare and the absence of
+// checked for the presence of subtle.ConstantTimeCompare and the absence of
 // bytes.Equal.  Add a new entry when a secret-comparison site is introduced;
 // remove one if the function is renamed or deleted (the companion
 // TestConstantTimeComparison_EntriesStillExist will catch stale entries).
@@ -143,6 +175,13 @@ var constantTimeComparisonEntries = map[string]constantTimeComparisonEntry{
 			"secret; a variable-time comparison lets a caller infer whether a submitted token " +
 			"prefix matches a stored secret",
 	},
+	"rotateSecret": {
+		relPath: "../secrets.go",
+		fn:      "rotateSecret",
+		reason: "compares the decrypted current secret value against the rotation's new value " +
+			"(no-op detection); a variable-time comparison leaks a prefix match against live " +
+			"secret material",
+	},
 }
 
 // TestConstantTimeComparison_UsesConstantTimePrimitive verifies that each
@@ -152,7 +191,8 @@ func TestConstantTimeComparison_UsesConstantTimePrimitive(t *testing.T) {
 	for name, e := range constantTimeComparisonEntries {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if !selectorCallExistsAt(t, e.relPath, e.fn, "ConstantTimeCompare") {
+			ct, _ := ctComparisonCalls(t, ctParse(t, e.relPath, nil), e.relPath, e.fn)
+			if ct == 0 {
 				t.Errorf("%s (%s) must call subtle.ConstantTimeCompare — %s\n"+
 					"(INV-CORE-secret-comparisons-use-constant-time)", e.fn, e.relPath, e.reason)
 			}
@@ -161,23 +201,89 @@ func TestConstantTimeComparison_UsesConstantTimePrimitive(t *testing.T) {
 }
 
 // TestConstantTimeComparison_NoBytesEqualOnSecret verifies that no guarded
-// function calls bytes.Equal anywhere in its body.  bytes.Equal is the most
-// likely accidental replacement for subtle.ConstantTimeCompare on []byte values.
-// A function that calls BOTH Equal and ConstantTimeCompare is flagged only if
-// ConstantTimeCompare is absent (a full replacement, not a coexistence, since
-// hmac.Equal is also a constant-time primitive and may legitimately coexist).
+// function calls bytes.Equal anywhere in its body, even next to a
+// subtle.ConstantTimeCompare call: a variable-time early-out added beside the
+// constant-time comparison is as much an oracle as a full replacement.
+// hmac.Equal (constant-time) and other Equal methods are not flagged.
 func TestConstantTimeComparison_NoBytesEqualOnSecret(t *testing.T) {
 	t.Parallel()
 	for name, e := range constantTimeComparisonEntries {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if selectorCallExistsAt(t, e.relPath, e.fn, "Equal") &&
-				!selectorCallExistsAt(t, e.relPath, e.fn, "ConstantTimeCompare") {
-				t.Errorf("%s (%s) calls bytes.Equal (or hmac.Equal) on a secret comparison\n"+
-					"and does NOT call subtle.ConstantTimeCompare — this is likely an\n"+
-					"accidental variable-time replacement.\n"+
+			if _, be := ctComparisonCalls(t, ctParse(t, e.relPath, nil), e.relPath, e.fn); be > 0 {
+				t.Errorf("%s (%s) calls bytes.Equal %d time(s) — a variable-time comparison on a\n"+
+					"secret value, whether or not subtle.ConstantTimeCompare is also called.\n"+
 					"Reason this matters: %s\n"+
-					"(INV-CORE-secret-comparisons-use-constant-time)", e.fn, e.relPath, e.reason)
+					"(INV-CORE-secret-comparisons-use-constant-time)", e.fn, e.relPath, be, e.reason)
+			}
+		})
+	}
+}
+
+// TestConstantTimeComparison_CheckerFlagsBytesEqual proves the checker both
+// ways on inline fixture sources: red on bytes.Equal next to
+// subtle.ConstantTimeCompare (the mutation the original Equal-and-not-
+// ConstantTimeCompare condition let through), on an aliased and on a
+// dot-imported bytes package; green on hmac.Equal and on a time.Time Equal
+// method.
+func TestConstantTimeComparison_CheckerFlagsBytesEqual(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name           string
+		src            string
+		wantCT, wantBE int
+	}{
+		{
+			name: "bytes.Equal beside ConstantTimeCompare",
+			src: `package x
+import ("bytes"; "crypto/subtle")
+func f(a, b string) bool {
+	if !bytes.Equal([]byte(a), []byte(b)) && subtle.ConstantTimeCompare([]byte(a), []byte(b)) != 1 {
+		return false
+	}
+	return true
+}`,
+			wantCT: 1, wantBE: 1,
+		},
+		{
+			name: "aliased bytes import",
+			src: `package x
+import (b "bytes"; s "crypto/subtle")
+func f(x, y []byte) bool { return b.Equal(x, y) || s.ConstantTimeCompare(x, y) == 1 }`,
+			wantCT: 1, wantBE: 1,
+		},
+		{
+			name: "dot-imported bytes",
+			src: `package x
+import (. "bytes"; "crypto/subtle")
+func f(x, y []byte) bool { return Equal(x, y) && subtle.ConstantTimeCompare(x, y) == 1 }`,
+			wantCT: 1, wantBE: 1,
+		},
+		{
+			name: "hmac.Equal and time Equal are not bytes.Equal",
+			src: `package x
+import ("crypto/hmac"; "crypto/subtle"; "time")
+func f(x, y []byte, t1, t2 time.Time) bool {
+	return hmac.Equal(x, y) && t1.Equal(t2) && subtle.ConstantTimeCompare(x, y) == 1
+}`,
+			wantCT: 1, wantBE: 0,
+		},
+		{
+			name: "local variable named subtle is not crypto/subtle",
+			src: `package x
+type cmp struct{}
+func (cmp) ConstantTimeCompare(a, b []byte) int { return 1 }
+func f(x, y []byte) bool { subtle := cmp{}; return subtle.ConstantTimeCompare(x, y) == 1 }`,
+			wantCT: 0, wantBE: 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ct, be := ctComparisonCalls(t, ctParse(t, "inline-fixture", tc.src), "inline-fixture", "f")
+			if ct != tc.wantCT || be != tc.wantBE {
+				t.Errorf("checker counted ConstantTimeCompare=%d bytes.Equal=%d, want %d and %d",
+					ct, be, tc.wantCT, tc.wantBE)
 			}
 		})
 	}
@@ -192,7 +298,7 @@ func TestConstantTimeComparison_EntriesStillExist(t *testing.T) {
 	for name, e := range constantTimeComparisonEntries {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if !funcExistsAt(t, e.relPath, e.fn) {
+			if ctFuncInFile(ctParse(t, e.relPath, nil), e.fn) == nil {
 				t.Errorf("constantTimeComparisonEntries entry %q names function %s in %s "+
 					"but no such function was found — update or remove this entry",
 					name, e.fn, e.relPath)

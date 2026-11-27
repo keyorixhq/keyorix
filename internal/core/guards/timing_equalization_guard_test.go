@@ -8,7 +8,7 @@
 //     account must each take as long as a wrong password, so an attacker
 //     cannot enumerate accounts by timing.  The function's two pre-bcrypt
 //     early-return if-blocks (user-not-found/storage-error; loginLocked)
-//     must each call bcrypt.CompareHashAndPassword(*dummyBcryptHash.Load(), ...).
+//     must each call kdfmeter.CompareHashAndPassword(*dummyBcryptHash.Load(), ...).
 //     Expected count: 2 references to dummyBcryptHash in the function body.
 //
 //  2. verifyCurrentPassword (account.go): the same locked-account oracle
@@ -24,16 +24,23 @@
 //     response are identical (#2888).  The function therefore calls
 //     recordFailedLogin in that branch as well as the normal wrong-code one.
 //     Expected count: 2 calls to recordFailedLogin in the function body.
+//     requireReauth (mfa.go), the step-up re-auth path, has the same pair of
+//     branches and the same expected count.
 //
-// Each check is deterministic: it counts identifiers or call-selector sites
-// in the parsed function body.  Red/green verification (see commit message):
-// each test was confirmed to fail when the respective call was temporarily
-// commented out and to pass with it restored.
+// The count checks are deterministic: they count identifiers or call-selector
+// sites in the parsed function body.  For sites 1 and 2,
+// TestTimingEqualization_EveryPreCompareEarlyReturnSpendsDummy also checks
+// position: every top-level if-block that returns before the real comparison
+// must reference dummyBcryptHash before its first return, so moving both
+// dummy calls into one block fails.  Red/green verification (see the PR body):
+// each property test was confirmed to fail on an out-of-tree mutation of the
+// production file and to pass on the unmodified file.
 //
-// What these tests do NOT verify: that the calls are in the correct positions
-// relative to their respective return statements (a count of 2 would not
-// catch both calls being moved into the same block).  That ordering property
-// is pinned by the INVARIANTS.d fragments and by the in-source comments.
+// What these tests do NOT verify: the position of the recordFailedLogin calls
+// in site 3 (a count of 2 would not catch both calls moved into one branch);
+// an early return nested inside a non-if statement (for, switch) before the
+// real comparison.  The INVARIANTS.d fragments and in-source comments pin
+// those.
 package guards
 
 import (
@@ -185,5 +192,141 @@ func TestTimingEqualization_MFACodeMatchedStorageError_CountsTowardLockout(t *te
 	got := countFuncBodySelectorCalls(t, "mfa.go", "VerifyMFACredentials", "recordFailedLogin")
 	if got != want {
 		t.Errorf("VerifyMFACredentials has %d recordFailedLogin call(s), want %d\n%s", got, want, desc)
+	}
+}
+
+// teEarlyReturnBlock is one top-level if-block that returns before the real
+// password comparison.
+type teEarlyReturnBlock struct {
+	line           int  // line of the if statement
+	dummyBeforeRet bool // a dummyBcryptHash reference precedes the block's first return
+}
+
+// teEarlyReturnBlocks parses file (relative to ../), walks funcName's
+// top-level statements up to the first one that calls CompareHashAndPassword
+// without referencing dummyBcryptHash (the real comparison), and returns every
+// if statement before it whose body contains a return. Fatals when no real
+// comparison is found, so the walk cannot pass on an empty prefix.
+func teEarlyReturnBlocks(t *testing.T, file, funcName string) []teEarlyReturnBlock {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "../"+file, nil, 0)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", file, err)
+	}
+	var fd *ast.FuncDecl
+	for _, decl := range f.Decls {
+		if cand, ok := decl.(*ast.FuncDecl); ok && cand.Name.Name == funcName {
+			fd = cand
+			break
+		}
+	}
+	if fd == nil || fd.Body == nil {
+		t.Fatalf("function %s not found in %s — rename or file move? update this guard", funcName, file)
+	}
+	firstDummy := func(n ast.Node) token.Pos {
+		pos := token.NoPos
+		ast.Inspect(n, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok && id.Name == "dummyBcryptHash" && (pos == token.NoPos || id.Pos() < pos) {
+				pos = id.Pos()
+			}
+			return true
+		})
+		return pos
+	}
+	realCompare := func(n ast.Node) bool {
+		found := false
+		ast.Inspect(n, func(m ast.Node) bool {
+			call, ok := m.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "CompareHashAndPassword" && firstDummy(call) == token.NoPos {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+	var blocks []teEarlyReturnBlock
+	for _, st := range fd.Body.List {
+		if realCompare(st) {
+			return blocks
+		}
+		ifs, ok := st.(*ast.IfStmt)
+		if !ok {
+			continue
+		}
+		firstRet := token.NoPos
+		ast.Inspect(ifs.Body, func(m ast.Node) bool {
+			if r, ok := m.(*ast.ReturnStmt); ok && (firstRet == token.NoPos || r.Pos() < firstRet) {
+				firstRet = r.Pos()
+			}
+			return true
+		})
+		if firstRet == token.NoPos {
+			continue
+		}
+		d := firstDummy(ifs.Body)
+		blocks = append(blocks, teEarlyReturnBlock{
+			line:           fset.Position(ifs.Pos()).Line,
+			dummyBeforeRet: d != token.NoPos && d < firstRet,
+		})
+	}
+	t.Fatalf("%s in %s has no top-level CompareHashAndPassword call on a real hash — update this guard", funcName, file)
+	return nil
+}
+
+// TestTimingEqualization_EveryPreCompareEarlyReturnSpendsDummy guards the
+// position half of INV-CORE-password-login-timing-equalization that the
+// counts above cannot see: EVERY top-level if-block that returns before the
+// real CompareHashAndPassword call must reference dummyBcryptHash before its
+// first return. Moving both dummy calls into one block, or adding a new early
+// return without one, fails here. The wantBlocks count keeps the walk from
+// passing on a refactor that hides the early returns from it.
+func TestTimingEqualization_EveryPreCompareEarlyReturnSpendsDummy(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		file, fn   string
+		wantBlocks int
+	}{
+		{"auth.go", "VerifyPasswordCredentials", 2},
+		{"account.go", "verifyCurrentPassword", 1},
+	} {
+		t.Run(tc.fn, func(t *testing.T) {
+			t.Parallel()
+			blocks := teEarlyReturnBlocks(t, tc.file, tc.fn)
+			if len(blocks) != tc.wantBlocks {
+				t.Errorf("%s has %d early-return if-block(s) before the real comparison, want %d — "+
+					"review the new path and update this guard (INV-CORE-password-login-timing-equalization)",
+					tc.fn, len(blocks), tc.wantBlocks)
+			}
+			for _, b := range blocks {
+				if !b.dummyBeforeRet {
+					t.Errorf("%s:%d: early-return block in %s returns before spending the dummy bcrypt "+
+						"comparison — its latency differs from a wrong password "+
+						"(INV-CORE-password-login-timing-equalization)", tc.file, b.line, tc.fn)
+				}
+			}
+		})
+	}
+}
+
+// TestTimingEqualization_RequireReauthPostVerdictFailureCountsTowardLockout
+// guards the requireReauth sibling of
+// INV-CORE-mfa-replay-consume-fail-counts-lockout: the step-up re-auth path
+// has the same pair of failure branches (the code/password matched but a
+// consumption write failed; the code/password was wrong), and both must call
+// recordFailedLogin so a correct guess is never cheaper, lockout-wise, than a
+// wrong one (#2888).
+func TestTimingEqualization_RequireReauthPostVerdictFailureCountsTowardLockout(t *testing.T) {
+	t.Parallel()
+	const want = 2
+	got := countFuncBodySelectorCalls(t, "mfa.go", "requireReauth", "recordFailedLogin")
+	if got != want {
+		t.Errorf("requireReauth has %d recordFailedLogin call(s), want %d: once in the\n"+
+			"postVerdictErr branch (credential correct, consumption write failed) and once\n"+
+			"in the wrong-credential path (#2888, INV-CORE-mfa-replay-consume-fail-counts-lockout)",
+			got, want)
 	}
 }
