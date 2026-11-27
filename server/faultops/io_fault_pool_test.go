@@ -141,6 +141,8 @@ type ioFaultPool struct {
 	// terminated counts PostgreSQL backends this pool really terminated.
 	terminated int
 	attr       ioAttribution
+	// base is the length of the call log when the pool was armed (see Arm).
+	base int
 	// swallow is a PLANTED BUG for the red proofs: a write that hit a "before"
 	// fault is reported as a success without running, which is exactly the defect
 	// "success returned after a failed durable write" the oracles must catch.
@@ -151,6 +153,12 @@ func (p *ioFaultPool) Arm(f *ioFault) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.armed, p.stmts, p.commits, p.fired, p.attr = f, 0, 0, false, ioAttribution{}
+	// The call log also holds the setup's calls; an ordinal counts from here, like
+	// FaultyStorage.Arm's NthCall, so the per-method rules keyed on it keep their meaning.
+	p.base = 0
+	if p.calls != nil {
+		p.base = len(p.calls())
+	}
 }
 
 func (p *ioFaultPool) Disarm() { p.Arm(nil) }
@@ -201,19 +209,30 @@ func (p *ioFaultPool) attribute(query string, commit, audit bool) ioAttribution 
 	if audit {
 		a.sql += " [transaction writes audit_events]"
 	}
-	if commit {
+	a.method = storageMethodOnStack()
+	if commit && a.method == "" {
 		a.method = "WithTransaction"
-	} else {
-		a.method = storageMethodOnStack()
 	}
 	if os.Getenv("IOFAULT_STACK") != "" { // triage aid: where did the faulted statement come from
 		buf := make([]byte, 16<<10)
 		fmt.Fprintf(os.Stderr, "IOFAULT-STACK method=%q\n%s\n", a.method, buf[:runtime.Stack(buf, false)])
 	}
+	if audit && (a.method == "" || (commit && a.method == "WithTransaction")) {
+		// A statement of the audit append that no storage method issued (the chain-tail
+		// read of the audit writer), or the COMMIT of a transaction that writes
+		// audit_events (whose acknowledgement may be lost): both are LogAuditEvent's work,
+		// so that method's rules apply, and they are the rules the storage-level fuzz can
+		// drive (a COMMIT-level WithTransaction row could not be driven there).
+		a.method = "LogAuditEvent"
+	}
 	if a.method == "" {
 		return a // a statement outside any storage call (a detached flusher): no method rules apply
 	}
-	for _, c := range p.calls() {
+	log := p.calls()
+	if p.base <= len(log) {
+		log = log[p.base:]
+	}
+	for _, c := range log {
 		if c.Method == a.method {
 			a.nth++
 		}

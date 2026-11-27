@@ -21,14 +21,19 @@ package faultops
 //	R2 a reported success keeps its audit event: success + no audit row at all, when
 //	   the fault-free run of the same op writes one, is a lost audit event. Skipped
 //	   when the faulted statement is itself an audit write (best-effort by design,
-//	   see best_effort_tables_entry_logauditevent_test.go) and for an op listed in
-//	   knownUnauditedOperations.
+//	   see best_effort_tables_entry_logauditevent_test.go), for a sticky ENOSPC/EIO
+//	   (it fails the audit write too) and for an op listed in knownUnauditedOperations.
 //	R3 no canary (secret value) in any log line the operation wrote.
 //	R4 a hang guard: the whole operation finishes within ioFaultInputDeadline.
 //
 // What it does NOT verify: the text of any error, a power cut or a torn page (that
 // is scripts/powercut), a network partition between replicas, or the audit chain
 // of a world whose faulted write was the audit row itself beyond "still verifies".
+// A sticky ENOSPC/EIO also fails every later write (audit append, compensation,
+// cleanup), so the single-fault state oracles are applied to it only for oracle (c)
+// on a sticky EIO authz read; R1, R3 and R4 always are. They are not applied to a
+// credential flow (login, MFA, WebAuthn, setup consume) at all: the #2880 by-design
+// rows decide a faulted storage method, not a driver-level fault.
 // A fault that lands on a different statement than predicted (a detached goroutine
 // interleaving) is judged by the same oracles against the method it was attributed
 // to; that costs precision, not soundness, because every oracle compares real state.
@@ -112,6 +117,22 @@ func ioFaultSeeds() [][]byte {
 	add("REST PUT /api/v1/roles/{id}", ioDiskFullBefore, 4)
 	add("REST PUT /api/v1/roles/{id}", ioCommitAckLost, 1)
 	add("GRPC keyorix.v1.RoleService.CreateRole", ioEIOAfter, 3)
+	// ops whose bookkeeping or audit sits in its own transaction after an external effect
+	for _, op := range []string{
+		"REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke",
+		"REST POST /api/v1/dynamic-secrets/configs/{id}/revoke-all",
+		"GRPC keyorix.v1.DynamicSecretService.RevokeLease",
+		"GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases",
+		"REST POST /api/v1/projects/{id}/break-glass",
+		"GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass",
+		"REST POST /api/v1/dynamic-secrets/configs/{id}/issue",
+		"GRPC keyorix.v1.DynamicSecretService.IssueLease",
+	} {
+		for _, at := range []int{1, 2} {
+			add(op, ioCommitNeverArrived, at)
+			add(op, ioCommitAckLost, at)
+		}
+	}
 	return out
 }
 
@@ -250,13 +271,37 @@ func runIOFaultIteration(t *testing.T, rep fuzzVerdict, data []byte, refW, w *fa
 	if authzReadMethods[method] && !(in.sticky && in.kind == ioEIOBefore) {
 		method = "~" + method
 	}
-	checkOraclesReporting(rep, oracleInput{
-		op: op.Key, method: method, nth: attr.nth, kind: in.kind.storageKind(),
-		result: ex.res, before: before, after: after, refAfter: refAfter, execLog: ex.log, world: w,
-	})
+	// A sticky full or failing disk keeps failing every later write too: the op's own
+	// audit append, and the compensation or cleanup writes (a released login-attempt
+	// slot, a rolled-back step). The state oracles reason about ONE failing storage
+	// call, so on such a run their verdict cannot be attributed to the faulted method
+	// and they are not applied; what a sticky fault is for is oracle (c) on a sticky
+	// EIO, which defeats the in-method fallback read, and R1, R3 and R4 (recovery,
+	// canary, hang).
+	stickyDisk := in.sticky && (in.kind == ioDiskFullBefore || in.kind == ioEIOBefore)
+	// A credential flow (an op with a by-design row in oracleAByDesignErrors: login, MFA
+	// verify, WebAuthn finish, setup consume). Those rows record the #2880 decision for
+	// ONE faulted storage METHOD (a storage-level effect-then-error lands, an in-transaction
+	// EIO-after or a lost COMMIT rolls the effect back), answered like a wrong credential.
+	// What a driver-level fault of such a flow must answer is not decided, so the state
+	// oracles are not applied to it (NEEDS DECISION, in the PR). R1, R3 and R4 are.
+	credentialFlow := isCredentialFlowOp(op.Key)
+	if credentialFlow {
+		rep.Logf("%s: not judged by the state oracles: credential flow (no driver-level decision recorded)", label)
+	}
+	if !credentialFlow && (!stickyDisk || (in.kind == ioEIOBefore && authzReadMethods[attr.method])) {
+		checkOraclesReporting(rep, oracleInput{
+			op: op.Key, method: method, nth: attr.nth, kind: in.kind.storageKind(),
+			result: ex.res, before: before, after: after, refAfter: refAfter, execLog: ex.log, world: w,
+		})
+	}
 
-	for _, msg := range ioCheckSuccessHasAudit(op.Key, ex.res.Success, attr, before, after, refAfter) {
-		rep.Errorf("%s: %s", label, msg)
+	// For a sticky disk fault the audit append of the op fails too, so "the faulted
+	// statement is not an audit write" does not hold for R2.
+	if !stickyDisk {
+		for _, msg := range ioCheckSuccessHasAudit(op.Key, ex.res.Success, attr, before, after, refAfter) {
+			rep.Errorf("%s: %s", label, msg)
+		}
 	}
 	for _, msg := range ioCheckCanaryInLog(ex.log) {
 		rep.Errorf("%s: %s", label, msg)
@@ -286,6 +331,16 @@ func runIOFaultIteration(t *testing.T, rep fuzzVerdict, data []byte, refW, w *fa
 		}
 	}
 	return out
+}
+
+// isCredentialFlowOp reports whether op has a by-design row in oracleAByDesignErrors.
+func isCredentialFlowOp(op string) bool {
+	for _, e := range oracleAByDesignErrors {
+		if e.op == op {
+			return true
+		}
+	}
+	return false
 }
 
 // ioCheckRecovery is R1: the audit chain verifies and the pool is quiescent.
