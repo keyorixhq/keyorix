@@ -43,6 +43,7 @@ func TestCompleteSSO_JITProvisionAuditRecordsTheForwardedClientBehindTrustedProx
 	p := &core.SSOProvider{
 		Name: "oidcjit", Issuer: "https://idp.test.example", ClientID: "cid",
 		CompleteURL: "https://app.example.com/sso/complete", AutoProvision: true,
+		HTTPClient: &http.Client{},
 		OAuth: &oauth2.Config{
 			ClientID:    "cid",
 			Endpoint:    oauth2.Endpoint{AuthURL: "https://idp.test.example/authorize"},

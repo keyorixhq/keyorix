@@ -78,6 +78,7 @@ func TestCompleteSSO_SessionRecordsCanonicalClientIP(t *testing.T) {
 	p := &core.SSOProvider{
 		Name: "oidcip", Issuer: "https://idp.test.example", ClientID: "cid",
 		CompleteURL: "https://app.example.com/sso/complete",
+		HTTPClient:  &http.Client{},
 		OAuth: &oauth2.Config{
 			ClientID:    "cid",
 			Endpoint:    oauth2.Endpoint{AuthURL: "https://idp.test.example/authorize"},

@@ -45,6 +45,7 @@ func newOIDCReconcileFixture(t *testing.T, groups any, groupRoleMap map[string]s
 	require.NoError(t, err)
 	p := &SSOProvider{
 		Name: "corp", Issuer: "https://idp.test", ClientID: "client-1",
+		HTTPClient: &http.Client{},
 		OAuth: &oauth2.Config{
 			ClientID:    "client-1",
 			Endpoint:    oauth2.Endpoint{AuthURL: "https://idp.test/authorize"},

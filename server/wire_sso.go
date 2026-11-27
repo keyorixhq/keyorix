@@ -47,14 +47,32 @@ var oidcDiscoveryTransport = func() *http.Transport {
 	return tr
 }()
 
+// ssoIdPHTTPClient is the one client for every server-side request to an OIDC
+// identity provider: the discovery GET and the authorization-code exchange
+// (#4738). Both get oidcDiscoveryTransport's link-local dial guard and the
+// same-origin, no-downgrade, bounded redirect policy. Before #4738 the exchange
+// carried no client in its context, so x/oauth2 used http.DefaultClient: no dial
+// guard, and up to 10 redirects followed, including a 307 that resends the POST
+// (code, PKCE verifier, client credentials) to another origin.
+func ssoIdPHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout:       10 * time.Second,
+		Transport:     oidcDiscoveryTransport,
+		CheckRedirect: noDiscoveryCrossOriginRedirect,
+	}
+}
+
 // discoverOIDC fetches an issuer's /.well-known/openid-configuration and validates
 // it. The issuer must use https (http only for loopback) so the document — which
 // names the jwks_uri that ultimately supplies the token-signing keys — is not
 // fetched over plaintext where a MITM could redirect key fetching to attacker keys.
 // Per the OIDC spec the document's own issuer must equal the configured issuer, and
 // the jwks_uri it advertises must live on the issuer's host, so a tampered/hostile
-// discovery doc can't point key fetching at an unrelated host.
-func discoverOIDC(issuer string) (*oidcDiscovery, error) {
+// discovery doc can't point key fetching at an unrelated host. The token_endpoint
+// (which receives the client credentials and the code) must pass
+// validateTokenEndpoint; tokenEndpointHosts are the extra hosts the operator
+// listed for it (sso.providers[].token_endpoint_hosts).
+func discoverOIDC(issuer string, tokenEndpointHosts ...string) (*oidcDiscovery, error) {
 	iss, err := url.Parse(strings.TrimRight(issuer, "/"))
 	if err != nil || iss.Host == "" {
 		return nil, fmt.Errorf("invalid issuer %q", issuer)
@@ -64,12 +82,7 @@ func discoverOIDC(issuer string) (*oidcDiscovery, error) {
 	}
 
 	u := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
-	client := &http.Client{
-		Timeout:       10 * time.Second,
-		Transport:     oidcDiscoveryTransport,
-		CheckRedirect: noDiscoveryCrossOriginRedirect,
-	}
-	resp, err := client.Get(u) // #nosec G107 -- issuer is operator-configured and https-validated above
+	resp, err := ssoIdPHTTPClient().Get(u) // #nosec G107 -- issuer is operator-configured and https-validated above
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +107,41 @@ func discoverOIDC(issuer string) (*oidcDiscovery, error) {
 	if !strings.EqualFold(jwksURL.Hostname(), iss.Hostname()) {
 		return nil, fmt.Errorf("discovery jwks_uri host %q does not match issuer host %q", jwksURL.Hostname(), iss.Hostname())
 	}
+	if err := validateTokenEndpoint(d.TokenEndpoint, iss, tokenEndpointHosts); err != nil {
+		return nil, err
+	}
 	return &d, nil
+}
+
+// validateTokenEndpoint is the discovery-time rule for the token_endpoint (#4738).
+// Its host must be the issuer's host or one the operator listed, compared like the
+// jwks_uri host (net/url hostname, case-insensitive, port ignored). Its scheme
+// must be https; http is accepted only when the issuer itself is http (which
+// requireSecureOrLoopback limits to loopback) and the endpoint is loopback too, so
+// an https issuer can never hand the credentials to a plaintext endpoint. The
+// authorization_endpoint is deliberately not checked here: the server never dials
+// it, it only redirects the browser there.
+func validateTokenEndpoint(raw string, iss *url.URL, extraHosts []string) error {
+	tok, err := url.Parse(raw)
+	if err != nil || tok.Host == "" {
+		return fmt.Errorf("discovery token_endpoint is invalid")
+	}
+	switch {
+	case tok.Scheme == "https":
+	case tok.Scheme == "http" && iss.Scheme == "http" && isLoopbackHostname(tok.Hostname()):
+	default:
+		return fmt.Errorf("discovery token_endpoint on host %q must use https (http only for a loopback issuer)", tok.Hostname())
+	}
+	host := tok.Hostname()
+	if strings.EqualFold(host, iss.Hostname()) {
+		return nil
+	}
+	for _, h := range extraHosts {
+		if strings.EqualFold(host, strings.TrimSpace(h)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("discovery token_endpoint host %q is neither the issuer host %q nor listed in token_endpoint_hosts", host, iss.Hostname())
 }
 
 // requireSecureOrLoopback rejects a non-https URL unless its host is loopback.
@@ -199,7 +246,7 @@ func buildSSOProviders(sso config.SSOConfig) (map[string]*core.SSOProvider, core
 			log.Printf("SSO provider %q misconfigured (issuer/client_id/redirect_url required); skipping", pc.Name)
 			continue
 		}
-		disc, err := discoverOIDC(pc.Issuer)
+		disc, err := discoverOIDC(pc.Issuer, pc.TokenEndpointHosts...)
 		if err != nil {
 			log.Printf("SSO provider %q discovery failed: %v; skipping", pc.Name, err)
 			continue
@@ -224,6 +271,7 @@ func buildSSOProviders(sso config.SSOConfig) (map[string]*core.SSOProvider, core
 				RedirectURL:  pc.RedirectURL,
 				Scopes:       scopes,
 			},
+			HTTPClient:    ssoIdPHTTPClient(),
 			CompleteURL:   completeURL,
 			AutoProvision: pc.AutoProvision,
 			DefaultRole:   pc.DefaultRole,
