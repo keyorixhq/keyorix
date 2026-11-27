@@ -40,7 +40,8 @@ func TestIssueLeaseExemption_ActiveLeaseRowStillFlagged(t *testing.T) {
 				}
 
 				active := in
-				active.after = withLeaseRowsActive(t, in.before, in.after)
+				active.after = withChangedRowsSet(t, in.before, in.after, "DynamicSecretLease",
+					map[string]string{"Status": `"active"`, "RevokeReason": `""`})
 				if f := oracleFindingsWithout(t, active, noop); len(f) == 0 {
 					t.Fatal("a failed issue that left its lease row active is accepted by design")
 				} else {
@@ -59,14 +60,13 @@ func TestIssueLeaseExemption_ActiveLeaseRowStillFlagged(t *testing.T) {
 	}
 }
 
-// withLeaseRowsActive returns after with every DynamicSecretLease row the request
-// wrote set back to `active` (no revoke reason), table and snapshot hashes rebuilt.
-func withLeaseRowsActive(t *testing.T, before, after dbSnapshot) dbSnapshot {
+// withChangedRowsSet returns after with set (column -> raw JSON value) applied to
+// every row of table the request wrote, table and snapshot hashes rebuilt.
+func withChangedRowsSet(t *testing.T, before, after dbSnapshot, table string, set map[string]string) dbSnapshot {
 	t.Helper()
-	const table = "DynamicSecretLease"
 	ts := after.Tables[table]
 	rows := make([]string, 0, len(ts.Rows))
-	flipped := 0
+	changed := 0
 	for _, row := range ts.Rows {
 		if slices.Contains(before.Tables[table].Rows, row) {
 			rows = append(rows, row)
@@ -74,19 +74,20 @@ func withLeaseRowsActive(t *testing.T, before, after dbSnapshot) dbSnapshot {
 		}
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(row), &fields); err != nil {
-			t.Fatalf("lease row %s: %v", row, err)
+			t.Fatalf("%s row %s: %v", table, row, err)
 		}
-		fields["Status"] = json.RawMessage(`"active"`)
-		fields["RevokeReason"] = json.RawMessage(`""`)
+		for col, v := range set {
+			fields[col] = json.RawMessage(v)
+		}
 		b, err := json.Marshal(fields)
 		if err != nil {
 			t.Fatal(err)
 		}
 		rows = append(rows, string(b))
-		flipped++
+		changed++
 	}
-	if flipped == 0 {
-		t.Fatal("the faulted issue wrote no lease row: the case does not reach the abort")
+	if changed == 0 {
+		t.Fatalf("the faulted request wrote no %s row: the case does not reach the documented path", table)
 	}
 	sort.Strings(rows)
 	out := dbSnapshot{Tables: maps.Clone(after.Tables)}
@@ -94,4 +95,34 @@ func withLeaseRowsActive(t *testing.T, before, after dbSnapshot) dbSnapshot {
 	out.Tables[table] = tableSnapshot{Table: table, Rows: rows, Hash: hex.EncodeToString(h[:])}
 	out.Hash = hashExcluding(out)
 	return out
+}
+
+// TestAccessReviewCampaignExemption_UndegradedRowStillFlagged pins the scope of the
+// ROLE-SHAPE-1 access-review rows (REVIEW-4745-DEEP-1 L2): they accept the campaign
+// row that carries the degraded report, not any AccessReviewCampaign diff. Driven on
+// the two pinned methods; GetEnvironment and ListRoles are not drivable here.
+func TestAccessReviewCampaignExemption_UndegradedRowStillFlagged(t *testing.T) {
+	noop := func() func() { return func() {} }
+	const op = "REST POST /api/v1/projects/{id}/access-review/campaigns"
+	for _, method := range []string{"ListAllUserRoleGrants", "ListAllGroupRoleGrants"} {
+		t.Run(method, func(t *testing.T) {
+			in, outcome, reason := driveFaultCase(t, op, method, 1, faultstorage.KindError)
+			if outcome != driveObserved {
+				t.Fatalf("case could not be driven (%s: %s)", outcome, reason)
+			}
+			if f := oracleFindingsWithout(t, in, noop); len(f) > 0 {
+				t.Fatalf("the real degraded state is reported: %v", f)
+			}
+			// A lost Degraded flag alone matches the reference; the row must also
+			// diverge in another column (ForcedIncomplete) for the exemption to matter.
+			undegraded := in
+			undegraded.after = withChangedRowsSet(t, in.before, in.after, "AccessReviewCampaign",
+				map[string]string{"Degraded": `false`, "DegradedReasons": `null`, "ForcedIncomplete": `true`})
+			if f := oracleFindingsWithout(t, undegraded, noop); len(f) == 0 {
+				t.Fatal("a campaign row that diverges without the degraded report is accepted by design")
+			} else {
+				t.Logf("undegraded campaign row flagged: %s", f[0])
+			}
+		})
+	}
 }

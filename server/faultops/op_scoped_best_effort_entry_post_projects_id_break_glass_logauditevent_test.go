@@ -1,6 +1,8 @@
 // One file per entry; never append to a shared list. See registry_entries_test.go.
 package faultops
 
+import "github.com/keyorixhq/keyorix/internal/faultstorage"
+
 func init() {
 	// BREAKGLASS-OWED-1 (internal/core/break_glass.go, activateBreakGlassDegraded):
 	// when the activation's audit append is refused, the activation still commits,
@@ -17,5 +19,6 @@ func init() {
 		op: "REST POST /api/v1/projects/{id}/break-glass", method: "LogAuditEvent",
 		tables:              []string{"AuditEvent", "BreakGlassActivation", "Notification", "PendingAuditEvent"},
 		requireLogSubstring: "is DEGRADED: user",
+		pinnedKinds:         []faultstorage.FaultKind{faultstorage.KindError},
 	})
 }

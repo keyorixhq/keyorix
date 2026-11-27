@@ -1,6 +1,8 @@
 // One file per entry; never append to a shared list. See registry_entries_test.go.
 package faultops
 
+import "github.com/keyorixhq/keyorix/internal/faultstorage"
+
 func init() {
 	// The gRPC twin of post_projects_id_break_glass_logauditevent: the same core
 	// ActivateBreakGlass, the same BREAKGLASS-OWED-1 degraded commit with owed audit
@@ -9,5 +11,6 @@ func init() {
 		op: "GRPC keyorix.v1.BreakGlassService.ActivateBreakGlass", method: "LogAuditEvent",
 		tables:              []string{"AuditEvent", "BreakGlassActivation", "Notification", "PendingAuditEvent"},
 		requireLogSubstring: "is DEGRADED: user",
+		pinnedKinds:         []faultstorage.FaultKind{faultstorage.KindError},
 	})
 }
