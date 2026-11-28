@@ -1,0 +1,2 @@
+### Fixed
+- **Sharing an expired secret answers 404, not 500.** `POST /api/v1/secrets/{id}/share` (user and group recipients) returned `500 Failed to share secret` for a secret whose expiration had passed, because core's `ErrSecretExpired` is in no errclass class. It now answers `404 Secret not found`, like an absent secret and like `GET /api/v1/secrets/{id}/shares` (#4653): core reads the secret before it judges ownership, so a 409 would tell a non-owner which ids are expired. Found by the nightly strict OpenAPI fuzz (#4786).

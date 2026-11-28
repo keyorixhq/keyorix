@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,12 +105,23 @@ func TestShareSecret_RefusalsAnswerTheirStatus(t *testing.T) {
 	h, err := NewShareHandler(cs)
 	require.NoError(t, err)
 
+	// An expired secret: core reads it before it judges ownership and answers
+	// ErrSecretExpired, in no errclass class (#4786, the nightly strict fuzz; sibling of
+	// #4653). It is answered 404 like an absent secret, so a non-owner learns nothing
+	// about which ids are expired.
+	past := time.Now().Add(-time.Hour)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 102, Name: "expired", IsSecret: true, OwnerID: 1, ProjectID: 1, Expiration: &past}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "share-group"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 10, RoleID: 1, ProjectID: 1}).Error)
+
 	cases := []struct {
 		name   string
 		secret string
 		body   string
 		status int
 	}{
+		{"expired secret, user recipient", "102", `{"recipient_id":2,"permission":"read"}`, http.StatusNotFound},
+		{"expired secret, group recipient", "102", `{"recipient_id":10,"is_group":true,"permission":"read"}`, http.StatusNotFound},
 		{"share with a project member", "101", `{"recipient_id":2,"permission":"read"}`, http.StatusCreated},
 		{"duplicate share", "101", `{"recipient_id":2,"permission":"read"}`, http.StatusCreated},
 		{"self-share", "101", `{"recipient_id":1,"permission":"read"}`, http.StatusBadRequest},
