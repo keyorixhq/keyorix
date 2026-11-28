@@ -1,0 +1,1 @@
+internal/core/guards/atomicity_exempt_stale_rows_test.go	docs/atomicity-exempt.tsv	atomicity exemption ledger: every row must still match code (R1.18)

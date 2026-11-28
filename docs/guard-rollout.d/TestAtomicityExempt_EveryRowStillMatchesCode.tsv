@@ -1,0 +1,1 @@
+TestAtomicityExempt_EveryRowStillMatchesCode	internal/core/guards	#4802	new repo-wide guard: every docs/atomicity-exempt.tsv row must still match the code its scanner sees (class-B and CONSUME: rows: a declared method)
