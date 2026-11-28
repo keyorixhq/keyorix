@@ -107,7 +107,7 @@ func secretsRowKinds() []outageKind {
 			committed: func(w *outageWorld, id uint, _ string) bool { return node(w, id).RetentionOverrideDays == 30 },
 		},
 		{
-			name: "clone-environment", eventType: EventEnvironmentCloneStarted, prepare: inOwnEnv, sentinel: ErrMutationAuditUnavailable, projectLevel: true,
+			name: "clone-environment", eventType: "environment.clone_started", prepare: inOwnEnv, sentinel: ErrMutationAuditUnavailable, projectLevel: true,
 			mutate: func(w *outageWorld, id uint, name string) (uint, error) {
 				_, err := w.c.CloneEnvironment(context.Background(), w.f.projectID, node(w, id).EnvironmentID, dstOf(w, name), "admin", w.f.adminID)
 				return 0, err
@@ -115,7 +115,7 @@ func secretsRowKinds() []outageKind {
 			committed: copied,
 		},
 		{
-			name: "copy-environment", eventType: EventEnvironmentSecretsCopyStarted, prepare: inOwnEnv, sentinel: ErrMutationAuditUnavailable, projectLevel: true,
+			name: "copy-environment", eventType: "environment.secrets_copy_started", prepare: inOwnEnv, sentinel: ErrMutationAuditUnavailable, projectLevel: true,
 			mutate: func(w *outageWorld, id uint, name string) (uint, error) {
 				_, _, err := w.c.CopyEnvironmentSecrets(context.Background(), w.f.projectID, node(w, id).EnvironmentID, dstOf(w, name), "admin", w.f.adminID, "198.51.100.9", "rows-test")
 				return 0, err
