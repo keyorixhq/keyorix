@@ -76,7 +76,7 @@ func TestJourney_CLILoginWithMFA(t *testing.T) {
 		}
 	})
 
-	t.Run("2. --mfa-code with a TOTP code logs in and stores a working session", func(t *testing.T) {
+	t.Run("2. KEYORIX_MFA_CODE with a TOTP code logs in and stores a working session", func(t *testing.T) {
 		code := totpCodeAfterStep(t, secret, burnedStep)
 		out := runCLI(t, cliBin, withEnv(loginEnv, "KEYORIX_PASSWORD="+adminPw, "KEYORIX_MFA_CODE="+code),
 			"login", "--server", s.BaseURL, "--username", adminUser)
@@ -98,7 +98,7 @@ func TestJourney_CLILoginWithMFA(t *testing.T) {
 		assertCredentialFileHasNoCode(t, s.Dir, code)
 	})
 
-	t.Run("3. --mfa-code accepts a recovery code", func(t *testing.T) {
+	t.Run("3. KEYORIX_MFA_CODE accepts a recovery code", func(t *testing.T) {
 		// The server accepts either a TOTP code or an unused recovery code on
 		// /auth/mfa/verify (internal/core.VerifyMFACredentials), and the CLI must not
 		// pre-judge which one it was handed.
