@@ -19,7 +19,7 @@ open is [known-limitations.md](known-limitations.md).
 | 5b | Audit-chain break: accept a proven **loss of rows** | **works with caveat** | `keyorix-server admin audit accept-loss --help` (the chain then reads `sealed`, never valid; the sealing run itself was **not run here**, the runbook shows a captured plan in section 7) | Only for lost rows (gap or truncation) |
 | 5c | Audit-chain break: restart after a **modified row** | **missing** | `admin audit accept-loss --first-broken-id 18 ...` on a chain with row 18 edited: `that is a modified row, not a lost one` | The break stays in every report and checkpoints stay refused. Ways forward: restore a known-good archive, or keep running on the broken chain |
 | 5d | `rotate-kek` makes older audit checkpoints read BROKEN | **works with caveat** | After `rotate-kek`: `verify-audit --checkpoint-key-file <new key>` is `VALID` (`Checkpoint: authenticated ... certifies 28 chained events`); with the **old** key it is `BROKEN` (wrong key) | Export the new key after every rotation; pass earlier keys with `--previous-checkpoint-key-file`. Test: `TestAuditKeyTransition_PurgedInstallStaysValid` (`internal/core`) |
-| 5e | `CONFIGURATION.md` calls the checkpoint key DEK-derived | **fixed** | `rg 'KEK-derived' docs/CONFIGURATION.md` (lines 2142, 2187, 2217) | none |
+| 5e | `CONFIGURATION.md` described the checkpoint key with the wrong key (it is KEK-derived, not DEK-derived) | **fixed** | `rg 'KEK-derived' docs/CONFIGURATION.md` (lines 2142, 2187, 2217) | none |
 
 ## Filed for the rows marked missing
 
