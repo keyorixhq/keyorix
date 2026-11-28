@@ -910,12 +910,13 @@ func (c *KeyorixCore) auditMFAError(ctx context.Context, userID uint, phase stri
 
 // mfaActiveGuardRefusal converts a requireActorActive refusal for ActivateMFA /
 // DisableMFA / RegenerateMFARecoveryCodes into the same generic error an absent
-// or consumed step-up grant produces. Anti-enumeration: a caller who knows only
-// a username must not be able to distinguish "account suspended" from "wrong
-// credential" by the error text. The returned error:
+// or consumed step-up grant produces, so the refusal does not tell "account
+// suspended" apart from "wrong credential" by its text. The returned error:
 //   - has message "invalid code or password" (same as requireReauth's negative path)
-//   - satisfies errors.Is(err, ErrPermissionDenied) (typed refusal, so transports
-//     map it 403, not 401 — we do NOT want it counted as a login attempt)
+//   - satisfies errors.Is(err, ErrPermissionDenied) (a typed refusal for core
+//     callers and the authzdiff matrix; REST writeMFAErr ignores the type and
+//     answers 400 with this safe message, the same status and text as a wrong
+//     credential; these ops have no gRPC route)
 //   - satisfies errors.Is(err, ErrReauthRejected) (via reauthRejectedError.Is)
 //
 // A storage fault from requireActorActive (ErrStorageReadUnavailable) is not
