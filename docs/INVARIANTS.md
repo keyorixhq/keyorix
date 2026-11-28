@@ -23,7 +23,7 @@ excluded from the counts table, which tracks production packages only.
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
 | `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 19 | 19 | 0 |
-| `fuzz/thirdparty` | [fuzz/thirdparty/INVARIANTS.md](../fuzz/thirdparty/INVARIANTS.md) | 14 | 14 | 0 |
+| `fuzz/thirdparty` | [fuzz/thirdparty/INVARIANTS.md](../fuzz/thirdparty/INVARIANTS.md) | 15 | 15 | 0 |
 | `fuzz/thirdparty/compress` | [fuzz/thirdparty/compress/INVARIANTS.md](../fuzz/thirdparty/compress/INVARIANTS.md) | 2 | 1 | 1 |
 | `fuzz/thirdparty/cors` | [fuzz/thirdparty/cors/INVARIANTS.md](../fuzz/thirdparty/cors/INVARIANTS.md) | 4 | 4 | 0 |
 | `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 5 | 5 | 0 |
@@ -34,7 +34,7 @@ excluded from the counts table, which tracks production packages only.
 | `internal/auditverify` | [internal/auditverify/INVARIANTS.md](../internal/auditverify/INVARIANTS.md) | 26 | 26 | 0 |
 | `internal/backupfmt` | [internal/backupfmt/INVARIANTS.md](../internal/backupfmt/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/connect` | [internal/connect/INVARIANTS.md](../internal/connect/INVARIANTS.md) | 3 | 3 | 0 |
-| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 188 | 188 | 0 |
+| `internal/core` | [internal/core/INVARIANTS.md](../internal/core/INVARIANTS.md) | 189 | 189 | 0 |
 | `internal/delivery` | [internal/delivery/INVARIANTS.md](../internal/delivery/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/encryption` | [internal/encryption/INVARIANTS.md](../internal/encryption/INVARIANTS.md) | 59 | 59 | 0 |
 | `internal/evidencesink` | [internal/evidencesink/INVARIANTS.md](../internal/evidencesink/INVARIANTS.md) | 1 | 1 | 0 |
