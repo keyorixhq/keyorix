@@ -123,6 +123,7 @@ audit_checkpoints:
   schedule: "3s"
 dynamic_secrets:
   insecure_allow_private_network_dynamic_secret_targets: true
+  insecure_allow_plaintext_dynamic_secret_transport: true
 break_glass:
   enabled: true
   emergency_role: "project_developer"
@@ -402,6 +403,13 @@ verify_migrated() {
 }
 
 verify_migrated "$DST" "$PDST" PostgreSQL
+# the server ran on PostgreSQL and wrote events of its own (logins, reads): they extend the chain
+# past what the restore left, and the head row of the move is still the one the source had.
+[ "$(mc "$DST" audit-tail --after "$SRC_AUDIT_MAX" | wc -l | tr -d ' ')" -gt "$(echo "$TAIL" | wc -l | tr -d ' ')" ] \
+    || fail "the server running on PostgreSQL appended no audit events after the restore"
+[ "$(mc "$DST" audit-link --after "$SRC_AUDIT_MAX" | sed -n 1p | cut -f1,3)" = "$(printf '%s\t%s' "$SRC_AUDIT_MAX" "$SRC_HEAD_ENTRY")" ] \
+    || fail "the migrated head row changed after the server ran on PostgreSQL"
+ok "new events extend the chain on PostgreSQL; the migrated head row is unchanged and the chain verified (exit 0)"
 
 # ============================================================================
 # 4b. the other direction: PostgreSQL -> SQLite
@@ -576,6 +584,152 @@ failure_leg "while migrating the target" "Running migrations against the target 
 failure_leg "while migrating the target" "Running migrations against the target database" cleanup
 failure_leg "while loading rows" "Loading data into the restored database" overwrite
 failure_leg "while loading rows" "Loading data into the restored database" cleanup
+
+# keys_listing <inst>: the names of the files in the instance's keys/ directory (journal included).
+keys_listing() {
+    local f out=""
+    for f in "$DRILL_DIR/$1/keys"/* "$DRILL_DIR/$1/keys"/.keyorix-restore-journal.json; do
+        [ -e "$f" ] && out="$out$(basename "$f") "
+    done
+    echo "${out:-nothing}"
+}
+
+# refusal_legs: restores that must be REFUSED, and what they leave behind (database B, which the
+# kill legs above left empty). Asserts the fail-closed properties (the restore exits non-zero, no key
+# file is installed or changed, the target database content is unchanged, the SQLite source file is
+# untouched); the observed outcome of each leg is printed for the report.
+refusal_legs() {
+    local first=ne-first second=ne-second wrongpw=wrong-pw diffkeys=diff-keys log rows ae
+    step "refusal legs: a non-empty target, a wrong master password, a target that holds other keys"
+    on_pg "$MIGRATE_PG_DSN_FILE2"
+
+    # a loaded target: a complete migration into B
+    pg_target "$first" "$(drill_port 31)" "$MIGRATE_PG_DSN_FILE2"
+    inst_admin "$first" restore --input "$EXT/backup.tar.gz" >"$DRILL_DIR/ne-first.log" 2>&1 \
+        || { cat "$DRILL_DIR/ne-first.log" >&2; fail "setup: restore into B failed"; }
+    mc "$first" table-sums >"$DRILL_DIR/ne-before.sums" || fail "table-sums on the loaded target"
+    ok "setup: database B holds a complete migration ($(jq -s 'map(select(.table!="__audit_max_id")) | map(.count) | add' "$DRILL_DIR/ne-before.sums") rows)"
+
+    # leg 1: a second restore (an instance with no keys, a plain restore) into the non-empty B
+    pg_target "$second" "$(drill_port 32)" "$MIGRATE_PG_DSN_FILE2"
+    log="$DRILL_DIR/refuse-nonempty.log"
+    if inst_admin "$second" restore --input "$EXT/backup.tar.gz" >"$log" 2>&1; then
+        fail "a restore into a NON-EMPTY PostgreSQL database was accepted"
+    fi
+    echo "    non-empty target: refused: $(grep -m1 -iE 'not empty|non-empty|already|existing' "$log" | cut -c1-200)"
+    echo "    non-empty target: keys/ after the refusal: [$(keys_listing "$second")]"
+    [ ! -e "$DRILL_DIR/$second/keys/dek.key" ] && [ ! -e "$DRILL_DIR/$second/keys/kek.salt" ] \
+        || fail "a key file was installed although the restore into a non-empty target was refused"
+    mc "$first" table-sums >"$DRILL_DIR/ne-after.sums" || fail "table-sums after the refusal"
+    cmp -s "$DRILL_DIR/ne-before.sums" "$DRILL_DIR/ne-after.sums" || fail "the non-empty target changed during a refused restore"
+    ok "non-empty target refused; no key file installed; every table of B unchanged"
+
+    # the same plain restore from the instance that already holds the right keys
+    log="$DRILL_DIR/refuse-nonempty-withkeys.log"
+    if inst_admin "$first" restore --input "$EXT/backup.tar.gz" >"$log" 2>&1; then
+        fail "a second plain restore over a loaded target (same instance) was accepted"
+    fi
+    mc "$first" table-sums >"$DRILL_DIR/ne-after2.sums" || fail "table-sums after the 2nd refusal"
+    cmp -s "$DRILL_DIR/ne-before.sums" "$DRILL_DIR/ne-after2.sums" || fail "the loaded target changed during a refused restore"
+    ok "second plain restore over the loaded target (instance holding its keys): refused, B unchanged"
+
+    mc "$first" reset-pg >/dev/null || fail "reset-pg after the non-empty legs"
+
+    # leg 2: wrong master password on an empty target
+    pg_target "$wrongpw" "$(drill_port 33)" "$MIGRATE_PG_DSN_FILE2"
+    log="$DRILL_DIR/refuse-wrongpw.log"
+    if inst_run "$wrongpw" env KEYORIX_MASTER_PASSWORD="wrong-$(rand_hex 8)" KEYORIX_CONFIG_PATH=./keyorix.yaml \
+        "$DRILL_SERVER_BIN" admin restore --input "$EXT/backup.tar.gz" --config ./keyorix.yaml >"$log" 2>&1; then
+        fail "a restore with a WRONG master password was accepted"
+    fi
+    echo "    wrong master password: refused: $(grep -m1 -iE 'password|decrypt|key' "$log" | cut -c1-200)"
+    echo "    wrong master password: keys/ after the refusal: [$(keys_listing "$wrongpw")]"
+    [ ! -e "$DRILL_DIR/$wrongpw/keys/dek.key" ] && [ ! -e "$DRILL_DIR/$wrongpw/keys/kek.salt" ] \
+        || fail "a key file was installed by a restore that was refused for a wrong master password"
+    if rows="$(mc "$wrongpw" table-sums 2>/dev/null)"; then
+        echo "    wrong master password: target B afterwards: schema present, $(echo "$rows" | jq -r 'select(.table=="audit_events") | .count') audit events, $(echo "$rows" | jq -s 'map(select(.table!="__audit_max_id")) | map(.count) | add') rows"
+        [ "$(echo "$rows" | jq -r 'select(.table=="audit_events") | .count')" = "0" ] \
+            || fail "data was committed by a restore refused for a wrong master password"
+    else
+        echo "    wrong master password: target B afterwards: no schema"
+    fi
+    echo "    wrong master password: leftover restore journal: $([ -e "$DRILL_DIR/$wrongpw/keys/.keyorix-restore-journal.json" ] && echo yes || echo no)"
+    ok "wrong master password refused; no key file installed; no row committed"
+    # the target must still be usable for a correct restore afterwards
+    if [ -e "$DRILL_DIR/$wrongpw/keys/.keyorix-restore-journal.json" ]; then
+        inst_admin "$wrongpw" restore --recover >/dev/null 2>&1 || fail "--recover after the wrong-password refusal failed"
+    fi
+    mc "$wrongpw" reset-pg >/dev/null || true
+
+    # leg 3: the target already holds a DIFFERENT key set (an `encryption init` of its own)
+    pg_target "$diffkeys" "$(drill_port 34)" "$MIGRATE_PG_DSN_FILE2"
+    (umask 077 && mkdir -p "$DRILL_DIR/$diffkeys/keys") && chmod 700 "$DRILL_DIR/$diffkeys/keys"
+    inst_admin "$diffkeys" encryption init >/dev/null 2>&1 || fail "setup: encryption init on the other-keys target failed"
+    local dek_before
+    dek_before="$(shasum -a 256 "$DRILL_DIR/$diffkeys/keys/dek.key" 2>/dev/null | awk '{print $1}')"
+    [ -n "$dek_before" ] || fail "setup: the other-keys target has no dek.key"
+    log="$DRILL_DIR/refuse-otherkeys.log"
+    # `encryption init` also migrated the schema, so this refusal comes from the non-empty-schema
+    # check; leg 3b below isolates the key check.
+    if inst_admin "$diffkeys" restore --input "$EXT/backup.tar.gz" >"$log" 2>&1; then
+        fail "a restore into a target holding its own keys and schema was accepted"
+    fi
+    echo "    target with other keys: refused: $(grep -m1 -iE 'key|exist|already' "$log" | cut -c1-200)"
+    [ "$dek_before" = "$(shasum -a 256 "$DRILL_DIR/$diffkeys/keys/dek.key" | awk '{print $1}')" ] \
+        || fail "a refused restore replaced the target's existing dek.key"
+    ok "target holding other keys (and a schema) refused; its dek.key is unchanged"
+
+    # leg 3b: the same target with its own keys but NO schema (an empty database): only the key check
+    # can refuse it now. The keys of another instance must never be replaced by the archive's.
+    mc "$diffkeys" reset-pg >/dev/null || fail "reset-pg on the other-keys target"
+    log="$DRILL_DIR/refuse-otherkeys-noschema.log"
+    if inst_admin "$diffkeys" restore --input "$EXT/backup.tar.gz" >"$log" 2>&1; then
+        fail "a restore into an empty database was accepted although the target holds its own, different keys"
+    fi
+    echo "    own keys, no schema: refused: $(grep -m1 -iE 'key|exist|already' "$log" | cut -c1-200)"
+    grep -q 'already exists and is not empty' "$log" \
+        || { cat "$log" >&2; fail "the own-keys refusal does not say which key file blocks the restore"; }
+    [ "$dek_before" = "$(shasum -a 256 "$DRILL_DIR/$diffkeys/keys/dek.key" | awk '{print $1}')" ] \
+        || fail "a restore refused for the target's own keys replaced its dek.key"
+    echo "    own keys, no schema: keys/ after the refusal: [$(keys_listing "$diffkeys")]"
+    if rows="$(mc "$diffkeys" table-sums 2>/dev/null)"; then
+        ae="$(echo "$rows" | jq -r 'select(.table=="audit_events") | .count')"
+        [ -z "$ae" ] || [ "$ae" = "0" ] || fail "data was committed by a restore refused for the target's own keys"
+    fi
+    [ ! -e "$DRILL_DIR/$diffkeys/keys/.keyorix-restore-journal.json" ] || fail "a restore refused before staging left a restore journal"
+    ok "own keys, no schema: refused (exit non-zero, message names the key file); dek.key unchanged, no journal, no row committed"
+    [ "$(shasum -a 256 "$DRILL_DIR/$SRC/keyorix.db" | awk '{print $1}')" = "$SRC_DB_SHA" ] \
+        || fail "the SQLite source changed during the refusal legs"
+    mc "$diffkeys" reset-pg >/dev/null || true
+}
+
+# overwrite_empty_leg: `--overwrite-existing` against an EMPTY target (database B, empty after the legs
+# above, no key files): the one case where the flag is harmless. It must complete like a plain restore,
+# and the chain must be intact and continue. The destructive case (the flag, plus --replace-existing-data,
+# against a target that holds data) is documented in docs/operator/drill-sqlite-to-postgres.md and is
+# deliberately NOT run here.
+overwrite_empty_leg() {
+    local inst=ow-empty first_new
+    step "--overwrite-existing against an EMPTY target (no schema, no keys)"
+    pg_target "$inst" "$(drill_port 35)" "$MIGRATE_PG_DSN_FILE2"
+    on_pg "$MIGRATE_PG_DSN_FILE2"
+    mc "$inst" reset-pg >/dev/null || fail "reset-pg before the overwrite leg"
+    inst_admin "$inst" restore --input "$EXT/backup.tar.gz" --overwrite-existing >"$DRILL_DIR/overwrite-empty.log" 2>&1 \
+        || { cat "$DRILL_DIR/overwrite-empty.log" >&2; fail "restore --overwrite-existing into an EMPTY target failed"; }
+    compare_to_source "$inst"
+    ok "restore --overwrite-existing into an empty target: all tables equal the source"
+    verify_audit "$inst" --checkpoint-key-file "$EXT/checkpoint.key"
+    first_new="$(mc "$inst" audit-link --after "$SRC_AUDIT_MAX")" || fail "audit-link on the overwrite target"
+    [ "$(echo "$first_new" | sed -n 1p | cut -f1,3)" = "$(printf '%s\t%s' "$SRC_AUDIT_MAX" "$SRC_HEAD_ENTRY")" ] \
+        || fail "head of the overwrite target differs from the source head"
+    [ "$(echo "$first_new" | sed -n 2p | cut -f2)" = "$SRC_HEAD_ENTRY" ] \
+        || fail "the first event after the overwrite restore does not chain onto the head"
+    ok "chain VALID, head unchanged, first new event chains onto it"
+    mc "$inst" reset-pg >/dev/null || true
+}
+
+refusal_legs
+overwrite_empty_leg
 
 step "rollback = do nothing to the SQLite source"
 [ "$(shasum -a 256 "$DRILL_DIR/$SRC/keyorix.db" | awk '{print $1}')" = "$SRC_DB_SHA" ] || fail "SQLite source changed"
