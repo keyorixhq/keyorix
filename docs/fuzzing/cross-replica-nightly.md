@@ -56,8 +56,9 @@ needs no lock — it checks for one and yields.
 
 ```sh
 # 0. Claim the lock (NEVER delete another session's claim; wait instead).
-ssh root@192.168.10.20 'cat /root/PVE-BENCH-LOCK 2>/dev/null'   # must be empty
-ssh root@192.168.10.20 'echo "xreplica-install $(date -u +%FT%TZ)" > /root/PVE-BENCH-LOCK'
+#    PVE_HOST is the Proxmox host's address from the private lab inventory.
+ssh "root@${PVE_HOST:?set PVE_HOST}" 'cat /root/PVE-BENCH-LOCK 2>/dev/null'   # must be empty
+ssh "root@${PVE_HOST}" 'echo "xreplica-install $(date -u +%FT%TZ)" > /root/PVE-BENCH-LOCK'
 
 # 1. Lay out the rig (on the box, as root).
 mkdir -p /opt/keyorix-xreplica/{state,go-cache,go-mod,gopath}
@@ -81,7 +82,7 @@ systemctl enable --now keyorix-xreplica-fuzz.timer
 systemctl list-timers keyorix-xreplica-fuzz.timer
 
 # 5. Release the lock.
-ssh root@192.168.10.20 'rm -f /root/PVE-BENCH-LOCK'
+ssh "root@${PVE_HOST}" 'rm -f /root/PVE-BENCH-LOCK'
 ```
 
 ## Smoke test

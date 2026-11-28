@@ -15,9 +15,9 @@ list (names only).
 
 | Item | Value |
 |------|-------|
-| Host | Proxmox VE — `192.168.10.20` |
+| Host | Proxmox VE — `<pve-host>` (the lab address is kept in the private lab inventory, not in this repo) |
 | Container | LXC 221 — `keyorix-dast` |
-| Container IP | `192.168.10.61` |
+| Container IP | `<dast-ct-ip>` (same inventory) |
 | Base dir | `/opt/keyorix-dast/` |
 | Results | `/opt/keyorix-dast/results/` |
 | Cron log | `/opt/keyorix-dast/results/cron.log` |
