@@ -76,6 +76,14 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if shareErr != nil {
+		// An expired secret is answered 404, like an absent one: core reads the secret
+		// before it judges ownership, so a 409 "expired" would tell a non-owner which
+		// secret ids are expired. It was a 500 (#4786): ErrSecretExpired is in no errclass
+		// class. Same answer as ListSecretShares (#4653).
+		if errors.Is(shareErr, core.ErrSecretExpired) {
+			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
+			return
+		}
 		// A refusal names its reason through core.ShareRefusalMessage (a recipient outside
 		// the project, a non-owner, a group without a role there); a self-share and a
 		// past expiry are validation refusals (400), an absent secret is a 404.

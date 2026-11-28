@@ -47,9 +47,11 @@ package http
 //                                   (default: <os.TempDir()>/osf_findings.log)
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -891,9 +893,24 @@ func osReport(t *testing.T, key, format string, args ...any) {
 
 func osExec(w *osWorld, req *http.Request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
+	var logs bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&logs)
+	defer func() {
+		log.SetOutput(prev)
+		osLastServerLog = logs.String()
+	}()
 	w.router.ServeHTTP(rec, req)
 	return rec
 }
+
+// osLastServerLog is what the router wrote to the standard logger while serving the most
+// recent osExec request. An Internal answer names its cause only in the handler's own
+// "Error <op>: <cause>" log line, and the fuzz engine's worker processes do not forward
+// their stderr, so the nightly strict failure (#4786) carried no cause. The strict no-5xx
+// failure prints this line. The root package of server/http runs no parallel tests, so
+// swapping the global logger around one request is safe here.
+var osLastServerLog string
 
 // osBindResponse scans a 2xx JSON body for integer "id" values and binds them into the
 // operation's collection pool, so later ops can target freshly created resources. Also
@@ -1039,8 +1056,8 @@ func osOracleNo5xx(t *testing.T, w *osWorld, o *osOp, princ, mode int, req *http
 	wellFormed := mode != 2
 	if wellFormed && osStrict {
 		osReport(t, "no5xx|"+o.opID+"|"+strconv.Itoa(rec.Code),
-			"NO-5XX: %s %s (op=%s princ=%d mode=%d) returned undeclared %d on a well-formed request\nbody=%s",
-			req.Method, req.URL.Path, o.opID, princ, mode, rec.Code, osTrunc(rec.Body.String()))
+			"NO-5XX: %s %s (op=%s princ=%d mode=%d) returned undeclared %d on a well-formed request\nbody=%s\nserver log=%s",
+			req.Method, req.URL.Path, o.opID, princ, mode, rec.Code, osTrunc(rec.Body.String()), osTrunc(osLastServerLog))
 		return
 	}
 	kind := "malformed-input robustness"

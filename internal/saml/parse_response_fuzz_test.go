@@ -174,6 +174,12 @@ func FuzzParseResponse(f *testing.F) {
 		f.Add(validResponse[:len(validResponse)-8]) // truncated
 		f.Add(validResponse + "QUFB")               // trailing garbage
 	}
+	// Library-failure seed (#4750): well-formed, one Assertion with one Subject/NameID and
+	// one Conditions, no signature. It passes the epilogue and strict-shape pre-checks and
+	// is refused by the library, the one branch where ParseResponse could hand back
+	// something other than the sentinel; every other seed is refused before it.
+	// TestParseResponseSeed_ReachesLibraryFailureBranch fails if it stops getting there.
+	f.Add(unsignedWellFormedResponseSeed())
 	// Fail-closed EncryptedAssertion seeds: keyorix configures no SP decryption key,
 	// so a CBC EncryptedAssertion must fail through the sanitized sentinel — never a
 	// decrypt/padding error that varies with the (unauthenticated) ciphertext. These
