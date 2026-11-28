@@ -52,6 +52,7 @@ func newSCIMSSOHarness(t *testing.T, c *KeyorixCore) *scimSSOHarness {
 	t.Cleanup(h.idp.Close)
 	h.p = &SSOProvider{
 		Name: "okta", Issuer: "https://idp.test", ClientID: "client-1",
+		HTTPClient: &http.Client{},
 		OAuth: &oauth2.Config{
 			ClientID:    "client-1",
 			Endpoint:    oauth2.Endpoint{AuthURL: "https://idp.test/authorize", TokenURL: h.idp.URL},

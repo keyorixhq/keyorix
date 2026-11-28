@@ -116,6 +116,7 @@ func fuzzOIDCProvider() (*core.SSOProvider, core.JWKSResolver, error) {
 	}
 	p := &core.SSOProvider{
 		Name: fuzzOIDCProviderName, Issuer: fuzzOIDCIssuer, ClientID: fuzzOIDCClientID,
+		HTTPClient: &http.Client{},
 		OAuth: &oauth2.Config{
 			ClientID: fuzzOIDCClientID,
 			Endpoint: oauth2.Endpoint{

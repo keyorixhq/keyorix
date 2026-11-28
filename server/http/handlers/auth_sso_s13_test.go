@@ -276,6 +276,7 @@ func newSSOProvider(name, completeURL string) *core.SSOProvider {
 		Name:        name,
 		Type:        "", // "" == oidc
 		CompleteURL: completeURL,
+		HTTPClient:  &http.Client{},
 		OAuth: &oauth2.Config{
 			ClientID:     "test-client-id",
 			ClientSecret: "test-client-secret",

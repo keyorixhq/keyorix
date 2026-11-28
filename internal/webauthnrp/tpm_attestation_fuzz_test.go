@@ -361,7 +361,11 @@ func checkTPMAccepted(fx *tpmFixture, st tpmStatement, requireRoot bool) error {
 	if !bytes.Equal(extra, want[:]) {
 		return errors.New("accepted certInfo.extraData that is not H(authData || H(clientData))")
 	}
-	name, err := tpmName(st.pubArea)
+	canon, err := tpmCanonicalPubArea(st.pubArea)
+	if err != nil {
+		return fmt.Errorf("accepted a pubArea the oracle cannot parse: %w", err)
+	}
+	name, err := tpmName(canon)
 	if err != nil {
 		return fmt.Errorf("accepted a pubArea the oracle cannot name: %w", err)
 	}
@@ -373,7 +377,7 @@ func checkTPMAccepted(fx *tpmFixture, st tpmStatement, requireRoot bool) error {
 	if err != nil {
 		return err
 	}
-	x, y, err := readECCUnique(st.pubArea)
+	x, y, err := readECCUnique(canon)
 	if err != nil {
 		return fmt.Errorf("accepted a pubArea the oracle cannot read: %w", err)
 	}
@@ -532,6 +536,23 @@ func tpmName(pubArea []byte) ([]byte, error) {
 	return append(append([]byte{}, pubArea[2:4]...), h.Sum(nil)...), nil
 }
 
+// tpmCanonicalPubArea is the canonical marshalling of the TPMT_PUBLIC that
+// pubArea parses to. go-webauthn parses pubArea with tpm2.Unmarshal, which
+// ignores bytes after the structure, then computes the Name with tpm2.ObjectName
+// and takes the key from the parsed structure. A pubArea with trailing bytes
+// therefore names the same object, with the same key, as its canonical form, and
+// a certInfo that certifies that Name is a genuine attestation of that key: no
+// forgery, the signed Name and the extracted key are unchanged. Hashing and
+// reading the raw bytes flagged it as a Name mismatch (KFZ-2026-190). The oracle
+// checks the Name and the key against this canonical form.
+func tpmCanonicalPubArea(pubArea []byte) ([]byte, error) {
+	pub, err := tpm2.Unmarshal[tpm2.TPMTPublic](pubArea)
+	if err != nil {
+		return nil, fmt.Errorf("pubArea does not parse: %w", err)
+	}
+	return tpm2.Marshal(*pub), nil
+}
+
 // algES256K is COSE algorithm -47 (ES256K, secp256k1). go-webauthn v0.18.2 maps
 // it to x509.ECDSAWithSHA256, so the library alone accepts a TPM statement
 // labelled -47 whose P-256 AIK signature over certInfo verifies (#4545,
@@ -559,6 +580,25 @@ func TestTPMSeed_AcceptedByBothModes(t *testing.T) {
 	}
 	if err := checkTPMAccepted(fx, st, true); err != nil {
 		t.Fatalf("oracle rejects the genuine statement: %v", err)
+	}
+}
+
+// TestTPMAttestation_TrailingPubAreaBytesTolerated pins the library's
+// tolerance of bytes after the TPMT_PUBLIC in pubArea (KFZ-2026-190): the
+// certInfo still certifies the canonical Name, the credential key is unchanged,
+// and the oracle agrees with the library instead of reporting a Name mismatch.
+// It is a tolerance record, not a security claim: if go-webauthn starts refusing
+// trailing bytes this test fails and the pin should be flipped to a refusal.
+func TestTPMAttestation_TrailingPubAreaBytesTolerated(t *testing.T) {
+	fx := newTPMFixture(t)
+	st := fx.seedStatement()
+	st.pubArea = append(append([]byte{}, st.pubArea...), 0x30)
+	resp := fx.response(t, st.ver, st.alg, st.certInfo, st.pubArea, st.sig, st.aik)
+	if _, err := finish(newKeyorixRP(t), resp); err != nil {
+		t.Fatalf("library no longer tolerates trailing pubArea bytes: %v (flip this pin to a refusal)", err)
+	}
+	if err := checkTPMAccepted(fx, st, false); err != nil {
+		t.Fatalf("oracle contradicts the library on trailing pubArea bytes: %v", err)
 	}
 }
 
@@ -775,6 +815,8 @@ func fuzzTPM(f *testing.F, requireRoot bool) {
 	for _, alg := range []int64{s.alg, -9, algES256K} {
 		f.Add(s.ver, alg, s.certInfo, s.pubArea, s.sig, s.aik)
 	}
+	// One byte after the TPMT_PUBLIC: accepted by the library (KFZ-2026-190).
+	f.Add(s.ver, s.alg, s.certInfo, append(append([]byte{}, s.pubArea...), 0x30), s.sig, s.aik)
 	f.Fuzz(func(t *testing.T, ver string, alg int64, certInfo, pubArea, sig, aik []byte) {
 		st := tpmStatement{ver, alg, certInfo, pubArea, sig, aik}
 		resp := fx.response(t, ver, alg, certInfo, pubArea, sig, aik)

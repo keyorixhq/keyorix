@@ -34,6 +34,7 @@ func ssoTestCore(t *testing.T) (*KeyorixCore, *MockStorage, *rsa.PrivateKey, *SS
 	store := new(MockStorage)
 	p := &SSOProvider{
 		Name: "okta", Issuer: "https://idp.test", ClientID: "client-1",
+		HTTPClient: &http.Client{},
 		OAuth: &oauth2.Config{
 			ClientID:    "client-1",
 			Endpoint:    oauth2.Endpoint{AuthURL: "https://idp.test/authorize", TokenURL: "https://idp.test/token"},

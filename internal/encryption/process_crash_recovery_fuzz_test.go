@@ -762,18 +762,38 @@ func pcrashRecordStat(op string, killAt int64, r pcrashChildRun) {
 	_, _ = fmt.Fprintf(f, "%s\t%d\t%v\t%s\n", op, killAt, r.killed, r.label)
 }
 
-// pcrashWorldFor builds a template for tb and removes it when tb ends.
+// pcrashWorldFor returns the process's template install. It is built once per
+// test binary (the build runs init, encryption init, migrate, seed and backup as
+// five child processes) and shared: every user only copies it (pcrashCopyTree)
+// and never writes to it; each caller gets its own calibration caches. The
+// directories are removed by TestMain; a binary killed before that leaves them
+// for removeStalePCrashWorlds. Fuzz workers are separate processes, so each
+// still builds its own.
 func pcrashWorldFor(tb testing.TB) *pcrashWorld {
 	tb.Helper()
-	w, err := buildPCrashWorld()
-	if err != nil {
-		tb.Fatalf("build template: %v", err)
+	pcrashShared.once.Do(func() { pcrashShared.w, pcrashShared.err = buildPCrashWorld() })
+	if pcrashShared.err != nil {
+		tb.Fatalf("build template: %v", pcrashShared.err)
 	}
-	tb.Cleanup(func() {
+	// The directories are shared; the calibration caches are not. A shared cache
+	// made FuzzProcessCrashRecovery's migrate-fresh seed fail after
+	// TestProcessCrashRedProof had filled it, so each caller keeps its own.
+	return &pcrashWorld{dir: pcrashShared.w.dir, fresh: pcrashShared.w.fresh, seed: pcrashShared.w.seed, cal: map[string]pcrashCalibration{}}
+}
+
+var pcrashShared struct {
+	once sync.Once
+	w    *pcrashWorld
+	err  error
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if w := pcrashShared.w; w != nil {
 		_ = os.RemoveAll(w.dir)
 		_ = os.RemoveAll(w.fresh)
-	})
-	return w
+	}
+	os.Exit(code)
 }
 
 // pcrashSkipUnlessRequested keeps a test that spawns real child processes out of

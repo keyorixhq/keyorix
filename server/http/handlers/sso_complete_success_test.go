@@ -59,6 +59,7 @@ func TestCompleteSSO_Success_S1727(t *testing.T) {
 	p := &core.SSOProvider{
 		Name: providerName, Issuer: "https://idp.test.example", ClientID: "test-client-id",
 		CompleteURL: completeURL,
+		HTTPClient:  &http.Client{},
 		OAuth: &oauth2.Config{
 			ClientID:    "test-client-id",
 			Endpoint:    oauth2.Endpoint{AuthURL: "https://idp.test.example/authorize", TokenURL: "https://idp.test.example/token"},
