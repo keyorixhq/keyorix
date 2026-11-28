@@ -172,18 +172,24 @@ ensure_ca() {
 valid_for() { openssl x509 -in "$1" -noout -checkend "$2" >/dev/null 2>&1; }
 end_date() { openssl x509 -in "$1" -noout -enddate | sed 's/^notAfter=//'; }
 
-# days_left CERT MAX prints the whole days (0..MAX) CERT stays valid from now, or -1 when it has
-# expired. openssl only: no date arithmetic, which differs between GNU and BSD date.
+# days_left CERT MAX [MARGIN] prints the whole days d (0..MAX) for which CERT is still valid
+# d days plus MARGIN seconds from now, or -1 when it is not even valid MARGIN seconds from now.
+# openssl only: no date arithmetic, which differs between GNU and BSD date.
 days_left() {
-  local lo=0 hi="$2" mid
-  valid_for "$1" 0 || { echo -1; return 0; }
-  if valid_for "$1" $(($2 * 86400)); then echo "$2"; return 0; fi
+  local lo=0 hi="$2" m="${3:-0}" mid
+  valid_for "$1" "$m" || { echo -1; return 0; }
+  if valid_for "$1" $(($2 * 86400 + m)); then echo "$2"; return 0; fi
   while [ $((hi - lo)) -gt 1 ]; do # valid lo days from now, not valid hi days from now
     mid=$(((lo + hi) / 2))
-    if valid_for "$1" $((mid * 86400)); then lo=$mid; else hi=$mid; fi
+    if valid_for "$1" $((mid * 86400 + m)); then lo=$mid; else hi=$mid; fi
   done
   echo "$lo"
 }
+
+# leaf_cap prints the days a new certificate gets: LEAF_DAYS, or fewer so that it ends at least
+# an hour before the CA (it is signed a moment after this is measured), or -1 / 0 when the CA
+# ends within the next day.
+leaf_cap() { days_left "$CA_CRT" "$LEAF_DAYS" 3600; }
 
 # ca_expiry_warning: a WARNING on stderr when the CA ends within CA_WARN_DAYS.
 ca_expiry_warning() {
@@ -203,7 +209,7 @@ leaf_problem() {
     # (issue_leaf caps it to the CA), so it is worth it only when this one ends more than a day
     # before that. Otherwise (the CA bounds both) re-issuing on every start would only pile up
     # old/ copies; ca_expiry_warning says what to do instead. An expired one is always due.
-    local cap; cap="$(days_left "$CA_CRT" "$LEAF_DAYS")"
+    local cap; cap="$(leaf_cap)"
     if ! valid_for "$LEAF_CRT" 0 || { [ "$cap" -ge 1 ] && ! valid_for "$LEAF_CRT" $(((cap - 1) * 86400)); }; then
       echo "fewer than $RENEW_DAYS days left (notAfter $(end_date "$LEAF_CRT"))"; return 0
     fi
@@ -226,9 +232,9 @@ leaf_perms() {
 
 issue_leaf() { # issue_leaf NAMES
   local names="$1" cn days
-  valid_for "$CA_CRT" 86400 || die "the local CA $CA_CRT ends $(end_date "$CA_CRT"): a certificate it signs would expire with it.
+  days="$(leaf_cap)"
+  [ "$days" -ge 1 ] || die "the local CA $CA_CRT ends $(end_date "$CA_CRT"): a certificate it signs would expire with it.
        Re-run install.sh with --reuse --new-ca (the old CA is kept) and trust the new CA on every client once."
-  days="$(days_left "$CA_CRT" "$LEAF_DAYS")"
   [ "$days" -ge "$LEAF_DAYS" ] || say "certificate validity capped to $days days: the CA ends $(end_date "$CA_CRT")"
   mkdir -p "$LEAF_DIR"; leaf_perms
   work="$(mktemp -d "$LEAF_DIR/.work.XXXXXX")"

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/configs"
 )
@@ -857,8 +858,10 @@ func TestPKI_LeafNeverOutlivesTheCA(t *testing.T) {
 		t.Errorf("init did not say it capped the certificate: %s", out)
 	}
 	ca, leaf := readCert(t, filepath.Join(d.ca, "ca.crt")), readCert(t, filepath.Join(d.leaf, "server.crt"))
-	if leaf.NotAfter.After(ca.NotAfter) {
-		t.Errorf("certificate ends %v, after the CA (%v)", leaf.NotAfter, ca.NotAfter)
+	// At least an hour before: the leaf is signed a moment after the CA's end is measured, and a
+	// same-second race once let it end one second after the CA.
+	if ca.NotAfter.Sub(leaf.NotAfter) < time.Hour {
+		t.Errorf("certificate ends %v, less than an hour before the CA (%v)", leaf.NotAfter, ca.NotAfter)
 	}
 	if gap := ca.NotAfter.Sub(leaf.NotAfter).Hours(); gap > 48 {
 		t.Errorf("certificate ends %.0f h before the CA: capped too far", gap)
