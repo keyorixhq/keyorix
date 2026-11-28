@@ -3,37 +3,47 @@
 # openssl only: no ACME, no public DNS, no server needed. install.sh runs it; the systemd unit
 # runs `renew` before every start and a timer runs it daily.
 #
-#   pki.sh init  --ca-dir D --leaf-dir D --ip IP [--ip IP]... --dns NAME [--dns NAME]... [--new-ca]
-#   pki.sh renew --ca-dir D --leaf-dir D [--restart-unit UNIT]
+#   pki.sh init  --ca-dir D --leaf-dir D --ip IP [--ip IP]... --dns NAME [--dns NAME]... [--new-ca] [--key-group G]
+#   pki.sh renew --ca-dir D --leaf-dir D [--restart-unit UNIT] [--key-group G]
 #   pki.sh check --ca-dir D --leaf-dir D
 #
-# The CA is created ONCE (ECDSA P-256, 10 years, key 0600) and is limited by an X.509
-# nameConstraints extension to the IPs and DNS names given to `init` (plus localhost and
-# 127.0.0.1), so a client that trusts it trusts it for nothing else. The CA key signs the
-# server certificate and nothing else.
+# The CA is created ONCE (ECDSA P-256, 10 years, key 0600 in a 0700 directory) and is limited
+# to TLS server certificates for this box:
+#   - extendedKeyUsage = serverAuth on the CA itself, so clients that check it (browsers, Go,
+#     OpenSSL with a purpose) refuse a client, code-signing or e-mail certificate it signs;
+#   - a critical X.509 nameConstraints extension that permits only the IPs and DNS names given
+#     to `init` (plus localhost and 127.0.0.1), and no e-mail address or URI at all.
+# What a DNS constraint cannot express: it also permits every name BELOW it (x.demo-box.lan,
+# x.localhost), so whoever holds the CA key can sign those too. The CA key signs the server
+# certificate and nothing else.
 #
 # The server certificate (ECDSA P-256, serverAuth, SAN = the names, 820 days: under the 825-day
-# cap of Apple and Chrome) is re-issued when fewer than 30 days are left, when it is missing,
-# does not chain to the CA, or does not match its key. Clients trust the CA once; a renewal needs
-# nothing on any client. Whatever a re-issue replaces is moved to <leaf-dir>/old/<utc time>/,
-# never deleted.
+# cap of Apple and Chrome, and never past the CA's own end) is re-issued when fewer than 30 days
+# are left, when it is missing, does not chain to the CA, or does not match its key. Clients
+# trust the CA once; a renewal needs nothing on any client. Whatever a re-issue replaces is moved
+# to <leaf-dir>/old/<utc time>/, never deleted. When the CA itself has fewer than 90 days left,
+# every command prints a WARNING (re-run install.sh --reuse --new-ca); once it has expired no
+# certificate can be issued and `renew` fails with that instruction.
 #
-#   check   exit 0 when the certificate is valid for more than the renewal threshold, chains to
-#           the CA and matches its key; exit 1 otherwise (prints why).
+#   check   exit 0 when the certificate is valid for more than the renewal threshold (or for as
+#           long as the CA allows), chains to the CA and matches its key; exit 1 otherwise.
 #   renew   re-issue when `check` fails; prints "pki: certificate ok ..." or "pki: renewed ...".
 #           --restart-unit UNIT: after a renewal, `systemctl try-restart UNIT` (the timer uses it).
+#   --key-group G  (init, renew) the server runs as a member of group G, not as root: the
+#           certificate key is root:G 0640 in a root:G 0750 leaf directory. Without it, 0600.
 #   init    create the CA if missing, then issue the certificate if it is missing, due, or does
 #           not carry exactly the requested names. If the CA exists but does not permit a
 #           requested name (the box got a new address) it refuses: --new-ca moves the old CA
 #           aside (kept) and creates a new one, which every client must then trust again.
 #
 # Tunables (environment, used by the tests): KEYORIX_LAN_LEAF_DAYS (820), KEYORIX_LAN_RENEW_DAYS
-# (30), KEYORIX_LAN_CA_DAYS (3650).
+# (30), KEYORIX_LAN_CA_DAYS (3650), KEYORIX_LAN_CA_WARN_DAYS (90).
 set -euo pipefail
 
 LEAF_DAYS="${KEYORIX_LAN_LEAF_DAYS:-820}"
 RENEW_DAYS="${KEYORIX_LAN_RENEW_DAYS:-30}"
 CA_DAYS="${KEYORIX_LAN_CA_DAYS:-3650}"
+CA_WARN_DAYS="${KEYORIX_LAN_CA_WARN_DAYS:-90}"
 
 say() { echo "pki: $*"; }
 die() { echo "pki: ERROR: $*" >&2; exit 1; }
@@ -43,7 +53,7 @@ command -v openssl >/dev/null 2>&1 || die "openssl is required (apt install open
 CMD="${1:-}"
 [ -n "$CMD" ] || die "usage: pki.sh init|renew|check --ca-dir D --leaf-dir D ... (see the header of this file)"
 shift
-CA_DIR="" LEAF_DIR="" NEW_CA=false RESTART_UNIT=""
+CA_DIR="" LEAF_DIR="" NEW_CA=false RESTART_UNIT="" KEY_GROUP=""
 IPS=() DNSS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -52,12 +62,14 @@ while [ $# -gt 0 ]; do
     --ip)           [ $# -ge 2 ] || die "--ip needs a value"; IPS+=("$2"); shift 2 ;;
     --dns)          [ $# -ge 2 ] || die "--dns needs a value"; DNSS+=("$2"); shift 2 ;;
     --restart-unit) [ $# -ge 2 ] || die "--restart-unit needs a value"; RESTART_UNIT="$2"; shift 2 ;;
+    --key-group)    [ $# -ge 2 ] || die "--key-group needs a value"; KEY_GROUP="$2"; shift 2 ;;
     --new-ca)       NEW_CA=true; shift ;;
     -h|--help)      grep '^#' "$0" | sed 's/^# \?//'; exit 0 ;;
     *)              die "unknown argument: $1" ;;
   esac
 done
-[ -n "$CA_DIR" ] && [ -n "$LEAF_DIR" ] || die "--ca-dir and --leaf-dir are required"
+if [ -z "$CA_DIR" ] || [ -z "$LEAF_DIR" ]; then die "--ca-dir and --leaf-dir are required"; fi
+if [ -n "$KEY_GROUP" ] && [[ ! "$KEY_GROUP" =~ ^[a-z_][a-z0-9_-]*$ ]]; then die "--key-group is not a group name: $KEY_GROUP"; fi
 
 CA_KEY="$CA_DIR/ca.key"; CA_CRT="$CA_DIR/ca.crt"; CA_NAMES="$CA_DIR/names"
 LEAF_KEY="$LEAF_DIR/server.key"; LEAF_CRT="$LEAF_DIR/server.crt"; LEAF_NAMES="$LEAF_DIR/names"
@@ -141,7 +153,10 @@ ensure_ca() {
     printf '[dn]\nCN = %s\n' "$cn"
     printf '[v3_ca]\nbasicConstraints = critical, CA:TRUE, pathlen:0\nkeyUsage = critical, keyCertSign, cRLSign\n'
     printf 'subjectKeyIdentifier = hash\nnameConstraints = critical, @nc\n'
+    printf 'extendedKeyUsage = serverAuth\n'
     printf '[nc]\n'; nc_section "$NAMES"
+    # A permitted subtree that no real name is in: no e-mail address and no URI passes.
+    printf 'permitted;email.0 = .invalid\npermitted;URI.0 = .invalid\n'
   } > "$work/ca.cnf"
   new_key "$work/ca.key"
   ( umask 077; openssl req -new -x509 -sha256 -days "$CA_DAYS" -key "$work/ca.key" -config "$work/ca.cnf" -out "$work/ca.crt" ) \
@@ -153,23 +168,68 @@ ensure_ca() {
   say "created the CA ($cn), valid $CA_DAYS days, limited to: $(printf '%s' "$NAMES" | tr '\n' ' ')"
 }
 
+# valid_for CERT SECONDS: CERT is still valid SECONDS from now.
+valid_for() { openssl x509 -in "$1" -noout -checkend "$2" >/dev/null 2>&1; }
+end_date() { openssl x509 -in "$1" -noout -enddate | sed 's/^notAfter=//'; }
+
+# days_left CERT MAX prints the whole days (0..MAX) CERT stays valid from now, or -1 when it has
+# expired. openssl only: no date arithmetic, which differs between GNU and BSD date.
+days_left() {
+  local lo=0 hi="$2" mid
+  valid_for "$1" 0 || { echo -1; return 0; }
+  if valid_for "$1" $(($2 * 86400)); then echo "$2"; return 0; fi
+  while [ $((hi - lo)) -gt 1 ]; do # valid lo days from now, not valid hi days from now
+    mid=$(((lo + hi) / 2))
+    if valid_for "$1" $((mid * 86400)); then lo=$mid; else hi=$mid; fi
+  done
+  echo "$lo"
+}
+
+# ca_expiry_warning: a WARNING on stderr when the CA ends within CA_WARN_DAYS.
+ca_expiry_warning() {
+  [ -s "$CA_CRT" ] || return 0
+  ! valid_for "$CA_CRT" $((CA_WARN_DAYS * 86400)) || return 0
+  echo "pki: WARNING: the local CA $CA_CRT ends $(end_date "$CA_CRT") (fewer than $CA_WARN_DAYS days left)." \
+    "Before then re-run install.sh with --reuse --new-ca and trust the new CA on every client once;" \
+    "after it has expired no server certificate can be issued." >&2
+}
+
 # leaf_problem prints why the certificate needs (re-)issuing and returns 0, or returns 1 when fine.
 leaf_problem() {
-  [ -s "$LEAF_CRT" ] && [ -s "$LEAF_KEY" ] || { echo "no certificate yet"; return 0; }
+  if [ ! -s "$LEAF_CRT" ] || [ ! -s "$LEAF_KEY" ]; then echo "no certificate yet"; return 0; fi
   [ -s "$CA_CRT" ] || { echo "no CA at $CA_CRT"; return 0; }
-  if ! openssl x509 -in "$LEAF_CRT" -noout -checkend $((RENEW_DAYS * 86400)) >/dev/null 2>&1; then
-    echo "fewer than $RENEW_DAYS days left (notAfter $(openssl x509 -in "$LEAF_CRT" -noout -enddate | sed 's/^notAfter=//'))"; return 0
+  if ! valid_for "$LEAF_CRT" $((RENEW_DAYS * 86400)); then
+    # Re-issue only when that gains at least a day. When the CA ends within a day of this
+    # certificate a new one cannot last longer, and re-issuing on every start would only pile up
+    # old/ copies; ca_expiry_warning says what to do instead.
+    local left; left="$(days_left "$LEAF_CRT" "$RENEW_DAYS")"
+    if [ "$left" -lt 0 ] || valid_for "$CA_CRT" $(((left + 1) * 86400)); then
+      echo "fewer than $RENEW_DAYS days left (notAfter $(end_date "$LEAF_CRT"))"; return 0
+    fi
   fi
   openssl verify -CAfile "$CA_CRT" "$LEAF_CRT" >/dev/null 2>&1 || { echo "does not verify against $CA_CRT"; return 0; }
   local a b
   a="$(openssl x509 -in "$LEAF_CRT" -noout -pubkey 2>/dev/null)"; b="$(openssl pkey -in "$LEAF_KEY" -pubout 2>/dev/null)"
-  [ -n "$a" ] && [ "$a" = "$b" ] || { echo "certificate and key do not match"; return 0; }
+  if [ -z "$a" ] || [ "$a" != "$b" ]; then echo "certificate and key do not match"; return 0; fi
   return 1
 }
 
+# leaf_perms: with --key-group the server (a member of KEY_GROUP, not root) can read the key and
+# nobody else can. Idempotent, so a renew also fixes the modes of an older install.
+leaf_perms() {
+  if [ -z "$KEY_GROUP" ]; then chmod 755 "$LEAF_DIR"; return 0; fi
+  chgrp "$KEY_GROUP" "$LEAF_DIR" || die "could not give $LEAF_DIR to group $KEY_GROUP"
+  chmod 750 "$LEAF_DIR"
+  if [ -e "$LEAF_KEY" ]; then chgrp "$KEY_GROUP" "$LEAF_KEY"; chmod 640 "$LEAF_KEY"; fi
+}
+
 issue_leaf() { # issue_leaf NAMES
-  local names="$1" cn
-  mkdir -p "$LEAF_DIR"; chmod 755 "$LEAF_DIR"
+  local names="$1" cn days
+  valid_for "$CA_CRT" 86400 || die "the local CA $CA_CRT ends $(end_date "$CA_CRT"): a certificate it signs would expire with it.
+       Re-run install.sh with --reuse --new-ca (the old CA is kept) and trust the new CA on every client once."
+  days="$(days_left "$CA_CRT" "$LEAF_DAYS")"
+  [ "$days" -ge "$LEAF_DAYS" ] || say "certificate validity capped to $days days: the CA ends $(end_date "$CA_CRT")"
+  mkdir -p "$LEAF_DIR"; leaf_perms
   work="$(mktemp -d "$LEAF_DIR/.work.XXXXXX")"
   cn="$(printf '%s\n' "$names" | sed -n 's/^DNS://p' | head -1)"
   {
@@ -180,7 +240,7 @@ issue_leaf() { # issue_leaf NAMES
   } > "$work/leaf.cnf"
   new_key "$work/server.key"
   openssl req -new -key "$work/server.key" -config "$work/leaf.cnf" -out "$work/server.csr" || die "openssl could not create the certificate request"
-  openssl x509 -req -sha256 -days "$LEAF_DAYS" -in "$work/server.csr" -CA "$CA_CRT" -CAkey "$CA_KEY" \
+  openssl x509 -req -sha256 -days "$days" -in "$work/server.csr" -CA "$CA_CRT" -CAkey "$CA_KEY" \
     -set_serial "0x$(openssl rand -hex 16)" -extfile "$work/leaf.cnf" -extensions v3_leaf -out "$work/server.crt" >/dev/null 2>&1 \
     || die "openssl could not sign the server certificate with the CA"
   openssl verify -CAfile "$CA_CRT" "$work/server.crt" >/dev/null 2>&1 \
@@ -195,35 +255,43 @@ issue_leaf() { # issue_leaf NAMES
     say "previous certificate moved to $dest (kept)"
   fi
   mv "$work/server.key" "$LEAF_KEY"; mv "$work/server.crt" "$LEAF_CRT"
+  leaf_perms
   printf '%s\n' "$names" > "$LEAF_NAMES"; chmod 644 "$LEAF_NAMES"
   drop_work
-  say "issued $LEAF_CRT for $(printf '%s' "$names" | tr '\n' ' '), $LEAF_DAYS days, signed by the local CA"
+  say "issued $LEAF_CRT for $(printf '%s' "$names" | tr '\n' ' '), $days days, signed by the local CA"
 }
 
 case "$CMD" in
   check)
-    why="$(leaf_problem)" && { say "certificate needs attention: $why"; exit 1; }
-    say "certificate ok ($(openssl x509 -in "$LEAF_CRT" -noout -enddate | sed 's/^notAfter=/valid until /'))"
+    ca_expiry_warning
+    if why="$(leaf_problem)"; then say "certificate needs attention: $why"; exit 1; fi
+    say "certificate ok (valid until $(end_date "$LEAF_CRT"))"
     ;;
   renew)
-    [ -s "$CA_KEY" ] && [ -s "$CA_CRT" ] || die "no CA in $CA_DIR (run install.sh first)"
+    if [ ! -s "$CA_KEY" ] || [ ! -s "$CA_CRT" ]; then die "no CA in $CA_DIR (run install.sh first)"; fi
+    ca_expiry_warning
     if why="$(leaf_problem)"; then
       say "re-issuing the certificate: $why"
       names="$(cat "$LEAF_NAMES" 2>/dev/null || cat "$CA_NAMES")"
       issue_leaf "$names"
       say "renewed: clients that trust the CA need nothing"
       if [ -n "$RESTART_UNIT" ]; then
-        command -v systemctl >/dev/null 2>&1 && systemctl try-restart "$RESTART_UNIT" && say "restarted $RESTART_UNIT to load it" \
-          || echo "pki: WARNING: could not restart $RESTART_UNIT; restart it to load the new certificate" >&2
+        if command -v systemctl >/dev/null 2>&1 && systemctl try-restart "$RESTART_UNIT"; then
+          say "restarted $RESTART_UNIT to load it"
+        else
+          echo "pki: WARNING: could not restart $RESTART_UNIT; restart it to load the new certificate" >&2
+        fi
       fi
     else
-      say "certificate ok ($(openssl x509 -in "$LEAF_CRT" -noout -enddate | sed 's/^notAfter=/valid until /'), more than $RENEW_DAYS days left)"
+      leaf_perms
+      say "certificate ok (valid until $(end_date "$LEAF_CRT"); renewed when fewer than $RENEW_DAYS days are left)"
     fi
     ;;
   init)
     [ ${#IPS[@]} -gt 0 ] || die "init needs at least one --ip"
     normalise_names
     ensure_ca
+    ca_expiry_warning
     have="$(cat "$LEAF_NAMES" 2>/dev/null || true)"
     if why="$(leaf_problem)"; then
       issue_leaf "$NAMES"
@@ -231,7 +299,8 @@ case "$CMD" in
       say "certificate names differ from the requested ones: re-issuing"
       issue_leaf "$NAMES"
     else
-      say "certificate ok ($(openssl x509 -in "$LEAF_CRT" -noout -enddate | sed 's/^notAfter=/valid until /')): kept"
+      leaf_perms
+      say "certificate ok (valid until $(end_date "$LEAF_CRT")): kept"
     fi
     ;;
   *) die "unknown command: $CMD (init, renew or check)" ;;

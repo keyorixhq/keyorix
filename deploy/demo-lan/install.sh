@@ -17,22 +17,30 @@
 #
 # What it does, in order (each step says what it does; nothing is deleted, whatever it replaces
 # is copied to --dir/backup-<utc time>/ first):
-#   1. creates a LOCAL CA once (ECDSA P-256, 10 years, key 0600, X.509 nameConstraints limited to
-#      this box's address and names) and signs the server certificate with it (deploy/demo-lan/pki.sh);
-#      the certificate is re-issued automatically when fewer than 30 days are left (before every
-#      start, and by a daily timer), so clients trust the CA ONCE and renewals need nothing;
+#   1. creates a LOCAL CA once (ECDSA P-256, 10 years, key 0600 readable by root only, limited to
+#      TLS server certificates for this box's address and names: see deploy/demo-lan/pki.sh) and
+#      signs the server certificate with it; the certificate is re-issued automatically when fewer
+#      than 30 days are left (before every start, and by a daily timer), so clients trust the CA
+#      ONCE and renewals need nothing;
 #   2. initialises a fresh server (scripts/demo/native-up.sh's demo settings: break-glass, 15 s
 #      anomaly detector, oidc, dynamic secrets) listening on 0.0.0.0 with TLS on, with a random
-#      master password and bootstrap token in a 0600 EnvironmentFile (never on argv or stdout);
-#   3. installs and enables a systemd unit (Restart=always) plus the renewal timer;
-#   4. seeds the demo org (scripts/demo/seed-demo.sh) and runs scripts/demo/check.sh --used;
+#      master password and bootstrap token in a root-only 0600 EnvironmentFile (never on argv or
+#      stdout);
+#   3. installs and enables a systemd unit (Restart=always) plus the renewal timer. The server runs
+#      as the system user keyorix-lan (created if missing), not root: it can write only --dir/state
+#      and read the certificate key; the CA key, the EnvironmentFile and --dir/seed are root's;
+#   4. seeds the demo org (scripts/demo/seed-demo.sh, into the root-only --dir/seed) and runs
+#      scripts/demo/check.sh --used;
 #   5. prints the URL, the CA file, its SHA-256 fingerprint and the commands to trust it.
 # Trusting the CA in each browser/OS is the only manual step.
 #
-# Needs: root, systemd, openssl, python3, curl, and a keyorix checkout or release tarball that has
-# scripts/demo and deploy/demo-lan (this script's own location). Refuses to run over an existing
-# keyorix.db in --dir unless --reuse is given. The demo logins are the repository's public demo
-# passwords with MFA on: this is a demo box, keep it off untrusted networks.
+# Needs: root, systemd, openssl, python3, curl, useradd, and a keyorix checkout or release tarball
+# that has scripts/demo and deploy/demo-lan (this script's own location). Refuses to run over an
+# existing keyorix.db in --dir unless --reuse is given, and refuses an existing --dir that is not
+# root's, is writable by others (/tmp) or holds anything but an earlier install; it never changes
+# the mode of a directory it did not create. --dir must not be under /home, /root or /run/user.
+# The demo logins are the repository's public demo passwords with MFA on: this is a demo box,
+# keep it off untrusted networks.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,7 +85,98 @@ port_busy() {
 # is_elf FILE: starts with the ELF magic (a Linux binary, not a macOS one).
 is_elf() { [ "$(head -c 4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]; }
 
-usage() { grep '^#' "${BASH_SOURCE[0]}" | sed 's/^# \?//' | sed -n '2,36p'; }
+usage() { grep '^#' "${BASH_SOURCE[0]}" | sed 's/^# \?//' | sed -n '2,43p'; }
+
+# The file that marks a --dir as this installer's own (written when it creates the layout).
+DIR_MARKER=".keyorix-demo-lan"
+
+# check_install_dir DIR: refuse a --dir this script must not take over, before anything is
+# written. A new path is fine (it is created below with this script's modes). An existing one
+# must be a real directory owned by the user running this (root), writable by nobody else, and
+# either empty or an earlier install (DIR_MARKER). Its own mode is never changed, so the box
+# can reach state/ and bin/ only when others may traverse it.
+check_install_dir() {
+  local d="$1"
+  if [ -L "$d" ]; then die "--dir $d is a symbolic link: give the real directory"; fi
+  [ -e "$d" ] || return 0
+  [ -d "$d" ] || die "--dir $d exists and is not a directory"
+  if [ -z "$(find "$d" -maxdepth 0 -user "$(id -u)" ! -perm -020 ! -perm -002 2>/dev/null)" ]; then
+    die "--dir $d already exists and is not owned by $(id -un) or is writable by group or others (a shared directory such as /tmp):
+       pick a new directory; this script does not change the mode of a directory it did not create"
+  fi
+  if [ ! -e "$d/$DIR_MARKER" ] && [ -n "$(find "$d" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+    die "--dir $d already exists, is not empty and is not an earlier install by this script: pick a new or empty directory"
+  fi
+  if [ -z "$(find "$d" -maxdepth 0 -perm -001 2>/dev/null)" ]; then
+    die "--dir $d already exists and others may not traverse it: the server user could not reach its files.
+       Make it traversable (chmod o+x $d) or pick a new directory"
+  fi
+}
+
+# server_unit / renew_unit print the systemd units. The server runs as SVC_USER, not root: it
+# can write only its state directory and read the certificate key through SVC_USER's group;
+# the CA key, the EnvironmentFile and the backups stay root-only and are hidden from it. The
+# certificate renewal before every start runs as root ("+"), the only step that needs the CA key.
+server_unit() {
+  local caps=""
+  # Binding a port below 1024 is the one privilege the server may keep.
+  if [ "$PORT" -lt 1024 ]; then caps="CAP_NET_BIND_SERVICE"; fi
+  cat <<EOF
+$MARKER
+[Unit]
+Description=Keyorix LAN demo ($DIR)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=$SVC_USER
+Group=$SVC_USER
+WorkingDirectory=$STATE
+EnvironmentFile=$ENVF
+ExecStartPre=+$PKI/pki.sh renew --ca-dir $CA_DIR --leaf-dir $LEAF_DIR --key-group $SVC_USER
+ExecStart=$DIR/bin/keyorix-server
+Restart=always
+RestartSec=5
+CapabilityBoundingSet=$caps
+AmbientCapabilities=$caps
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=$STATE
+InaccessiblePaths=$CA_DIR $ENVF
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+UMask=0077
+StandardOutput=append:$STATE/server.log
+StandardError=append:$STATE/server.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+renew_unit() {
+  cat <<EOF
+$MARKER
+[Unit]
+Description=Keyorix LAN demo: renew the server certificate when fewer than 30 days are left ($DIR)
+
+[Service]
+Type=oneshot
+ExecStart=$PKI/pki.sh renew --ca-dir $CA_DIR --leaf-dir $LEAF_DIR --key-group $SVC_USER --restart-unit $UNIT.service
+EOF
+}
 
 main() {
   local BIN_DIR="" DIR="/opt/keyorix-demo" PORT="8080" HOSTNAME_ARG="" IP_ARG="" REUSE=false NEW_CA=false
@@ -98,7 +197,10 @@ main() {
   # ── 0. Check everything we can before touching anything ───────────────────
   [ -n "$BIN_DIR" ] || die "--bin-dir is required: the directory holding the Linux binaries keyorix, keyorix-server and totpgen"
   [[ "$DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "--dir must be an absolute path of letters, digits and . _ / - only (it goes into a systemd unit): $DIR"
-  [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "--port must be 1-65535: $PORT"
+  case "$DIR/" in
+    /home/*|/root/*|/run/user/*) die "--dir must not be under /home, /root or /run/user (the server's unit hides those with ProtectHome=yes): $DIR" ;;
+  esac
+  if [[ ! "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then die "--port must be 1-65535: $PORT"; fi
   [ -d "$BIN_DIR" ] || die "--bin-dir is not a directory: $BIN_DIR"
   local b
   for b in keyorix keyorix-server totpgen; do
@@ -110,11 +212,12 @@ main() {
     [ -f "$REPO_ROOT/$s" ] || die "$REPO_ROOT/$s not found: run install.sh from a keyorix checkout or release tarball (it needs scripts/demo, docs/demo and deploy/demo-lan)"
   done
   [ -f "$SCRIPT_DIR/pki.sh" ] || die "$SCRIPT_DIR/pki.sh not found: install.sh and pki.sh must stay together"
-  local STATE="$DIR/state" PKI="$DIR/pki" ENVF="$DIR/env"
+  local STATE="$DIR/state" PKI="$DIR/pki" ENVF="$DIR/env" SEED="$DIR/seed"
   local CA_DIR="$PKI/ca" LEAF_DIR="$PKI/leaf" CA_PUB="$DIR/keyorix-demo-ca.crt"
   local UNIT; UNIT="keyorix-lan-$(basename "$DIR")"
   local UNIT_FILE="/etc/systemd/system/$UNIT.service"
   local MARKER="# keyorix demo-lan install.sh dir=$DIR"
+  local SVC_USER="keyorix-lan"
   local STAGE="$STATE/.install-stage"
 
   # Existing install: refuse unless --reuse (the data and the master password belong together).
@@ -124,19 +227,21 @@ main() {
        Nothing was changed."
   fi
   if [ "$REUSE" = true ] && [ -e "$STATE/keyorix.db" ]; then
-    [ -s "$STATE/keyorix.yaml" ] && [ -s "$ENVF" ] && [ "$(cat "$STAGE" 2>/dev/null)" = "init-done" ] \
-      || die "--reuse: $DIR holds a database but not a finished install (config, $ENVF or $STAGE missing).
+    if [ ! -s "$STATE/keyorix.yaml" ] || [ ! -s "$ENVF" ] || [ "$(cat "$STAGE" 2>/dev/null)" != "init-done" ]; then
+      die "--reuse: $DIR holds a database but not a finished install (config, $ENVF or $STAGE missing).
        Move $DIR aside (nothing here is deleted by this script) and install again."
+    fi
     local have_port; have_port="$(sed -n 's/^    port: "\([0-9][0-9]*\)".*/\1/p' "$STATE/keyorix.yaml" | head -1)"
     [ -z "$have_port" ] || [ "$have_port" = "$PORT" ] || die "--reuse: the existing config listens on port $have_port, not $PORT; re-run with --port $have_port"
   fi
+  check_install_dir "$DIR"
   # The checks above only read; from here on the box itself is examined.
   if [ ! -d /run/systemd/system ] || ! command -v systemctl >/dev/null 2>&1; then
     die "this box does not run systemd (no /run/systemd/system): this installer needs it; see docs/demo/LAN-TLS.md for the manual steps"
   fi
   [ "$(id -u)" -eq 0 ] || die "must be run as root (it writes /etc/systemd/system and listens on the LAN): sudo $0 ..."
   local tool
-  for tool in openssl python3 curl; do
+  for tool in openssl python3 curl useradd; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool is required and not installed (apt install $tool / dnf install $tool)"
   done
   # A unit of that name that this script did not write is somebody else's: never overwrite it.
@@ -184,8 +289,24 @@ main() {
     say "stopping $UNIT to replace its files (it is started again below)"
     systemctl stop "$UNIT"
   fi
-  mkdir -p "$DIR/bin" "$DIR/scripts/demo" "$PKI" "$STATE"
-  chmod 755 "$DIR" "$DIR/bin" "$DIR/scripts" "$DIR/scripts/demo"; chmod 700 "$PKI" "$STATE"
+  if ! id -u "$SVC_USER" >/dev/null 2>&1; then
+    local nologin; nologin="$(command -v nologin || echo /usr/sbin/nologin)"
+    useradd --system --user-group --no-create-home --home-dir /nonexistent --shell "$nologin" "$SVC_USER" \
+      || die "could not create the system user $SVC_USER the server runs as"
+    info "created the system user $SVC_USER (no login, no home): the server runs as it, not as root"
+  fi
+  [ "$(id -u "$SVC_USER")" -ne 0 ] || die "the user $SVC_USER has uid 0: the server must not run as root"
+  # --dir itself: created here with 0755, or (an existing, checked one) left exactly as it is.
+  if [ ! -e "$DIR" ]; then
+    mkdir -p "$(dirname "$DIR")"
+    mkdir -m 0755 "$DIR" || die "could not create $DIR"
+    check_install_dir "$DIR"
+  fi
+  [ -e "$DIR/$DIR_MARKER" ] || printf 'created by deploy/demo-lan/install.sh %s\n' "$STAMP" > "$DIR/$DIR_MARKER"
+  # Everything below --dir is this script's own. pki/ is only traversable: the CA directory in
+  # it is root-only, the leaf directory is shared with the server's group by pki.sh --key-group.
+  mkdir -p "$DIR/bin" "$DIR/scripts/demo" "$PKI" "$STATE" "$SEED"
+  chmod 755 "$DIR/bin" "$DIR/scripts" "$DIR/scripts/demo"; chmod 711 "$PKI"; chmod 700 "$STATE" "$SEED"
   say "copying the binaries and demo scripts"
   local f
   for f in keyorix keyorix-server totpgen; do
@@ -209,7 +330,7 @@ main() {
 
   # ── 2. Local CA + server certificate ──────────────────────────────────────
   say "local CA and server certificate"
-  local pki_args=(init --ca-dir "$CA_DIR" --leaf-dir "$LEAF_DIR" "${PKI_NAMES[@]}")
+  local pki_args=(init --ca-dir "$CA_DIR" --leaf-dir "$LEAF_DIR" --key-group "$SVC_USER" "${PKI_NAMES[@]}")
   [ "$NEW_CA" != true ] || pki_args+=(--new-ca)
   "$PKI/pki.sh" "${pki_args[@]}" || die "could not set up the CA/certificate (see the pki: lines above)"
   if [ ! -e "$CA_PUB" ] || ! cmp -s "$CA_DIR/ca.crt" "$CA_PUB"; then
@@ -235,10 +356,10 @@ main() {
     ( umask 077
       [ -s "$ENVF" ] || printf 'KEYORIX_MASTER_PASSWORD=%s\nKEYORIX_BOOTSTRAP_TOKEN=%s\nKEYORIX_CONFIG_PATH=keyorix.yaml\n' \
         "$(openssl rand -hex 24)" "$(openssl rand -hex 32)" > "$ENVF"
-      [ -s "$STATE/bootstrap-token" ] || sed -n 's/^KEYORIX_BOOTSTRAP_TOKEN=//p' "$ENVF" > "$STATE/bootstrap-token"
+      [ -s "$SEED/bootstrap-token" ] || sed -n 's/^KEYORIX_BOOTSTRAP_TOKEN=//p' "$ENVF" > "$SEED/bootstrap-token"
       [ -s "$STATE/metrics-token" ] || openssl rand -hex 32 > "$STATE/metrics-token"
       : > "$LOG" )
-    chmod 600 "$ENVF" "$STATE/bootstrap-token" "$STATE/metrics-token" "$LOG"
+    chmod 600 "$ENVF" "$SEED/bootstrap-token" "$STATE/metrics-token" "$LOG"
     say "initialising the server (config, keys, schema)"
     run_logged "admin init" "$DIR/bin/keyorix-server" admin init --dev --config keyorix.yaml
     KLAN_PORT="$PORT" KLAN_CERT="$LEAF_DIR/server.crt" KLAN_KEY="$LEAF_DIR/server.key" KLAN_METRICS="$STATE/metrics-token" \
@@ -293,43 +414,16 @@ PY
     printf 'init-done' > "$STAGE"
     info "initialised (details: $LOG)"
   fi
+  # The server (SVC_USER) owns its state: config, database, keys, tokens. The admin steps above
+  # ran as root; an earlier install's files are root's too. -h: never follow a link out of it.
+  chown -hR "$SVC_USER:$SVC_USER" "$STATE"
 
   # ── 4. systemd units: the server and the certificate renewal timer ────────
-  say "installing the systemd unit $UNIT.service and the renewal timer"
+  say "installing the systemd unit $UNIT.service (runs as $SVC_USER) and the renewal timer"
   backup "$UNIT_FILE"
-  cat > "$UNIT_FILE" <<EOF
-$MARKER
-[Unit]
-Description=Keyorix LAN demo ($DIR)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-WorkingDirectory=$STATE
-EnvironmentFile=$ENVF
-ExecStartPre=$PKI/pki.sh renew --ca-dir $CA_DIR --leaf-dir $LEAF_DIR
-ExecStart=$DIR/bin/keyorix-server
-Restart=always
-RestartSec=5
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=full
-StandardOutput=append:$STATE/server.log
-StandardError=append:$STATE/server.log
-
-[Install]
-WantedBy=multi-user.target
-EOF
+  server_unit > "$UNIT_FILE"
   backup "/etc/systemd/system/$UNIT-renew.service"
-  cat > "/etc/systemd/system/$UNIT-renew.service" <<EOF
-$MARKER
-[Unit]
-Description=Keyorix LAN demo: renew the server certificate when fewer than 30 days are left ($DIR)
-
-[Service]
-Type=oneshot
-ExecStart=$PKI/pki.sh renew --ca-dir $CA_DIR --leaf-dir $LEAF_DIR --restart-unit $UNIT.service
-EOF
+  renew_unit > "/etc/systemd/system/$UNIT-renew.service"
   backup "/etc/systemd/system/$UNIT-renew.timer"
   cat > "/etc/systemd/system/$UNIT-renew.timer" <<EOF
 $MARKER
@@ -362,16 +456,17 @@ EOF
     tail -20 "$STATE/server.log" 2>/dev/null | sed 's/^/    /' >&2 || true
     die "see: systemctl status $UNIT; journalctl -u $UNIT -n 50 --no-pager"
   fi
-  printf '%s' "$URL" > "$STATE/server.url"
+  printf '%s' "$URL" > "$SEED/server.url"
   info "healthy"
 
   # ── 5. Seed and check, through https, trusting only our CA ────────────────
   say "seeding the demo org through $URL (about 90 s)"
-  export KEYORIX_SERVER="$URL" SSL_CERT_FILE="$CA_PUB" CURL_CA_BUNDLE="$CA_PUB" KEYORIX_CA_FILE="$CA_PUB"
-  "$DIR/scripts/demo/seed-demo.sh" "$STATE" || die "seeding failed (the server keeps running; fix the cause and re-run with --reuse). Server log: $STATE/server.log"
+  # DEMO_SERVER_LOG: the seed and the check read the anomaly detector's first pass from it.
+  export KEYORIX_SERVER="$URL" SSL_CERT_FILE="$CA_PUB" CURL_CA_BUNDLE="$CA_PUB" KEYORIX_CA_FILE="$CA_PUB" DEMO_SERVER_LOG="$STATE/server.log"
+  "$DIR/scripts/demo/seed-demo.sh" "$SEED" || die "seeding failed (the server keeps running; fix the cause and re-run with --reuse). Server log: $STATE/server.log"
   say "checking the demo (scripts/demo/check.sh --used)"
   local check_rc=0
-  "$DIR/scripts/demo/check.sh" --url "$URL" --state "$STATE/state.env" --used --no-ui || check_rc=$?
+  "$DIR/scripts/demo/check.sh" --url "$URL" --state "$SEED/state.env" --used --no-ui || check_rc=$?
 
   # ── 6. Summary ─────────────────────────────────────────────────────────────
   local ca_cmds="$DIR/keyorix-demo-ca.crt"
@@ -381,7 +476,7 @@ EOF
  Keyorix demo box: $URL
  server:        systemctl status $UNIT   (log: $STATE/server.log)
  login:         admin with the public demo password (scripts/demo/seed-demo.sh); MFA is on:
-                the TOTP setup key is in $STATE/admin-mfa (0600), logins in $STATE/state.env
+                the TOTP setup key is in $SEED/admin-mfa (0600), logins in $SEED/state.env
  CA file:       $CA_PUB
  CA SHA-256:    $FP
  certificate:   renewed automatically (<30 days left): clients need nothing after trusting the CA once
@@ -394,7 +489,8 @@ EOF
  RHEL/Fedora:   sudo cp keyorix-demo-ca.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust
  Keyorix CLI:   keyorix config set ca_file \$PWD/keyorix-demo-ca.crt     (then: keyorix login --server $URL)
  Check the fingerprint above against: openssl x509 -in keyorix-demo-ca.crt -noout -fingerprint -sha256
- The CA only vouches for this box's address and names (X.509 nameConstraints).
+ The CA can only vouch for TLS servers at this box's address and names (and names below them,
+ such as x.<name>): extendedKeyUsage serverAuth and X.509 nameConstraints, no e-mail or URI.
 ================================================================================
 EOF
   if [ "$check_rc" -ne 0 ]; then

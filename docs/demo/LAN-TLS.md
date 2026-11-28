@@ -7,7 +7,7 @@ demo on an internet-facing VM (Docker, Caddy, ACME) use `deploy/demo-hosted` ins
 
 ## What you need
 
-- A Linux box with systemd, `openssl`, `python3` and `curl`, and root.
+- A Linux box with systemd, `openssl`, `python3`, `curl` and `useradd`, and root.
 - A checkout (or release tarball) of this repository on that box: the installer copies
   `scripts/demo` and `docs/demo/GOLDEN-PATH.md` from it.
 - Linux builds of the three binaries, in one directory (build them anywhere with Go; use the
@@ -57,29 +57,46 @@ Firefox keeps its own store: Settings, Privacy & Security, Certificates, Import 
   keyorix-demo-ca.crt     the CA certificate to hand out (public)
   bin/                    keyorix, keyorix-server, totpgen
   scripts/demo/, docs/demo/   copied from the checkout; seed and check run from here
-  pki/ca/                 ca.key (0600, directory 0700) and ca.crt: used to sign the server certificate, nothing else
-  pki/leaf/               server.crt, server.key (0600); replaced certificates are kept in old/<time>/
-  env                     0600 EnvironmentFile: master password, bootstrap token (generated, never printed)
-  state/                  keyorix.yaml, keyorix.db, server.log, state.env, admin-mfa (0600), install.log
-  backup-<time>/          anything a re-run replaced
+  pki/                    0711 root: traversable only
+  pki/ca/                 ca.key (0600, directory 0700, root only) and ca.crt: signs the server certificate, nothing else
+  pki/leaf/               server.crt, server.key (root:keyorix-lan 0640, directory 0750); replaced ones in old/<time>/ (root only)
+  env                     0600 root EnvironmentFile: master password, bootstrap token (generated, never printed)
+  state/                  the server's own (keyorix-lan, 0700): keyorix.yaml, keyorix.db, keys/, server.log, install.log
+  seed/                   0700 root: state.env, admin-mfa, demo-passwords, the CLI login of the seed and check
+  backup-<time>/          anything a re-run replaced (0700 root)
+  .keyorix-demo-lan       marks the directory as this installer's
 ```
 
 The unit is `keyorix-lan-<dir name>.service` (`Restart=always`, enabled), with a daily
-`...-renew.timer`.
+`...-renew.timer`. The server runs as the system user `keyorix-lan` (created if missing), not
+as root: no capabilities (only `CAP_NET_BIND_SERVICE` when `--port` is below 1024),
+`NoNewPrivileges`, `ProtectSystem=strict` with only `state/` writable, `ProtectHome`, and the CA
+directory and `env` made inaccessible to it. The renewal before every start
+(`ExecStartPre=+.../pki.sh renew`) and the daily timer run as root: they are the only steps that
+use the CA key.
 
 ## The certificate
 
 - The CA is created once: ECDSA P-256, 10 years, key mode 0600, `basicConstraints CA:TRUE,
-  pathlen:0`, and a critical **nameConstraints** extension that permits only this box's address
-  and names plus `localhost` and `127.0.0.1`. A client that trusts it does not thereby trust it
-  for any other site. The CA key signs the server certificate and nothing else.
+  pathlen:0`, `extendedKeyUsage serverAuth`, and a critical **nameConstraints** extension that
+  permits only this box's address and names plus `localhost` and `127.0.0.1`, and no e-mail
+  address or URI. So a client that trusts it accepts from it only TLS server certificates for
+  those names. What X.509 cannot express: a DNS constraint also permits the names below it
+  (`x.<hostname>`, `x.localhost`), so whoever holds the CA key could sign those too. Clients that
+  ignore a CA's extendedKeyUsage still apply the name constraints. The CA key signs the server
+  certificate and nothing else.
 - The server certificate (ECDSA P-256, `serverAuth`, SAN: address, hostname, `localhost`,
-  `127.0.0.1`) is valid 820 days, under the 825-day cap of Apple and Chrome.
+  `127.0.0.1`) is valid 820 days, under the 825-day cap of Apple and Chrome, and never longer
+  than the CA: in the CA's last 820 days it ends with the CA.
 - It is re-issued when fewer than 30 days are left: before every start of the server and by
   the daily timer (which then restarts the server). The CA does not change, so **clients need
   nothing at renewal**.
 - If the box gets a new address, the old CA cannot sign for it. `install.sh --reuse --new-ca`
   makes a new CA (the old one is kept in `pki/ca/old/`) and every client trusts the new CA once.
+- The same applies before the CA's own end (10 years): from 90 days before it, every renewal
+  (the daily timer, each start) logs a WARNING saying so. Once it has expired no certificate can
+  be issued, the renewal fails with that instruction and the server does not start until
+  `install.sh --reuse --new-ca` has run.
 
 ## Re-running, upgrading, safety
 
@@ -88,8 +105,11 @@ The unit is `keyorix-lan-<dir name>.service` (`Restart=always`, enabled), with a
   seed is idempotent). Replaced files are copied to `backup-<time>/`; nothing is deleted.
 - A port that is already in use, a missing binary, a macOS binary instead of a Linux one, no
   systemd, or not being root each stop it with a message before anything is written.
+- An existing `--dir` must be root's, writable by nobody else and empty (or an earlier install):
+  `--dir /tmp` or a populated directory is refused, and the installer never changes the mode of
+  a directory it did not create. `--dir` cannot be under `/home`, `/root` or `/run/user`.
 - The demo logins are the repository's public demo passwords, with MFA on (the TOTP setup key is
-  in `state/admin-mfa`). `/metrics` is protected by a generated token; rate limiting stays as the
+  in `seed/admin-mfa`). `/metrics` is protected by a generated token; rate limiting stays as the
   demo config sets it. Keep the box off untrusted networks.
 
 ## Not covered

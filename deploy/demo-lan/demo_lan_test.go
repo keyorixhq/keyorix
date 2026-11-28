@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -231,6 +232,13 @@ func TestPKI_CAAndLeaf(t *testing.T) {
 	if len(ca.ExcludedDNSDomains)+len(ca.ExcludedIPRanges) != 0 {
 		t.Error("unexpected excluded ranges")
 	}
+	// No e-mail address or URI is permitted, and the CA itself is limited to serverAuth.
+	if strings.Join(ca.PermittedEmailAddresses, ",") != ".invalid" || strings.Join(ca.PermittedURIDomains, ",") != ".invalid" {
+		t.Errorf("permitted e-mail %v / URI %v, want only .invalid", ca.PermittedEmailAddresses, ca.PermittedURIDomains)
+	}
+	if len(ca.ExtKeyUsage) != 1 || ca.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth {
+		t.Errorf("CA ExtKeyUsage %v, want [serverAuth]", ca.ExtKeyUsage)
+	}
 
 	leaf := readCert(t, filepath.Join(d.leaf, "server.crt"))
 	if leaf.IsCA {
@@ -275,37 +283,80 @@ func TestPKI_CAAndLeaf(t *testing.T) {
 	}
 }
 
-// The point of the constraint: even the CA's own key cannot make a certificate for another
-// name that a client which trusts the CA would accept.
-func TestPKI_CAConstraintRejectsOtherNames(t *testing.T) {
-	needOpenssl(t)
-	d := newPKIDirs(t)
-	initPKI(t, d, nil)
+// signWithCA has the local CA's own key sign a certificate with the given extensions (what
+// anyone holding ca.key could do) and returns it and its path.
+func signWithCA(t *testing.T, d pkiDirs, extensions string) (*x509.Certificate, string) {
+	t.Helper()
 	w := t.TempDir()
 	ext := filepath.Join(w, "ext.cnf")
-	if err := os.WriteFile(ext, []byte("subjectAltName = DNS:evil.example\nextendedKeyUsage = serverAuth\n"), 0o600); err != nil {
+	if err := os.WriteFile(ext, []byte(extensions), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	steps := [][]string{
 		{"ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", filepath.Join(w, "k.pem")},
-		{"req", "-new", "-key", filepath.Join(w, "k.pem"), "-subj", "/CN=evil.example", "-out", filepath.Join(w, "k.csr")},
+		{"req", "-new", "-key", filepath.Join(w, "k.pem"), "-subj", "/CN=signed-by-the-demo-ca", "-out", filepath.Join(w, "k.csr")},
 		{"x509", "-req", "-in", filepath.Join(w, "k.csr"), "-CA", filepath.Join(d.ca, "ca.crt"), "-CAkey", filepath.Join(d.ca, "ca.key"),
-			"-set_serial", "0x1234", "-days", "30", "-extfile", ext, "-out", filepath.Join(w, "evil.crt")},
+			"-set_serial", "0x1234", "-days", "30", "-extfile", ext, "-out", filepath.Join(w, "c.crt")},
 	}
 	for _, s := range steps {
 		if out, code := run(t, nil, "openssl", s...); code != 0 {
 			t.Fatalf("openssl %v: %s", s, out)
 		}
 	}
-	evil := readCert(t, filepath.Join(w, "evil.crt"))
+	return readCert(t, filepath.Join(w, "c.crt")), filepath.Join(w, "c.crt")
+}
+
+// The point of the constraints: even the CA's own key cannot make a certificate that a client
+// which trusts the CA would accept for another site, another address, an e-mail address or a
+// URI, or for a purpose other than a TLS server. Each case is checked by Go's verifier and, for
+// the names, by `openssl verify`.
+func TestPKI_CAConstraintRejectsOtherNames(t *testing.T) {
+	needOpenssl(t)
+	d := newPKIDirs(t)
+	initPKI(t, d, nil)
 	roots := x509.NewCertPool()
 	roots.AddCert(readCert(t, filepath.Join(d.ca, "ca.crt")))
-	_, err := evil.Verify(x509.VerifyOptions{Roots: roots, DNSName: "evil.example", KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}})
-	if err == nil {
-		t.Fatal("a certificate for evil.example signed by the local CA verified: the nameConstraints do not bind")
+	serverAuth := []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+	for _, tc := range []struct {
+		name, ext, dnsName string
+		usages             []x509.ExtKeyUsage
+	}{
+		{"another site", "subjectAltName = DNS:evil.example\nextendedKeyUsage = serverAuth\n", "evil.example", serverAuth},
+		{"a neighbour's address", "subjectAltName = IP:192.0.2.11\nextendedKeyUsage = serverAuth\n", "192.0.2.11", serverAuth},
+		{"another network", "subjectAltName = IP:198.51.100.10\nextendedKeyUsage = serverAuth\n", "198.51.100.10", serverAuth},
+		{"an e-mail address", "subjectAltName = DNS:demo-box, email:ceo@evil.example\nextendedKeyUsage = serverAuth\n", "demo-box", serverAuth},
+		{"a URI", "subjectAltName = DNS:demo-box, URI:https://evil.example/\nextendedKeyUsage = serverAuth\n", "demo-box", serverAuth},
+		{"code signing for the box's own name", "subjectAltName = DNS:demo-box\nextendedKeyUsage = codeSigning\n", "", []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning}},
+		{"a TLS client for the box's own name", "subjectAltName = DNS:demo-box\nextendedKeyUsage = clientAuth\n", "", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, path := signWithCA(t, d, tc.ext)
+			if _, err := c.Verify(x509.VerifyOptions{Roots: roots, DNSName: tc.dnsName, KeyUsages: tc.usages}); err == nil {
+				t.Errorf("a certificate for %s signed by the local CA verified", tc.name)
+			}
+			if tc.usages[0] != x509.ExtKeyUsageServerAuth {
+				return // `openssl verify` without -purpose does not check extendedKeyUsage
+			}
+			if out, code := run(t, nil, "openssl", "verify", "-CAfile", filepath.Join(d.ca, "ca.crt"), path); code == 0 {
+				t.Errorf("openssl verify accepted the out-of-constraint certificate: %s", out)
+			}
+		})
 	}
-	if out, code := run(t, nil, "openssl", "verify", "-CAfile", filepath.Join(d.ca, "ca.crt"), filepath.Join(w, "evil.crt")); code == 0 {
-		t.Errorf("openssl verify accepted the out-of-constraint certificate: %s", out)
+
+	// What a DNS name constraint cannot express (RFC 5280 name constraints): it also permits every name
+	// below it. pki.sh's header, the installer's summary and docs/demo/LAN-TLS.md say so; this
+	// pins the behaviour they describe, so the text cannot drift from it.
+	c, _ := signWithCA(t, d, "subjectAltName = DNS:x.demo-box.lan\nextendedKeyUsage = serverAuth\n")
+	if _, err := c.Verify(x509.VerifyOptions{Roots: roots, DNSName: "x.demo-box.lan", KeyUsages: serverAuth}); err != nil {
+		t.Errorf("a name below a permitted one no longer verifies (%v): update the documented limitation", err)
+	}
+	for _, f := range []string{"pki.sh", "install.sh", "../../docs/demo/LAN-TLS.md"} {
+		if !strings.Contains(strings.ToLower(string(readBytes(t, f))), "below") {
+			t.Errorf("%s no longer states that a DNS constraint also permits the names below it", f)
+		}
+	}
+	if strings.Contains(string(readBytes(t, "pki.sh")), "trusts it for nothing else") {
+		t.Error(`pki.sh claims a client "trusts it for nothing else", which the subdomain case above disproves`)
 	}
 }
 
@@ -534,6 +585,8 @@ func TestInstall_ArgumentAndBinaryErrors(t *testing.T) {
 		{"bin-dir not a directory", []string{"--bin-dir", filepath.Join(missing, "nope")}, "not a directory"},
 		{"relative dir", []string{"--bin-dir", missing, "--dir", "relative/dir"}, "absolute path"},
 		{"dir with a space", []string{"--bin-dir", missing, "--dir", "/opt/a b"}, "absolute path"},
+		{"dir under /home", []string{"--bin-dir", missing, "--dir", "/home/demo/keyorix"}, "must not be under /home"},
+		{"dir is /root", []string{"--bin-dir", missing, "--dir", "/root"}, "must not be under /home"},
 		{"port zero", []string{"--bin-dir", missing, "--port", "0"}, "--port must be"},
 		{"port not a number", []string{"--bin-dir", missing, "--port", "http"}, "--port must be"},
 		{"missing binary", []string{"--bin-dir", missing}, "missing binary"},
@@ -732,15 +785,17 @@ func TestInstall_ConfigAnchorsAreInTheDevTemplate(t *testing.T) {
 	}
 }
 
-// The generated unit and the renewal path rely on these properties of the script text.
-func TestInstall_UnitAndSecretsShape(t *testing.T) {
+// The parts of main() that need root and systemd and so cannot run here: these only show that
+// the script text still has them (TestInstall_ServerUnitRunsUnprivileged checks the units).
+func TestInstall_SecretsShape(t *testing.T) {
 	script := string(readBytes(t, "install.sh"))
 	for _, want := range []string{
-		"Restart=always",
-		"EnvironmentFile=$ENVF",
-		"ExecStartPre=$PKI/pki.sh renew",
+		"server_unit > \"$UNIT_FILE\"",
+		"renew_unit > \"/etc/systemd/system/$UNIT-renew.service\"",
+		"--key-group \"$SVC_USER\"",
+		"chown -hR \"$SVC_USER:$SVC_USER\" \"$STATE\"",
+		"check_install_dir \"$DIR\"",
 		"enable --now",
-		"--restart-unit",
 		"OnCalendar=daily",
 		"umask 077",
 		"--cacert",
@@ -785,4 +840,300 @@ func TestPKI_OnlyRemovesItsOwnWorkDir(t *testing.T) {
 			t.Errorf("work directory left behind: %v", left)
 		}
 	}
+}
+
+// ── the certificate never outlives the CA ──────────────────────────────────
+
+// In the CA's last 820 days a full-length certificate would end after the CA; it would verify
+// for nobody after the CA's end and every renewal would then fail. pki.sh caps it.
+func TestPKI_LeafNeverOutlivesTheCA(t *testing.T) {
+	needOpenssl(t)
+	d := newPKIDirs(t)
+	out, code := d.pki(t, []string{"KEYORIX_LAN_CA_DAYS=100"}, "init", boxNames...)
+	if code != 0 {
+		t.Fatalf("init (exit %d): %s", code, out)
+	}
+	if !strings.Contains(out, "capped to") {
+		t.Errorf("init did not say it capped the certificate: %s", out)
+	}
+	ca, leaf := readCert(t, filepath.Join(d.ca, "ca.crt")), readCert(t, filepath.Join(d.leaf, "server.crt"))
+	if leaf.NotAfter.After(ca.NotAfter) {
+		t.Errorf("certificate ends %v, after the CA (%v)", leaf.NotAfter, ca.NotAfter)
+	}
+	if gap := ca.NotAfter.Sub(leaf.NotAfter).Hours(); gap > 48 {
+		t.Errorf("certificate ends %.0f h before the CA: capped too far", gap)
+	}
+	// 100 days is well over the renewal threshold: nothing to do, no warning yet (90 days).
+	out, code = d.pki(t, nil, "renew")
+	if code != 0 || !strings.Contains(out, "certificate ok") || strings.Contains(out, "WARNING") {
+		t.Errorf("renew of a capped certificate (exit %d): %s", code, out)
+	}
+}
+
+// A CA in its last renewal window: the certificate it can sign ends with it. That must not be
+// re-issued on every start (a pile of old/ copies, a restart from every timer run), and the
+// operator must be told what to do before the CA ends.
+func TestPKI_CANearItsEndWarnsAndDoesNotReissueInALoop(t *testing.T) {
+	needOpenssl(t)
+	d := newPKIDirs(t)
+	out, code := d.pki(t, []string{"KEYORIX_LAN_CA_DAYS=20"}, "init", boxNames...)
+	if code != 0 {
+		t.Fatalf("init (exit %d): %s", code, out)
+	}
+	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "--new-ca") {
+		t.Errorf("init with a CA that ends in 20 days must warn and name --new-ca: %s", out)
+	}
+	before := readBytes(t, filepath.Join(d.leaf, "server.crt"))
+	if out, code := d.pki(t, nil, "check"); code != 0 || !strings.Contains(out, "WARNING") {
+		t.Errorf("check (exit %d) must pass and warn: %s", code, out)
+	}
+	for i := 0; i < 2; i++ {
+		out, code := d.pki(t, nil, "renew")
+		if code != 0 || !strings.Contains(out, "certificate ok") || !strings.Contains(out, "--new-ca") {
+			t.Errorf("renew %d (exit %d): %s", i+1, code, out)
+		}
+	}
+	if !bytes.Equal(before, readBytes(t, filepath.Join(d.leaf, "server.crt"))) {
+		t.Error("renew re-issued a certificate that a new one could not outlast")
+	}
+	if olds, _ := filepath.Glob(filepath.Join(d.leaf, "old", "*")); len(olds) != 0 {
+		t.Errorf("renew piled up old certificates: %v", olds)
+	}
+	// A certificate that could last longer under the same CA is still renewed.
+	d2 := newPKIDirs(t)
+	initPKI(t, d2, []string{"KEYORIX_LAN_CA_DAYS=40", "KEYORIX_LAN_LEAF_DAYS=5"})
+	if out, code := d2.pki(t, nil, "renew"); code != 0 || !strings.Contains(out, "renewed") {
+		t.Errorf("a 5-day certificate under a 40-day CA must be renewed (exit %d): %s", code, out)
+	}
+	if dd := days(readCert(t, filepath.Join(d2.leaf, "server.crt"))); dd < 38 || dd > 40 {
+		t.Errorf("renewed certificate %.1f days, want the CA's remaining 39-40", dd)
+	}
+}
+
+// ── the key is readable by the server's group, the CA key by root only ────
+
+func TestPKI_KeyGroup(t *testing.T) {
+	needOpenssl(t)
+	grp, code := run(t, nil, "id", "-gn")
+	if code != 0 {
+		t.Skip("id -gn failed")
+	}
+	grp = strings.TrimSpace(grp)
+	d := newPKIDirs(t)
+	// First without --key-group (an older install), then a renew with it fixes the modes.
+	initPKI(t, d, nil)
+	if m := perm(t, filepath.Join(d.leaf, "server.key")); m != 0o600 {
+		t.Errorf("server.key without --key-group: mode %o, want 600", m)
+	}
+	if out, code := d.pki(t, nil, "renew", "--key-group", grp); code != 0 {
+		t.Fatalf("renew --key-group (exit %d): %s", code, out)
+	}
+	check := func(when string, d pkiDirs) {
+		t.Helper()
+		for path, want := range map[string]os.FileMode{
+			filepath.Join(d.leaf, "server.key"): 0o640, d.leaf: 0o750,
+			filepath.Join(d.ca, "ca.key"): 0o600, d.ca: 0o700,
+		} {
+			if m := perm(t, path); m != want {
+				t.Errorf("%s: %s mode %o, want %o", when, path, m, want)
+			}
+		}
+		for _, path := range []string{filepath.Join(d.leaf, "server.key"), d.leaf} {
+			if gid := fileGID(t, path); gid != os.Getgid() {
+				t.Errorf("%s: %s group %d, want %d (%s)", when, path, gid, os.Getgid(), grp)
+			}
+		}
+	}
+	check("after renew --key-group", d)
+	// Issued and re-issued keys get the same modes from their first moment in place.
+	d = newPKIDirs(t)
+	initPKI(t, d, []string{"KEYORIX_LAN_LEAF_DAYS=20"}, "--key-group", grp)
+	check("after init --key-group", d)
+	if out, code := d.pki(t, nil, "renew", "--key-group", grp); code != 0 || !strings.Contains(out, "renewed") {
+		t.Fatalf("renew --key-group of a due certificate (exit %d): %s", code, out)
+	}
+	check("after a re-issue", d)
+	// Replaced keys stay root-only.
+	if olds, _ := filepath.Glob(filepath.Join(d.leaf, "old", "*", "server.key")); len(olds) == 0 {
+		t.Error("no replaced key under old/")
+	} else if m := perm(t, filepath.Dir(olds[0])); m != 0o700 {
+		t.Errorf("old/ directory mode %o, want 700", m)
+	}
+	if out, code := d.pki(t, nil, "renew", "--key-group", "bad group"); code == 0 || !strings.Contains(out, "not a group name") {
+		t.Errorf("a bad --key-group was accepted (exit %d): %s", code, out)
+	}
+}
+
+// ── install.sh never takes over a directory that is not its own ────────────
+
+func TestInstall_RefusesAnUnsafeExistingDir(t *testing.T) {
+	needOpenssl(t)
+	root := t.TempDir()
+	mk := func(name string, mode os.FileMode, files ...string) string {
+		t.Helper()
+		p := filepath.Join(root, name)
+		if err := os.Mkdir(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			if err := os.WriteFile(filepath.Join(p, f), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	shared := mk("shared", 0o777|os.ModeSticky) // what /tmp looks like
+	groupWritable := mk("group-writable", 0o775)
+	populated := mk("populated", 0o755, "somebody-else's-file")
+	private := mk("private", 0o700)
+	empty := mk("empty", 0o755)
+	earlier := mk("earlier-install", 0o755, ".keyorix-demo-lan", "keyorix-demo-ca.crt")
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(empty, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		dir, want string // want "" = accepted
+	}{
+		{shared, "writable by group or others"},
+		{groupWritable, "writable by group or others"},
+		{populated, "is not empty"},
+		{private, "others may not traverse it"},
+		{link, "symbolic link"},
+		{empty, ""},
+		{earlier, ""},
+		{filepath.Join(root, "new"), ""},
+	} {
+		t.Run(filepath.Base(tc.dir), func(t *testing.T) {
+			before, _ := os.Lstat(tc.dir)
+			out, code := run(t, nil, "bash", "-c", `source ./install.sh; check_install_dir "$1"; echo accepted`, "x", tc.dir)
+			switch {
+			case tc.want == "" && (code != 0 || !strings.Contains(out, "accepted")):
+				t.Errorf("refused (exit %d): %s", code, out)
+			case tc.want != "" && (code == 0 || !strings.Contains(out, tc.want)):
+				t.Errorf("exit %d, want a refusal containing %q: %s", code, tc.want, out)
+			}
+			if before != nil {
+				if after, _ := os.Lstat(tc.dir); after.Mode() != before.Mode() {
+					t.Errorf("mode changed from %v to %v", before.Mode(), after.Mode())
+				}
+			}
+		})
+	}
+
+	// The whole installer stops on it before anything else, and leaves /tmp-like modes alone.
+	bins := t.TempDir()
+	fakeELF(t, bins, "keyorix", "keyorix-server", "totpgen")
+	out, code := run(t, nil, "bash", "install.sh", "--bin-dir", bins, "--dir", shared)
+	if code == 0 || !strings.Contains(out, "writable by group or others") {
+		t.Errorf("install.sh --dir <shared dir> (exit %d): %s", code, out)
+	}
+	if fi, _ := os.Stat(shared); fi.Mode()&os.ModeSticky == 0 || fi.Mode().Perm() != 0o777 {
+		t.Errorf("install.sh changed the shared directory's mode to %v", fi.Mode())
+	}
+	if entries, _ := os.ReadDir(shared); len(entries) != 0 {
+		t.Errorf("install.sh wrote into the refused directory: %v", entries)
+	}
+}
+
+// ── the systemd units, as install.sh writes them ───────────────────────────
+
+// renderUnit runs one of install.sh's unit functions with the variables main() sets.
+func renderUnit(t *testing.T, fn, port string) (map[string][]string, []string) {
+	t.Helper()
+	script := `source ./install.sh
+DIR=/opt/keyorix-demo; STATE=$DIR/state; PKI=$DIR/pki; ENVF=$DIR/env; CA_DIR=$PKI/ca; LEAF_DIR=$PKI/leaf
+UNIT=keyorix-lan-keyorix-demo; SVC_USER=keyorix-lan; PORT=` + port + `; MARKER="# keyorix demo-lan install.sh dir=$DIR"
+` + fn
+	out, code := run(t, nil, "bash", "-c", script)
+	if code != 0 {
+		t.Fatalf("%s (exit %d): %s", fn, code, out)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	kv := map[string][]string{}
+	for _, l := range lines {
+		if k, v, ok := strings.Cut(l, "="); ok && !strings.HasPrefix(l, "#") {
+			kv[k] = append(kv[k], v)
+		}
+	}
+	return kv, lines
+}
+
+func one(t *testing.T, kv map[string][]string, key string) string {
+	t.Helper()
+	if len(kv[key]) != 1 {
+		t.Errorf("%s= appears %d times, want once", key, len(kv[key]))
+		return ""
+	}
+	return kv[key][0]
+}
+
+// The server must not run as root: a 0.0.0.0 listener as root could read the CA key. These
+// assert the generated unit itself (rendered by install.sh's own function), not words in the
+// script. What they cannot show: that systemd on a real box accepts and applies every directive
+// (docs/demo/LAN-TLS.md's manual run covers that).
+func TestInstall_ServerUnitRunsUnprivileged(t *testing.T) {
+	kv, lines := renderUnit(t, "server_unit", "8080")
+	if lines[0] != "# keyorix demo-lan install.sh dir=/opt/keyorix-demo" {
+		t.Errorf("first line %q is not the installer's marker", lines[0])
+	}
+	if u := one(t, kv, "User"); u == "" || u == "root" || u == "0" {
+		t.Errorf("User=%q: the server must run as a dedicated user", u)
+	}
+	if g := one(t, kv, "Group"); g != one(t, kv, "User") {
+		t.Errorf("Group=%q, want the service user's own group (it reads the key through it)", g)
+	}
+	pre := one(t, kv, "ExecStartPre")
+	if !strings.HasPrefix(pre, "+/opt/keyorix-demo/pki/pki.sh renew ") || !strings.Contains(pre, "--key-group keyorix-lan") {
+		t.Errorf("ExecStartPre=%q: the renewal must run as root (+) and hand the key to the server's group", pre)
+	}
+	if start := one(t, kv, "ExecStart"); strings.ContainsAny(start[:1], "+!@-:") || start != "/opt/keyorix-demo/bin/keyorix-server" {
+		t.Errorf("ExecStart=%q runs with a privilege prefix or something other than the server", start)
+	}
+	for key, want := range map[string]string{
+		"CapabilityBoundingSet": "", "AmbientCapabilities": "", "NoNewPrivileges": "yes",
+		"ProtectSystem": "strict", "ProtectHome": "yes", "PrivateTmp": "yes", "PrivateDevices": "yes",
+		"ReadWritePaths": "/opt/keyorix-demo/state", "RestrictSUIDSGID": "yes", "UMask": "0077",
+		"Restart": "always", "EnvironmentFile": "/opt/keyorix-demo/env", "WorkingDirectory": "/opt/keyorix-demo/state",
+	} {
+		if got := one(t, kv, key); got != want {
+			t.Errorf("%s=%q, want %q", key, got, want)
+		}
+	}
+	hidden := strings.Fields(one(t, kv, "InaccessiblePaths"))
+	sort.Strings(hidden)
+	if strings.Join(hidden, " ") != "/opt/keyorix-demo/env /opt/keyorix-demo/pki/ca" {
+		t.Errorf("InaccessiblePaths=%v, want the CA directory and the EnvironmentFile", hidden)
+	}
+	// A port below 1024 needs exactly one capability, and nothing more.
+	kv, _ = renderUnit(t, "server_unit", "443")
+	for _, key := range []string{"CapabilityBoundingSet", "AmbientCapabilities"} {
+		if got := one(t, kv, key); got != "CAP_NET_BIND_SERVICE" {
+			t.Errorf("port 443: %s=%q, want CAP_NET_BIND_SERVICE only", key, got)
+		}
+	}
+	// The timer's renewal also keeps the key readable by the server and restarts it.
+	kv, _ = renderUnit(t, "renew_unit", "8080")
+	if s := one(t, kv, "ExecStart"); !strings.Contains(s, "--key-group keyorix-lan") || !strings.Contains(s, "--restart-unit keyorix-lan-keyorix-demo.service") {
+		t.Errorf("renew unit ExecStart=%q", s)
+	}
+	if _, ok := kv["User"]; ok {
+		t.Error("the renewal unit must run as root (it signs with the CA key)")
+	}
+}
+
+func fileGID(t *testing.T, path string) int {
+	t.Helper()
+	out, code := run(t, nil, "bash", "-c", `ls -nd "$1" | awk '{print $4}'`, "x", path)
+	if code != 0 {
+		t.Fatalf("ls -nd %s: %s", path, out)
+	}
+	gid, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		t.Fatalf("group of %s: %q", path, out)
+	}
+	return gid
 }
