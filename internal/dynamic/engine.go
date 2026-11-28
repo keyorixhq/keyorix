@@ -71,9 +71,11 @@ func registerCloudEngine(backendType string, ctor cloudEngineCtor) {
 // mongodb/redis refuse a connection that isn't using TLS, and postgres/mysql
 // refuse one that does not verify the server certificate (#4374; a stored
 // admin_dsn is accepted with a WARNING while dsn.StoredSQLTransportGrace holds).
-// The cloud-IAM engines and
-// Kubernetes (in-cluster/explicit api_server) don't dial an admin_dsn host
-// the same way and ignore both parameters.
+// The cloud-IAM engines don't dial an admin_dsn host and ignore both
+// parameters. Kubernetes honours allowPrivateNetwork for an explicit
+// api_server (an admin-supplied host, re-validated at every dial) and ignores
+// both parameters in in-cluster mode, whose address comes from the pod's own
+// environment and is not admin-controlled.
 //
 // Every engine returned is wrapped by Contain: a panic inside a third-party client
 // library on a malformed target reply comes back as ErrEngineClientPanic instead of
@@ -99,7 +101,17 @@ func newEngine(backendType string, allowPrivateNetwork, allowInsecureTransport b
 		return &RedisEngine{allowPrivateNetwork: allowPrivateNetwork, allowInsecureTransport: allowInsecureTransport}, nil
 	case "aws-sts", "gcp", "azure", "kubernetes":
 		if ctor, ok := cloudEngines[backendType]; ok {
-			return ctor()
+			eng, err := ctor()
+			if err != nil {
+				return nil, err
+			}
+			// An engine that dials an admin-supplied host itself opts in to the
+			// same dial-time guard as postgres/mysql/mongodb/redis. Done through an
+			// interface so this file stays independent of the engine's build tag.
+			if s, ok := eng.(interface{ setAllowPrivateNetwork(bool) }); ok {
+				s.setAllowPrivateNetwork(allowPrivateNetwork)
+			}
+			return eng, nil
 		}
 		return nil, fmt.Errorf("dynamic-secret backend %q: not available in this build (compiled with a no<integration> tag that excludes it); rebuild without that tag to use this backend", backendType)
 	default:
