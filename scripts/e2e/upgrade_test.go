@@ -31,9 +31,10 @@ import (
 // supports (a skipped minor is not supported before 1.0). The point is to
 // catch "the last release's schema, migrated by HEAD," which is what a real
 // operator upgrading one version at a time actually does. Move it forward
-// when a new minor ships. Override via KEYORIX_E2E_UPGRADE_FROM_TAG for a
-// manual run against a different release.
-const defaultUpgradeFromReleaseTag = "v0.96.3"
+// when a new minor ships (v0.97.0 shipped 2026-11-24, so HEAD is the next
+// minor and v0.96.x is now a skipped minor). Override via
+// KEYORIX_E2E_UPGRADE_FROM_TAG for a manual run against a different release.
+const defaultUpgradeFromReleaseTag = "v0.97.0"
 
 // oldBinaryInitArgs returns the `admin init` arguments for the downloaded
 // OLD binary. This harness drives plain HTTP, and a binary that has --dev

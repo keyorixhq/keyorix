@@ -162,7 +162,9 @@ func runK8sHostile(p hostile.Program, known []hostile.Known) *hostile.Harness {
 		"namespace": "ns", "service_account": "sa", "revocable": true,
 		"api_server": h.URL(), "ca_cert": h.CAPEM(), "token": hostileK8sBearer,
 	})
-	var e KubernetesEngine
+	// The hostile API stands in on loopback; the dial guard is pinned separately by
+	// TestKubernetesEngine_DialGuard, so this engine opts out of it.
+	e := KubernetesEngine{allowPrivateNetwork: true}
 
 	var cred Credential
 	var label string
