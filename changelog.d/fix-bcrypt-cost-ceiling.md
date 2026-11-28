@@ -1,0 +1,2 @@
+### Security
+- **Password verification refuses a stored bcrypt hash with an excessive cost.** `kdfmeter.CompareHashAndPassword` now returns `ErrHashCostTooHigh` for a hash declaring a cost above 16 instead of running 2^cost rounds (cost 31 is minutes of CPU per login attempt). Keyorix hashes at cost 12, so no hash it created is affected. Defence in depth: the case needs write access to the password-hash column or a foreign backup import (`INV-KDFMETER-compare-cost-ceiling`).
