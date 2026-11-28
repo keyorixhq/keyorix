@@ -81,6 +81,23 @@ NEG_DIR="$WORK_DIR/neg"          # bind-mounted into the negative-leg restore ta
 EXTERNAL_DIR="$WORK_DIR/external-media"  # stands in for write-once media held OFF this host
 mkdir -p "$SRC_DIR/keys" "$DST_DIR" "$NEG_DIR" "$EXTERNAL_DIR"
 
+# The work dirs are bind-mounted and created here by the caller: mktemp -d is 0700 and the
+# 0600 env/config files are readable only by the caller's uid, so a container running as the
+# image's own user (1001) cannot read them (and could not write into the 0700 dirs) unless
+# the caller happens to be uid 1001. Run every container as the caller instead; the files it
+# writes into the mounts are then the caller's too, so cleanup's rm -rf works. Rootless
+# podman maps the caller to root inside the container, where --user would pick a subuid that
+# owns nothing, so keep the caller's id there with --userns=keep-id.
+RUN_AS=(--user "$(id -u):$(id -g)")
+if [ "$ENGINE" = podman ]; then
+    RUN_AS=(--userns=keep-id "${RUN_AS[@]}")
+fi
+
+# engine_run <docker-run args...>: `$ENGINE run` as the caller's uid:gid.
+engine_run() {
+    $ENGINE run "${RUN_AS[@]}" "$@"
+}
+
 cleanup() {
     $ENGINE rm -f "$SERVER_CONTAINER" "$RESTORE_CONTAINER" >/dev/null 2>&1 || true
     rm -rf "$WORK_DIR"
@@ -167,6 +184,7 @@ api_get() {
         # (no header-from-file option, unlike curl's -H @file), so there is nothing to move it
         # to. The exposure is a process list inside a --network none container that is removed
         # at exit, holding a session token for a throwaway database.
+        # shellcheck disable=SC2016 # the single-quoted program is meant to expand INSIDE the container
         printf 'Authorization: Bearer %s\n' "$token" |
             $ENGINE exec -i "$container" sh -c \
                 'IFS= read -r h; exec wget -q --header="$h" -O- "$1"' sh "http://127.0.0.1:8080$path"
@@ -183,6 +201,7 @@ api_post() {
     local container="$1" path="$2" mounted_path="$3" token="${4:-}"
     if [ -n "$token" ]; then
         # Same stdin hand-off and the same wget-argv residual as api_get.
+        # shellcheck disable=SC2016 # the single-quoted program is meant to expand INSIDE the container
         printf 'Authorization: Bearer %s\n' "$token" |
             $ENGINE exec -i "$container" sh -c \
                 'IFS= read -r h; exec wget -q --header="Content-Type: application/json" --header="$h" --post-file="$2" -O- "$1"' \
@@ -194,14 +213,24 @@ api_post() {
 }
 
 wait_for_health() {
-    local container="$1"
-    for _ in $(seq 1 30); do
+    local container="$1" tries="${KEYORIX_AIRGAP_E2E_HEALTH_WAIT_SECS:-30}"
+    for _ in $(seq 1 "$tries"); do
         if $ENGINE exec "$container" wget -q --spider "http://127.0.0.1:8080/health" 2>/dev/null; then
             return 0
         fi
         sleep 1
     done
-    fail "$container never became healthy on http://127.0.0.1:8080/health"
+    # Say why, not only that: a server that exited at start (unreadable config, key file
+    # permissions, bad uid) never answers, and its own log is the only place that shows it.
+    {
+        echo ""
+        echo "==> $container state after ${tries}s:"
+        $ENGINE ps -a --filter "name=$container" --format '{{.Names}}: {{.Status}}' 2>&1 || true
+        echo "==> $ENGINE logs --tail 100 $container:"
+        $ENGINE logs --tail 100 "$container" 2>&1 || true
+        echo "==> end of $container logs"
+    } >&2
+    fail "$container never became healthy on http://127.0.0.1:8080/health in ${tries}s (container logs above)"
 }
 
 # ============================================================================
@@ -209,7 +238,7 @@ wait_for_health() {
 # ============================================================================
 
 echo "==> Starting the source server (--network none, loopback only)"
-$ENGINE run -d --name "$SERVER_CONTAINER" --network none --workdir /app/data \
+engine_run -d --name "$SERVER_CONTAINER" --network none --workdir /app/data \
     -v "$SRC_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
     --env-file "$SERVER_ENV_FILE" \
@@ -262,7 +291,7 @@ $ENGINE stop "$SERVER_CONTAINER" >/dev/null
 $ENGINE rm "$SERVER_CONTAINER" >/dev/null
 
 echo "==> Exporting the checkpoint to $EXTERNAL_DIR (stands in for write-once media held off this host)"
-$ENGINE run --rm --network none --workdir /app/data \
+engine_run --rm --network none --workdir /app/data \
     -v "$SRC_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
     --entrypoint /app/keyorix-server \
@@ -272,7 +301,7 @@ cp "$SRC_DIR/checkpoint-export.json" "$EXTERNAL_DIR/checkpoint-export.json"
 [ -s "$EXTERNAL_DIR/checkpoint-export.json" ] || fail "checkpoint export is empty"
 
 echo "==> Extracting the checkpoint verification key (admin audit export-checkpoint-key, F12)"
-$ENGINE run --rm --network none --workdir /app/data \
+engine_run --rm --network none --workdir /app/data \
     -v "$SRC_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
     --env-file "$MASTER_ENV_FILE" \
@@ -283,7 +312,7 @@ cp "$SRC_DIR/checkpoint.key" "$EXTERNAL_DIR/checkpoint.key"
 [ -s "$EXTERNAL_DIR/checkpoint.key" ] || fail "checkpoint key export is empty"
 
 echo "==> admin backup (--network none)"
-$ENGINE run --rm --network none --workdir /app/data \
+engine_run --rm --network none --workdir /app/data \
     -v "$SRC_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
     --env-file "$MASTER_ENV_FILE" \
@@ -315,7 +344,7 @@ security:
   require_mfa: false
 EOF
 cp "$WORK_DIR/backup.tar.gz" "$DST_DIR/backup.tar.gz"
-$ENGINE run --rm --network none --workdir /app/data \
+engine_run --rm --network none --workdir /app/data \
     -v "$DST_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
     --env-file "$MASTER_ENV_FILE" \
@@ -326,7 +355,7 @@ $ENGINE run --rm --network none --workdir /app/data \
 echo "==> admin verify-audit against the restored database, cross-checked against the externally-held anchor"
 cp "$EXTERNAL_DIR/checkpoint-export.json" "$DST_DIR/checkpoint-export.json"
 cp "$EXTERNAL_DIR/checkpoint.key" "$DST_DIR/checkpoint.key"
-VERIFY_OUT="$($ENGINE run --rm --network none --workdir /app/data \
+VERIFY_OUT="$(engine_run --rm --network none --workdir /app/data \
     -v "$DST_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
     --entrypoint /app/keyorix-server \
@@ -342,7 +371,7 @@ echo "$VERIFY_OUT" | jq -e '.external_anchor.authenticated == true' >/dev/null \
 echo "    verify-audit: VALID, external anchor cross-checked and authenticated"
 
 echo "==> Booting a server against the RESTORED data to confirm the secret VALUE survived"
-$ENGINE run -d --name "$RESTORE_CONTAINER" --network none --workdir /app/data \
+engine_run -d --name "$RESTORE_CONTAINER" --network none --workdir /app/data \
     -v "$DST_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
     --env-file "$MASTER_ENV_FILE" \
@@ -412,7 +441,7 @@ audit_checkpoints:
 EOF
 
 set +e
-$ENGINE run --rm --network none --workdir /app/data \
+engine_run --rm --network none --workdir /app/data \
     -v "$NEG_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
     --env-file "$MASTER_ENV_FILE" \
