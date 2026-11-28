@@ -1,0 +1,2 @@
+### Testing
+- **Fixed an intermittent `-race` failure in `internal/rotation`.** `newUnreachableMongoClient` (used by `TestMongoClientConn_UpdateUserPassword`) never disconnected its client, so the mongo topology heartbeat goroutine kept dialing through `net.DefaultResolver` while the DNS-rebinding fuzz targets swapped it (`egressref.RebindDNS.Install`). The helper now disconnects the client in `t.Cleanup`. Test-only; no product code changed.
