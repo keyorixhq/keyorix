@@ -62,7 +62,11 @@ func (c *KeyorixCore) auditAdminDSNTransportAllowedOnSave(ctx context.Context, a
 // is refused unless the operator's flag is set or the soft period holds
 // (dsn.StoredSQLTransportGrace); when it is let through, every issue writes an
 // audit event naming the config and option (the engine logs the WARNING when it
-// connects).
+// connects). That event is the only record that a credential was issued over a
+// connection that does not verify the server, so it fails closed like
+// dynamic_lease.issued (#4716): it runs before engine.Issue, and if it was not
+// committed the issue is refused with ErrMutationAuditUnavailable before anything
+// is minted (AUDIT-DISCLOSURE-NOV-1).
 func (c *KeyorixCore) checkAdminDSNTransportOnIssue(ctx context.Context, engine ports.DynamicBackendEngine, cfg *models.DynamicSecretConfig, adminDSN string, userID uint) error {
 	w := adminDSNTransportWeakness(engine, adminDSN)
 	if w == nil {
@@ -77,8 +81,10 @@ func (c *KeyorixCore) checkAdminDSNTransportOnIssue(ctx context.Context, engine 
 		why = "accepted only during the upgrade grace period, refused from the next release: set sslmode=verify-full (postgres) or tls=true (mysql), or the operator flag " + dsn.TransportPolicyKey
 	}
 	uid, pid := userID, cfg.ProjectID // attributed like dynamic_lease.issued
-	c.writeAuditEventFull(ctx, "dynamic_lease.insecure_transport", &uid, nil, &pid, "",
+	if !c.writeAuditEventFull(ctx, "dynamic_lease.insecure_transport", &uid, nil, &pid, "",
 		fmt.Sprintf("issuing from dynamic-secret config %d %q (%s) whose admin_dsn has %s: %s; %s",
-			cfg.ID, cfg.Name, w.Backend, w.Option, w.Effect(), why))
+			cfg.ID, cfg.Name, w.Backend, w.Option, w.Effect(), why)) {
+		return fmt.Errorf("%w: audit event %q was not recorded; no credential was issued, retry", ErrMutationAuditUnavailable, "dynamic_lease.insecure_transport")
+	}
 	return nil
 }

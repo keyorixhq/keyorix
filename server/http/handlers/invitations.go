@@ -230,6 +230,11 @@ func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request
 	}
 	prov, err := h.coreService.ResendInvitationLink(r.Context(), projectID, uint(invID), actor.UserID)
 	if err != nil {
+		// The new link's setup_token.issued row was refused: no link was issued
+		// and the previous one stays live (AUDIT-DISCLOSURE-NOV-1).
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if sendStorageUnavailable(w, err) {
 			return
 		}

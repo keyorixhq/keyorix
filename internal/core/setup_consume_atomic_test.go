@@ -89,7 +89,7 @@ func completeSetupRecovering(c *KeyorixCore) (res *SetupConsumeResult, err error
 func TestCompleteSetup_FaultAtAnyWriteLeavesNothingAndTheLinkStillWorks(t *testing.T) {
 	t.Parallel()
 	for _, mfa := range []bool{false, true} {
-		methods := []string{"WithTransaction", "MarkSetupTokenConsumed", "SetPasswordHash", "SetAccountState", "RevokeAllPersonalAccessTokensForUser"}
+		methods := []string{"WithTransaction", "MarkSetupTokenConsumed", "SetPasswordHash", "SetAccountState", "RevokeAllPersonalAccessTokensForUser", "DeleteSessionsForUserExcept"}
 		if mfa {
 			methods = append(methods, "CreateMFAChallenge")
 		} else {

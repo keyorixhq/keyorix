@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
@@ -201,8 +202,11 @@ func (c *KeyorixCore) auditSessionListFailure(ctx context.Context, userID uint, 
 }
 
 // evictSessionsAndAudit is evictSessions followed by auditSessionListFailure, for callers
-// that hold no lock at this point.
+// that hold no lock at this point. Every caller runs it after its revocation committed,
+// so it recovers its own panic (INV-CORE-34): a misbehaving cache evictor must not turn
+// a committed change into a reported failure.
 func (c *KeyorixCore) evictSessionsAndAudit(ctx context.Context, userID uint, ev sessionEvictions, mode sessionEvictMode, reason string) {
+	defer besteffort.RunRecover("session_eviction.evictSessionsAndAudit")()
 	c.evictSessions(userID, ev, mode, reason)
 	c.auditSessionListFailure(ctx, userID, ev, mode, reason)
 }

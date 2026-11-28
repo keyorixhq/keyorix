@@ -117,7 +117,7 @@ func (c *KeyorixCore) CompleteSetupHoldingLoginSlot(ctx context.Context, raw, ne
 // Commit-aware the same way the error kinds are: a session written before the
 // panic is deleted by createSession and its token never returned
 // (mintLoginSession). Nothing that runs after the session is minted can panic
-// out (deleteSessionsForUserAndEvict and the audit writes recover their own),
+// out (the session eviction and the audit writes recover their own),
 // so a recovered panic never follows a minted session. Whatever else committed
 // before the panic (the consumed token, the new password) is what the same
 // write's error leaves too.
@@ -145,14 +145,15 @@ func (c *KeyorixCore) completeValidSetupToken(ctx context.Context, tok *models.S
 //
 // All or nothing (AUTH-2 item 1, #3298). Every write that makes up the consume
 // commits in ONE transaction: the token is marked consumed, the password hash and
-// account state are set, the account's PATs are revoked, and the session (or the
-// MFA challenge) is inserted. Everything fallible that is not a write runs before
+// account state are set, the account's PATs are revoked and its sessions deleted,
+// and the new session (or the MFA challenge) is inserted. Everything fallible that is not a write runs before
 // it: the account read, the policy/history check, the response identity. So a
 // failure or panic at any step leaves the token live, the old password in place,
-// every PAT live and no session: the caller is told the link failed and it can be
-// used again. What runs after the commit cannot report a failure: the cache
-// eviction, password history, the session cap, the purge of other sessions and the
-// audit events are best-effort and recover their own panics.
+// every PAT and old session live and no new session: the caller is told the link failed and it can be
+// used again. The account's existing sessions are deleted in the same transaction
+// (R1.16): a reset never completes with a stolen session still live. What runs after
+// the commit cannot report a failure: the cache eviction, password history, the
+// session cap and the audit events are best-effort and recover their own panics.
 //
 // This replaces consume-first: the token used to be spent before the password was
 // set and the session minted, so a later fault answered "link could not be
@@ -240,6 +241,7 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 	}
 
 	var revokedPATs []string
+	var ev sessionEvictions
 	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		ok, err := tx.MarkSetupTokenConsumed(ctx, tok.ID, now)
 		if err != nil {
@@ -269,6 +271,16 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 		revokedPATs = hashes
+		// Every existing session ends with the reset, in this transaction (R1.16):
+		// a reset whose purge failed is refused whole, like the PAT revocation
+		// above, instead of completing with a stolen session still live. Listed
+		// first (in a savepoint; a failed listing only widens the post-commit
+		// cache eviction), and before the new session exists, so it is not in
+		// the list.
+		ev = listSessionHashesInTx(ctx, tx, user.ID)
+		if err := tx.DeleteSessionsForUserExcept(ctx, user.ID, 0); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
 		if secondFactor {
 			if err := tx.CreateMFAChallenge(ctx, challengeRow); err != nil {
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -303,6 +315,9 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 
 	// Committed. Nothing below can report a failure.
 	c.invalidateTokenCache(revokedPATs...)
+	// The other sessions were deleted with the reset; evict them from the auth cache
+	// so a stolen one is refused on its next request, not after the cache TTL.
+	c.evictSessionsAndAudit(ctx, user.ID, ev, evictTombstone, "setup consume")
 	if c.passwordPolicy.HistoryCount > 0 {
 		besteffort.Run(ctx, "setup_consume.AddPasswordHistory", func() error {
 			return c.storage.AddPasswordHistory(ctx, user.ID, string(hash), now)
@@ -315,21 +330,12 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 		fmt.Sprintf("setup token consumed (purpose=%s, subject=%s)", tok.Purpose, tok.SubjectEmail))
 
 	if secondFactor {
-		// Evict every existing session (keep none) so a stolen session is locked
-		// out now, not only once the second factor completes.
-		_ = c.deleteSessionsForUserAndEvict(ctx, user.ID, 0, "")
 		c.writeAuditEventFull(ctx, "account.setup_completed", &user.ID, nil, nil, ip,
 			fmt.Sprintf("account setup completed via %s (MFA required before session)", tok.Purpose))
 		return &SetupConsumeResult{User: user, MFAChallenge: challenge}, ErrMFARequired
 	}
 
 	c.enforceSessionLimitBestEffort(ctx, user.ID)
-	// Evict every other session for this account, keeping only the one just minted, and
-	// drop those sessions from the auth cache so a stolen session is locked out on its
-	// next request, not after the cache TTL. A self-service password reset must lock out
-	// anyone holding a stolen session (and a re-provision must drop stale ones) — matching
-	// ChangePassword's invalidate-other-devices invariant.
-	_ = c.deleteSessionsForUserAndEvict(ctx, user.ID, session.ID, session.SessionToken)
 	c.writeAuditEventFull(ctx, "account.setup_completed", &user.ID, nil, nil, ip,
 		fmt.Sprintf("account setup completed via %s", tok.Purpose))
 

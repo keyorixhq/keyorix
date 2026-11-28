@@ -109,24 +109,34 @@ type IssueSetupTokenResult struct {
 // IssueSetupToken mints a single-use setup token, superseding any prior active token
 // for the same (purpose, email) so a reissue invalidates the old link. The raw token
 // is returned once; only its hash is stored.
+//
+// Audit before disclosure (AUDIT-DISCLOSURE-NOV-1): the setup_token.issued row is
+// written in the mint's own transaction through a fail-closed audit target. If it
+// does not persist, the supersede and the insert roll back, no token is returned and
+// the caller gets ErrMutationAuditUnavailable: a link to an account is never handed
+// out without its audit record, and the subject's previous link stays live.
 func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRequest) (*IssueSetupTokenResult, error) {
-	result, err := c.mintSetupTokenOn(ctx, c.storage, req)
-	if err != nil {
+	var result *IssueSetupTokenResult
+	if err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		minted, err := c.mintSetupTokenOn(ctx, tx, req)
+		if err != nil {
+			return err
+		}
+		c.auditSetupTokenIssuedOn(ctx, tgt, req, minted.Token)
+		result = minted
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	c.auditSetupTokenIssued(ctx, req, result.Token)
 	return result, nil
 }
 
 // mintSetupTokenOn is IssueSetupToken's actual mint logic, parameterized over
-// the storage.Storage handle it writes through, WITHOUT auditing (the audit
-// write always happens via emitAudit against c.storage directly and must
-// never run until the caller's own transaction, if any, has committed --
-// #2444 coordinator follow-up). st is c.storage for the standalone
-// IssueSetupToken path above, or an outer caller's already-open transaction
-// handle (e.g. createInvitationWithSetupTokenAtomically below) when the mint
-// must commit or roll back together with a durable record created ahead of
-// it. st.WithTransaction nests as a SAVEPOINT when st is already
+// the storage.Storage handle it writes through, WITHOUT auditing: the caller
+// writes setup_token.issued through the audit target of the same transaction
+// (auditSetupTokenIssuedOn). st is the transaction handle of IssueSetupToken
+// above, or of createInvitationWithSetupTokenAtomically when the mint must
+// commit or roll back together with a durable record created ahead of it. st.WithTransaction nests as a SAVEPOINT when st is already
 // transaction-scoped (GORM's standard nested-transaction behavior, same
 // mechanism catalog.go's nested environment-seed transaction relies on), so
 // this needs no special-casing for either caller.
@@ -190,18 +200,16 @@ func (c *KeyorixCore) mintSetupTokenOn(ctx context.Context, st storage.Storage, 
 	return &IssueSetupTokenResult{Token: created, PlainToken: raw}, nil
 }
 
-// auditSetupTokenIssued writes setup_token.issued. Split out of IssueSetupToken
-// so a caller that minted the token via mintSetupTokenOn against an outer,
-// not-yet-committed transaction (createInvitationWithSetupTokenAtomically)
-// can defer this until AFTER that transaction actually commits -- emitAudit
-// always writes through c.storage directly (never a tx handle), so calling
-// it before commit would record "issued" for a token a later rollback could
-// still erase.
-func (c *KeyorixCore) auditSetupTokenIssued(ctx context.Context, req IssueSetupTokenRequest, tok *models.SetupToken) {
+// auditSetupTokenIssuedOn writes setup_token.issued through tgt. Both issuers
+// (IssueSetupToken and createInvitationWithSetupTokenAtomically) call it as
+// the last statement of the transaction that mints the token, with a
+// fail-closed target (withAuditedMutation), so the row commits with the token
+// or neither does.
+func (c *KeyorixCore) auditSetupTokenIssuedOn(ctx context.Context, tgt auditTarget, req IssueSetupTokenRequest, tok *models.SetupToken) {
 	// Issuer is the actor; for self-service reset (CreatedBy == 0) attribute to the
 	// subject. No token (not even the hash) is recorded on the audit row.
 	actor := actorOrSubject(req.CreatedBy, req.SubjectUserID)
-	c.writeAuditEventFull(ctx, "setup_token.issued", actor, nil, nil, "",
+	c.writeAuditEventFullOn(ctx, tgt, "setup_token.issued", actor, nil, nil, "",
 		fmt.Sprintf("setup token issued (purpose=%s, subject=%s, expires=%s)",
 			req.Purpose, tok.SubjectEmail, tok.ExpiresAt.UTC().Format(time.RFC3339)))
 }

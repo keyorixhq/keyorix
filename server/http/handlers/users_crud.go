@@ -725,6 +725,11 @@ func (h *UserHandler) ResendSetupLink(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.coreService.ResendAccountSetupLink(r.Context(), uint(id), admin.UserID)
 	if err != nil {
+		// The new link's setup_token.issued row was refused: no link was issued
+		// and the previous one stays live (AUDIT-DISCLOSURE-NOV-1).
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		// S1 (CLI-split inventory #2012): the ceiling refusal must go through
 		// clientSafe, not the raw msg this handler otherwise returns verbatim —
 		// requireEqualOrGreaterAdminAuthority's underlying error names the
