@@ -60,16 +60,22 @@ package auditverify_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/keyorixhq/keyorix/internal/auditverify"
 	"github.com/keyorixhq/keyorix/internal/fuzzutil/resguard"
+	sqlitedialect "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 )
 
 // brd is a tiny deterministic consumer of the fuzz byte slice.
@@ -397,6 +403,96 @@ func liveIDs(f *diffFixture) []uint64 {
 	return ids
 }
 
+// auditChainTemplates caches one built, checkpointed chain per event count n
+// (3..24, so at most 22 files). Building one through the real write path
+// (migrate, i18n init, n LogAuditEvent calls, a signed checkpoint) costs about
+// 5 ms for n=13, a third of an input; copying the finished file and reopening
+// it costs about 0.2 ms. The fuzzed part (the mutation, the fingerprints and
+// both Verify calls) only ever uses the SQLite file (f.path, f.db): every
+// mutation is raw SQL on that handle, and Verify opens the file on its own.
+//
+// Sound because each input still mutates ITS OWN COPY, never the template, and
+// because open refuses a copy whose SHA-256 differs from the template's as
+// built. The chain content does not depend on when it was built: Verify reads
+// no wall clock, and the only time-based mutation computes its own timestamp.
+type auditChainTemplates struct {
+	mu  sync.Mutex
+	dir string
+	byN map[int]*auditChainTemplate
+}
+
+type auditChainTemplate struct {
+	path string
+	sum  [sha256.Size]byte
+}
+
+func newAuditChainTemplates(dir string) *auditChainTemplates {
+	return &auditChainTemplates{dir: dir, byN: map[int]*auditChainTemplate{}}
+}
+
+// fixtureFor returns a private, mutable copy of the n-event chain, building the
+// template on first use (from this input's t, whose TempDir is discarded; the
+// template itself lives in s.dir).
+func (s *auditChainTemplates) fixtureFor(t *testing.T, n int) *diffFixture {
+	t.Helper()
+	s.mu.Lock()
+	tmpl := s.byN[n]
+	s.mu.Unlock()
+	if tmpl == nil {
+		fx := newDiffFixture(t)
+		fx.logEvents(n, time.Hour)
+		if _, written, err := fx.core.WriteAuditCheckpoint(fx.ctx); err != nil || !written {
+			t.Skipf("fixture: checkpoint not written (err=%v written=%v)", err, written)
+		}
+		if sqlDB, err := fx.db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+		raw, err := os.ReadFile(fx.path)
+		if err != nil {
+			t.Fatalf("read template: %v", err)
+		}
+		tmpl = &auditChainTemplate{path: filepath.Join(s.dir, fmt.Sprintf("chain-%d.db", n)), sum: sha256.Sum256(raw)}
+		if err := os.WriteFile(tmpl.path, raw, 0o600); err != nil {
+			t.Fatalf("write template: %v", err)
+		}
+		s.mu.Lock()
+		s.byN[n] = tmpl
+		s.mu.Unlock()
+	}
+	f, err := tmpl.open(t)
+	if err != nil {
+		t.Fatalf("template: %v", err)
+	}
+	return f
+}
+
+// open copies the template into the input's own TempDir and opens it. It fails
+// if the template file no longer has the bytes it was built with.
+func (tmpl *auditChainTemplate) open(t *testing.T) (*diffFixture, error) {
+	t.Helper()
+	raw, err := os.ReadFile(tmpl.path)
+	if err != nil {
+		return nil, err
+	}
+	if sha256.Sum256(raw) != tmpl.sum {
+		return nil, fmt.Errorf("template file changed since it was built")
+	}
+	dst := filepath.Join(t.TempDir(), "audit.db")
+	if err := os.WriteFile(dst, raw, 0o600); err != nil {
+		return nil, err
+	}
+	db, err := gorm.Open(sqlitedialect.Open(dst), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() {
+		if sqlDB, e := db.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	return &diffFixture{t: t, path: dst, db: db, ctx: context.Background()}, nil
+}
+
 func FuzzAuditChainMetamorphicTamper(f *testing.F) {
 	// Seeds: a few bytes selecting different mutation kinds / sizes.
 	f.Add([]byte{})
@@ -419,16 +515,18 @@ func FuzzAuditChainMetamorphicTamper(f *testing.F) {
 	ctx := context.Background()
 	opts := auditverify.Options{CheckpointKey: fixedCheckpointKey}
 
+	tmplDir, err := os.MkdirTemp("", "audit-chain-templates-")
+	if err != nil {
+		f.Fatalf("template dir: %v", err)
+	}
+	f.Cleanup(func() { _ = os.RemoveAll(tmplDir) })
+	templates := newAuditChainTemplates(tmplDir)
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		r := &brd{b: data}
 		n := 3 + r.intn(22) // 3..24 events
 
-		f := newDiffFixture(t)
-		f.logEvents(n, time.Hour)
-		_, written, err := f.core.WriteAuditCheckpoint(f.ctx)
-		if err != nil || !written {
-			t.Skipf("fixture: checkpoint not written (err=%v written=%v)", err, written)
-		}
+		f := templates.fixtureFor(t, n)
 
 		// Metamorphic base invariant: the untampered chain MUST verify VALID,
 		// else any non-VALID after mutation is trivially (and wrongly) "detected".

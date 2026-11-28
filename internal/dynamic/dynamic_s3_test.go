@@ -910,7 +910,7 @@ func TestKubernetesEngine_Issue_NilMinterBuildsRealMinter(t *testing.T) {
 	cfg := fmt.Sprintf(`{"namespace":"default","service_account":"my-sa","api_server":%q,"token":"tok","ca_cert":%q}`,
 		srv.URL, caPEM)
 
-	e := &KubernetesEngine{} // nil minter → will call newRealK8sMinter
+	e := &KubernetesEngine{allowPrivateNetwork: true} // nil minter → will call newRealK8sMinter; loopback stub needs the opt-out
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, _, err := e.Issue(ctx, cfg, "", time.Hour)
@@ -932,7 +932,7 @@ func TestKubernetesEngine_Revoke_NilMinterRevocableBuildsRealMinter(t *testing.T
 	cfg := fmt.Sprintf(`{"namespace":"default","service_account":"my-sa","revocable":true,"api_server":%q,"token":"tok","ca_cert":%q}`,
 		srv.URL, caPEM)
 
-	e := &KubernetesEngine{}
+	e := &KubernetesEngine{allowPrivateNetwork: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := e.Revoke(ctx, cfg, "keyorix-dyn-abc123xyz012")

@@ -1,0 +1,3 @@
+### Documentation
+
+- **ADR-126 (Proposed): TLS bootstrap for on-prem and air-gapped installs.** Design for getting correct, trusted, self-renewing HTTPS from the install alone: one install question that selects `private-ca` (a name-constrained two-level local CA for the server's own listeners, leaf renewed in-process), `acme` (with an internal directory for air-gapped networks), `byo` (enterprise PKI, validated at start and on reload) or `proxy` (cleartext only to the configured proxies); an enforced cleartext rule for non-loopback binds; CLI trust by out-of-band CA fingerprint; a separate compliance control for the served certificate; audit events; upgrade grace. No behaviour change; open decisions are listed in the ADR.
