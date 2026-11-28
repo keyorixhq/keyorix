@@ -95,7 +95,7 @@ Measured against the private fuzz-corpus registry (2026-11-18) using the
 |---|---|---|
 | first-party (keyorix) | 60 | 28 (47%) |
 | — with FuncName (can replay + burst) | — | 14 |
-| — package-path only (burst if target found) | — | 14 |
+| — package-path only (reported UNCHECKED, nothing is run) | — | 14 |
 | upstream | 48 | 1 (2%) |
 | other (product, third-party) | 12 | 0 |
 | **ALL ACTIVE** | **120** | **29 (24%)** |
@@ -113,6 +113,12 @@ those are intentionally not parsed (free-text parsing is fragile).
 that originally triggered the finding.  This requires that the fix committer
 added the reproducer bytes as a committed seed in `testdata/fuzz/<FuncName>/`.
 If no seeds are committed for a finding, only the burst runs.
+
+A replay or burst that exits 0 but did not run the function (`no tests to run`,
+`no fuzz tests to fuzz`: the func was renamed or removed) is a FAILURE, never a
+pass. A finding mapped to a package only (no `Fuzz*` func) has nothing to run: it
+is listed as `UNCHECKED`, and a run in which no replay or burst executed prints
+`GATE UNCHECKED` instead of `GATE PASSED`.
 
 **Burst** (`go test -fuzz='^FuzzXxx$' -fuzztime=60s`) runs the fuzzer for a
 bounded window and catches crashes not covered by the existing seed corpus —
@@ -144,7 +150,7 @@ REGATE_REGISTRY=... \
   python3 scripts/fuzzing/finding-regate/regate.py \
     --staged
 
-# Dry-run: show matched findings without running tests
+# Dry-run: show matched findings; no go test command is executed
 python3 scripts/fuzzing/finding-regate/regate.py \
   --diff-names internal/connect/connector.go \
   --registry /path/to/registry/findings \

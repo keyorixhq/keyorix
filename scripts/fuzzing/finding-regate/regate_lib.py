@@ -335,6 +335,12 @@ def replay_seed(
     )
 
 
+_NO_FUZZ_RE = re.compile(r"no fuzz tests to fuzz|no tests to run")
+
+# error_msg of the row recorded for a package-only target: nothing was run.
+UNCHECKED_MSG = "no fuzz func: package watched, nothing run (UNCHECKED)"
+
+
 def run_burst(
     target: Target,
     fuzztime: str,         # e.g. "60s"
@@ -351,16 +357,26 @@ def run_burst(
         ".",
     ]
     rc, out = runner(cmd, pkg_dir)
-    # go test -fuzz exits 0 when time expires normally.
-    # It exits non-zero if a crash is found.
-    ok = rc == 0
+    # go test -fuzz exits 0 when time expires normally and non-zero if a crash
+    # is found. It also exits 0 with "no fuzz tests to fuzz" when the func does
+    # not exist (renamed or deleted), which would pass vacuously.
+    if rc != 0:
+        ok, error_msg = False, f"exit {rc}"
+    elif _NO_FUZZ_RE.search(out):
+        ok = False
+        error_msg = (
+            f"exit 0 but {target.func} did not run ('no fuzz tests to fuzz' / "
+            "'no tests to run'): func renamed or removed?"
+        )
+    else:
+        ok, error_msg = True, ""
     return RunResult(
         finding_id="",
         target=target,
         seed_name=None,
         ok=ok,
         output=out,
-        error_msg="" if ok else f"exit {rc}",
+        error_msg=error_msg,
     )
 
 
@@ -381,6 +397,8 @@ class GateConfig:
     no_burst: bool = False
     # If True, skip the replay step (burst only)
     no_replay: bool = False
+    # If True, only match findings; execute nothing (rows stays empty)
+    dry_run: bool = False
 
 
 @dataclass
@@ -436,6 +454,9 @@ def run_gate(
 
     rows: list[RunResult] = []
 
+    if cfg.dry_run:
+        return GateOutput(matched_findings=matched, rows=rows)
+
     for fm in matched:
         for t in fm.targets:
             if not t.func:
@@ -446,7 +467,7 @@ def run_gate(
                     seed_name=None,
                     ok=True,
                     output="",
-                    error_msg="no fuzz func — package watched, burst skipped",
+                    error_msg=UNCHECKED_MSG,
                 ))
                 continue
 

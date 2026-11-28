@@ -468,5 +468,120 @@ class TestDefaultRunner_Environment(unittest.TestCase):
         self.assertEqual(call.args[0][:3], ["nice", "-n", "10"])
 
 
+def _no_fuzz_runner(cmd, cwd):
+    """Fake runner: -fuzz of a missing func exits 0 with a warning."""
+    return 0, "testing: warning: no fuzz tests to fuzz\nPASS\nok  \texample/foo\t0.002s\n"
+
+
+class TestBurst_VacuousPassFails(unittest.TestCase):
+    """rc==0 with 'no fuzz tests to fuzz' must not count as a burst."""
+
+    def test_missing_fuzz_func_is_a_failure(self):
+        cfg = _make_cfg(runner=_no_fuzz_runner, no_replay=True)
+        out = run_gate(["internal/foo/foo.go"], cfg)
+        bursts = [r for r in out.rows if r.seed_name is None]
+        self.assertGreater(len(bursts), 0)
+        self.assertFalse(any(r.ok for r in bursts))
+        self.assertIn("did not run", bursts[0].error_msg)
+
+    def test_no_tests_to_run_is_a_failure(self):
+        cfg = _make_cfg(runner=_no_tests_runner, no_replay=True)
+        out = run_gate(["internal/foo/foo.go"], cfg)
+        self.assertFalse(any(r.ok for r in out.rows if r.seed_name is None))
+
+    def test_normal_burst_still_passes(self):
+        cfg = _make_cfg(runner=_ok_runner, no_replay=True)
+        out = run_gate(["internal/foo/foo.go"], cfg)
+        bursts = [r for r in out.rows if r.seed_name is None]
+        self.assertTrue(bursts and all(r.ok for r in bursts))
+
+
+class _RecordingRunner:
+    def __init__(self, rc=1):
+        self.calls = []
+        self.rc = rc
+
+    def __call__(self, cmd, cwd):
+        self.calls.append(cmd)
+        return self.rc, "--- FAIL: FuzzFoo\n"
+
+
+class TestMain_DryRun(unittest.TestCase):
+    def test_dry_run_executes_nothing_even_if_tests_would_fail(self):
+        rec = _RecordingRunner(rc=1)
+        cfg = _make_cfg(runner=rec)
+        cfg.dry_run = True
+        out = run_gate(["internal/foo/foo.go"], cfg)
+        self.assertEqual(rec.calls, [])
+        self.assertEqual(out.rows, [])
+        self.assertGreater(len(out.matched_findings), 0)
+
+    def test_cli_dry_run_exits_zero_and_runs_no_go_test(self):
+        import io
+        from contextlib import redirect_stdout
+        import regate
+        with mock.patch("regate_lib.subprocess.run") as run, \
+                redirect_stdout(io.StringIO()) as buf:
+            rc = regate.main([
+                "--registry", _REGISTRY, "--targets-d", _TARGETS_D,
+                "--repo-root", _REPO, "--diff-names", "internal/foo/foo.go",
+                "--dry-run",
+            ])
+        self.assertEqual(rc, 0)
+        run.assert_not_called()
+        self.assertIn("dry-run", buf.getvalue())
+
+
+class TestMain_PackageOnlyNeverPasses(unittest.TestCase):
+    def _main(self, extra=()):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+        import regate
+        import regate_lib
+        fm = regate_lib.FindingMeta(
+            id="KFZ-PKG-001", title="pkg only", scope="first-party",
+            module="keyorix", disposition="active",
+            targets=[Target(pkg="internal/foo", func="")])
+        out_buf, err_buf = io.StringIO(), io.StringIO()
+        with mock.patch("regate_lib.match_findings", return_value=[fm]), \
+                redirect_stdout(out_buf), redirect_stderr(err_buf):
+            rc = regate.main([
+                "--registry", _REGISTRY, "--targets-d", _TARGETS_D,
+                "--repo-root", _REPO, "--diff-names", "internal/foo/foo.go",
+                *extra,
+            ])
+        return rc, out_buf.getvalue(), err_buf.getvalue()
+
+    def test_package_only_alone_is_not_gate_passed(self):
+        rc, out, err = self._main()
+        self.assertNotIn("GATE PASSED", out + err)
+        self.assertIn("GATE UNCHECKED", err)
+        self.assertIn("UNCHECKED", out)
+
+    def test_burst_only_target_prints_a_note(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+        import regate
+        with mock.patch("regate_lib.subprocess.run",
+                        side_effect=lambda cmd, **kw: mock.Mock(
+                            returncode=0, stdout="ok\n", stderr="")), \
+                redirect_stdout(io.StringIO()), \
+                redirect_stderr(io.StringIO()) as err:
+            regate.main([
+                "--registry", _REGISTRY, "--targets-d", _TARGETS_D,
+                "--repo-root", _REPO, "--diff-names", "internal/bar/bar.go",
+            ])
+        self.assertIn("burst only", err.getvalue())
+
+    def test_package_only_row_is_marked_unchecked(self):
+        import regate_lib
+        fm = regate_lib.FindingMeta(
+            id="KFZ-PKG-001", title="t", scope="first-party", module="keyorix",
+            disposition="active", targets=[Target(pkg="internal/foo", func="")])
+        with mock.patch("regate_lib.match_findings", return_value=[fm]):
+            out = run_gate(["internal/foo/foo.go"], _make_cfg())
+        self.assertEqual([r.error_msg for r in out.rows], [regate_lib.UNCHECKED_MSG])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

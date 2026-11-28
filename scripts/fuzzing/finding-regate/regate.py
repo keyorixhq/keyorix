@@ -130,7 +130,7 @@ def _print_table(rows, verbose: bool = False) -> None:
     print("-" * 130)
     for r in rows:
         step = r.seed_name if r.seed_name else "(burst)"
-        result = _fmt_ok(r.ok)
+        result = "UNCHECKED" if r.error_msg.endswith("(UNCHECKED)") else _fmt_ok(r.ok)
         if r.error_msg and not r.ok:
             result += f"  [{r.error_msg}]"
         print(f"{r.finding_id:<20} {r.target.pkg:<35} {r.target.func:<40} {step:<30} {result}")
@@ -149,6 +149,7 @@ def main(argv=None) -> int:
         GateConfig,
         ReproMissingError,
         RegistryError,
+        UNCHECKED_MSG,
         changed_packages,
         run_gate,
     )
@@ -197,6 +198,7 @@ def main(argv=None) -> int:
         no_burst=args.no_burst,
         no_replay=args.no_replay,
         only_ids=args.id or [],
+        dry_run=args.dry_run,
     )
 
     try:
@@ -229,15 +231,36 @@ def main(argv=None) -> int:
     # Execute
     _print_table(out.rows, verbose=args.verbose)
 
-    failures = [r for r in out.rows if not r.ok and "burst skipped" not in r.error_msg]
+    if not args.no_replay:
+        for fm in out.matched_findings:
+            for t in fm.targets:
+                if t.func and not any(
+                        r.finding_id == fm.id and r.target == t and r.seed_name
+                        for r in out.rows):
+                    print(f"NOTE: {fm.id} {t.pkg} {t.func}: no seed was replayed "
+                          "(none committed or registered); burst only",
+                          file=sys.stderr)
+
+    failures = [r for r in out.rows if not r.ok]
     if failures:
         print(f"GATE FAILED: {len(failures)} check(s) failed.", file=sys.stderr)
         return 1
 
-    # All passed
+    unchecked = [r for r in out.rows if r.error_msg == UNCHECKED_MSG]
     n_replay = sum(1 for r in out.rows if r.seed_name is not None)
-    n_burst = sum(1 for r in out.rows if r.seed_name is None and "skipped" not in r.error_msg)
-    print(f"GATE PASSED: {n_replay} replay(s), {n_burst} burst(s), 0 failures.")
+    n_burst = sum(1 for r in out.rows
+                  if r.seed_name is None and r.error_msg != UNCHECKED_MSG)
+    for r in unchecked:
+        print(f"UNCHECKED: {r.finding_id} {r.target.pkg} (no fuzz func, nothing run)",
+              file=sys.stderr)
+    if n_replay + n_burst == 0:
+        # Never claim a pass when nothing ran.
+        print(f"GATE UNCHECKED: 0 checks executed ({len(unchecked)} package-only "
+              "target(s) not run; --no-burst/--no-replay or no seeds/funcs).",
+              file=sys.stderr)
+        return 0
+    print(f"GATE PASSED: {n_replay} replay(s), {n_burst} burst(s), 0 failures"
+          + (f", {len(unchecked)} UNCHECKED package-only target(s)." if unchecked else "."))
     return 0
 
 
