@@ -36,13 +36,19 @@ func TestUpdateSecretWrites_AreColumnScoped(t *testing.T) {
 		// the share re-stamp share one transaction) and UpdateSecret (AUDIT-MUTATION-TX-1:
 		// the field write and its audit row share one transaction) write through their
 		// transaction handle, so the required receiver is "tx" there and "storage"
-		// everywhere else.
-		recv := "storage"
-		if c.fn == "updateSecretWithNewVersion" || c.fn == "transferOwnership" || c.fn == "UpdateSecret" {
+		// everywhere else. ClassifySecret, MoveSecret, BulkRenameSecrets and
+		// ExtendExpiringSecrets (#4719) write through c.writeSecretFieldsAudited, which
+		// is checked below to write through its transaction handle.
+		recv, required := "storage", "UpdateSecretFields"
+		switch c.fn {
+		case "updateSecretWithNewVersion", "transferOwnership", "UpdateSecret":
 			recv = "tx"
+		case "ClassifySecret", "MoveSecret", "BulkRenameSecrets", "ExtendExpiringSecrets":
+			recv, required = "c", "writeSecretFieldsAudited"
 		}
-		assertCoreWritesOnlyVia(t, "../"+c.file, c.fn, recv, "UpdateSecretFields", "Save", "UpdateSecret")
+		assertCoreWritesOnlyVia(t, "../"+c.file, c.fn, recv, required, "Save", "UpdateSecret")
 	}
+	assertCoreWritesOnlyVia(t, "../secret_mutation_audit.go", "writeSecretFieldsAudited", "tx", "UpdateSecretFields", "Save", "UpdateSecret")
 }
 
 // TestUpdateSecretRequest_FieldSetsMatch is the guard the comment on

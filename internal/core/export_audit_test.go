@@ -21,6 +21,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
+// dir-listing-ok: lists the export's output directory, not internal/core's sources
 func TestExportComplianceEvidence_RefusedRowDeliversNothing(t *testing.T) {
 	t.Parallel()
 	c, db, _ := newEvidenceExportCore(t)
