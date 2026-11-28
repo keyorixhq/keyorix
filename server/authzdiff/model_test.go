@@ -1,6 +1,8 @@
 package authzdiff
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"slices"
@@ -289,11 +291,19 @@ func (m model) allowed(p *principal, req requirement) bool {
 		// Only a user with an Activated=false row in mfa_secrets satisfies this.
 		return false
 	}
-	if req.noMFARequired && m.mfaEnabled(p) {
+	if req.noMFARequired && (m.mfaEnabled(p) || p.machineID != 0) {
 		// BeginMFAEnrollment: "MFA already enabled — disable first".
 		// A user with mfa_enabled=true cannot re-enroll without disabling first.
-		// Machines and actor-0 never have MFA enabled, so they pass this check and
-		// are denied (if at all) for another reason.
+		// A machine token has no user account behind it, so core answers 400
+		// "user not found" (the same refusal the other MFA ops give a machine):
+		// an account-state precondition, not an RBAC gate.
+		return false
+	}
+	if req.impersonatingSession && !m.isImpersonatingSession(p) {
+		// EndImpersonation: the bearer must be an impersonation session
+		// (sessions.impersonated_by IS NOT NULL). A regular session token returns
+		// 400 "not an impersonation session"; the model denies all non-impersonating
+		// callers. Only pkImpersonating satisfies this.
 		return false
 	}
 	return true
@@ -394,14 +404,21 @@ type requirement struct {
 	pendingMFARequired bool
 	// noMFARequired: the op fails if the calling user ALREADY has MFA enrolled and
 	// enabled (BeginMFAEnrollment: "MFA already enabled — disable first"). The check
-	// is on users.mfa_enabled in the grant DB. Machines and actor-0 never have MFA
-	// enabled, so they satisfy this check (and are denied, if at all, for another
-	// reason). Like mfaRequired/pendingMFARequired, this is an account-state
+	// is on users.mfa_enabled in the grant DB. A machine has no user account, so
+	// it fails this check too (400 "user not found"). Like mfaRequired/pendingMFARequired, this is an account-state
 	// precondition, not an RBAC gate: an op carrying it sets accountState so a
 	// caller refused ONLY by it maps to PreconditionFailed, not Denied.
 	noMFARequired bool
-	// accountState: mfaRequired / pendingMFARequired / noMFARequired on this op are
-	// business-rule preconditions on the caller's own account, not an authorization gate (no
+	// impersonatingSession: the op requires the caller to be authenticated via an
+	// impersonation session (sessions.impersonated_by IS NOT NULL). Only
+	// pkImpersonating satisfies this — every other principal uses a regular session
+	// token. Used by impersonation.end (EndImpersonation), which checks
+	// session.ImpersonatedBy != nil. Like the MFA flags it is a business-rule
+	// precondition on the caller's own session, not an RBAC gate: an op carrying it
+	// sets accountState so a caller refused ONLY by it maps to PreconditionFailed.
+	impersonatingSession bool
+	// accountState: mfaRequired / pendingMFARequired / noMFARequired / impersonatingSession
+	// on this op are business-rule preconditions on the caller's own account/session, not an authorization gate (no
 	// RBAC gate at the router; the handler answers 400). When the caller passes
 	// every OTHER check but fails one of those, decision says PreconditionFailed
 	// instead of Denied; a caller refused for any other reason (unauthenticated,
@@ -418,6 +435,7 @@ func (m model) decision(p *principal, req requirement) Outcome {
 	if req.accountState {
 		authz := req
 		authz.mfaRequired, authz.pendingMFARequired, authz.noMFARequired = false, false, false
+		authz.impersonatingSession = false
 		if m.allowed(p, authz) {
 			return PreconditionFailed
 		}
@@ -444,6 +462,26 @@ func (m model) pendingMFAEnrollment(p *principal) bool {
 	}
 	var n int64
 	m.db.Raw(`SELECT COUNT(*) FROM mfa_secrets WHERE user_id = ? AND activated = false`, p.userID).Scan(&n)
+	return n > 0
+}
+
+// isImpersonatingSession: p's bearer token is the token of an impersonation
+// session (sessions.impersonated_by IS NOT NULL). Only pkImpersonating satisfies
+// this — every other principal uses a regular (non-impersonating) session token.
+// Machines and actor-0 never have sessions, so they always return false. The
+// stored session_token is a SHA-256 hash of the plaintext bearer (models.Session),
+// so the lookup hashes p.token the same way local_auth.go does.
+//
+// What this does NOT verify: session expiry (the middleware checks it), or whether
+// the impersonated user is the same as p.userID (p is derived from the session).
+func (m model) isImpersonatingSession(p *principal) bool {
+	if p.token == "" || p.machineID != 0 || p.systemActor {
+		return false
+	}
+	sum := sha256.Sum256([]byte(p.token))
+	h := hex.EncodeToString(sum[:])
+	var n int64
+	m.db.Raw(`SELECT COUNT(*) FROM sessions WHERE session_token = ? AND impersonated_by IS NOT NULL`, h).Scan(&n)
 	return n > 0
 }
 

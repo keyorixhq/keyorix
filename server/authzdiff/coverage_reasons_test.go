@@ -90,12 +90,9 @@ var uncoveredReasons = map[string]string{
 	"REST DELETE /api/v1/secrets/{id}/self-share":                                "fixture: needs a share to the calling principal per case",
 	"REST DELETE /api/v1/secrets/{id}/dependencies/{depId}":                      "fixture: needs a secret-dependency row",
 	"REST POST /api/v1/secrets/{id}/dependencies":                                "fixture: needs a second secret to depend on and dependency-cycle rules",
-	"REST DELETE /api/v1/secrets/{id}/schedule":                                  "model: time-window access schedules are not in the reference model",
-	"REST PUT /api/v1/secrets/{id}/schedule":                                     "model: time-window access schedules are not in the reference model",
 	"REST DELETE /api/v1/secrets/{id}/versions/{versionId}/comments/{commentId}": "fixture: needs a version comment",
 	"REST POST /api/v1/secrets/{id}/versions/{versionId}/comments":               "fixture: needs a version id exposed by the fixture",
 	"REST GET /api/v1/secrets/{id}/certificate":                                  "fixture: needs a certificate-type secret",
-	"REST PATCH /api/v1/secrets/{id}/classification":                             "model: restricted-classification gate rules are not in the reference model",
 	"REST POST /api/v1/secret-access-requests":                                   "model: restricted-classification secret-access rules are not in the reference model",
 	"REST POST /api/v1/secret-access-requests/{requestId}/withdraw":              "model: restricted-classification secret-access rules are not in the reference model",
 	"REST PUT /api/v1/secret-access-requests/{requestId}":                        "model: restricted-classification secret-access rules are not in the reference model",
@@ -124,10 +121,4 @@ var uncoveredReasons = map[string]string{
 	// admin-tier is refused by core). Binding it needs the owner-style model
 	// extension, analyzed-not-bound in V8b — see the report's LEFTOVERS.
 	"REST DELETE /api/v1/risk-exceptions/{id}": "model: revoke authority (creator-or-admin-tier) is a typed core gate beyond the system.write@global router gate; needs the owner-style model extension (analyzed-not-bound)",
-
-	// mfa.enroll: BeginMFAEnrollment requires c.authEncryptor != nil, which is nil
-	// in test mode. Every principal receives an error before any authorization check.
-	// The authorization gate (BlockWhenImpersonating) is verified structurally by
-	// TestMFARouteGatesPresent (sweep_v5ext5_test.go).
-	"REST POST /api/v1/auth/mfa/enroll": "structural: BlockWhenImpersonating only; BeginMFAEnrollment requires authEncryptor (unavailable in test mode); covered by TestMFARouteGatesPresent",
 }

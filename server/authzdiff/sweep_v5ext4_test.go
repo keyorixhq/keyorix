@@ -299,7 +299,7 @@ func TestSCIMStrictSweep(t *testing.T) {
 			// construction because NewRouter sets package-level handler globals.
 			db := fuzzworld.OpenSQLiteFromImage(t, b)
 			ls := store.NewLocalStorage(db)
-			co := newCore(ls)
+			co := newCore(ls, fx.enc)
 			routerMu.Lock()
 			r, err := httpserver.NewRouter(&config.Config{
 				SCIM: config.SCIMConfig{Enabled: true, Token: scimTok},
