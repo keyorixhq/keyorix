@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"log"
 	"slices"
 	"strings"
 	"sync"
@@ -141,7 +142,13 @@ func withMigrationLockPooled(db *gorm.DB, isPostgres, xactLock bool, dbPath stri
 			if err := tx.Exec("SELECT pg_advisory_lock(?)", postgresMigrationLockKey).Error; err != nil {
 				return fmt.Errorf("acquire migration advisory lock: %w", err)
 			}
-			defer tx.Exec("SELECT pg_advisory_unlock(?)", postgresMigrationLockKey)
+			defer func() {
+				// The lock is session-level: when the unlock fails the connection is
+				// broken and PostgreSQL releases the lock when it closes.
+				if err := tx.Exec("SELECT pg_advisory_unlock(?)", postgresMigrationLockKey).Error; err != nil {
+					log.Printf("migration advisory lock: pg_advisory_unlock(%d) failed: %v", postgresMigrationLockKey, err)
+				}
+			}()
 			return run(tx)
 		})
 	}
