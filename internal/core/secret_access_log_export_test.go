@@ -16,6 +16,9 @@ import (
 )
 
 func newExportCore(ms *MockStorage) *KeyorixCore {
+	// The export is recorded before it is returned (#4721); Maybe() because the
+	// refusal cases stop before it.
+	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
 	return NewKeyorixCore(ms)
 }
 

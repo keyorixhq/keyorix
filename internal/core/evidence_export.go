@@ -119,6 +119,31 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 		Signed:          signed,
 	}
 
+	// #136: a degraded export must be visible in the audit trail itself, not just in
+	// the archived file — an auditor or admin scanning the log/SIEM for delivery
+	// confirmations should not read "exported" as "complete and clean".
+	degradedNote := ""
+	if res.Degraded {
+		degradedNote = fmt.Sprintf("; DEGRADED (%d collection failure(s)): %s", len(res.DegradedReasons), strings.Join(res.DegradedReasons, "; "))
+	}
+	// #4721: the exported row is written BEFORE anything is delivered, fail-closed:
+	// a pack the audit log cannot record goes nowhere, and the next tick retries. It
+	// names the targets the pack is about to go to; an off-box delivery that then
+	// fails gets its own row below.
+	planned := []string{}
+	if outputDir != "" {
+		planned = append(planned, "file:"+filepath.Join(outputDir, name))
+	}
+	if c.evidenceForwarder != nil {
+		planned = append(planned, c.evidenceForwarder.Target())
+	}
+	sysCtx := WithActorType(ctx, ActorTypeSystem)
+	if err := c.logExportBeforeDelivery(sysCtx, EventComplianceEvidenceExported, nil, nil, nil, "",
+		fmt.Sprintf("compliance evidence pack exporting to %v (%d bytes, signed=%t; %d campaigns, %d break-glass activations, %d overdue rotations, %d SoD violations)%s",
+			planned, len(data), signed, len(ev.Campaigns), len(ev.BreakGlass), len(ev.RotationOverdue), len(ev.SoDViolations), degradedNote)); err != nil {
+		return nil, fmt.Errorf("evidence export: nothing delivered: %w", err)
+	}
+
 	if outputDir != "" {
 		if err := os.MkdirAll(outputDir, 0o700); err != nil {
 			return nil, fmt.Errorf("evidence export: create output dir: %w", err)
@@ -135,12 +160,13 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 		}
 	}
 
-	forwardNote := ""
 	if c.evidenceForwarder != nil {
 		if err := c.evidenceForwarder.ForwardEvidence(ctx, name, data, signature); err != nil {
 			// Best-effort secondary target: record the failure but don't drop the
-			// export when a durable file was also written.
-			forwardNote = fmt.Sprintf("; off-box delivery FAILED: %v", err)
+			// export when a durable file was also written. The failure row describes
+			// a delivery that did not happen, so it never gates anything.
+			c.writeAuditEventFailed(sysCtx, EventComplianceEvidenceDeliveryFailed, nil, nil, "",
+				fmt.Sprintf("compliance evidence pack %q: off-box delivery to %s FAILED: %v", name, c.evidenceForwarder.Target(), err))
 			if res.Path == "" {
 				return nil, fmt.Errorf("evidence export: off-box delivery failed: %w", err)
 			}
@@ -148,19 +174,6 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 			res.Targets = append(res.Targets, c.evidenceForwarder.Target())
 		}
 	}
-
-	// #136: a degraded export must be visible in the audit trail itself, not just in
-	// the archived file — an auditor or admin scanning the log/SIEM for delivery
-	// confirmations should not read "exported" as "complete and clean".
-	degradedNote := ""
-	if res.Degraded {
-		degradedNote = fmt.Sprintf("; DEGRADED (%d collection failure(s)): %s", len(res.DegradedReasons), strings.Join(res.DegradedReasons, "; "))
-	}
-
-	sysCtx := WithActorType(ctx, ActorTypeSystem)
-	c.writeAuditEvent(sysCtx, "compliance.evidence_exported", nil, nil,
-		fmt.Sprintf("compliance evidence pack exported to %v (%d bytes, signed=%t; %d campaigns, %d break-glass activations, %d overdue rotations, %d SoD violations)%s%s",
-			res.Targets, len(data), signed, len(ev.Campaigns), len(ev.BreakGlass), len(ev.RotationOverdue), len(ev.SoDViolations), forwardNote, degradedNote))
 
 	return res, nil
 }

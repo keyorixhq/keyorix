@@ -48,6 +48,8 @@ DeleteAlertEscalationPolicy
 DeleteNotificationChannel
 DeleteRotationPolicy
 DeleteSoDPolicy
+ExportComplianceEvidence
+ExportSecretAccessLog
 GrantSecretACL
 InviteGlobal
 InviteGlobalWithLink
@@ -58,6 +60,8 @@ IssueLease
 IssueMachineToken
 LiftLegalHold
 LockedCreateSecretDependencyExclusive
+LogAuditLogExported
+LogComplianceEvidenceExported
 LogCryptoInventoryRead
 MigrateUserToMachine
 OpenAccessReviewCampaign

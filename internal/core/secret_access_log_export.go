@@ -56,7 +56,8 @@ func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, actorKind strin
 
 	// Verify the secret exists before querying audit events. A storage failure is
 	// a retrieval failure, not "no such secret".
-	if _, err := k.storage.GetSecret(ctx, secretID); err != nil {
+	secret, err := k.storage.GetSecret(ctx, secretID)
+	if err != nil {
 		return nil, "", secretLookupError(err)
 	}
 	if allowed, err := k.AuthorizeSecretPrincipal(ctx, actorKind, actorID, secretID, permSecretsRead); err != nil {
@@ -109,11 +110,21 @@ func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, actorKind strin
 		rows = append(rows, row)
 	}
 
-	if format == ExportFormatCSV {
-		return encodeCSV(rows), "text/csv; charset=utf-8", nil
+	data, contentType := encodeCSV(rows), "text/csv; charset=utf-8"
+	if format != ExportFormatCSV {
+		if data, err = json.Marshal(rows); err != nil {
+			return nil, "", err
+		}
+		contentType = "application/json; charset=utf-8"
 	}
-	data, err := json.Marshal(rows)
-	return data, "application/json; charset=utf-8", err
+	// #4721: recorded before the history is returned, fail-closed (export_audit.go).
+	sid, pid := secretID, secret.ProjectID
+	if err := k.logExportBeforeDelivery(ctx, EventSecretAccessLogExported,
+		actorPtr(humanActorID(actorID, actorKind == ActorTypeMachine)), &sid, &pid, "",
+		fmt.Sprintf("access log of secret %q exported as %s (%d row(s))", secret.Name, format, len(rows))); err != nil {
+		return nil, "", err
+	}
+	return data, contentType, nil
 }
 
 // csvSafe neutralises spreadsheet formula injection (CWE-1236) in a CSV cell. It delegates to the

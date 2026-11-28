@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -25,7 +26,8 @@ const csvExportMaxRows = 10000
 // Filters: ?project_id, ?user_id, ?since / ?until (RFC3339), ?limit (default
 // 1000, cap csvExportMaxRows).
 func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
@@ -54,6 +56,16 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 			panic(http.ErrAbortHandler)
 		}
 		if cw == nil {
+			// #4721: a bulk export of the audit trail is itself recorded before its
+			// first byte, fail-closed (core/export_audit.go). After the first batch is
+			// read, so the export is the trail as it stood and does not contain its
+			// own row. The row names the filter, never rows.
+			if aerr := h.coreService.LogAuditLogExported(core.DetachedAuditContext(r.Context()), userCtx.UserID, clientIP(r), "csv", auditCSVFilterNote(r, limit)); aerr != nil {
+				if !sendExportAuditUnavailable(w, aerr) {
+					sendError(w, "InternalServerError", "Failed to record the audit export", http.StatusInternalServerError, nil)
+				}
+				return
+			}
 			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("Content-Disposition", `attachment; filename="audit-export.csv"`)
@@ -81,6 +93,18 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 		last := events[len(events)-1]
 		filter.Before = &storage.AuditCursor{EventTime: last.EventTime, ID: last.ID}
 	}
+}
+
+// auditCSVFilterNote describes an export's filter for its audit.exported row.
+func auditCSVFilterNote(r *http.Request, limit int) string {
+	q := r.URL.Query()
+	note := "limit=" + strconv.Itoa(limit)
+	for _, k := range []string{"project_id", "user_id", "since", "until"} {
+		if v := q.Get(k); v != "" {
+			note += " " + k + "=" + v
+		}
+	}
+	return note
 }
 
 // csvExportBatchRows is the keyset batch of the streamed CSV export.

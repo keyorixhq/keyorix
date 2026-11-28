@@ -143,6 +143,19 @@ func (h *DashboardHandler) GetComplianceEvidence(w http.ResponseWriter, r *http.
 		sendError(w, "InternalServerError", "Failed to assemble compliance evidence", http.StatusInternalServerError, nil)
 		return
 	}
+	// #4721: audit-before-disclosure, as the crypto inventory: not one byte of the
+	// pack is sent unless its export is on record. Detached so a client that hangs
+	// up cannot drop the row.
+	var actorID uint
+	if userCtx := middleware.GetUserFromContext(r.Context()); userCtx != nil {
+		actorID = userCtx.UserID
+	}
+	if aerr := h.coreService.LogComplianceEvidenceExported(core.DetachedAuditContext(r.Context()), actorID, clientIP(r), filename, len(data), signed); aerr != nil {
+		if !sendExportAuditUnavailable(w, aerr) {
+			sendError(w, "InternalServerError", "Failed to record the evidence export", http.StatusInternalServerError, nil)
+		}
+		return
+	}
 	sendSuccess(w, map[string]any{
 		"filename":  filename,
 		"data_b64":  base64.StdEncoding.EncodeToString(data),

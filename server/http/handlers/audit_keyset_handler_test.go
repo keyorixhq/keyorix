@@ -165,8 +165,11 @@ func TestAuditExportCSV_StreamsAcrossBatches(t *testing.T) {
 	require.Equal(t, "id", records[0][0])
 	require.Len(t, records, 1+1100)
 
+	// The export's own audit.exported row (#4721) is written after its first batch
+	// was read, so it is not part of the export.
 	var want []uint
-	require.NoError(t, db.Model(&models.AuditEvent{}).Order("event_time DESC, id DESC").Limit(1100).Pluck("id", &want).Error)
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type <> ?", core.EventAuditLogExported).
+		Order("event_time DESC, id DESC").Limit(1100).Pluck("id", &want).Error)
 	for i, rec := range records[1:] {
 		id, err := strconv.ParseUint(rec[0], 10, 64)
 		require.NoError(t, err)
