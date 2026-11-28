@@ -1,0 +1,2 @@
+### Testing
+- **Faster `scripts/ci` and `internal/encryption` package tests, no guard weakened.** The MQ-TEST-SLIM-1 tests run each distinct `select-affected.py` invocation once per test binary (same env and files share the result) and run in parallel; the process-crash tests build the template install once per test binary instead of once per test. Every assertion and every scanned input is unchanged.
