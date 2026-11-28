@@ -42,10 +42,23 @@
 package kdfmeter
 
 import (
+	"errors"
 	"sync/atomic"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+// MaxCompareCost is the highest bcrypt work factor CompareHashAndPassword will
+// run. Keyorix generates every password hash at cost 12 (internal/core
+// bcrypt_cost.go), so a stored hash declaring a cost above this ceiling did not
+// come from this code; verifying it would spend 2^cost rounds (cost 31 is
+// minutes of CPU per attempt) on a single login. The ceiling leaves headroom for
+// hashes imported from other systems at a higher-than-default cost.
+const MaxCompareCost = 16
+
+// ErrHashCostTooHigh is returned by CompareHashAndPassword, without running the
+// KDF, when the stored hash declares a cost above MaxCompareCost.
+var ErrHashCostTooHigh = errors.New("kdfmeter: stored password hash cost exceeds the allowed maximum")
 
 // Op classifies a single KDF invocation for the observer. The two kinds are kept
 // distinct because an enumeration oracle cares about them separately: a
@@ -96,10 +109,15 @@ func GenerateFromPassword(password []byte, cost int) ([]byte, error) {
 }
 
 // CompareHashAndPassword wraps bcrypt.CompareHashAndPassword, recording one
-// OpCompare invocation before delegating. Behaviour and return values are
-// identical to the wrapped function.
+// OpCompare invocation before delegating. Return values are identical to the
+// wrapped function, except that a hash declaring a cost above MaxCompareCost is
+// refused with ErrHashCostTooHigh before any KDF work. A malformed hash is passed
+// through so bcrypt reports its own error.
 func CompareHashAndPassword(hashedPassword, password []byte) error {
 	notify(OpCompare)
+	if cost, err := bcrypt.Cost(hashedPassword); err == nil && cost > MaxCompareCost {
+		return ErrHashCostTooHigh
+	}
 	return bcrypt.CompareHashAndPassword(hashedPassword, password)
 }
 
