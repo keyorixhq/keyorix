@@ -208,7 +208,7 @@ dial guard. Redirects: `refused` = `CheckRedirect` returns an error or `ErrUseLa
 | S19 | `internal/rotation/awsiam.go`, `gcpsa.go`, `azure_sdk.go` | E12 | C | no | none (SDK constant endpoints) | n/a | none needed |
 | S20 | `internal/rotation/postgres.go`, `mysql.go`, `mongodb.go`, `redis.go` | E12 | O (`dsn_env`) | no | none for private networks (the target is the operator's own database); MySQL and RESP responses are bounded by `netutil.MySQLGuardDialer` / `RESPGuardDialer` | n/a | response-bound fuzzers only |
 | S21 | `internal/dynamic/postgres.go`, `mysql.go`, `mongodb.go`, `redis.go` | E13 | P (`admin_dsn`) | **yes** (project admin) | netutil, private tier, every dial, opt-out `allow_private_network`; `mongodb+srv` targets pre-validated | n/a | `FuzzAdminDSNHostSSRFGuard`, `FuzzSSRFGuardDifferential`, `FuzzDSNHostsCoverDriverHosts`, `FuzzEgressDialEnforcement`; table tests `internal/dynamic/egress_guard_test.go` |
-| S22 | `internal/dynamic/kubernetes.go` | E13 | P (`api_server` inside `admin_dsn`) | **yes** (project admin) | register-time host check; see F1 | refused | none yet. Finding F1 (tracked privately) |
+| S22 | `internal/dynamic/kubernetes.go` | E13 | P (`api_server` inside `admin_dsn`) | **yes** (project admin) | netutil, private tier, every dial, opt-out `allow_private_network` (explicit `api_server` only; the in-cluster API address is exempt); register-time host check kept as defence in depth | refused (every hop is re-dialed through the guard) | `TestKubernetesEngine_DialGuard` (`internal/dynamic/kubernetes_dialguard_test.go`: loopback refusal, resolver rebinding, positive control). F1 fixed |
 | S23 | `internal/dynamic/awssts.go`, `azure.go`, `gcp.go` | E13 | C | no | none (SDK constant endpoints) | n/a | none needed |
 | S24 | `internal/core/dynamic_secrets.go` | E13 | P | **yes** | this is the register-time DNS check itself (private tier), not a connection | n/a | `FuzzAdminDSNHostSSRFGuard` |
 | S25 | `internal/k8ssync/keyorix_fetcher.go`, `rest_sink.go`, `cmd/keyorix-k8s-sync` | E14 | O (config file), in-cluster API server | no | scheme (https; http loopback only) | refused (fetcher) | none needed |
@@ -240,7 +240,7 @@ encode them, so a change to one of them fails a test instead of passing silently
 
 | ID | Site | Supplier | Finding | Severity | Where tracked |
 |---|---|---|---|---|---|
-| F1 | S22 `internal/dynamic/kubernetes.go` | P | Details withheld until the fix lands; the description returns to this table then | tracked privately | private tracker (F1) |
+| F1 | S22 `internal/dynamic/kubernetes.go` | P | The Kubernetes dynamic-secret engine built its HTTP client on a bare `http.Transport` and ignored `allow_private_network_targets`. The only check on the admin-supplied `api_server` ran once at registration, so a hostname that resolved public then and private later (DNS rebinding) reached a private address at issue time | fixed: dial-time guard on the explicit `api_server` | `TestKubernetesEngine_DialGuard`; closure `k8s-dynamic-dial-guard-001` |
 | F2 | S10 `internal/core/sso.go` | H | The authorization-code exchange uses `http.DefaultClient`: the `token_endpoint` from the discovery document gets no host check (only `jwks_uri` does), no dial guard, and redirects are followed. The allowlist row said the client was built in `server/wire_sso.go`; that client serves the discovery GET only | low (needs a compromised IdP) | [#4738](https://github.com/keyorixhq/keyorix/issues/4738), fixed: the exchange runs on the discovery client (dial guard, redirects only to the same host:port without downgrade) and discovery refuses a token_endpoint off the issuer host unless listed in `token_endpoint_hosts` |
 
 The three packages that on 2026-11-12 had HTTP clients and no netutil guard were checked:
@@ -310,7 +310,7 @@ it red for their own reason.
 Not covered: with an egress proxy configured the dial targets the proxy, not the destination
 (accepted and documented at each site); the loopback-permitted tier sites (S01, S03, S05, S07)
 are covered at the predicate level and by table tests, not by a transport-level fuzz target;
-S22 (finding F1) has no guard to fuzz yet. S10 (the SSO code exchange) runs on the S09 client
+S22 is pinned by a table test (`TestKubernetesEngine_DialGuard`), not a transport-level fuzz target. S10 (the SSO code exchange) runs on the S09 client
 and is driven by `FuzzSSOExchangeTransportEgressParity`; the rebinding target drives the shared
 transport variable, not the exchange client itself.
 

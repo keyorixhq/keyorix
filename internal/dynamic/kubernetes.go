@@ -119,7 +119,15 @@ type k8sTokenMinter interface {
 // KubernetesEngine mints short-lived ServiceAccount tokens via the TokenRequest API.
 type KubernetesEngine struct {
 	minter k8sTokenMinter // nil uses the real REST minter built from the config
+
+	// allowPrivateNetwork mirrors dynamic_secrets.allow_private_network_targets
+	// (set by New). When false, an explicit api_server is re-validated at every
+	// dial, so a hostname that resolved public at registration cannot be
+	// rebound to a private address later. In-cluster mode is exempt.
+	allowPrivateNetwork bool
 }
+
+func (e *KubernetesEngine) setAllowPrivateNetwork(allow bool) { e.allowPrivateNetwork = allow }
 
 func (e *KubernetesEngine) BackendType() string        { return "kubernetes" }
 func (e *KubernetesEngine) SupportsNativeExpiry() bool { return true } // Kubernetes enforces the token TTL
@@ -185,7 +193,7 @@ func (e *KubernetesEngine) Issue(ctx context.Context, adminDSN, _ string, ttl ti
 
 	minter := e.minter
 	if minter == nil {
-		m, err := newRealK8sMinter(cfg)
+		m, err := newRealK8sMinterWith(cfg, e.allowPrivateNetwork)
 		if err != nil {
 			return Credential{}, "", err
 		}
@@ -240,7 +248,7 @@ func (e *KubernetesEngine) Revoke(ctx context.Context, adminDSN, roleName string
 
 	minter := e.minter
 	if minter == nil {
-		m, err := newRealK8sMinter(cfg)
+		m, err := newRealK8sMinterWith(cfg, e.allowPrivateNetwork)
 		if err != nil {
 			return err
 		}
@@ -279,7 +287,14 @@ type realK8sMinter struct {
 	hc    *http.Client
 }
 
+// newRealK8sMinter builds the REST minter with the dial-time guard on (the
+// default policy). Production code goes through newRealK8sMinterWith with the
+// engine's allowPrivateNetwork.
 func newRealK8sMinter(cfg k8sConfig) (*realK8sMinter, error) {
+	return newRealK8sMinterWith(cfg, false)
+}
+
+func newRealK8sMinterWith(cfg k8sConfig, allowPrivateNetwork bool) (*realK8sMinter, error) {
 	var host, token string
 	var caPEM []byte
 
@@ -317,14 +332,23 @@ func newRealK8sMinter(cfg k8sConfig) (*realK8sMinter, error) {
 	if !pool.AppendCertsFromPEM(caPEM) {
 		return nil, fmt.Errorf("kubernetes: no certificates in ca bundle")
 	}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+	}
+	// An explicit api_server is supplied by a project admin and is validated once
+	// at register time; re-validate the resolved address at every dial, as the
+	// other dynamic engines do, so DNS rebinding cannot reach a private or
+	// link-local address the operator disallowed. In-cluster mode targets the
+	// pod network from the pod's own environment and is not admin-controlled.
+	if strings.TrimSpace(cfg.APIServer) != "" && !allowPrivateNetwork {
+		tr.DialContext = netutil.Dialer{Disallow: netutil.IsPrivateOrLinkLocal, Resolve: dialResolve}.DialContext
+	}
 	m := &realK8sMinter{
 		host:  host,
 		token: token,
 		hc: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
-			},
+			Timeout:       30 * time.Second,
+			Transport:     tr,
 			CheckRedirect: refuseRedirect,
 		},
 	}

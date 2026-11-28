@@ -1,0 +1,2 @@
+### Security
+- **Kubernetes dynamic secrets now refuse private `api_server` destinations at dial time.** The engine ignored `allow_private_network_targets` and only checked the host once at registration, so a hostname that later resolved to a private address was still dialled. An explicit `api_server` now goes through the same dial-time guard as the postgres, mysql, mongodb and redis engines; setting `allow_private_network_targets` keeps the old behaviour. The in-cluster API address is unaffected. Guarded by `TestKubernetesEngine_DialGuard`.
