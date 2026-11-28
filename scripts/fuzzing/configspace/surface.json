@@ -1193,6 +1193,11 @@
   "type": "[]string"
  },
  {
+  "path": "sso.providers[].token_endpoint_hosts",
+  "type": "[]string",
+  "secret": true
+ },
+ {
   "path": "sso.providers[].type",
   "type": "string"
  },

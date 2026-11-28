@@ -137,6 +137,7 @@ func newSSOFuzzCore(key *ecdsa.PrivateKey, tokenURL, rowProvider string, rowExpi
 	}).Return((*models.User)(nil), errSSOFuzzStop)
 	p := &SSOProvider{
 		Name: "okta", Issuer: ssoFuzzIssuer, ClientID: ssoFuzzClientID,
+		HTTPClient: &http.Client{},
 		OAuth: &oauth2.Config{
 			ClientID: ssoFuzzClientID, ClientSecret: "s3cret",
 			Endpoint:    oauth2.Endpoint{AuthURL: ssoFuzzIssuer + "/authorize", TokenURL: tokenURL},
