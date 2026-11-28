@@ -65,20 +65,15 @@ var egressGuardScanDirs = []egressGuardScanDir{
 // explicitly so the exclusion is visible and auditable rather than a case
 // this guard silently never looked at.
 //
-// internal/dynamic/kubernetes.go's realK8sMinter builds a raw *http.Client
-// with no DialContext (found during this fix's repo-wide enumeration -- the
-// same unguarded-egress shape as Mongo/Redis/SIEM before this change).
-// NOT fixed here: unlike Mongo/Redis/SIEM (all external, off-box network
-// targets where refusing a private/link-local resolved address is
-// unconditionally the right default), a Kubernetes api_server is routinely,
-// LEGITIMATELY a private RFC-1918 address (kubernetes.go's own doc comment
-// example: "api_server":"https://10.0.0.1:443") -- wiring the same
-// IsPrivateOrLinkLocal policy here by default would break the common,
-// intended case, not just an attacker's. Closing this gap correctly needs
-// its own threat-model decision (what, if anything, should be disallowed for
-// an api_server target) that this change's scope (2b-2e, explicitly Mongo/
-// Redis/SIEM) does not make for it. Tracked as a known, reasoned exclusion,
-// not silently missed.
+// internal/dynamic/kubernetes.go's realK8sMinter builds a *http.Client, which
+// this AST walk (driver construction calls) cannot model, so the file stays
+// excluded from the structural scan. It is NOT unguarded any more: an explicit
+// api_server gets the same dial-time guard as the other engines unless
+// allow_private_network_targets is set (newRealK8sMinterWith), and in-cluster
+// mode is exempt because its address comes from the pod's own environment. A
+// private api_server was already refused at register time unless that opt-out
+// is set, so the dial-time check enforces the same policy. The behaviour is
+// pinned by TestKubernetesEngine_DialGuard (kubernetes_dialguard_test.go).
 var knownOutOfScopeEgressFiles = map[string]map[string]bool{
 	".": {"kubernetes.go": true},
 }
