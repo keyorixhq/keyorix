@@ -52,7 +52,7 @@ func openSecretRefsSource(t *testing.T) (*gorm.DB, secretRefsSeed) {
 	configPathFlag = writeBackupRestoreTestConfig(t, srcDir, filepath.Join(srcDir, "secrets.db"))
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(srcCfg) // creates + migrates the source DB
+	_, err = createStorageClosedAtCleanup(t, srcCfg) // creates + migrates the source DB
 	require.NoError(t, err)
 	db, err := storage.OpenGormDB(srcCfg)
 	require.NoError(t, err)

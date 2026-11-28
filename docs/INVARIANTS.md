@@ -51,12 +51,12 @@ excluded from the counts table, which tracks production packages only.
 | `internal/keyfiles` | [internal/keyfiles/INVARIANTS.md](../internal/keyfiles/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/libconformance` | [internal/libconformance/INVARIANTS.md](../internal/libconformance/INVARIANTS.md) | 19 | 19 | 0 |
 | `internal/logging` | [internal/logging/INVARIANTS.md](../internal/logging/INVARIANTS.md) | 3 | 3 | 0 |
-| `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 3 | 3 | 0 |
+| `internal/netutil` | [internal/netutil/INVARIANTS.md](../internal/netutil/INVARIANTS.md) | 4 | 4 | 0 |
 | `internal/notifychan` | [internal/notifychan/INVARIANTS.md](../internal/notifychan/INVARIANTS.md) | 2 | 2 | 0 |
 | `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 8 | 1 |
 | `internal/restorejournal` | [internal/restorejournal/INVARIANTS.md](../internal/restorejournal/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/rotation` | [internal/rotation/INVARIANTS.md](../internal/rotation/INVARIANTS.md) | 1 | 1 | 0 |
-| `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 1 | 1 | 0 |
+| `internal/secretenv` | [internal/secretenv/INVARIANTS.md](../internal/secretenv/INVARIANTS.md) | 6 | 6 | 0 |
 | `internal/secrettemplate` | [internal/secrettemplate/INVARIANTS.md](../internal/secrettemplate/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/securefiles` | [internal/securefiles/INVARIANTS.md](../internal/securefiles/INVARIANTS.md) | 1 | 1 | 0 |
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
@@ -69,7 +69,7 @@ excluded from the counts table, which tracks production packages only.
 | `operator/internal/controller` | [operator/internal/controller/INVARIANTS.md](../operator/internal/controller/INVARIANTS.md) | 5 | 5 | 0 |
 | `scripts/e2e/mp1` | [scripts/e2e/mp1/INVARIANTS.md](../scripts/e2e/mp1/INVARIANTS.md) | 6 | 6 | 0 |
 | `scripts/fuzzing/time-travel` | [scripts/fuzzing/time-travel/INVARIANTS.md](../scripts/fuzzing/time-travel/INVARIANTS.md) | 2 | 1 | 1 |
-| `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 13 | 13 | 0 |
+| `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 14 | 14 | 0 |
 | `server/authzdiff` | [server/authzdiff/INVARIANTS.md](../server/authzdiff/INVARIANTS.md) | 14 | 14 | 0 |
 | `server/grpc` (+ `interceptors`) | [server/grpc/INVARIANTS.md](../server/grpc/INVARIANTS.md) | 23 | 23 | 0 |
 | `server/grpc/services` | [server/grpc/services/INVARIANTS.md](../server/grpc/services/INVARIANTS.md) | 12 | 12 | 0 |

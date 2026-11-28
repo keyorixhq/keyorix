@@ -31,6 +31,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -145,6 +146,7 @@ func commitAll(st corestorage.Storage, n, workers int, acked func(i int, d time.
 func runBench(path string, fdatasync bool, n, workers int) {
 	log.SetOutput(os.Stderr)
 	st := openStorage(path, fdatasync)
+	defer closeStorage(st)
 	// Warm-up: the first commits create WAL/shm and fill caches.
 	commitAll(st, 200, workers, func(int, time.Duration) {})
 
@@ -169,6 +171,7 @@ func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond)
 func runWrite(path, acksPath string, fdatasync bool, n, workers int) {
 	log.SetOutput(os.Stderr)
 	st := openStorage(path, fdatasync)
+	defer closeStorage(st)
 	fmt.Printf("fdatasync_requested=%v fdatasync_effective=%v\n", fdatasync, msqlite.FdatasyncEnabled())
 	f, err := os.OpenFile(filepath.Clean(acksPath), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) // #nosec G703 -- acksPath is the operator's own flag to this hand-run power-cut tool, no remote input
 	if err != nil {
@@ -233,6 +236,7 @@ func runVerify(path, acksPath string, cutoffNanos int64) {
 	// open). Its start-up migration runs first, which is a no-op on a schema that
 	// survived the cut; integrity_check below still covers the whole file.
 	st := openStorage(path, false)
+	defer closeStorage(st)
 	ls, ok := st.(*store.LocalStorage)
 	if !ok {
 		fatalf("unexpected storage type %T", st)
@@ -294,4 +298,12 @@ func runVerify(path, acksPath string, cutoffNanos int64) {
 		os.Exit(1)
 	}
 	fmt.Println("RESULT=PASS")
+}
+
+// closeStorage closes st when it can be closed (normal exit only; a power cut
+// is the point of this tool and never reaches it).
+func closeStorage(st any) {
+	if c, ok := st.(io.Closer); ok {
+		_ = c.Close()
+	}
 }

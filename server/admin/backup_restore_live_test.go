@@ -93,7 +93,7 @@ func TestAdminRestore_AbsoluteKeyPaths_FreshEmptyKeysDir(t *testing.T) {
 	configPathFlag = writeAbsKeyPathsConfig(t, srcDir, fmt.Sprintf("  type: local\n  database:\n    path: %s\n", srcDB), keysDir)
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(srcCfg)
+	_, err = createStorageClosedAtCleanup(t, srcCfg)
 	require.NoError(t, err)
 
 	archivePath := filepath.Join(t.TempDir(), "backup.tar.gz")
@@ -135,7 +135,7 @@ func TestAdminRestore_AbsoluteKeyPaths_NonEmptyKeysDirStillRefused(t *testing.T)
 	configPathFlag = writeAbsKeyPathsConfig(t, srcDir, fmt.Sprintf("  type: local\n  database:\n    path: %s\n", srcDB), keysDir)
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(srcCfg)
+	_, err = createStorageClosedAtCleanup(t, srcCfg)
 	require.NoError(t, err)
 	archivePath := filepath.Join(t.TempDir(), "backup.tar.gz")
 	backupOutput = archivePath
@@ -189,7 +189,7 @@ func TestAdminBackup_SQLite_LiveServerRefusedExplicitly(t *testing.T) {
 	configPathFlag = writeAbsKeyPathsConfig(t, srcDir, fmt.Sprintf("  type: local\n  database:\n    path: %s\n", filepath.Join(srcDir, "secrets.db")), keysDir)
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(cfg)
+	_, err = createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	simulateLiveServer(t, cfg, enc, srcDir)
 

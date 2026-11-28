@@ -113,7 +113,7 @@ func newOverwriteFixture(t *testing.T, backend string, danglingRef bool) *overwr
 	encCfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
 	require.NoError(t, encryption.NewService(encCfg, f.dir).Initialize(overwriteTestPassphrase))
 	cfg := f.config(t)
-	_, err := storage.NewStorageFactory().CreateStorage(cfg)
+	_, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 
 	f.withDB(t, func(db *gorm.DB) {
