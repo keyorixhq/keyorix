@@ -289,6 +289,13 @@ func (m model) allowed(p *principal, req requirement) bool {
 		// Only a user with an Activated=false row in mfa_secrets satisfies this.
 		return false
 	}
+	if req.noMFARequired && m.mfaEnabled(p) {
+		// BeginMFAEnrollment: "MFA already enabled — disable first".
+		// A user with mfa_enabled=true cannot re-enroll without disabling first.
+		// Machines and actor-0 never have MFA enabled, so they pass this check and
+		// are denied (if at all) for another reason.
+		return false
+	}
 	return true
 }
 
@@ -385,8 +392,16 @@ type requirement struct {
 	// The check is on mfa_secrets.activated=false in the grant DB; a fully
 	// activated enrollment does NOT satisfy it. Machines and actor-0 always fail.
 	pendingMFARequired bool
-	// accountState: mfaRequired / pendingMFARequired on this op are business-rule
-	// preconditions on the caller's own account, not an authorization gate (no
+	// noMFARequired: the op fails if the calling user ALREADY has MFA enrolled and
+	// enabled (BeginMFAEnrollment: "MFA already enabled — disable first"). The check
+	// is on users.mfa_enabled in the grant DB. Machines and actor-0 never have MFA
+	// enabled, so they satisfy this check (and are denied, if at all, for another
+	// reason). Like mfaRequired/pendingMFARequired, this is an account-state
+	// precondition, not an RBAC gate: an op carrying it sets accountState so a
+	// caller refused ONLY by it maps to PreconditionFailed, not Denied.
+	noMFARequired bool
+	// accountState: mfaRequired / pendingMFARequired / noMFARequired on this op are
+	// business-rule preconditions on the caller's own account, not an authorization gate (no
 	// RBAC gate at the router; the handler answers 400). When the caller passes
 	// every OTHER check but fails one of those, decision says PreconditionFailed
 	// instead of Denied; a caller refused for any other reason (unauthenticated,
@@ -402,7 +417,7 @@ func (m model) decision(p *principal, req requirement) Outcome {
 	}
 	if req.accountState {
 		authz := req
-		authz.mfaRequired, authz.pendingMFARequired = false, false
+		authz.mfaRequired, authz.pendingMFARequired, authz.noMFARequired = false, false, false
 		if m.allowed(p, authz) {
 			return PreconditionFailed
 		}
