@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
@@ -130,9 +131,10 @@ func (c *KeyorixCore) verifyCurrentPassword(ctx context.Context, user *models.Us
 	return nil
 }
 
-// ChangePassword verifies the caller's current password and sets a new one. On
-// success it drops the caller's other sessions (keeping the one identified by
-// keepSessionToken) so a credential change invalidates other devices. If the
+// ChangePassword verifies the caller's current password and sets a new one. In the
+// same transaction it drops the caller's other sessions (keeping the one identified
+// by keepSessionToken) so a credential change invalidates other devices; if that
+// purge fails the change is refused and the old password stays valid. If the
 // current session cannot be resolved from keepSessionToken (e.g. a PAT-authenticated
 // request), all of the user's sessions are dropped.
 func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, newPassword, keepSessionToken string) error {
@@ -165,7 +167,11 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 		}
 		return err
 	}
-	if err := c.applyNewPassword(ctx, user, newPassword); err != nil {
+	// Resolved before the change: the purge of the OTHER sessions commits with the
+	// new password (applyNewPassword), so a thief holding a stolen session never
+	// outlives a change reported as successful (R1.16).
+	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "change_password")
+	if err := c.applyNewPassword(ctx, user, newPassword, keepID, keepHash); err != nil {
 		return err
 	}
 	// The change has committed. Reset the lockout as a delivered password login
@@ -177,11 +183,6 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 		besteffort.Run(ctx, "account.ChangePassword.clearLoginFailures", func() error { c.clearLoginFailures(ctx, user); return nil })
 	}
 
-	// Drop OTHER sessions and evict them from the auth cache, so a thief holding a
-	// stolen session is locked out immediately on the next request — not after the
-	// cache TTL. Best-effort: the password change itself has succeeded.
-	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "change_password")
-	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	c.writeAuditEvent(ctx, "auth.password_changed", actorPtr(userID), nil,
 		fmt.Sprintf("user %d changed their own password", userID))
 	return nil
@@ -281,11 +282,10 @@ func (c *KeyorixCore) evictUserSessionCache(ctx context.Context, userID uint) {
 }
 
 // EventSessionRevocationPanicked audits a panic recovered inside
-// deleteSessionsForUserAndEvict. Every one of this function's 8 call sites
-// (account.go, mfa.go x2, scim.go, setup_consume.go x2, webauthn.go x2)
-// discards the returned error (`_ = c.deleteSessionsForUserAndEvict(...)`)
-// because the primary operation (password change, MFA activate/disable, SCIM
-// deprovision, setup-token consume, WebAuthn registration) has ALREADY
+// deleteSessionsForUserAndEvict. Its post-commit call sites (mfa.go x2,
+// scim.go, webauthn.go x2) discard the returned error
+// (`_ = c.deleteSessionsForUserAndEvict(...)`) because the primary operation
+// (MFA activate/disable, SCIM deprovision, WebAuthn registration) has ALREADY
 // committed by the time this runs -- the same "best-effort helper, primary
 // effect already succeeded" shape evictUserSessionCache above and
 // revokeProjectDynamicSecretLeases (catalog.go, #2325) already recover from.
@@ -298,7 +298,7 @@ const EventSessionRevocationPanicked = "auth.session_revocation_panicked" // #no
 // EventSessionRevocationFailed audits deleteSessionsForUserAndEvict's own
 // storage.DeleteSessionsForUserExcept call returning a plain (non-panic) error.
 // #2835: previously this was indistinguishable from success to every caller --
-// all 8 call sites discard the returned error (`_ = c.deleteSessionsForUserAndEvict(...)`)
+// its post-commit call sites discard the returned error (`_ = c.deleteSessionsForUserAndEvict(...)`)
 // because, same as EventSessionRevocationPanicked's own rationale, the primary
 // operation has already committed by the time this runs. A failed purge here means
 // sessions that should have been revoked are left live with no signal anywhere else
@@ -500,7 +500,14 @@ func (e policyRefusal) Is(target error) bool {
 // actually needs to clear a restriction, SetAccountState) rather than the generic
 // UpdateUser. Both writes run inside one transaction so a partial application (hash
 // persisted but the state clear lost, or vice versa) can't happen.
-func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, newPassword string) error {
+//
+// R1.16 (AUDIT-DISCLOSURE-NOV-1): the user's other sessions (all but keepID) are
+// deleted in that same transaction. The purge used to run after the commit and only
+// log its failure, so a stolen session survived a change reported as successful. A
+// failed purge now rolls the change back: the caller is told it failed and the old
+// password stays valid. Only the auth-cache eviction (keepHash is never evicted)
+// runs after the commit; it is the immediacy, the delete is the control.
+func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, newPassword string, keepID uint, keepHash string) error {
 	hash, err := kdfmeter.GenerateFromPassword([]byte(newPassword), int(bcryptCost.Load()))
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -514,6 +521,7 @@ func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, n
 	// actually changing.
 	stateChanged := newState != NormalizeAccountState(user.AccountState)
 
+	var ev sessionEvictions
 	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		if err := tx.SetPasswordHash(ctx, user.ID, string(hash), now); err != nil {
 			return err
@@ -523,11 +531,17 @@ func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, n
 				return err
 			}
 		}
-		return nil
+		// Listed in a savepoint before the delete (a failed listing is carried out
+		// in ev and handled after the commit, never fails the change).
+		ev = listSessionHashesInTx(ctx, tx, user.ID)
+		return tx.DeleteSessionsForUserExcept(ctx, user.ID, keepID)
 	})
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	// Committed. evictSessionsAndAudit recovers its own panic.
+	ev.Hashes = slices.DeleteFunc(ev.Hashes, func(h string) bool { return h == keepHash })
+	c.evictSessionsAndAudit(ctx, user.ID, ev, evictTombstone, "change_password")
 	user.PasswordHash = string(hash)
 	user.PasswordChangedAt = &now
 	user.AccountState = newState

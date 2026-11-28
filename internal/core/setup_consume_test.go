@@ -95,10 +95,11 @@ func TestCompleteSetup(t *testing.T) {
 		ms.On("EnforceSessionLimit", mock.Anything, uid, mock.Anything).Return(nil)
 		ms.On("CreateSession", ctx, mock.AnythingOfType("*models.Session")).
 			Return(&models.Session{ID: 1, UserID: uid, SessionToken: "sess-abc"}, nil)
-		// Completing setup must evict the subject's other sessions (keeping the new
-		// one) so a stolen session can't survive a self-service password reset.
+		// Completing setup must end the subject's existing sessions so a stolen
+		// session can't survive a self-service password reset. They are deleted in
+		// the consume transaction, before the new session is inserted (keep none).
 		ms.On("ListSessionTokenHashesForUser", ctx, uid).Return([]string{}, nil)
-		ms.On("DeleteSessionsForUserExcept", ctx, uid, uint(1)).Return(nil)
+		ms.On("DeleteSessionsForUserExcept", ctx, uid, uint(0)).Return(nil)
 		ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
 
 		res, err := c.CompleteSetup(ctx, raw, strongPw, "ua", "1.2.3.4")
@@ -109,7 +110,7 @@ func TestCompleteSetup(t *testing.T) {
 		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(strongPw)))
 		ms.AssertCalled(t, "MarkSetupTokenConsumed", ctx, uint(2), mock.AnythingOfType("time.Time"))
 		ms.AssertCalled(t, "CreateSession", ctx, mock.AnythingOfType("*models.Session"))
-		ms.AssertCalled(t, "DeleteSessionsForUserExcept", ctx, uid, uint(1))
+		ms.AssertCalled(t, "DeleteSessionsForUserExcept", ctx, uid, uint(0))
 	})
 
 	t.Run("an account with MFA enabled does NOT get an auto-login session (must complete the second factor)", func(t *testing.T) {

@@ -51,6 +51,17 @@ Rules for a team this size:
    (company chat or email, if those are in scope). Use the out-of-band channel named
    in the contact sheet.
 
+**Who decides what** (a summary of the rules above and of sections 2 and 5; it adds no new
+authority):
+
+| Decision | Decides | Confirms |
+|---|---|---|
+| Declare an incident; set or change severity | The IC (anyone may declare) | Nobody; the IC writes down why |
+| Revoke a credential, disable a workflow, take a copy of a system | Technical lead | The IC is told at once |
+| Withdraw a release, publish an advisory, notify a regulator, rotate a signing identity | The IC proposes | A second person confirms in writing (rule 3) |
+| Whether a legal or contractual notice duty applies | Counsel | The IC |
+| Text of a customer, researcher or regulator message | Communications lead drafts | The IC approves; a second person reads it for accuracy (section 5) |
+
 **Contact sheet** lives outside this repository (the repository is public): phone
 numbers, personal email, counsel, hosting and registrar support lines, the GitHub
 organisation owners. Andrei to create it and name its location here:
@@ -85,6 +96,14 @@ check, a failing `verify-audit`, a teammate noticing something odd.
 - Mailbox and GitHub private reports: acknowledge within 48 hours (public
   commitment). Treat a report that describes a live compromise as SEV1/SEV2 and ignore
   the 48-hour target; the IC replies the same hour.
+- **Response times for a pilot customer are not stated in this plan.** The acknowledgement
+  time for a pilot's security issue, the response time for a pilot defect, the named
+  contact, the backup contact and the escalation path are Andrei's to set in the pilot plan:
+  `[VENDOR TO CONFIRM: pilot security-issue acknowledgement time; pilot defect response time;
+  named contact; backup contact; escalation path]`. Until they are confirmed, do not quote a
+  pilot time to anyone. The only published commitments are the ones in
+  [`SECURITY.md`](../../SECURITY.md): acknowledge within 48 hours, initial assessment within
+  7 days, fix within 90 days.
 - **Open a private incident record** at declaration: one private document or
   private GitHub issue titled `INC-YYYY-MM-DD-<slug>` with severity, IC, start time
   (UTC), and the timeline. Keep it out of this public repository until disclosure.
@@ -175,6 +194,16 @@ before it is changed or ages out.
    - Host or VM: disk and memory image before reboot if a host was compromised; a
      provider snapshot is acceptable.
    - Email and chat: headers of phishing messages; the researcher's original report.
+   - A Keyorix deployment (ours, or a customer's we are helping). Commands checked on
+     2026-11-28 against `origin/main` (`476a87938`); on SQLite the `admin` ones need the
+     server stopped: `keyorix audit export --all > audit.ndjson` (trail as NDJSON);
+     `keyorix audit verify` (chain verdict, non-zero unless valid); `keyorix pat list`
+     (tokens); `keyorix-server admin backup --output <archive>` (database plus key files,
+     store off the host); `keyorix-server admin verify-audit --json --db <copy>` (verdict
+     from a detached copy, no lock); `keyorix-server admin audit export-checkpoint --output
+     <file>` and `... export-checkpoint-key --output <file>` (an anchor, and the key that
+     verifies it; the key is a shared secret). Hash each output file. Scripted steps:
+     [`tabletop-2.md`](tabletop-2.md).
 3. **Retention clock.** GitHub's audit-log and Actions-log retention windows are
    finite and plan-dependent. `[retention periods: CONFIRM against our plan]`. Export
    at T+30 for a SEV1/SEV2 instead of assuming the data will be there later.
@@ -255,9 +284,15 @@ not be: log, error, backup manifest, crash dump)? If yes, it is a vulnerability:
 **Do not:** edit `KEYORIX_MASTER_PASSWORD` in place; delete the key volume "to be
 safe"; rotate before copying the evidence that shows how the key leaked.
 
-**To confirm before adoption:** what `rotate-kek` does to the signed audit checkpoints
-and backup-manifest signing key, which are KEK-derived (`architecture.md` §3,
-`UPGRADING.md`); write the verified answer into this section. `[CONFIRM by test]`
+**Verified 2026-11-28 (native SQLite, `origin/main` `476a87938`): audit checkpoints.**
+`admin encryption rotate-kek` carries the audit verification state over and signs a fresh
+checkpoint under the new KEK-derived key. Afterwards `admin verify-audit
+--checkpoint-key-file <new key>` reads `VALID`; the **old** key reads `BROKEN` ("high-water
+mark fails its signature under the supplied checkpoint key"), which is the wrong key, not
+tampering. Export the new key with `admin audit export-checkpoint-key`; pass the earlier key
+with `--previous-checkpoint-key-file` to check the old-key signature of the transition record.
+**Still to confirm by test:** the effect on the backup-manifest signing key (an archive taken
+before a rotation, restored after it). `[CONFIRM by test]`
 
 ### 8.2 Audit-chain break
 
@@ -270,9 +305,12 @@ it, and do not "repair" it.
 
 **First actions:**
 1. **Stop writes that would destroy evidence?** Take a detached copy of the database
-   (SQLite file copy, or a restored/replica PostgreSQL) *before* anything else. Run
-   verification on the copy; `verify-audit` on a copy takes no lock
-   (`hardening-guide.md`).
+   *before* anything else: on SQLite, stop the server and copy `keyorix.db` **with its
+   `-wal` and `-shm`** (committed rows can sit in the `-wal`; the main file alone can look
+   truncated); on PostgreSQL, a `pg_dump` or a restored/replica database. Run
+   `keyorix-server admin verify-audit --json --db <copy>` (or `--pg-dsn`) on the copy: it
+   takes no lock and never writes ([`audit-chain-break-runbook.md`](../operator/audit-chain-break-runbook.md)
+   section 2 has the full procedure).
 2. Record: the first failing entry id, the failure type (hash mismatch, gap, reorder,
    truncation, checkpoint signature), the Keyorix version, and when the last good
    verification ran.
@@ -382,8 +420,11 @@ disclosed or agrees (`scripts/fuzzing/DISCLOSURE-TRIAGE.md`; embargo rule in
 
 ## 10. Maintenance and open items
 
-- Exercised by [`tabletop-1.md`](tabletop-1.md); outcomes feed back here.
+- Exercised by [`tabletop-1.md`](tabletop-1.md) (a bad image) and
+  [`tabletop-2.md`](tabletop-2.md) (leaked admin token, audit-chain break, lost KEK);
+  outcomes feed back here.
 - Open items before adoption (also in the PR): counsel confirmation of section 7; the
   contact sheet; the customer contact register; GitHub retention periods; the
-  verified effect of `rotate-kek` on checkpoints; deputy names; whether the hosted demo
+  effect of `rotate-kek` on the backup-manifest signing key (checkpoints are verified, 8.1);
+  the pilot response times (section 3, `VENDOR TO CONFIRM`); deputy names; whether the hosted demo
   is operated by Keyorix and what data it holds.

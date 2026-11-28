@@ -1,0 +1,3 @@
+### Documentation
+
+- **Pilot security documents.** New `docs/security/tabletop-2.md` (three Keyorix-side drills: leaked admin token, audit-chain break, lost KEK, commands run against a native SQLite server); the incident response plan gains a who-decides table, `VENDOR TO CONFIRM` placeholders for pilot response times, real evidence-preservation commands and a corrected SQLite copy step; new `docs/operator/pilot-runbook-gaps.md` states which RUNBOOKS-1 gaps work, work with a caveat or are missing (#4823, #4824); `docs/security/security-txt.md` records that the product server answers `/.well-known/security.txt` with the dashboard HTML; `docs/operator/startup-refusals.md` names the FIPS self-test and relative-key-path refusals (exit 1) and marks the open exit-78 decision.

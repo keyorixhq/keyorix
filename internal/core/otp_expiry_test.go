@@ -127,7 +127,7 @@ func TestOneTimePassword_NewPasswordClearsTheExpiry(t *testing.T) {
 	setOTPExpiry(t, db, clock.Add(time.Hour))
 
 	u := reloadUser(t, db)
-	require.NoError(t, c.applyNewPassword(context.Background(), u, "Brand#New-Passw0rd-99"))
+	require.NoError(t, c.applyNewPassword(context.Background(), u, "Brand#New-Passw0rd-99", 0, ""))
 
 	assert.Nil(t, reloadUser(t, db).OneTimePasswordExpiresAt, "the expiry belongs to the one-time password and must not outlive it")
 	*clock = clock.Add(100 * 24 * time.Hour)
