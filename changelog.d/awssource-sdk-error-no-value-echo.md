@@ -1,0 +1,2 @@
+### Security
+- **`keyorix-migrate` no longer puts an AWS Secrets Manager response body into its error text.** When the SDK cannot decode a response, its error quotes the body, and for `GetSecretValue` that body is the secret value, so the value could reach whatever prints or logs the importer's error. The AWS importer now reports the HTTP status only for such errors, as the Azure importer already does. Guarded by `TestList_SDKErrorDoesNotEchoResponseBody`.
