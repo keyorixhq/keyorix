@@ -26,7 +26,7 @@ func TestExportComplianceEvidence_RefusedRowDeliversNothing(t *testing.T) {
 	c, db, _ := newEvidenceExportCore(t)
 	c.storage = hooked(store.NewLocalStorage(db), &storeHooks{
 		LogAuditEvent: func(next storage.Storage, ctx context.Context, e *models.AuditEvent) error {
-			if e.EventType == EventComplianceEvidenceExported {
+			if e.EventType == "compliance.evidence_exported" {
 				return fmt.Errorf("fault-injected: %s audit write failed", e.EventType)
 			}
 			return next.LogAuditEvent(ctx, e)
@@ -50,7 +50,7 @@ func TestExportComplianceEvidence_DeliveryFailureIsRecorded(t *testing.T) {
 	c.SetEvidenceForwarder(&fakeEvidenceForwarder{err: errors.New("boom")})
 	_, err := c.ExportComplianceEvidence(context.Background(), t.TempDir())
 	require.NoError(t, err, "a file was written, so a webhook failure is non-fatal")
-	for _, evt := range []string{EventComplianceEvidenceExported, EventComplianceEvidenceDeliveryFailed} {
+	for _, evt := range []string{"compliance.evidence_exported", "compliance.evidence_delivery_failed"} {
 		var n int64
 		require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", evt).Count(&n).Error)
 		assert.EqualValues(t, 1, n, evt)
@@ -63,15 +63,15 @@ func TestExportSecretAccessLog_RecordedBeforeDelivery(t *testing.T) {
 		data, _, err := w.c.ExportSecretAccessLog(context.Background(), ActorTypeUser, w.f.adminID, s.ID, ExportFormatCSV)
 		require.NoError(t, err)
 		require.NotEmpty(t, data)
-		require.EqualValues(t, 1, w.auditRows(EventSecretAccessLogExported, s.ID))
+		require.EqualValues(t, 1, w.auditRows("secret.access_log_exported", s.ID))
 
-		w.outage.arm(EventSecretAccessLogExported)
+		w.outage.arm("secret.access_log_exported")
 		data, _, err = w.c.ExportSecretAccessLog(context.Background(), ActorTypeUser, w.f.adminID, s.ID, ExportFormatJSON)
 		fired := w.outage.fired()
 		w.outage.arm("")
 		require.Positive(t, fired)
 		require.ErrorIs(t, err, ErrMutationAuditUnavailable)
 		require.Nil(t, data, "a refused export returns no history")
-		require.EqualValues(t, 1, w.auditRows(EventSecretAccessLogExported, s.ID))
+		require.EqualValues(t, 1, w.auditRows("secret.access_log_exported", s.ID))
 	})
 }

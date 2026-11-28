@@ -78,10 +78,10 @@ func TestExportAuditLogsCSV_RecordedBeforeDelivery(t *testing.T) {
 	h.ExportAuditLogsCSV(w, withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export.csv?limit=50", nil)))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "seed row")
-	assert.NotContains(t, w.Body.String(), core.EventAuditLogExported, "the export is the trail as it stood: not its own row")
-	assert.EqualValues(t, 1, f.rows(t, core.EventAuditLogExported), "the CSV export must be on record")
+	assert.NotContains(t, w.Body.String(), "audit.exported", "the export is the trail as it stood: not its own row")
+	assert.EqualValues(t, 1, f.rows(t, "audit.exported"), "the CSV export must be on record")
 
-	f.refused.Store(core.EventAuditLogExported)
+	f.refused.Store("audit.exported")
 	w = httptest.NewRecorder()
 	h.ExportAuditLogsCSV(w, withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export.csv?limit=50", nil)))
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
@@ -89,7 +89,7 @@ func TestExportAuditLogsCSV_RecordedBeforeDelivery(t *testing.T) {
 	assert.Empty(t, w.Header().Get("Content-Disposition"), "a refused export sends no file")
 	assert.Contains(t, w.Body.String(), auditUnavailableCode)
 	assert.NotContains(t, w.Body.String(), "seed row", "a refused export discloses no audit row")
-	assert.EqualValues(t, 1, f.rows(t, core.EventAuditLogExported))
+	assert.EqualValues(t, 1, f.rows(t, "audit.exported"))
 }
 
 func TestGetComplianceEvidence_RecordedBeforeDelivery(t *testing.T) {
@@ -100,9 +100,9 @@ func TestGetComplianceEvidence_RecordedBeforeDelivery(t *testing.T) {
 	h.GetComplianceEvidence(w, withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/compliance/evidence", nil)))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "data_b64")
-	assert.EqualValues(t, 1, f.rows(t, core.EventComplianceEvidenceExported), "the evidence download must be on record")
+	assert.EqualValues(t, 1, f.rows(t, "compliance.evidence_exported"), "the evidence download must be on record")
 
-	f.refused.Store(core.EventComplianceEvidenceExported)
+	f.refused.Store("compliance.evidence_exported")
 	w = httptest.NewRecorder()
 	h.GetComplianceEvidence(w, withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/compliance/evidence", nil)))
 	require.Equal(t, http.StatusServiceUnavailable, w.Code, w.Body.String())
