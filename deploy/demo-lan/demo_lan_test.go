@@ -744,7 +744,7 @@ func TestInstall_KitHasEverythingTheScriptsCall(t *testing.T) {
 		if !strings.HasSuffix(f, ".sh") {
 			continue
 		}
-		for _, line := range strings.Split(string(readBytes(t, filepath.Join("..", "..", f))), "\n") {
+		for line := range strings.SplitSeq(string(readBytes(t, filepath.Join("..", "..", f))), "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), "#") {
 				continue
 			}
@@ -887,7 +887,7 @@ func TestPKI_CANearItsEndWarnsAndDoesNotReissueInALoop(t *testing.T) {
 	if out, code := d.pki(t, nil, "check"); code != 0 || !strings.Contains(out, "WARNING") {
 		t.Errorf("check (exit %d) must pass and warn: %s", code, out)
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		out, code := d.pki(t, nil, "renew")
 		if code != 0 || !strings.Contains(out, "certificate ok") || !strings.Contains(out, "--new-ca") {
 			t.Errorf("renew %d (exit %d): %s", i+1, code, out)
