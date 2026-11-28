@@ -70,10 +70,14 @@ import (
 //     never overwrite them (backupfmt/loader.go). The script compares their values.
 //   - system_metadata role_permissions_generation: the target's own cache-invalidation
 //     generation (backupfmt/loader.go).
+//   - system_metadata service_accounts_purge_v1: the legacy service-accounts marker the
+//     TARGET's own migration writes (recordLegacyServiceAccountsState); the loader skips the
+//     archive's copy, so only its updated_at differs (backupfmt/loader.go).
 var (
 	deliberateColumns  = map[string]bool{"secret_nodes.cache_epoch": true}
 	deliberateMetaKeys = map[string]bool{
 		"schema_epoch": true, "schema_min_compatible_epoch": true, "role_permissions_generation": true,
+		"service_accounts_purge_v1": true,
 	}
 	strict bool
 )
