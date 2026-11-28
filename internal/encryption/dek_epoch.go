@@ -32,8 +32,10 @@
 //     blocks new ones until commit) and swaps the epoch to the new fingerprint
 //     with a compare-and-set in the same transaction as the re-encryption.
 //
-// PostgreSQL only. SQLite is single-node (one process holds the database and
-// dek.lock), so none of this runs there and its behaviour is unchanged.
+// The watcher, the write fence and the compare-and-set rotation are PostgreSQL
+// only. SQLite is single-node (one process holds the database and dek.lock), so
+// none of that runs there; it only verifies or seeds the epoch once at boot
+// (INV-ENCRYPTION-sqlite-dek-epoch-at-boot).
 //
 // What this does not cover (stated, per this repo's convention): a write
 // whose encryption happened before its replica saw the fence and whose INSERT
