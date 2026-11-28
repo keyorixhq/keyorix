@@ -200,7 +200,10 @@ func startServerWithDynamicSecrets(t *testing.T, binary string) *harness.Server 
 	}
 	run("init", "--dev", "--config", configPath) // plain-HTTP harness (SECURE-DEFAULT-1)
 
-	dynBlock := "\ndynamic_secrets:\n  allow_private_network_targets: true\n"
+	// The target Postgres is a throwaway container with no TLS, reached with sslmode=disable;
+	// the server refuses that unless the operator opts in (visibly, an insecure_ key), which is
+	// the only thing that lets the journey's admin_dsn through (#4699).
+	dynBlock := "\ndynamic_secrets:\n  allow_private_network_targets: true\n  insecure_allow_plaintext_dynamic_secret_transport: true\n"
 	cfgFile := filepath.Join(dir, "keyorix.yaml")
 	raw, err := os.ReadFile(cfgFile) // #nosec G304 -- cfgFile is this test's own t.TempDir()-derived path
 	if err != nil {
