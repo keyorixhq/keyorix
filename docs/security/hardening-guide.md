@@ -445,6 +445,18 @@ option there, but it does not bundle the key-material files.
   (WARNING per connection) and audited (`dynamic_secret.config_insecure_transport`,
   `dynamic_lease.insecure_transport`). Upgrade window for PostgreSQL/MySQL configs stored before
   #4374: [UPGRADING.md §6zt](../UPGRADING.md#6zt-postgresql-and-mysql-dynamic-secret-admin_dsns-must-verify-the-server-certificate).
+- **A MySQL target on TLS is not covered by the wire guard** — `netutil.MySQLGuardDialer`
+  refuses an oversized or truncated result-set header only while the connection is
+  plaintext; once the client negotiates TLS the stream is ciphertext and the guard steps
+  aside (this includes `tls=skip-verify` and `tls=preferred` when the server offers TLS;
+  upstream [go-sql-driver/mysql#1866](https://github.com/go-sql-driver/mysql/issues/1866) is
+  open). Do not rely on the guard for an endpoint you do not control: point
+  `dynamic_secrets` and `auto_rotation` backends only at servers you operate. A malformed
+  server reply on any database target (TLS or not) that makes the client library fail
+  is contained: the dynamic-secret engine or rotation executor returns an error that
+  names the backend and the operation and none of the reply, and the details go to the
+  redacted server log. This containment is a second line of defence, not a substitute
+  for the guard on a plaintext link.
 - **Do not weaken the SSRF/link-local guard** — there is no supported
   configuration key to disable `internal/netutil`'s SSRF checks on connector/
   dynamic-secret/DSN-driven calls; if a legitimate target trips it (e.g. a
