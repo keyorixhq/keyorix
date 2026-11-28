@@ -27,7 +27,7 @@ internal/delivery/smtp.go	E07	Setup-link email through the operator's SMTP relay
 internal/dynamic/awssts.go	E13	AWS STS dynamic-secret backend (build tag !noaws)
 internal/dynamic/azure.go	E13	Azure dynamic-secret backend (build tag !noazure)
 internal/dynamic/gcp.go	E13	GCP IAM credentials dynamic-secret backend (build tag !nogcp)
-internal/dynamic/kubernetes.go	E13	Kubernetes API dynamic-secret backend (build tag !nok8s)
+internal/dynamic/kubernetes.go	E13	Kubernetes API dynamic-secret backend (build tag !nok8s); explicit api_server dialled through the netutil private-tier guard
 internal/dynamic/mongodb.go	E13	MongoDB dynamic-secret backend
 internal/dynamic/mysql.go	E13	MySQL dynamic-secret backend
 internal/dynamic/postgres.go	E13	PostgreSQL dynamic-secret backend
