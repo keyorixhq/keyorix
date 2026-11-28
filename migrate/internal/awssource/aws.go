@@ -92,7 +92,7 @@ func (c *Client) List(ctx context.Context) ([]cloudentry.Entry, []cloudentry.Ski
 	for {
 		out, err := cl.ListSecrets(ctx, &secretsmanager.ListSecretsInput{NextToken: nextToken})
 		if err != nil {
-			return nil, nil, sdkSafeError(err, "aws-secrets-manager: list secrets")
+			return nil, nil, sdkSafeError(ctx, err, "aws-secrets-manager: list secrets")
 		}
 		for _, s := range out.SecretList {
 			name := aws.ToString(s.Name)
@@ -130,15 +130,20 @@ func (c *Client) List(ctx context.Context) ([]cloudentry.Entry, []cloudentry.Ski
 	return entries, skipped, nil
 }
 
-// sdkSafeError wraps an SDK call's error for the caller. An error carrying the HTTP response
-// (*awshttp.ResponseError) is reported by its status code only: when the body cannot be
-// decoded the SDK quotes it in the error text ("deserialization failed, expected '{', got
-// ..."), and for GetSecretValue that body is the secret value, which would otherwise reach
-// whatever prints or logs the error. The request id and API error code are left out too: both
-// come from the response. Any other error (a network failure, a cancelled context) is wrapped
-// unchanged, as azuresource's statusOnlyError does.
-func sdkSafeError(err error, what string) error {
-	if re, ok := errors.AsType[*awshttp.ResponseError](err); ok {
+// sdkSafeError wraps an SDK call's error for the caller. When the SDK received an HTTP
+// response (*awshttp.ResponseError with a non-zero status) it is reported by status code only:
+// if the body cannot be decoded the SDK quotes it in the error text ("deserialization failed,
+// expected '{', got ..."), and for GetSecretValue that body is the secret value, which would
+// otherwise reach whatever prints or logs the error. The request id and API error code are left
+// out too: both come from the response. The SDK also wraps send failures in a ResponseError, with
+// status 0 and no response; those carry only the URL and the transport cause, so they are wrapped
+// unchanged, and a context that has ended is reported as such (keeping errors.Is). Any other
+// error is wrapped unchanged, as azuresource's statusOnlyError does.
+func sdkSafeError(ctx context.Context, err error, what string) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("%s: %w", what, ctxErr)
+	}
+	if re, ok := errors.AsType[*awshttp.ResponseError](err); ok && re.HTTPStatusCode() != 0 {
 		return fmt.Errorf("%s: unexpected response, status %d", what, re.HTTPStatusCode())
 	}
 	return fmt.Errorf("%s: %w", what, err)
@@ -157,7 +162,7 @@ func (c *Client) locator(name string) string {
 func (c *Client) readSecret(ctx context.Context, cl smAPI, name, locator string) ([]cloudentry.Entry, *cloudentry.Skipped, error) {
 	out, err := cl.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{SecretId: aws.String(name)})
 	if err != nil {
-		return nil, nil, sdkSafeError(err, fmt.Sprintf("aws-secrets-manager: get %q", name))
+		return nil, nil, sdkSafeError(ctx, err, fmt.Sprintf("aws-secrets-manager: get %q", name))
 	}
 
 	// SecretString != nil alone is not "has a value" -- a response body like

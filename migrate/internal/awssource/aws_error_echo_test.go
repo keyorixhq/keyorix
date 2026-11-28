@@ -2,10 +2,12 @@ package awssource
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
@@ -65,4 +67,47 @@ func TestList_SDKErrorDoesNotEchoResponseBody(t *testing.T) {
 			}
 		})
 	}
+}
+
+func realClientFor(url string) func(context.Context) (smAPI, error) {
+	return func(context.Context) (smAPI, error) {
+		return secretsmanager.New(secretsmanager.Options{
+			Region:           "us-east-1",
+			BaseEndpoint:     aws.String(url),
+			Credentials:      staticCreds{},
+			HTTPClient:       &http.Client{Timeout: 5 * time.Second},
+			RetryMaxAttempts: 1,
+		}), nil
+	}
+}
+
+// TestList_TransportFailuresStayDiagnosable: the SDK wraps send failures in a response error
+// with status 0, so the status-only rule must not flatten them. A refused connection keeps its
+// cause, and a deadline keeps errors.Is(context.DeadlineExceeded).
+func TestList_TransportFailuresStayDiagnosable(t *testing.T) {
+	t.Run("connection refused keeps its cause", func(t *testing.T) {
+		srv := httptest.NewServer(http.NotFoundHandler())
+		url := srv.URL
+		srv.Close() // nothing listens any more
+		c := New(Config{Region: "us-east-1"})
+		c.newClient = realClientFor(url)
+		_, _, err := c.List(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "connection refused") {
+			t.Fatalf("a refused connection must stay diagnosable, got: %v", err)
+		}
+	})
+	t.Run("deadline keeps errors.Is", func(t *testing.T) {
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+		defer srv.Close()
+		defer close(release)
+		c := New(Config{Region: "us-east-1"})
+		c.newClient = realClientFor(srv.URL)
+		ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		_, _, err := c.List(ctx)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("errors.Is(err, DeadlineExceeded) lost: %v", err)
+		}
+	})
 }
