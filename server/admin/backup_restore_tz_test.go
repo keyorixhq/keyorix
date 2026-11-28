@@ -204,7 +204,7 @@ func sqliteRoundTripOnThisHost(t *testing.T) {
 	configPathFlag = writeBackupRestoreTestConfig(t, srcDir, filepath.Join(srcDir, "secrets.db"))
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	st, err := kstorage.NewStorageFactory().CreateStorage(srcCfg)
+	st, err := createStorageClosedAtCleanup(t, srcCfg)
 	require.NoError(t, err)
 	seedAuditEventsForTZ(t, st)
 
@@ -259,7 +259,7 @@ func postgresRoundTripOnThisHost(t *testing.T, base string) {
 	configPathFlag = writePostgresBackupRestoreTestConfig(t, srcDir, srcDSN)
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	st, err := kstorage.NewStorageFactory().CreateStorage(srcCfg)
+	st, err := createStorageClosedAtCleanup(t, srcCfg)
 	require.NoError(t, err)
 	seedAuditEventsForTZ(t, st)
 

@@ -17,7 +17,9 @@ import (
 // rotation sweep's transaction next to the epoch compare-and-set. Lifting a
 // rotation fence (a failed or interrupted rotation, at rotation or at startup)
 // rewrites the epoch row and its updated_at but never this row, so the old DEK is
-// not re-dated by a rotation that did not happen. PostgreSQL only, like the epoch.
+// not re-dated by a rotation that did not happen. Written on both backends, like
+// the epoch: on PostgreSQL in the watcher-backed guard, and on SQLite at
+// boot-seed and in the single-transaction rotation (SQLITE-DEK-EPOCH-1).
 const dekCreatedAtKey = "dek.created_at"
 
 // DEKCreatedAtMetadataKey is dekCreatedAtKey for callers outside the package.

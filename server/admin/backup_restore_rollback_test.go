@@ -21,7 +21,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -147,7 +146,7 @@ func TestAdminRestore_AllowsRollback_WithOverride(t *testing.T) {
 
 	cfg, err := config.Load(cfgPath)
 	require.NoError(t, err)
-	st, err := storage.NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	action := "admin.restore_rollback_override"
 	events, _, err := st.GetAuditLogs(context.Background(), &corestorage.AuditFilter{Action: &action})
@@ -273,7 +272,7 @@ func TestAdminRestore_LiteralRepro_NoCheckpointNoWitness_RefusesOverwrite(t *tes
 
 	cfg, err := config.Load(cfgPath)
 	require.NoError(t, err)
-	st, err := storage.NewStorageFactory().CreateStorage(cfg) // creates + migrates the target DB for real
+	st, err := createStorageClosedAtCleanup(t, cfg) // creates + migrates the target DB for real
 	require.NoError(t, err)
 	success := true
 	require.NoError(t, st.LogAuditEvent(context.Background(), &models.AuditEvent{

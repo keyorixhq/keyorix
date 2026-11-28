@@ -28,7 +28,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/serverguard"
-	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -72,7 +71,7 @@ func testRotateForceNextToLiveReplica(t *testing.T, confirm *bool, run func(*cob
 `, dsn)), 0o600))
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(cfg)
+	_, err = createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 
 	// Replica B's host: a copy of the same key set.

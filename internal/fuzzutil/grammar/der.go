@@ -1,19 +1,21 @@
-// Package grammar provides structure-aware input generation for the ASN.1 DER
-// and XML parsers this repository drives (CMS/PKCS#7 via digitorus/pkcs7, X.509
-// via crypto/x509 and encoding/asn1, SAML via crewjam/saml + beevik/etree +
-// goxmldsig). It is imported only from _test.go fuzz files, and like
-// internal/fuzzutil it imports no testing-only machinery, so it cannot leak a
-// test dependency into a non-test build.
+// Package grammar provides structure-aware input generation for the ASN.1 DER,
+// XML, and protobuf wire-format parsers this repository drives (CMS/PKCS#7 via
+// digitorus/pkcs7, X.509 via crypto/x509 and encoding/asn1, SAML via
+// crewjam/saml + beevik/etree + goxmldsig, gRPC messages via
+// google.golang.org/protobuf). It is imported only from _test.go fuzz files,
+// and like internal/fuzzutil it imports no testing-only machinery, so it cannot
+// leak a test dependency into a non-test build.
 //
 // The point of the package: byte-level fuzz mutation stalls at the first length
 // or tag check (a random bit-flip in a DER length octet makes the whole
 // structure unparseable, so the engine never gets past the envelope). Here the
 // fuzzer's []byte is decoded into a *tree* plus a set of *mutation choices*
-// (see decode.go), the tree is serialised to well-formed-by-construction DER/XML
-// by the builders below, and the chosen mutations deliberately break specific
-// invariants (indefinite length, non-minimal length, wrong tag class, …). The
-// standard `go test -fuzz` engine then mutates the CHOICES, not the raw bytes —
-// so its edits land on structural features instead of being rejected at octet 0.
+// (see decode.go), the tree is serialised to well-formed-by-construction DER/XML/
+// protobuf by the builders below, and the chosen mutations deliberately break
+// specific invariants (indefinite length, non-minimal length, wrong tag class,
+// non-minimal varint, overlong varint, wire-type mismatch, …). The standard
+// `go test -fuzz` engine then mutates the CHOICES, not the raw bytes — so its
+// edits land on structural features instead of being rejected at octet 0.
 //
 // Nothing here asserts anything; it only *generates*. The oracles live in the
 // fuzz targets that consume this package.

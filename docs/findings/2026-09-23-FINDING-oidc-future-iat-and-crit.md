@@ -13,6 +13,7 @@ coverage in `FuzzOIDCIDTokenSingleConstraintViolation` /
 (`internal/core/jwt_single_constraint_fuzz_test.go`) and
 `TestOIDCSSODifferential_SingleConstraintViolation`
 (`internal/core/jwt_cross_verifier_differential_test.go`).
+**Regression test:** `TestOIDCVerifier_RejectsFutureIssuedAt` (`internal/core`)
 **Severity: Low** (future-iat bypass), **informational** (crit — RFC 7515
 compliance gap, not independently exploitable by itself).
 

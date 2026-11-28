@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,6 +36,7 @@ var GuardTimeout = 3 * time.Second * time.Duration(guardTimeoutScale)
 // on the caller's goroutine, and a runner whose fn hung is never reused.
 func Guard(fatalf func(format string, args ...any), label string, fn func()) {
 	r := getRunner()
+	r.start()
 	r.work <- fn
 
 	timeout := GuardTimeout
@@ -72,10 +74,41 @@ func Guard(fatalf func(format string, args ...any), label string, fn func()) {
 		}
 		// Abandon the runner: closing work ends its loop once the hung fn
 		// returns (done is buffered, so its final send cannot block).
+		r.abandon()
 		r.stop()
 		fatalf("%s exceeded %s — possible amplification or hang (waited %s, process frozen %s: %s)",
 			label, timeout, time.Since(start).Round(time.Millisecond), frozen.Round(time.Millisecond), why)
 	}
+}
+
+// abandonedRunning counts guarded fns that Guard gave up on (deadline and any
+// grace missed) and that have NOT returned yet: incremented when Guard abandons
+// the call, decremented by the runner when that fn finally returns.
+var abandonedRunning atomic.Int64
+
+// AbandonedRunning reports how many abandoned guarded fns are still running in
+// this process. A caller that holds a resource across a guarded fn (resguard's
+// measure lock) can tell that the fn holding it may never return, whether it took
+// the resource before or after Guard gave up on it.
+func AbandonedRunning() int64 { return abandonedRunning.Load() }
+
+// Prime builds Guard's one-time per-process state now: the stall monitor and
+// pooled runners and timers. A cost oracle (resguard.New) calls it before its first
+// measured input, so that setup is not charged to whichever input happens to make
+// the process's first Guard call (INV-FUZZUTIL-first-guard-call-allocates-nothing-extra).
+// It pools TWO runners and timers: sync.Pool keeps the first Put in the calling
+// P's private slot, which a Get on another P cannot reach, and the second in the
+// shared slot, which any P can steal. Each fuzz input runs on a fresh goroutine
+// that may land on another P than the one Prime ran on. Safe to call more than
+// once; later calls reuse what is pooled.
+func Prime() {
+	startStallMonitor()
+	r1, r2 := getRunner(), getRunner()
+	putRunner(r1)
+	putRunner(r2)
+	t1, t2 := getTimer(GuardTimeout), getTimer(GuardTimeout)
+	putTimer(t1)
+	putTimer(t2)
 }
 
 // runnerCore is what the runner goroutine references; runner (the handle callers
@@ -85,9 +118,47 @@ type runnerCore struct {
 	work chan func()
 	done chan struct{}
 	once sync.Once
+
+	// mu guards returned/abandoned, the abandonedRunning bookkeeping of the call
+	// in flight (see abandon).
+	mu        sync.Mutex
+	returned  bool
+	abandoned bool
+}
+
+// start resets the in-flight bookkeeping before a call is handed to the runner,
+// so a deadline that fires before the runner even picks the call up still counts.
+func (c *runnerCore) start() {
+	c.mu.Lock()
+	c.returned = false
+	c.mu.Unlock()
 }
 
 func (c *runnerCore) stop() { c.once.Do(func() { close(c.work) }) }
+
+// abandon marks the in-flight fn as abandoned and counts it in abandonedRunning,
+// unless it already returned. mu makes the mark and the runner's "returned" check
+// one decision, so the gauge is never incremented for a fn that has already been
+// accounted as returned (which would leave it above zero forever).
+func (c *runnerCore) abandon() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.returned {
+		c.abandoned = true
+		abandonedRunning.Add(1)
+	}
+}
+
+// fnReturned is called by the runner after each fn; it undoes abandon's count.
+func (c *runnerCore) fnReturned() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.abandoned {
+		c.abandoned = false
+		abandonedRunning.Add(-1)
+	}
+	c.returned = true
+}
 
 // runner executes guarded calls one at a time on a long-lived goroutine.
 type runner struct{ *runnerCore }
@@ -103,6 +174,7 @@ func getRunner() *runner {
 	go func() {
 		for fn := range c.work {
 			fn()
+			c.fnReturned()
 			c.done <- struct{}{}
 		}
 	}()

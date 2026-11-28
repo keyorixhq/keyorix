@@ -1,0 +1,3 @@
+### Testing
+
+- Added a cross-version restore round-trip harness (`server/admin/backup_xver_fixture_fuzz_test.go`): a frozen v2 backup archive committed with its canary plaintexts and metadata is restored and asserted to decrypt every recorded secret to its recorded plaintext (O1), to fail closed with no half-restored state under mutation (O2), to bound work on hostile length fields (O3), and to leak no canary or key byte in error text (O4). Unlike the existing round-trip fuzzers it reads a frozen archive, so a reader regression on a pinned format is caught. Its O1/O2/O4 oracles were red-proofed against three planted reader defects (skipped per-entry SHA-256, skipped manifest-signature gate, silent table drop).

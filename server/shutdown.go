@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"time"
 
@@ -54,5 +55,63 @@ func closeAuditForwarder(coreService *core.KeyorixCore) {
 	type closer interface{ Close() }
 	if cl, ok := coreService.AuditForwarder().(closer); ok {
 		cl.Close()
+	}
+}
+
+// storageCloseTimeout bounds closeStorageOnShutdown: the wait for the
+// schedulers and the storage Close together. On Postgres Close waits for every
+// pooled connection to come back (pgxpool.Pool.Close), and a request still
+// running past the HTTP drain timeout keeps its connection, possibly for as
+// long as a query to an unreachable database takes. The defers that run after
+// this one (KEK wipe, single-writer and presence release, the lock-loss
+// os.Exit(1)) must not wait on that.
+const storageCloseTimeout = 5 * time.Second
+
+// closeStorageOnShutdown closes the core's storage after everything that writes
+// to it has stopped (deferred first in main, so it runs last): on Postgres it
+// stops the background jobs CreateStorage started and releases the
+// connections. waitSchedulers (startSchedulers' wait, nil before they started)
+// is awaited first, so no scheduler tick runs against a closed storage. Both
+// steps share storageCloseTimeout; past it, shutdown goes on without them. A
+// storage without Close is left alone.
+func closeStorageOnShutdown(coreService *core.KeyorixCore, waitSchedulers func()) {
+	closeStorageWithin(coreService.Storage(), waitSchedulers, storageCloseTimeout)
+}
+
+func closeStorageWithin(st any, waitSchedulers func(), d time.Duration) {
+	deadline := time.Now().Add(d)
+	if waitSchedulers != nil && !doneWithin(waitSchedulers, time.Until(deadline)) {
+		log.Printf("closing storage on shutdown: schedulers still running after %s; exiting without closing the storage", d)
+		return
+	}
+	c, ok := st.(io.Closer)
+	if !ok {
+		return
+	}
+	var err error
+	if !doneWithin(func() { err = c.Close() }, time.Until(deadline)) {
+		log.Printf("closing storage on shutdown: still waiting after %s (a request or job still holds a connection); exiting without it", d)
+		return
+	}
+	if err != nil {
+		log.Printf("closing storage on shutdown: %v", err)
+	}
+}
+
+// doneWithin runs f in its own goroutine and reports whether it returned within
+// d. On false f keeps running; the caller must not read anything f writes.
+func doneWithin(f func(), d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f()
+	}()
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		return false
 	}
 }

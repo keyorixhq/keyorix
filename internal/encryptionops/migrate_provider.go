@@ -220,6 +220,7 @@ func MigrateProviderWithConfig(cfg *config.Config, opts MigrateOpts, confirm boo
 	if err != nil {
 		return err
 	}
+	defer audit.close()
 
 	// 2. Encrypt a probe value under the current DEK — used after re-wrapping to
 	//    verify the target provider yields the *same* DEK (data still decryptable).

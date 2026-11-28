@@ -13,4 +13,4 @@ New invariants go in `INVARIANTS.d/INV-RES-<slug>.md` (one per file), never
 appended here. Every current invariant is a fragment in `INVARIANTS.d/`:
 airgap-fails-nonloopback, budget-calibrated-not-handtuned, absmax-for-decompression,
 sampled-meters-skip-cheap-inputs, live-heap-per-input-delta, bounded-absolute-from-product-cap, sentinel-reuses-taint,
-test-only.
+test-only, measure-windows-serialized.
