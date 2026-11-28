@@ -1,0 +1,1 @@
+deploy/demo-lan	none	-	test-only package: demo_lan_test.go checks install.sh and pki.sh (CA/leaf with openssl, refusals, address detection, kit file list, config anchors); no non-test Go code	test-helper
