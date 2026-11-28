@@ -1,4 +1,4 @@
-# Keyorix DAST stack — persistent on lxc-keyorix-dast (192.168.10.61).
+# Keyorix DAST stack — persistent on lxc-keyorix-dast (see docs/DAST.md).
 # cp .env.example .env, fill in values, then: docker compose up -d
 # Scans: ./scan-nuclei.sh (daily) and ./scan-zap.sh (weekly).
 services:
