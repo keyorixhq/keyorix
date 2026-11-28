@@ -122,6 +122,8 @@ req POST "secret/data/values/oversized-value" "{\"data\":{\"value\":\"${OVERSIZE
 BINARY_B64="$(head -c 4096 /dev/urandom | base64 | tr -d '\n')"
 req POST "secret/data/values/binary-value" "{\"data\":{\"value\":\"${BINARY_B64}\"}}" >/dev/null
 req POST "secret/data/values/json-blob" '{"data":{"value":"{\"nested\":{\"array\":[1,2,3],\"flag\":true}}"}}' >/dev/null
+# Documented fixture, not a key: the body is a truncated placeholder (it does not decode to any
+# RSA key) and exists only to give the importer a multi-line PEM-shaped value to round-trip.
 PEM_VALUE='-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK...mig1-fake-pem-not-a-real-key...\n-----END RSA PRIVATE KEY-----'
 req POST "secret/data/values/pem-key" "{\"data\":{\"value\":\"${PEM_VALUE}\"}}" >/dev/null
 
