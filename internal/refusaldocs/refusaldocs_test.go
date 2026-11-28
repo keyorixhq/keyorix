@@ -459,3 +459,325 @@ func TestDocMatchesParsing(t *testing.T) {
 		t.Fatalf("docMatches = %q, want %q", got, want)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Exit statuses (BOOT-REFUSAL-TRUTH-NOV-1). These tests live in this file, not
+// in a file of their own, because scripts/ci/guard-inputs.d maps
+// docs/operator/startup-refusals.md to refusaldocs_test.go: a docs-only change
+// to the page must select them too (CI-GUARD-TRIGGERS-1).
+//
+// Fatal checks, each small on purpose (the general code -> docs direction
+// stays log-only, see the package comment):
+//
+//   - TestExitStatusTableUsesTheServersStatuses: the statuses in the table are
+//     exactly the two server/boot_exit.go defines plus 1. A renumbered status
+//     (or a fourth one added to the code) makes the page lie to an operator who
+//     writes RestartPreventExitStatus= from it.
+//   - TestOperatorFixRefusalsAreDocumented: the refusals that were exit 1 and
+//     were moved to 78 (EXIT78-1, BOOT-REFUSAL-TRUTH-NOV-1) keep a Match entry on
+//     the page. The list is hand-kept: it names the refusals a systemd unit
+//     stops on that are not plain configuration errors, and a new one is added
+//     here when it is marked. What it does not see: an operatorFix call whose
+//     message is not in this list.
+//   - TestReplicationRoleEntryGivesAdminStatus: the session_replication_role
+//     entry does not say admin exits 1 (it exits 78 since this change).
+//   - TestAdminExitStatusParagraphNamesEveryCode: every non-1 status that
+//     server/admin passes to newExitCodeError (a literal, or a package-level
+//     constant with a literal value) is named in the admin paragraph of the
+//     page. What it does not see: a status computed at run time (verify-audit's
+//     result.ExitCode(), whose values the verify-audit entry documents) and an
+//     exit status set any other way than newExitCodeError.
+
+var (
+	statusConst = regexp.MustCompile(`(?m)^\s*(exitOperatorFix|exitDependencyDown)\s*=\s*(\d+)\s*$`)
+	statusRow   = regexp.MustCompile(`^\|\s*(\d+)\s*\|`)
+)
+
+// tableStatuses returns the distinct statuses in the first column of the
+// "Exit statuses" table, in ascending order.
+func tableStatuses(markdown string) []int {
+	set := map[int]bool{}
+	inSection := false
+	for line := range strings.SplitSeq(markdown, "\n") {
+		switch {
+		case strings.HasPrefix(line, "## "):
+			inSection = strings.TrimSpace(strings.TrimPrefix(line, "## ")) == "Exit statuses"
+		case inSection:
+			if m := statusRow.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+				n, _ := strconv.Atoi(m[1])
+				set[n] = true
+			}
+		}
+	}
+	var out []int
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Ints(out)
+	return out
+}
+
+func TestExitStatusTableUsesTheServersStatuses(t *testing.T) {
+	root := repoRoot(t)
+	code, err := os.ReadFile(filepath.Join(root, "server", "boot_exit.go")) //nolint:gosec // repo file
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[int]bool{1: true} // "everything else", documented in boot_exit.go's header
+	consts := statusConst.FindAllStringSubmatch(string(code), -1)
+	if len(consts) != 2 {
+		t.Fatalf("server/boot_exit.go: found %d exit status constants, want exitOperatorFix and exitDependencyDown: the checker needs updating", len(consts))
+	}
+	for _, c := range consts {
+		n, _ := strconv.Atoi(c[2])
+		want[n] = true
+	}
+	doc, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(docPath))) //nolint:gosec // repo file
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := tableStatuses(string(doc))
+	if len(got) == 0 {
+		t.Fatalf("%s: no rows found under \"## Exit statuses\"", docPath)
+	}
+	for _, n := range got {
+		if !want[n] {
+			t.Errorf("%s: the Exit statuses table lists status %d, which server/boot_exit.go does not define", docPath, n)
+		}
+		delete(want, n)
+	}
+	for n := range want {
+		t.Errorf("%s: the Exit statuses table has no row for status %d, which server/boot_exit.go defines", docPath, n)
+	}
+}
+
+func TestOperatorFixRefusalsAreDocumented(t *testing.T) {
+	root := repoRoot(t)
+	doc, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(docPath))) //nolint:gosec // repo file
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches := docMatches(string(doc))
+	for _, need := range []string{
+		"KEYORIX_BOOTSTRAP_TOKEN too short",                    // server/bootstrap_token.go, exit 78
+		"PostgreSQL session_replication_role is",               // storage.NonOriginReplicationRoleError, exit 78 (server and admin)
+		"existing row group(s) normalize to the same identity", // storage.FoldCollisionError (78 for projects only), text shared by all tables
+	} {
+		found := false
+		for _, m := range matches {
+			// One direction only: a Match shortened to a fragment of the
+			// needle (`PostgreSQL`) would otherwise still pass.
+			if strings.Contains(m, need) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s has no Match entry for %q, a refusal the server exits 78 for", docPath, need)
+		}
+	}
+}
+
+func TestTableStatusesParsing(t *testing.T) {
+	md := "| 78 | before the section |\n\n## Exit statuses\n\n| Exit | What |\n|---|---|\n| 78 | a |\n| 75 | b |\n| 78 | c |\n| 1 | d |\n\n## Next\n\n| 2 | after |\n"
+	got := tableStatuses(md)
+	if len(got) != 3 || got[0] != 1 || got[1] != 75 || got[2] != 78 {
+		t.Fatalf("tableStatuses = %v, want [1 75 78]", got)
+	}
+}
+
+// sectionText returns the text under the "### "+title heading up to the next
+// heading of level 3 or higher, or "" when there is no such heading.
+func sectionText(markdown, title string) string {
+	var b strings.Builder
+	in := false
+	for line := range strings.SplitSeq(markdown, "\n") {
+		if strings.HasPrefix(line, "### ") || strings.HasPrefix(line, "## ") {
+			if in {
+				break
+			}
+			in = strings.TrimSpace(strings.TrimPrefix(line, "### ")) == title
+			continue
+		}
+		if in {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+var exitsOne = regexp.MustCompile(`(?i)\bexit(s| code| status)?:?\*{0,2} 1\b`)
+
+func TestReplicationRoleEntryGivesAdminStatus(t *testing.T) {
+	root := repoRoot(t)
+	doc, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(docPath))) //nolint:gosec // repo file
+	if err != nil {
+		t.Fatal(err)
+	}
+	const title = "`session_replication_role` is not `origin`"
+	sec := sectionText(string(doc), title)
+	if sec == "" {
+		t.Fatalf("%s: no section %q", docPath, title)
+	}
+	// "earlier builds exited 1" is history and allowed; a present-tense
+	// "exits 1" / "exit code 1" is the stale claim.
+	if m := exitsOne.FindString(sec); m != "" {
+		t.Errorf("%s: section %q says %q, but admin commands exit 78 for this refusal (server/admin adminExitCode)", docPath, title, m)
+	}
+	if !strings.Contains(sec, "exits 78") {
+		t.Errorf("%s: section %q does not say that admin exits 78 for this refusal", docPath, title)
+	}
+}
+
+// adminExitCodes returns the distinct statuses passed to newExitCodeError in
+// the non-test Go files of server/admin, as an int literal or as a
+// package-level constant with an int literal value. unresolved counts the calls
+// whose status is neither (computed at run time).
+func adminExitCodes(dir string) (codes []int, unresolved int, err error) {
+	fset := token.NewFileSet()
+	var files []*ast.File
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, perr := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if perr != nil {
+			return nil, 0, perr
+		}
+		files = append(files, f)
+	}
+	consts := map[string]int{}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, n := range vs.Names {
+					if i < len(vs.Values) {
+						if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.INT {
+							v, _ := strconv.Atoi(lit.Value)
+							consts[n.Name] = v
+						}
+					}
+				}
+			}
+		}
+	}
+	set := map[int]bool{}
+	for _, f := range files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			if id, ok := call.Fun.(*ast.Ident); !ok || id.Name != "newExitCodeError" {
+				return true
+			}
+			switch a := call.Args[0].(type) {
+			case *ast.BasicLit:
+				if a.Kind == token.INT {
+					v, _ := strconv.Atoi(a.Value)
+					set[v] = true
+					return true
+				}
+			case *ast.Ident:
+				if v, ok := consts[a.Name]; ok {
+					set[v] = true
+					return true
+				}
+			}
+			unresolved++
+			return true
+		})
+	}
+	for v := range set {
+		codes = append(codes, v)
+	}
+	sort.Ints(codes)
+	return codes, unresolved, nil
+}
+
+// adminParagraph returns the paragraph of the page that starts with the admin
+// exit-status sentence, or "".
+func adminParagraph(markdown string) string {
+	const start = "`keyorix-server admin <command>` exits 1 for a failure"
+	i := strings.Index(markdown, start)
+	if i < 0 {
+		return ""
+	}
+	p := markdown[i:]
+	if j := strings.Index(p, "\n\n"); j >= 0 {
+		p = p[:j]
+	}
+	return p
+}
+
+func TestAdminExitStatusParagraphNamesEveryCode(t *testing.T) {
+	root := repoRoot(t)
+	codes, unresolved, err := adminExitCodes(filepath.Join(root, "server", "admin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codes) == 0 {
+		t.Fatal("server/admin: no newExitCodeError status found: the checker needs updating")
+	}
+	t.Logf("server/admin newExitCodeError statuses: %v (%d computed at run time, not checked)", codes, unresolved)
+	doc, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(docPath))) //nolint:gosec // repo file
+	if err != nil {
+		t.Fatal(err)
+	}
+	para := adminParagraph(string(doc))
+	if para == "" {
+		t.Fatalf("%s: the admin exit-status paragraph (\"`keyorix-server admin <command>` exits 1 for a failure ...\") is missing", docPath)
+	}
+	// 78 is set by adminExitCode for the replication-role refusal, not by
+	// newExitCodeError; it is checked the same way.
+	codes = append(codes, 78)
+	for _, c := range codes {
+		if c == 1 {
+			continue
+		}
+		if !regexp.MustCompile(`\bexits ` + strconv.Itoa(c) + `\b|\(` + strconv.Itoa(c) + ` `).MatchString(para) {
+			t.Errorf("%s: the admin exit-status paragraph does not name status %d, which server/admin can exit with", docPath, c)
+		}
+	}
+}
+
+func TestAdminExitCodesParsing(t *testing.T) {
+	dir := t.TempDir()
+	src := "package admin\n\nconst aExitCode = 4\n\nfunc f(r interface{ ExitCode() int }) {\n" +
+		"\t_ = newExitCodeError(aExitCode, nil)\n\t_ = newExitCodeError(2, nil)\n\t_ = newExitCodeError(r.ExitCode(), nil)\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a_test.go"), []byte("package admin\n\nfunc g() { _ = newExitCodeError(9, nil) }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codes, unresolved, err := adminExitCodes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(codes) != 2 || codes[0] != 2 || codes[1] != 4 || unresolved != 1 {
+		t.Fatalf("adminExitCodes = %v, %d unresolved; want [2 4], 1", codes, unresolved)
+	}
+	para := adminParagraph("x\n\n`keyorix-server admin <command>` exits 1 for a failure unless; backup\nexits 4 when.\n\nexits 2 is in the next paragraph\n")
+	if !strings.Contains(para, "exits 4") || strings.Contains(para, "exits 2") {
+		t.Fatalf("adminParagraph = %q", para)
+	}
+	sec := sectionText("### A\nexits 1\n### B\nkeep\n## C\nno\n", "B")
+	if sec != "keep\n" {
+		t.Fatalf("sectionText = %q", sec)
+	}
+	if !exitsOne.MatchString("and keeps the `admin` exit code 1.") || exitsOne.MatchString("earlier builds exited 1") {
+		t.Fatal("exitsOne: wrong match")
+	}
+}

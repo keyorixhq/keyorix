@@ -22,7 +22,9 @@ which applies any pending migration as an ordinary, idempotent side effect
 of opening. Does not start a listener.
 
 Exit codes: 0 on success (including a no-op run against an already-migrated
-database), 1 on any failure (see the printed error message).`,
+database), 78 when the database is refused because only an operator can fix it
+(a PostgreSQL session_replication_role other than origin), 1 on any other
+failure (see the printed error message).`,
 	RunE: runAdminMigrate,
 }
 
