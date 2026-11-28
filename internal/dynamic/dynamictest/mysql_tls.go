@@ -81,7 +81,7 @@ func selfSignedTLS(t testing.TB) *tls.Config {
 
 func myPacket(seq byte, payload []byte) []byte {
 	n := len(payload)
-	return append([]byte{byte(n), byte(n >> 8), byte(n >> 16), seq}, payload...)
+	return append([]byte{byte(n), byte(n >> 8), byte(n >> 16), seq}, payload...) // #nosec G115 -- the 3-byte length is the wire format; fixture payloads are a few hundred bytes
 }
 
 func readMyPacket(r io.Reader) error {
