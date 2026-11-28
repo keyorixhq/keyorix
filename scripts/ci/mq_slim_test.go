@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -26,16 +27,56 @@ func runSelectEnv(t *testing.T, mode string, files ...string) (map[string]string
 // runSelectWith runs select-affected.py with extra environment entries (they
 // win over the defaults below; MQ_SLIM_LEVERS is cleared so a developer's own
 // value never leaks into a test).
+//
+// Every run is a full `go list ./...` plus a lex of every Go file of the
+// module, and the script is deterministic for one (env, files) pair against
+// the checkout the tests read, so identical invocations are run once per test
+// binary and share the result (the callers get their own copy of the map).
+// Runs with different env or files are never merged: each assertion still
+// compares real runs of the unchanged script.
 func runSelectWith(t *testing.T, env []string, files ...string) (map[string]string, string) {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not on PATH")
 	}
+	key := strings.Join(env, "\x00") + "\x01" + strings.Join(files, "\x00")
+	slimRunsMu.Lock()
+	r := slimRuns[key]
+	if r == nil {
+		r = &slimRun{}
+		slimRuns[key] = r
+	}
+	slimRunsMu.Unlock()
+	r.once.Do(func() { r.kv, r.log, r.err = execSelect(env, files) })
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	return maps.Clone(r.kv), r.log
+}
+
+type slimRun struct {
+	once sync.Once
+	kv   map[string]string
+	log  string
+	err  error
+}
+
+var (
+	slimRunsMu sync.Mutex
+	slimRuns   = map[string]*slimRun{}
+)
+
+func execSelect(env []string, files []string) (map[string]string, string, error) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
-		t.Fatal(err)
+		return nil, "", err
 	}
-	out := filepath.Join(t.TempDir(), "github_output")
+	dir, err := os.MkdirTemp("", "mqslim")
+	if err != nil {
+		return nil, "", err
+	}
+	defer os.RemoveAll(dir)
+	out := filepath.Join(dir, "github_output")
 	args := append([]string{"scripts/ci/select-affected.py", "--github-output", out, "--changed"}, files...)
 	cmd := exec.Command("python3", args...)
 	cmd.Dir = root
@@ -43,18 +84,18 @@ func runSelectWith(t *testing.T, env []string, files ...string) (map[string]stri
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("select-affected.py (%v): %v\n%s", env, err, stderr.String())
+		return nil, "", fmt.Errorf("select-affected.py (%v): %w\n%s", env, err, stderr.String())
 	}
 	raw, err := os.ReadFile(out)
 	if err != nil {
-		t.Fatal(err)
+		return nil, "", err
 	}
 	kv := map[string]string{}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
 		k, v, _ := strings.Cut(line, "=")
 		kv[k] = v
 	}
-	return kv, stderr.String()
+	return kv, stderr.String(), nil
 }
 
 // A web/ change plus a changelog fragment: rule 3 selects many legs through
@@ -65,6 +106,7 @@ var slimCase = []string{
 }
 
 func TestMQSlim_ShadowNeverChangesTheOutputs(t *testing.T) {
+	t.Parallel()
 	off, offLog := runSelectEnv(t, "off", slimCase...)
 	shadow, shadowLog := runSelectEnv(t, "shadow", slimCase...)
 	if strings.Contains(offLog, "MQ-SHADOW ") {
@@ -104,6 +146,7 @@ func TestMQSlim_ShadowNeverChangesTheOutputs(t *testing.T) {
 
 // enforce only ADDS outputs; everything off/shadow writes stays identical.
 func TestMQSlim_EnforceAddsOutputsOnly(t *testing.T) {
+	t.Parallel()
 	off, _ := runSelectEnv(t, "off", slimCase...)
 	enf, _ := runSelectEnv(t, "enforce", slimCase...)
 	for k, v := range off {
@@ -163,6 +206,7 @@ var gateKeys = []string{"gate_edge", "gate_e2e_smoke", "gate_smoke"}
 // testreach lever is computed and logged but writes no leg_tests, and nothing
 // else the script writes moves.
 func TestMQSlim_GateOnlyEnforce(t *testing.T) {
+	t.Parallel()
 	off, _ := runSelectEnv(t, "off", slimCase...)
 	all, allLog := runSelectEnv(t, "enforce", slimCase...)
 	gate, gateLog := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=gate"}, slimCase...)
@@ -215,6 +259,7 @@ func TestMQSlim_GateOnlyEnforce(t *testing.T) {
 // With MQ_SLIM_LEVERS unset, blank, or naming every lever, enforce is today's
 // enforce: same outputs, same records, no new log line.
 func TestMQSlim_LeversUnsetIsToday(t *testing.T) {
+	t.Parallel()
 	base, baseLog := runSelectEnv(t, "enforce", slimCase...)
 	for name, val := range map[string]string{
 		"blank":           "  ",
@@ -223,6 +268,7 @@ func TestMQSlim_LeversUnsetIsToday(t *testing.T) {
 		"with guards":     "gate,testreach,guards",
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			got, gotLog := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=" + val}, slimCase...)
 			if !maps.Equal(got, base) {
 				t.Errorf("outputs differ from levers unset:\n got:  %v\n base: %v", got, base)
@@ -250,9 +296,11 @@ func TestMQSlim_LeversUnsetIsToday(t *testing.T) {
 // A value that names no known lever enforces nothing (never "everything"):
 // outputs equal shadow's and the unknown name is said out loud.
 func TestMQSlim_UnknownLeversEnforceNothing(t *testing.T) {
+	t.Parallel()
 	shadow, _ := runSelectEnv(t, "shadow", slimCase...)
 	for name, val := range map[string]string{"typo": "gates", "comma only": ",", "guards only": "guards"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=" + val}, slimCase...)
 			if !maps.Equal(got, shadow) {
 				t.Errorf("MQ_SLIM_LEVERS=%q wrote outputs beyond shadow's: %v", val, got)
@@ -270,6 +318,7 @@ func TestMQSlim_UnknownLeversEnforceNothing(t *testing.T) {
 // The sampled full run (run number divisible by 10) opens everything whatever
 // levers are enforced, and is off when no lever is enforced.
 func TestMQSlim_SampledFullRun(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		levers   string
 		wantMode string
@@ -280,6 +329,7 @@ func TestMQSlim_SampledFullRun(t *testing.T) {
 		"typo":      {"gates", "selected"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			got, _ := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=" + tc.levers, "GITHUB_RUN_NUMBER=10"}, slimCase...)
 			if got["mode"] != tc.wantMode {
 				t.Fatalf("mode=%q, want %q", got["mode"], tc.wantMode)
@@ -319,6 +369,7 @@ func recordFor(t *testing.T, log, lever, check string) map[string]any {
 // get a leg_tests entry. slimCase narrows exactly one check, test-suite/root-1
 // (server/webui); the other selected legs are kept whole.
 func TestMQSlim_TestreachCheckList(t *testing.T) {
+	t.Parallel()
 	const narrowed = "test-suite/root-1"
 	shadow, _ := runSelectEnv(t, "shadow", slimCase...)
 	base, baseLog := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach"}, slimCase...)
@@ -327,6 +378,7 @@ func TestMQSlim_TestreachCheckList(t *testing.T) {
 	}
 
 	t.Run("listed check enforces as before", func(t *testing.T) {
+		t.Parallel()
 		for _, val := range []string{" test-suite/root-2 , test-suite/root-1, ", "test-suite/root-1,test-suite/nope"} {
 			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach", "MQ_SLIM_TESTREACH_CHECKS=" + val}, slimCase...)
 			if !maps.Equal(got, base) {
@@ -339,6 +391,7 @@ func TestMQSlim_TestreachCheckList(t *testing.T) {
 	})
 
 	t.Run("unlisted check is computed and logged but not enforced", func(t *testing.T) {
+		t.Parallel()
 		// A valid name no decision uses (typo, or another check) is harmless.
 		for _, val := range []string{"test-suite/root-2", "TEST-SUITE/ROOT-1"} {
 			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach", "MQ_SLIM_TESTREACH_CHECKS=" + val}, slimCase...)
@@ -363,6 +416,7 @@ func TestMQSlim_TestreachCheckList(t *testing.T) {
 	})
 
 	t.Run("unset or blank is every check", func(t *testing.T) {
+		t.Parallel()
 		for _, val := range []string{"   "} {
 			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach", "MQ_SLIM_TESTREACH_CHECKS=" + val}, slimCase...)
 			if !maps.Equal(got, base) {
@@ -375,6 +429,7 @@ func TestMQSlim_TestreachCheckList(t *testing.T) {
 	})
 
 	t.Run("unparseable list enforces nothing for testreach", func(t *testing.T) {
+		t.Parallel()
 		for _, val := range []string{"test-suite/root-1;test-suite/root-2", " , ,"} {
 			got, log := runSelectWith(t, []string{"MQ_SLIM_MODE=enforce", "MQ_SLIM_LEVERS=testreach", "MQ_SLIM_TESTREACH_CHECKS=" + val}, slimCase...)
 			if !maps.Equal(got, shadow) {
@@ -636,6 +691,7 @@ func TestMQShadowReport_Misses(t *testing.T) {
 			[]map[string]string{{"name": "test-suite (http-1, 2400, coverage_http1.out)", "conclusion": "failure", "log": outLog}}, 0, 1},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			dir := filepath.Join(t.TempDir(), "4242")
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				t.Fatal(err)
