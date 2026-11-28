@@ -43,7 +43,7 @@ func init() {
 	secretCreateCmd.Flags().StringVar(&secretCreateName, "name", "", "Secret name (required)")
 	secretCreateCmd.Flags().StringVar(&secretCreateType, "type", "generic", "Secret type")
 	secretCreateCmd.Flags().IntVar(&secretCreateProjectID, "project", 1, "Project ID")
-	secretCreateCmd.Flags().IntVar(&secretCreateEnvironmentID, "environment", 1, "Environment ID. With --project and no --environment the project's \"development\" environment is used; if it has none, --environment is required (see `keyorix project environments <project-id>`). Without --project: 1")
+	secretCreateCmd.Flags().IntVar(&secretCreateEnvironmentID, "environment", 1, "Environment ID. With --project and no --environment the project's \"development\" environment is used; if it has none, --environment is required (see \"keyorix project environments <project-id>\"). Without --project: 1")
 	secretCreateCmd.Flags().IntVar(&secretCreateMaxReads, "max-reads", 0, "Maximum number of reads (0 = unlimited)")
 	secretCreateCmd.Flags().StringVar(&secretCreateExpiration, "expires", "", "Expiration time (RFC3339 format)")
 	secretCreateCmd.Flags().StringVar(&secretCreateValue, "value", "", "Secret value")
