@@ -23,7 +23,7 @@ excluded from the counts table, which tracks production packages only.
 | Package | File | Invariants | Guarded | UNGUARDED |
 |---|---|---|---|---|
 | `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 19 | 19 | 0 |
-| `fuzz/thirdparty` | [fuzz/thirdparty/INVARIANTS.md](../fuzz/thirdparty/INVARIANTS.md) | 14 | 14 | 0 |
+| `fuzz/thirdparty` | [fuzz/thirdparty/INVARIANTS.md](../fuzz/thirdparty/INVARIANTS.md) | 15 | 15 | 0 |
 | `fuzz/thirdparty/compress` | [fuzz/thirdparty/compress/INVARIANTS.md](../fuzz/thirdparty/compress/INVARIANTS.md) | 2 | 1 | 1 |
 | `fuzz/thirdparty/cors` | [fuzz/thirdparty/cors/INVARIANTS.md](../fuzz/thirdparty/cors/INVARIANTS.md) | 4 | 4 | 0 |
 | `fuzz/thirdparty/jwt` | [fuzz/thirdparty/jwt/INVARIANTS.md](../fuzz/thirdparty/jwt/INVARIANTS.md) | 5 | 5 | 0 |
