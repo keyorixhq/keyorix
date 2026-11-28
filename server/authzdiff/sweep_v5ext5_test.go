@@ -12,13 +12,13 @@ import (
 //
 // mfa.activate:
 //
-//	No RBAC gate. Core: ActivateMFA checks pending enrollment (coreEnforced=false).
+//	No RBAC gate. Core: ActivateMFA checks pending enrollment (coreGateExcluded).
 //	Positive control: pkMFAEnrollee (the only principal with a pending enrollment).
 //	Named principals include pkMFAEnrollee (world_test.go V5EXT5 seed).
 //
 // mfa.disable:
 //
-//	No RBAC gate. Core: DisableMFA checks mfa_enabled (coreEnforced=false).
+//	No RBAC gate. Core: DisableMFA checks mfa_enabled (coreGateExcluded).
 //	Positive control: pkMFAUser (the only principal with mfa_enabled=true).
 //
 // mfa.recovery-codes.regenerate:

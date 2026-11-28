@@ -88,6 +88,23 @@ func TestAuthLane_GetUserReadFault_IsUnavailableNotNotFound(t *testing.T) {
 				assert.NotContains(t, err.Error(), assert.AnError.Error(), "the driver text stays out of the caller-visible error")
 			})
 
+			// For the requireActorActive-guarded ops, GetUser call 1 is the guard's
+			// pre-check, so the "fault" subtest above stops there. Call 2 is the op's
+			// own account read (its classifyReadError site), which must classify a
+			// fault the same way.
+			if op.skipNotFoundMsg {
+				t.Run("fault on the op's own read", func(t *testing.T) {
+					c, faulty := build()
+					faulty.Arm(&faultstorage.FaultSpec{Method: "GetUser", NthCall: 2, Kind: faultstorage.KindError, Err: assert.AnError})
+					err := op.call(c, 1)
+					require.True(t, faulty.Fired(), "the op's own GetUser read must be reached")
+					require.Error(t, err, "a faulted account read must refuse (fail closed)")
+					assert.True(t, IsStorageReadUnavailable(err), "want the storage-read-unavailable class, got %v", err)
+					assert.NotContains(t, err.Error(), "not found", "a fault must not read as a deleted account")
+					assert.NotContains(t, err.Error(), assert.AnError.Error(), "the driver text stays out of the caller-visible error")
+				})
+			}
+
 			t.Run("not found stays a refusal", func(t *testing.T) {
 				c, _ := build()
 				err := op.call(c, 999)
