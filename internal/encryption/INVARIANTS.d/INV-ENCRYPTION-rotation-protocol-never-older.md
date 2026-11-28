@@ -2,7 +2,7 @@
   writes a key file or a row, when the database records a DEK rotation protocol
   (`system_metadata["dek.rotation_protocol"]`) newer than its own `dekRotationProtocol`, or one
   that does not parse. The record is only ever raised: by every server start, PostgreSQL and
-  SQLite (`StartDEKEpochGuard`; on SQLite it records the marker and starts no guard), and inside
+  SQLite (`StartDEKEpochGuard`; on SQLite it records the marker and starts no watcher), and inside
   every rotation's sweep transaction. So once a database has
   been served by a binary with protocol N, an admin image with protocol < N that reads the
   marker cannot rotate it. Why: an N-1 admin image without the DEK epoch rotated and left
