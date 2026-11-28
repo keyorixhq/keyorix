@@ -4200,7 +4200,7 @@ keyorix secret acl revoke --secret 42 --acl 5
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--acl` | `int` | — | ACL entry ID to revoke (from `acl list`) |
+| `--acl` | `int` | — | ACL entry ID to revoke (from "keyorix secret acl list") |
 | `--secret` | `int` | — | Secret ID to revoke the ACL from |
 
 ## `keyorix secret audit`
@@ -4541,7 +4541,7 @@ keyorix secret create --project 3 --environment 2 --name TLS_KEY --from-file ./t
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--description` | `string` | — | Optional free-text note about the secret |
-| `--environment` | `int` | `1` | Environment ID. With --project and no --environment the project's "development" environment is used; if it has none, --environment is required (see `keyorix project environments \<project-id\>`). Without --project: 1 |
+| `--environment` | `int` | `1` | Environment ID. With --project and no --environment the project's "development" environment is used; if it has none, --environment is required (see "keyorix project environments \<project-id\>"). Without --project: 1 |
 | `--expires` | `string` | — | Expiration time (RFC3339 format) |
 | `--from-file` | `string` | — | Read the secret value from a file (relative path), or from stdin with "-" |
 | `--interactive` | — | — | Interactive mode (value read from a hidden prompt) |

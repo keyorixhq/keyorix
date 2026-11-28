@@ -22,8 +22,8 @@ import (
 //     `keyorix project list` and GET /api/v1/projects are refused with
 //     MFAEnrollmentRequired, while the profile stays reachable;
 //  3. `keyorix mfa enroll` + `keyorix mfa activate` enrol a TOTP factor;
-//  4. `keyorix login --mfa-code` completes the two-step login, and the same commands
-//     now work.
+//  4. `keyorix login` with KEYORIX_MFA_CODE set completes the two-step login, and the
+//     same commands now work.
 //
 // Red before #2446's CLI enrolment port: `keyorix mfa enroll` does not exist on main.
 func TestJourney_ADR112FreshInstallRequiresMFAEnrolment(t *testing.T) {

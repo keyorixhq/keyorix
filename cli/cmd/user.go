@@ -140,6 +140,10 @@ func runUserCreate(cmd *cobra.Command, _ []string) error {
 	if userCreateSetupLink && userCreateOneTimePassword {
 		return errors.New("use either --setup-link or --one-time-password, not both")
 	}
+	email, err := cliEmailAddress("email", userCreateEmail, "")
+	if err != nil {
+		return err
+	}
 
 	var password string
 	if !userCreateSetupLink && !userCreateOneTimePassword {
@@ -166,7 +170,7 @@ func runUserCreate(cmd *cobra.Command, _ []string) error {
 
 	body := apiclient.CreateUserJSONRequestBody{
 		Username:    userCreateUsername,
-		Email:       openapitypes.Email(userCreateEmail),
+		Email:       email,
 		DisplayName: display,
 	}
 	switch {
@@ -364,6 +368,14 @@ func runUserUpdate(_ *cobra.Command, _ []string) error {
 		}
 		active = &v
 	}
+	var updateEmail *openapitypes.Email
+	if userUpdateEmail != "" {
+		e, err := cliEmailAddress("email", userUpdateEmail, "")
+		if err != nil {
+			return err
+		}
+		updateEmail = &e
+	}
 
 	ctx := context.Background()
 	client, err := apiClientWithSkewCheck(ctx)
@@ -375,10 +387,7 @@ func runUserUpdate(_ *cobra.Command, _ []string) error {
 	if userUpdateUsername != "" {
 		body.Username = &userUpdateUsername
 	}
-	if userUpdateEmail != "" {
-		e := openapitypes.Email(userUpdateEmail)
-		body.Email = &e
-	}
+	body.Email = updateEmail
 	if userUpdateDisplayName != "" {
 		body.DisplayName = &userUpdateDisplayName
 	}

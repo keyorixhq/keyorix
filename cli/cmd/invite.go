@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/oapi-codegen/runtime/types"
 	"github.com/spf13/cobra"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
@@ -108,6 +107,10 @@ func runInviteSend(cmd *cobra.Command, args []string) error {
 	if inviteSendEmail == "" || inviteSendRole == "" {
 		return usageErrorf("--email and --role are required")
 	}
+	inviteEmail, err := cliEmailAddress("email", inviteSendEmail, "")
+	if err != nil {
+		return err
+	}
 	client, serverURL, err := inviteAPIClient()
 	if err != nil {
 		return err
@@ -119,7 +122,7 @@ func runInviteSend(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Target: %s (project %q, id=%d)\n", serverURL, projectName, projectID)
 
 	body := apiclient.CreateProjectInvitationJSONRequestBody{
-		Email: types.Email(inviteSendEmail),
+		Email: inviteEmail,
 		Role:  inviteSendRole,
 	}
 	resp, err := client.CreateProjectInvitationWithResponse(context.Background(), projectID, body)

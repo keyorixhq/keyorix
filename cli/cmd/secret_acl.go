@@ -140,7 +140,7 @@ func init() {
 	secretACLGrantCmd.Flags().StringArrayVar(&secretACLGrantPerms, "perm", nil, "Permission to grant (secrets.read or secrets.write); may be repeated")
 
 	secretACLRevokeCmd.Flags().IntVar(&secretACLRevokeSecret, "secret", 0, "Secret ID to revoke the ACL from")
-	secretACLRevokeCmd.Flags().IntVar(&secretACLRevokeACL, "acl", 0, "ACL entry ID to revoke (from `acl list`)")
+	secretACLRevokeCmd.Flags().IntVar(&secretACLRevokeACL, "acl", 0, "ACL entry ID to revoke (from \"keyorix secret acl list\")")
 
 	secretACLCmd.AddCommand(secretACLListCmd, secretACLGrantCmd, secretACLRevokeCmd)
 }
