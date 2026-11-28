@@ -1,0 +1,6 @@
+### Fixed
+- **`keyorix-server admin` exits 78 for a PostgreSQL `session_replication_role` other than `origin`.** `admin migrate` and the other admin commands that open the database used to exit 1 for this refusal while the server exits 78 (a systemd unit with `RestartPreventExitStatus=78` stops on it). The message is unchanged. Every other admin failure still exits 1, and `admin verify-audit` keeps its verdict statuses. Guarded by `TestAdminExitCode` and `TestBootExitCodes_AdminReplicationRoleRefusalIs78` (PostgreSQL, needs a role that may set `session_replication_role`).
+- **A failed `pg_advisory_unlock` after the PostgreSQL migration is logged.** The error was discarded; the lock is session-level and PostgreSQL releases it when the connection closes, so nothing else changes.
+
+### Documentation
+- **`docs/operator/startup-refusals.md` states the admin exit statuses and its status table is checked against the code.** `TestExitStatusTableUsesTheServersStatuses` fails when the table lists a status `server/boot_exit.go` does not define (or lacks one it does), and `TestOperatorFixRefusalsAreDocumented` fails when the bootstrap-token, `session_replication_role` or name-fold refusal loses its entry.
