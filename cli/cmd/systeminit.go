@@ -22,7 +22,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/oapi-codegen/runtime/types"
 	"github.com/spf13/cobra"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
@@ -95,8 +94,9 @@ func runSystemInit(cmd *cobra.Command, _ []string) error {
 	// the request, so nothing is sent and the failure would read "contact <server>: json:
 	// error calling MarshalJSON ...". Say it is the flag, before asking for a password.
 	// The value is not echoed back.
-	if _, err := types.Email(systemInitAdminEmail).MarshalJSON(); err != nil {
-		return usageErrorf("--admin-email is not a valid email address.%s", systemInitValidationHint("email"))
+	adminEmail, err := cliEmailAddress("admin-email", systemInitAdminEmail, systemInitValidationHint("email"))
+	if err != nil {
+		return err
 	}
 
 	password, err := resolveSystemInitAdminPassword(cmd)
@@ -115,7 +115,7 @@ func runSystemInit(cmd *cobra.Command, _ []string) error {
 
 	body := apiclient.SystemInitJSONRequestBody{
 		Username:    systemInitAdminUsername,
-		Email:       types.Email(systemInitAdminEmail),
+		Email:       adminEmail,
 		Password:    password,
 		DisplayName: strPtr("Administrator"),
 	}
