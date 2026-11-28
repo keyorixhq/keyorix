@@ -48,6 +48,13 @@ seconds instead of hourly, loopback is a trusted proxy (so a script can present 
 address), break-glass is on, a local stand-in CI issuer is trusted for the OIDC scenario, and the
 dynamic-secret sweeper runs every 10 seconds. None of this is a production recommendation.
 
+One side effect of the 15-second cadence: every detector pass writes an
+`admin_job.anomaly_alerts_run` audit row (actor `system`), four rows a minute with nobody using
+the demo. Dashboard Recent Activity hides them; the Audit page does not (#4807), so use its
+Human or Machine toggle, or the event-type filter, to look at people and machines only. The
+dashboard's Audit Events (30d), the Audit page's event total and the audit chain head all count
+them, so those three numbers only match at the same moment.
+
 ### Seeding a server you started yourself (hosted demo kits)
 
 `scripts/demo/seed-demo.sh STATE_DIR` is the seed on its own. It is what `native-up.sh` calls, and
@@ -80,6 +87,24 @@ clean. There is exactly one deliberate, explainable gap:
 > control the Compliance page flags, and the one we fix live." (`GOLDEN-PATH.md` section 1b)
 
 `scripts/demo/trigger-anomaly.sh status` prints `calm: 0 open anomalies`.
+
+The calm has a budget. The two volume rules count every row of a secret's access log in their
+window, not only value reads (`keyorix secret access-log --id N` lists them; create, rotate,
+update, `versions_list` and `read` all count, #4808). The seed leaves `stripe-api-key`, the
+secret a walk opens first, with 5 rows. 10 rows within an hour raise `frequency_spike` and more
+than 20 within 24 hours raise `cumulative_rate` (both medium: the dashboard Security tile turns
+into Alerts). A visit to a secret's detail page adds one `versions_list` row and each Reveal adds
+one `read` row; nothing else on that page is logged. Keep to about four more accesses of one
+secret in the first hour, and after a rehearsal wipe and re-seed (`native-down.sh --wipe`, then
+`native-up.sh`, about 90 seconds) instead of reusing the demo.
+
+The Compliance "Audit chain verified" tile and `keyorix audit verify` read the same chain but not
+at the same moment. A Compliance request re-walks the chain when its last check is more than 5
+minutes old; within the first minute the tile shows that check as it was, and after that it adds
+"Up to this many events after the last check (newest #N), not yet verified: k". The two agree
+when the tile's chain head plus k equals the `head id` that `keyorix audit verify` prints; to
+see them identical, open Compliance after 5 quiet minutes and run `keyorix audit verify` right
+away.
 
 ## 3. Anomaly detection, live
 
