@@ -1,0 +1,1 @@
+scripts/fuzzing/depmatrix	none	-	developer tool deriving the dependency-to-fuzz-coverage matrix and gap report from go.mod and imports; not part of any shipped build	test-helper

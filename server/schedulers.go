@@ -22,9 +22,10 @@ import (
 //
 // The returned wait blocks until every scheduler goroutine started here has
 // exited, which happens once ctx is cancelled and any in-flight tick returns.
-// The server process never needs it (it exits); tests do, so a tick cannot
-// outlive the test that started it and run against the next test's process
-// state (log output, i18n, config) -- see startSchedulersForTest.
+// main waits for it (bounded) before closing the storage on shutdown, see
+// closeStorageOnShutdown. Tests wait for it so a tick cannot outlive the test
+// that started it and run against the next test's process state (log output,
+// i18n, config) -- see startSchedulersForTest.
 func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) (wait func()) {
 	var schedulers sync.WaitGroup
 	ctx = withSchedulerTracking(ctx, &schedulers)

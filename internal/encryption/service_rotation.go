@@ -166,6 +166,15 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 				tx.Rollback()
 				return err
 			}
+		} else if db.Name() == "sqlite" {
+			// SQLite is single node, so there is no cross-replica fence (fence is
+			// nil), but the boot guard now verifies the epoch on SQLite too
+			// (SQLITE-DEK-EPOCH-1): move it to the new DEK in the same transaction
+			// as the re-encryption, so the next boot under the new DEK still matches.
+			if err := setDEKEpochOnSQLiteRotation(tx, newSvc); err != nil {
+				tx.Rollback()
+				return err
+			}
 		}
 		// Write-ahead redo marker (crash-consistency, ADR-010): in the SAME transaction as
 		// the row re-encryption, record that a new DEK version is committed and its on-disk

@@ -22,7 +22,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage"
 )
 
 // resetBackupSeams clears the archive write seam and the --exclusive flag after the test.
@@ -78,7 +77,7 @@ func sqliteBackupSource(t *testing.T) (lockPath string) {
 	configPathFlag = writeBackupRestoreTestConfig(t, srcDir, dbPath)
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(cfg) // creates + migrates the source database
+	_, err = createStorageClosedAtCleanup(t, cfg) // creates + migrates the source database
 	require.NoError(t, err)
 	old := config.PinnedLockPingInterval
 	config.PinnedLockPingInterval = 20 * time.Millisecond

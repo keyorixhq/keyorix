@@ -1,0 +1,1 @@
+golang.org/x/sync	2027-05-31	Used only as singleflight.Group in internal/oidcverify to deduplicate concurrent JWKS fetches; it has no parser surface and takes a string key and a function. No fuzz target is warranted.

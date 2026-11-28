@@ -22,7 +22,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
@@ -106,7 +105,7 @@ func TestAdminBackupRestore_Postgres_RoundTrip(t *testing.T) {
 	configPathFlag = writePostgresBackupRestoreTestConfig(t, srcDir, srcDSN)
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(srcCfg) // creates + migrates the source DB
+	_, err = createStorageClosedAtCleanup(t, srcCfg) // creates + migrates the source DB
 	require.NoError(t, err)
 
 	seedDB := pgAdminRawOpen(t, srcDSN)
@@ -173,7 +172,7 @@ func TestAdminRestore_Postgres_RefusesNonEmptyTarget(t *testing.T) {
 	configPathFlag = writePostgresBackupRestoreTestConfig(t, srcDir, srcDSN)
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(srcCfg)
+	_, err = createStorageClosedAtCleanup(t, srcCfg)
 	require.NoError(t, err)
 
 	archivePath := filepath.Join(t.TempDir(), "pg-backup-nonempty.tar.gz")
@@ -187,7 +186,7 @@ func TestAdminRestore_Postgres_RefusesNonEmptyTarget(t *testing.T) {
 	configPathFlag = writePostgresBackupRestoreTestConfig(t, dstDir, dstDSN)
 	dstCfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(dstCfg)
+	_, err = createStorageClosedAtCleanup(t, dstCfg)
 	require.NoError(t, err)
 
 	restoreInput = archivePath

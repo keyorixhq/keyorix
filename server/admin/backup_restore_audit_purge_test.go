@@ -28,7 +28,6 @@ import (
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -98,7 +97,7 @@ func TestAdminRestore_PurgedAuditChain_ReportsValid_SQLite(t *testing.T) {
 	configPathFlag = writeBackupRestoreTestConfig(t, srcDir, filepath.Join(srcDir, "secrets.db"))
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	st, err := storage.NewStorageFactory().CreateStorage(srcCfg)
+	st, err := createStorageClosedAtCleanup(t, srcCfg)
 	require.NoError(t, err)
 	seedPurgedAuditChain(t, st, svc)
 
@@ -137,7 +136,7 @@ func TestAdminRestore_PurgedAuditChain_ReportsValid_Postgres(t *testing.T) {
 	configPathFlag = writePostgresBackupRestoreTestConfig(t, srcDir, srcDSN)
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	st, err := storage.NewStorageFactory().CreateStorage(srcCfg)
+	st, err := createStorageClosedAtCleanup(t, srcCfg)
 	require.NoError(t, err)
 	seedPurgedAuditChain(t, st, svc)
 

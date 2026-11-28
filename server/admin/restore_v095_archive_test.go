@@ -205,7 +205,7 @@ func requireV0953ArchiveRestored(t *testing.T, out string) {
 	require.NoError(t, gdb.Raw("SELECT COALESCE(url, '') FROM notification_channels WHERE id = 1").Scan(&legacy).Error)
 	require.Empty(t, legacy, "the plaintext URL must not stay in the legacy column")
 
-	st, err := storage.NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	enc := encryption.NewService(&cfg.Storage.Encryption, ".")
 	require.NoError(t, enc.Initialize(v0953FixturePassphrase))

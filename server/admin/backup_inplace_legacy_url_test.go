@@ -140,7 +140,7 @@ func restoreAndRequireChannelURL(t *testing.T, storageBlock func(string) string,
 
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	st, err := storage.NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	enc := encryption.NewService(&cfg.Storage.Encryption, ".")
 	require.NoError(t, enc.Initialize(passphrase))

@@ -65,8 +65,10 @@ func epochValue(t *testing.T, db *gorm.DB) (string, bool) {
 	return v, found
 }
 
-// SQLite is single-node: no guard, no fence, no epoch row, rotation unchanged.
-func TestDEKEpoch_SQLiteUnchanged(t *testing.T) {
+// SQLite is single-node: no watcher and no fence, but since SQLITE-DEK-EPOCH-1
+// the boot guard seeds the epoch and a rotation keeps it consistent (atomically,
+// in the sweep transaction, with no "rotating:<old>" fenced state).
+func TestDEKEpoch_SQLiteBootSeedsAndRotationKeepsEpoch(t *testing.T) {
 	db := fuzzworld.OpenSQLite(t, "file:"+filepath.Join(t.TempDir(), "e.db"), 1)
 	fuzzworld.Bootstrap(t, db)
 	svc := newEpochTestService(t, t.TempDir())
@@ -76,17 +78,46 @@ func TestDEKEpoch_SQLiteUnchanged(t *testing.T) {
 	if err := svc.StartDEKEpochGuard(db, func() { released = true }); err != nil {
 		t.Fatalf("StartDEKEpochGuard on SQLite: %v", err)
 	}
+	// Single node: boot verifies at boot only — no watcher goroutine, and the
+	// handle is not kept (release is never called).
 	if svc.DEKEpochGuardRunning() || released {
-		t.Fatalf("guard running=%v released=%v on SQLite, want neither", svc.DEKEpochGuardRunning(), released)
+		t.Fatalf("guard running=%v released=%v on SQLite, want neither (boot-time check only)", svc.DEKEpochGuardRunning(), released)
 	}
+	// A fresh database seeds the epoch to this DEK's fingerprint.
+	fp, err := svc.DEKFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, found := epochValue(t, db); !found || v != fp {
+		t.Fatalf("after a SQLite boot, epoch = %q (found=%v), want this DEK's fingerprint %q", v, found, fp)
+	}
+
+	// Rotation moves the epoch to the new DEK in the same transaction as the sweep
+	// — never a "rotating:<old>" fenced value — so the next boot still matches.
 	if _, err := svc.RotateDEKWithSweep("epoch-test-passphrase", db); err != nil {
 		t.Fatalf("rotate on SQLite: %v", err)
 	}
-	if v, found := epochValue(t, db); found {
-		t.Fatalf("SQLite rotation wrote a DEK epoch %q; SQLite behaviour must be unchanged", v)
+	newFP, err := svc.DEKFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newFP == fp {
+		t.Fatalf("rotation did not change the DEK fingerprint (%q)", fp)
+	}
+	if v, found := epochValue(t, db); !found || v != newFP {
+		t.Fatalf("after a SQLite rotation, epoch = %q (found=%v), want the new DEK's fingerprint %q", v, found, newFP)
 	}
 	if _, _, err := svc.EncryptSecretWithAAD([]byte("x"), []byte("aad")); err != nil {
 		t.Fatalf("encrypt after SQLite rotation: %v", err)
+	}
+
+	// A second boot under the rotated DEK must be accepted (epoch matches), and a
+	// repeat start must stay idempotent (no mismatch, no watcher).
+	if err := svc.StartDEKEpochGuard(db, nil); err != nil {
+		t.Fatalf("second StartDEKEpochGuard on SQLite after rotation: %v", err)
+	}
+	if svc.DEKEpochGuardRunning() {
+		t.Fatal("a watcher started on SQLite; single-node SQLite must verify at boot only")
 	}
 }
 

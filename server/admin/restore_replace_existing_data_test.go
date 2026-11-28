@@ -93,7 +93,7 @@ func TestAdminRestore_SQLite_OverwriteExisting_EmptyMigratedTarget_NotPopulated(
 	configPathFlag = writeBackupRestoreTestConfig(t, dir, dbPath)
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	st, err := storage.NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	closeTestStorage(st)
 

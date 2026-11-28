@@ -15,17 +15,18 @@
 //     Service's StartDEKEpochGuard seeds the epoch, the second's is refused with
 //     ErrDEKEpochMismatch and leaves the stored epoch unchanged (oracle
 //     kcWrongKeyDEKViolation);
+//   - SQLite (no DSN needed, so never SKIPs — SQLITE-DEK-EPOCH-1): the same
+//     seed-then-refuse at boot, boot-time only (no watcher), via the same oracle;
 //   - red-proof: the oracle reports a guard that returns nil, and one that refuses
 //     for another reason, and stays quiet on the real refusal;
 //   - an ordinary (non-partitioned) dek.key under the wrong passphrase is refused by
 //     Initialize itself, so it is the partition that lets the second KEK in.
 //
-// What this does NOT verify: that the epoch check exists on SQLite (it applies to
-// PostgreSQL only, dek_epoch.go; the SQLite run below checks the controls and makes
-// no claim about load-time rejection); reachability beyond the two callers that
-// load a dek.key (server boot via initializeKeysAndStartEpochGuard, restore via
+// What this does NOT verify: reachability beyond the two callers that load a
+// dek.key (server boot via initializeKeysAndStartEpochGuard, restore via
 // stageKeyFilesForKEKUnwrap), which this test does not drive; a database already
-// holding rows under an epoch written by a different release.
+// holding rows under an epoch written by a different release; the PostgreSQL
+// watcher/fence runtime behaviour (dek_epoch_postgres_test.go); concurrent boots.
 package encryption
 
 import (
@@ -167,6 +168,48 @@ func TestKeyCommitment_EpochGuard_SQLiteControls(t *testing.T) {
 	db := fuzzworld.OpenSQLite(t, "file:"+filepath.Join(t.TempDir(), "kc.db"), 1)
 	fuzzworld.Bootstrap(t, db)
 	kcEpochWorld(t, db)
+}
+
+// TestKeyCommitment_EpochGuard_SQLite is the SQLite analogue of
+// TestKeyCommitment_EpochGuard_Postgres (SQLITE-DEK-EPOCH-1, fuzz-corpus#195 /
+// KEYCOMMIT-2 item 4): on SQLite, as on PostgreSQL, the Service whose DEK the
+// database is under must start and seed the epoch, and a wrong-key DEK (the
+// partition's second DEK) must be refused at boot with a wrapped
+// ErrDEKEpochMismatch, leaving the stored epoch unchanged. No PostgreSQL DSN is
+// needed — SQLite is the default backend — so this never SKIPs.
+//
+// RED on code without the SQLite boot guard: dekEpochApplies is false for
+// SQLite, so StartDEKEpochGuard takes the record-protocol-only branch and
+// returns nil for B → the oracle fires "WRONG-KEY DEK ACCEPTED".
+func TestKeyCommitment_EpochGuard_SQLite(t *testing.T) {
+	db := fuzzworld.OpenSQLite(t, "file:"+filepath.Join(t.TempDir(), "kc.db"), 1)
+	fuzzworld.Bootstrap(t, db)
+	a, b, _ := kcEpochWorld(t, db)
+
+	// Positive control: the Service whose DEK the database's row is under must
+	// start (and, with the fix, seed the epoch).
+	if err := a.StartDEKEpochGuard(db, nil); err != nil {
+		t.Fatalf("control failed: the Service whose DEK the database is under was refused: %v", err)
+	}
+	fa := fingerprintOf(t, a)
+
+	// The wrong-key DEK must be refused at boot as a DEK epoch mismatch. On
+	// current code (no SQLite guard) this returns nil and the oracle fires.
+	err := b.StartDEKEpochGuard(db, nil)
+	if v := kcWrongKeyDEKViolation(err); v != "" {
+		t.Fatalf("%s", v)
+	}
+
+	// A seeded the epoch to its own fingerprint, and refusing B did not change it.
+	if v, found := epochValue(t, db); !found || v != fa {
+		t.Fatalf("epoch = %q (found=%v), want A's fingerprint %q (seeded by A, unchanged by refusing B)", v, found, fa)
+	}
+
+	// No watcher on single-node SQLite, and no handle kept.
+	if a.DEKEpochGuardRunning() || b.DEKEpochGuardRunning() {
+		t.Fatalf("a watcher started on SQLite (running a=%v b=%v); single-node SQLite must verify at boot only",
+			a.DEKEpochGuardRunning(), b.DEKEpochGuardRunning())
+	}
 }
 
 // TestKeyCommitment_EpochGuard_RedProof shows the oracle fires on a guard that lets

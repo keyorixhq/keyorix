@@ -1,0 +1,31 @@
+{
+  "format": "v2",
+  "passphrase": "metamorphic-passphrase-1234",
+  "versions": [
+    {
+      "node_id": 1,
+      "project_id": 1,
+      "version": 1,
+      "plaintext_b64": "cGxhaW50ZXh0LTItMA=="
+    },
+    {
+      "node_id": 1,
+      "project_id": 1,
+      "version": 2,
+      "plaintext_b64": "cGxhaW50ZXh0LXYtMy0w"
+    }
+  ],
+  "project_names": [
+    "proj-1"
+  ],
+  "secret_names": [
+    "secret-2"
+  ],
+  "role_names": [
+    "role-4"
+  ],
+  "key_blobs_b64": [
+    "3/l2WtxAYqSAOTisnFSQkaH61+jEKW7iLsQWpqtXORoBZ0DKpRtekTWvDKSpfbeIgNDR+dNGBg77Sd4n",
+    "WTwiIkbdpJMmel9B49vg2l4P46nbj9WtaguCs7oPK0s="
+  ]
+}

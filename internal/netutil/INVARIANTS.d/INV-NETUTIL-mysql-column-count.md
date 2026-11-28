@@ -13,7 +13,8 @@
   that negotiates the compressed protocol (its framing is not tracked), so a `compress=true` DSN
   fails to connect. Packets of 0xffffff bytes and their continuations are one logical packet,
   and only the first client packet with sequence 1 is read as capability flags.
-  Why: go-sql-driver/mysql up to v1.10.1 sizes its column slice from the announced count before it
+  Why: go-sql-driver/mysql (v1.10.1 and v1.10.2 alike; v1.10.2 only fixed the truncated ERR
+  packet, go-sql-driver/mysql#1858, which the guard still refuses) sizes its column slice from the announced count before it
   reads a column packet, so a hostile or intercepted server could make the client allocate hundreds
   of megabytes (or panic) with a reply of a few bytes (fuzz-found, KFZ-2026-005; the MORE_RESULTS
   path and the short heads found in review of #4567); the driver's own fix is a separate upstream
