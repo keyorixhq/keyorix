@@ -1,0 +1,904 @@
+{
+  "package": "github.com/digitorus/pkcs7",
+  "version": "v0.0.0-20261104125046-a476de3098e4",
+  "date": "2026-11-20",
+  "src_dir": "/root/go/pkg/mod/github.com/digitorus/pkcs7@v0.0.0-20261104125046-a476de3098e4",
+  "symbols": [
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "DegenerateCertificate",
+      "kind": "func",
+      "receiver": "",
+      "signature": "func github.com/digitorus/pkcs7.DegenerateCertificate(cert []byte) ([]byte, error)",
+      "parameters": [
+        {
+          "name": "cert",
+          "type": "[]byte",
+          "class": "untrusted-bytes"
+        }
+      ],
+      "returns": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "A",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 2,
+      "risk_score": 30,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "untrusted-bytes-param:cert(+20)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "Encrypt",
+      "kind": "func",
+      "receiver": "",
+      "signature": "func github.com/digitorus/pkcs7.Encrypt(content []byte, recipients []*crypto/x509.Certificate) ([]byte, error)",
+      "parameters": [
+        {
+          "name": "content",
+          "type": "[]byte",
+          "class": "untrusted-bytes"
+        },
+        {
+          "name": "recipients",
+          "type": "[]*crypto/x509.Certificate",
+          "class": "structured"
+        }
+      ],
+      "returns": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": true,
+      "alloc_detail": "make() with non-constant size arg",
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 12,
+      "risk_score": 52,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "untrusted-bytes-param:content(+20)",
+        "sign/encrypt-path(+8)",
+        "allocates-from-input(+10)",
+        "moderate-complexity:branches=12(+4)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "EncryptUsingPSK",
+      "kind": "func",
+      "receiver": "",
+      "signature": "func github.com/digitorus/pkcs7.EncryptUsingPSK(content []byte, key []byte) ([]byte, error)",
+      "parameters": [
+        {
+          "name": "content",
+          "type": "[]byte",
+          "class": "untrusted-bytes"
+        },
+        {
+          "name": "key",
+          "type": "[]byte",
+          "class": "untrusted-bytes"
+        }
+      ],
+      "returns": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 8,
+      "risk_score": 38,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "untrusted-bytes-param:content(+20)",
+        "sign/encrypt-path(+8)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "GetDigestOIDForSignatureAlgorithm",
+      "kind": "func",
+      "receiver": "",
+      "signature": "func github.com/digitorus/pkcs7.GetDigestOIDForSignatureAlgorithm(digestAlg crypto/x509.SignatureAlgorithm) (encoding/asn1.ObjectIdentifier, error)",
+      "parameters": [
+        {
+          "name": "digestAlg",
+          "type": "crypto/x509.SignatureAlgorithm",
+          "class": "structured"
+        }
+      ],
+      "returns": [
+        {
+          "type": "encoding/asn1.ObjectIdentifier"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 5,
+      "risk_score": 18,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "sign/encrypt-path(+8)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "NewSignedData",
+      "kind": "func",
+      "receiver": "",
+      "signature": "func github.com/digitorus/pkcs7.NewSignedData(data []byte) (*github.com/digitorus/pkcs7.SignedData, error)",
+      "parameters": [
+        {
+          "name": "data",
+          "type": "[]byte",
+          "class": "untrusted-bytes"
+        }
+      ],
+      "returns": [
+        {
+          "type": "*github.com/digitorus/pkcs7.SignedData"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "A",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 1,
+      "risk_score": 38,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "untrusted-bytes-param:data(+20)",
+        "sign/encrypt-path(+8)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "Parse",
+      "kind": "func",
+      "receiver": "",
+      "signature": "func github.com/digitorus/pkcs7.Parse(data []byte) (p7 *github.com/digitorus/pkcs7.PKCS7, err error)",
+      "parameters": [
+        {
+          "name": "data",
+          "type": "[]byte",
+          "class": "untrusted-bytes"
+        }
+      ],
+      "returns": [
+        {
+          "type": "*github.com/digitorus/pkcs7.PKCS7"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "A",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": true,
+      "caller_tier": 1,
+      "coverage": [
+        "FuzzDigitorusPKCS7BoundedWork",
+        "FuzzDERPKCS7BoundedWork",
+        "FuzzPKCS7TimeTravelOracle"
+      ],
+      "branch_count": 8,
+      "risk_score": 80,
+      "risk_reasons": [
+        "covered-by:FuzzDigitorusPKCS7BoundedWork+FuzzDERPKCS7BoundedWork+FuzzPKCS7TimeTravelOracle(+10)",
+        "keyorix-tier-1-caller(+35)",
+        "untrusted-bytes-param:data(+20)",
+        "is-parser(+15)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "Error",
+      "kind": "method",
+      "receiver": "*MessageDigestMismatchError",
+      "signature": "func (*github.com/digitorus/pkcs7.MessageDigestMismatchError).Error() string",
+      "parameters": null,
+      "returns": [
+        {
+          "type": "string"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 0,
+      "risk_score": 10,
+      "risk_reasons": [
+        "not-directly-called(+10)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "Decrypt",
+      "kind": "method",
+      "receiver": "*PKCS7",
+      "signature": "func (*github.com/digitorus/pkcs7.PKCS7).Decrypt(cert *crypto/x509.Certificate, pkey crypto.PrivateKey) ([]byte, error)",
+      "parameters": [
+        {
+          "name": "cert",
+          "type": "*crypto/x509.Certificate",
+          "class": "structured"
+        },
+        {
+          "name": "pkey",
+          "type": "crypto.PrivateKey",
+          "class": "handle"
+        }
+      ],
+      "returns": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": true,
+      "caller_tier": 2,
+      "coverage": null,
+      "branch_count": 10,
+      "risk_score": 49,
+      "risk_reasons": [
+        "keyorix-tier-2-adjacent(+25)",
+        "decrypt-path(+20)",
+        "moderate-complexity:branches=10(+4)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "DecryptUsingPSK",
+      "kind": "method",
+      "receiver": "*PKCS7",
+      "signature": "func (*github.com/digitorus/pkcs7.PKCS7).DecryptUsingPSK(key []byte) ([]byte, error)",
+      "parameters": [
+        {
+          "name": "key",
+          "type": "[]byte",
+          "class": "untrusted-bytes"
+        }
+      ],
+      "returns": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "m",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": true,
+      "caller_tier": 2,
+      "coverage": null,
+      "branch_count": 1,
+      "risk_score": 65,
+      "risk_reasons": [
+        "keyorix-tier-2-adjacent(+25)",
+        "untrusted-bytes-param:key(+20)",
+        "decrypt-path(+20)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "GetOnlySigner",
+      "kind": "method",
+      "receiver": "*PKCS7",
+      "signature": "func (*github.com/digitorus/pkcs7.PKCS7).GetOnlySigner() *crypto/x509.Certificate",
+      "parameters": null,
+      "returns": [
+        {
+          "type": "*crypto/x509.Certificate"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": true,
+      "caller_tier": 2,
+      "coverage": null,
+      "branch_count": 1,
+      "risk_score": 33,
+      "risk_reasons": [
+        "keyorix-tier-2-adjacent(+25)",
+        "sign/encrypt-path(+8)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "UnmarshalSignedAttribute",
+      "kind": "method",
+      "receiver": "*PKCS7",
+      "signature": "func (*github.com/digitorus/pkcs7.PKCS7).UnmarshalSignedAttribute(attributeType encoding/asn1.ObjectIdentifier, out interface{}) error",
+      "parameters": [
+        {
+          "name": "attributeType",
+          "type": "encoding/asn1.ObjectIdentifier",
+          "class": "structured"
+        },
+        {
+          "name": "out",
+          "type": "interface{}",
+          "class": "handle"
+        }
+      ],
+      "returns": [
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": true,
+      "caller_tier": 2,
+      "coverage": null,
+      "branch_count": 2,
+      "risk_score": 35,
+      "risk_reasons": [
+        "keyorix-tier-2-adjacent(+25)",
+        "sign/encrypt-path(+8)",
+        "pure-validator(+2)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "Verify",
+      "kind": "method",
+      "receiver": "*PKCS7",
+      "signature": "func (*github.com/digitorus/pkcs7.PKCS7).Verify() (err error)",
+      "parameters": null,
+      "returns": [
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": true,
+      "caller_tier": 2,
+      "coverage": null,
+      "branch_count": 0,
+      "risk_score": 42,
+      "risk_reasons": [
+        "keyorix-tier-2-adjacent(+25)",
+        "verify-path(+15)",
+        "pure-validator(+2)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "VerifyWithChain",
+      "kind": "method",
+      "receiver": "*PKCS7",
+      "signature": "func (*github.com/digitorus/pkcs7.PKCS7).VerifyWithChain(truststore *crypto/x509.CertPool) (err error)",
+      "parameters": [
+        {
+          "name": "truststore",
+          "type": "*crypto/x509.CertPool",
+          "class": "structured"
+        }
+      ],
+      "returns": [
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": true,
+      "caller_tier": 2,
+      "coverage": null,
+      "branch_count": 1,
+      "risk_score": 42,
+      "risk_reasons": [
+        "keyorix-tier-2-adjacent(+25)",
+        "verify-path(+15)",
+        "pure-validator(+2)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "VerifyWithChainAtTime",
+      "kind": "method",
+      "receiver": "*PKCS7",
+      "signature": "func (*github.com/digitorus/pkcs7.PKCS7).VerifyWithChainAtTime(truststore *crypto/x509.CertPool, currentTime time.Time) (err error)",
+      "parameters": [
+        {
+          "name": "truststore",
+          "type": "*crypto/x509.CertPool",
+          "class": "structured"
+        },
+        {
+          "name": "currentTime",
+          "type": "time.Time",
+          "class": "config"
+        }
+      ],
+      "returns": [
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": true,
+      "caller_tier": 2,
+      "coverage": null,
+      "branch_count": 1,
+      "risk_score": 42,
+      "risk_reasons": [
+        "keyorix-tier-2-adjacent(+25)",
+        "verify-path(+15)",
+        "pure-validator(+2)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "VerifyWithOpts",
+      "kind": "method",
+      "receiver": "*PKCS7",
+      "signature": "func (*github.com/digitorus/pkcs7.PKCS7).VerifyWithOpts(opts crypto/x509.VerifyOptions) (err error)",
+      "parameters": [
+        {
+          "name": "opts",
+          "type": "crypto/x509.VerifyOptions",
+          "class": "structured"
+        }
+      ],
+      "returns": [
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": true,
+      "caller_tier": 1,
+      "coverage": null,
+      "branch_count": 7,
+      "risk_score": 52,
+      "risk_reasons": [
+        "keyorix-tier-1-caller(+35)",
+        "verify-path(+15)",
+        "pure-validator(+2)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "AddCertificate",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).AddCertificate(cert *crypto/x509.Certificate)",
+      "parameters": [
+        {
+          "name": "cert",
+          "type": "*crypto/x509.Certificate",
+          "class": "structured"
+        }
+      ],
+      "returns": null,
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": true,
+      "alloc_detail": "append() with non-constant size arg",
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 0,
+      "risk_score": 20,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "allocates-from-input(+10)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "AddSigner",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).AddSigner(ee *crypto/x509.Certificate, keyOrSigner interface{}, config github.com/digitorus/pkcs7.SignerInfoConfig) error",
+      "parameters": [
+        {
+          "name": "ee",
+          "type": "*crypto/x509.Certificate",
+          "class": "structured"
+        },
+        {
+          "name": "keyOrSigner",
+          "type": "interface{}",
+          "class": "handle"
+        },
+        {
+          "name": "config",
+          "type": "github.com/digitorus/pkcs7.SignerInfoConfig",
+          "class": "structured"
+        }
+      ],
+      "returns": [
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 0,
+      "risk_score": 20,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "sign/encrypt-path(+8)",
+        "pure-validator(+2)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "AddSignerChain",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).AddSignerChain(ee *crypto/x509.Certificate, keyOrSigner interface{}, parents []*crypto/x509.Certificate, config github.com/digitorus/pkcs7.SignerInfoConfig) error",
+      "parameters": [
+        {
+          "name": "ee",
+          "type": "*crypto/x509.Certificate",
+          "class": "structured"
+        },
+        {
+          "name": "keyOrSigner",
+          "type": "interface{}",
+          "class": "handle"
+        },
+        {
+          "name": "parents",
+          "type": "[]*crypto/x509.Certificate",
+          "class": "structured"
+        },
+        {
+          "name": "config",
+          "type": "github.com/digitorus/pkcs7.SignerInfoConfig",
+          "class": "structured"
+        }
+      ],
+      "returns": [
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": true,
+      "alloc_detail": "append() with non-constant size arg",
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 15,
+      "risk_score": 34,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "sign/encrypt-path(+8)",
+        "allocates-from-input(+10)",
+        "moderate-complexity:branches=15(+4)",
+        "pure-validator(+2)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "Detach",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).Detach()",
+      "parameters": null,
+      "returns": null,
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 0,
+      "risk_score": 10,
+      "risk_reasons": [
+        "not-directly-called(+10)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "Finish",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).Finish() ([]byte, error)",
+      "parameters": null,
+      "returns": [
+        {
+          "type": "[]byte"
+        },
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 1,
+      "risk_score": 10,
+      "risk_reasons": [
+        "not-directly-called(+10)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "GetSignedData",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).GetSignedData() *github.com/digitorus/pkcs7.signedData",
+      "parameters": null,
+      "returns": [
+        {
+          "type": "*github.com/digitorus/pkcs7.signedData"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 0,
+      "risk_score": 18,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "sign/encrypt-path(+8)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "RemoveAuthenticatedAttributes",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).RemoveAuthenticatedAttributes()",
+      "parameters": null,
+      "returns": null,
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 1,
+      "risk_score": 10,
+      "risk_reasons": [
+        "not-directly-called(+10)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "RemoveUnauthenticatedAttributes",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).RemoveUnauthenticatedAttributes()",
+      "parameters": null,
+      "returns": null,
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 1,
+      "risk_score": 10,
+      "risk_reasons": [
+        "not-directly-called(+10)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "SetContentType",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).SetContentType(contentType encoding/asn1.ObjectIdentifier)",
+      "parameters": [
+        {
+          "name": "contentType",
+          "type": "encoding/asn1.ObjectIdentifier",
+          "class": "structured"
+        }
+      ],
+      "returns": null,
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 0,
+      "risk_score": 10,
+      "risk_reasons": [
+        "not-directly-called(+10)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "SetDigestAlgorithm",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).SetDigestAlgorithm(d encoding/asn1.ObjectIdentifier)",
+      "parameters": [
+        {
+          "name": "d",
+          "type": "encoding/asn1.ObjectIdentifier",
+          "class": "structured"
+        }
+      ],
+      "returns": null,
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 0,
+      "risk_score": 10,
+      "risk_reasons": [
+        "not-directly-called(+10)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "SetEncryptionAlgorithm",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).SetEncryptionAlgorithm(d encoding/asn1.ObjectIdentifier)",
+      "parameters": [
+        {
+          "name": "d",
+          "type": "encoding/asn1.ObjectIdentifier",
+          "class": "structured"
+        }
+      ],
+      "returns": null,
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": false,
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 0,
+      "risk_score": 18,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "sign/encrypt-path(+8)"
+      ]
+    },
+    {
+      "package": "github.com/digitorus/pkcs7",
+      "name": "SignWithoutAttr",
+      "kind": "method",
+      "receiver": "*SignedData",
+      "signature": "func (*github.com/digitorus/pkcs7.SignedData).SignWithoutAttr(ee *crypto/x509.Certificate, keyOrSigner interface{}, config github.com/digitorus/pkcs7.SignerInfoConfig) error",
+      "parameters": [
+        {
+          "name": "ee",
+          "type": "*crypto/x509.Certificate",
+          "class": "structured"
+        },
+        {
+          "name": "keyOrSigner",
+          "type": "interface{}",
+          "class": "handle"
+        },
+        {
+          "name": "config",
+          "type": "github.com/digitorus/pkcs7.SignerInfoConfig",
+          "class": "structured"
+        }
+      ],
+      "returns": [
+        {
+          "type": "error"
+        }
+      ],
+      "bwgen_family": "",
+      "can_panic": false,
+      "allocates_from_input": true,
+      "alloc_detail": "append() with non-constant size arg",
+      "alloc_in_callee": false,
+      "reachable_from_parser": false,
+      "caller_tier": 3,
+      "coverage": null,
+      "branch_count": 3,
+      "risk_score": 30,
+      "risk_reasons": [
+        "not-directly-called(+10)",
+        "sign/encrypt-path(+8)",
+        "allocates-from-input(+10)",
+        "pure-validator(+2)"
+      ]
+    }
+  ]
+}
