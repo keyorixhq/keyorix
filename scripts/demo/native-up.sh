@@ -4,7 +4,7 @@
 # server in the background against SQLite (default) or PostgreSQL, and seeds the org via
 # scripts/demo/seed.sh (shared with up.sh).
 #
-#   scripts/demo/native-up.sh                 # SQLite, http://127.0.0.1:18480
+#   scripts/demo/native-up.sh                 # SQLite, http://127.0.0.1:18490 (KEYORIX_DEMO_PORT, KEYORIX_DEMO_DIR to move it)
 #   KEYORIX_DEMO_PG_DSN=<dsn> scripts/demo/native-up.sh   # PostgreSQL (the DSN is read
 #                                              # from the environment, never argv)
 #
