@@ -141,7 +141,10 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 	if actorKind == ActorTypeMachine {
 		createdBy = 0
 	}
-	created, err := c.LockedCreateSecretDependencyExclusive(ctx, &models.SecretDependency{
+	// #4718: the edge and its secret.dependency_added row commit together; a refused
+	// row adds no edge (it reorders every later rotation of the project).
+	pid := dependent.ProjectID
+	created, err := c.lockedCreateSecretDependency(ctx, &models.SecretDependency{
 		ProjectID:                  dependent.ProjectID,
 		DependentSecretID:          dependentID,
 		DependsOnSecretID:          dependsOnID,
@@ -149,6 +152,9 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 		CreatedBy:                  createdBy,
 		CreatedByMachineIdentityID: createdByMachineID,
 		CreatedAt:                  c.now(),
+	}, func(tgt auditTarget) {
+		c.writeAuditEventFullOn(ctx, tgt, EventSecretDependencyAdded, actorPtr(actorID), &dependentID, &pid, "",
+			fmt.Sprintf("declared secret %q depends on %q", dependent.Name, dependsOn.Name))
 	})
 	if err != nil {
 		switch {
@@ -156,12 +162,12 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 			return nil, errDependencyInvalidf("this dependency already exists")
 		case errors.Is(err, storage.ErrSecretDependencyCycle):
 			return nil, errDependencyInvalidf("this dependency would create a cycle")
+		case errors.Is(err, ErrMutationAuditUnavailable):
+			return nil, err
 		default:
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 	}
-	c.writeAuditEvent(ctx, EventSecretDependencyAdded, actorPtr(actorID), &dependentID,
-		fmt.Sprintf("declared secret %q depends on %q", dependent.Name, dependsOn.Name))
 	return created, nil
 }
 
@@ -207,17 +213,31 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 // statements, after the key is granted) reads this one's edge. The storage
 // call's own transaction nests as a savepoint of this one.
 func (c *KeyorixCore) LockedCreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
+	return c.lockedCreateSecretDependency(ctx, d, nil)
+}
+
+// lockedCreateSecretDependency is LockedCreateSecretDependencyExclusive with the
+// edge's audit row: audit, when non-nil, writes it through tgt as the last statement
+// of the insert's transaction (withAuditedMutation, opened inside the named lock as
+// mutation_audit_tx.go's connection budget requires), so the edge and its row
+// commit together (#4718).
+func (c *KeyorixCore) lockedCreateSecretDependency(ctx context.Context, d *models.SecretDependency, audit func(tgt auditTarget)) (*models.SecretDependency, error) {
 	var created *models.SecretDependency
 	err := c.storage.WithNamedLock(ctx, secretDependencyGraphLockKey(d.ProjectID), func(ctx context.Context) error {
 		c.secretDependencyMu.Lock()
 		defer c.secretDependencyMu.Unlock()
-		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		return c.mutationTx(ctx, audit != nil, func(tx storage.Storage, tgt auditTarget) error {
 			if err := lockNamedKeysInTxOn(ctx, tx, secretDependencyGraphLockKey(d.ProjectID)); err != nil {
 				return err
 			}
 			var cerr error
-			created, cerr = tx.CreateSecretDependencyExclusive(ctx, d)
-			return cerr
+			if created, cerr = tx.CreateSecretDependencyExclusive(ctx, d); cerr != nil {
+				return cerr
+			}
+			if audit != nil {
+				audit(tgt)
+			}
+			return nil
 		})
 	})
 	if err != nil {
@@ -266,13 +286,16 @@ func (c *KeyorixCore) RemoveSecretDependency(ctx context.Context, actorKind stri
 	} else if !allowed {
 		return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized on the dependency target")
 	}
-	if err := c.storage.DeleteSecretDependency(ctx, edgeID); err != nil {
-		return err
-	}
-	dep := edge.DependentSecretID
-	c.writeAuditEvent(ctx, EventSecretDependencyRemoved, actorPtr(actorID), &dep,
-		fmt.Sprintf("removed dependency of secret %d on secret %d", edge.DependentSecretID, edge.DependsOnSecretID))
-	return nil
+	// #4718: the delete and its secret.dependency_removed row commit together.
+	dep, pid := edge.DependentSecretID, edge.ProjectID
+	return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		if err := tx.DeleteSecretDependency(ctx, edgeID); err != nil {
+			return err
+		}
+		c.writeAuditEventFullOn(ctx, tgt, EventSecretDependencyRemoved, actorPtr(actorID), &dep, &pid, "",
+			fmt.Sprintf("removed dependency of secret %d on secret %d", edge.DependentSecretID, edge.DependsOnSecretID))
+		return nil
+	})
 }
 
 // ListSecretDependencies returns a secret's direct dependencies and dependents, with

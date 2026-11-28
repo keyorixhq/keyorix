@@ -243,6 +243,8 @@ func TestCloneEnvironment_ListSecretsError(t *testing.T) {
 	// project and secrets.read on the source environment.
 	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 1}, permSecretsWrite)
 	stubAuthorizedPrincipal(ms, 1, Scope{ProjectID: 1, EnvironmentID: 2}, permSecretsRead)
+	// The clone's started row is written before anything is listed (#4718).
+	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	result, err := c.CloneEnvironment(context.Background(), 1, 2, 3, "owner", 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "db unavailable")

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/ports"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -817,13 +818,6 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 	secret.RotationBackend = spec.Backend
 	secret.RotationRef = spec.Ref
 	secret.UpdatedAt = c.now()
-	matched, err := c.storage.UpdateSecretRotationConfig(ctx, secret, fromBackend)
-	if err != nil {
-		return fmt.Errorf("failed to update secret: %w", err)
-	}
-	if !matched {
-		return fmt.Errorf("secret %d was deleted, moved or its rotation backend changed concurrently; retry", id)
-	}
 	uid := actorID
 	sid := id
 	verb := "disabled"
@@ -835,7 +829,31 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 		via = fmt.Sprintf(" (backend %q ref %q)", spec.Backend, spec.Ref)
 	}
 	pid := secret.ProjectID
-	c.writeAuditEventFull(ctx, EventSecretAutoRotateConfig, &uid, &sid, &pid, "",
-		fmt.Sprintf("auto-rotation %s for secret %q%s", verb, secret.Name, via))
+	// #4718: the configuration and its secret.auto_rotate_config row commit together.
+	// Binding (or rebinding) a backend, enabling and changing the spec fail closed: a
+	// silent change would hand a credential-minting backend to a ref nobody sees. Only
+	// unbinding a backend is a revocation of that grant: never blocked by the audit log,
+	// its row owed (withAuditedOrOwedMutation).
+	unbinds := spec.Backend == "" && fromBackend != ""
+	var matched bool
+	err = c.withAuditedOrOwedMutation(ctx, !unbinds, func(tx storage.Storage, tgt auditTarget) error {
+		m, uerr := tx.UpdateSecretRotationConfig(ctx, secret, fromBackend)
+		if uerr != nil || !m {
+			return uerr
+		}
+		matched = true
+		c.writeAuditEventFullOn(ctx, tgt, EventSecretAutoRotateConfig, &uid, &sid, &pid, "",
+			fmt.Sprintf("auto-rotation %s for secret %q%s", verb, secret.Name, via))
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrMutationAuditUnavailable) {
+			return err
+		}
+		return fmt.Errorf("failed to update secret: %w", err)
+	}
+	if !matched {
+		return fmt.Errorf("secret %d was deleted, moved or its rotation backend changed concurrently; retry", id)
+	}
 	return nil
 }

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -32,19 +33,24 @@ func (c *KeyorixCore) SetSecretRetentionOverride(ctx context.Context, actorID, s
 	if days != 0 && days < minRetentionOverrideDays {
 		return fmt.Errorf("%w (got %d)", ErrInvalidRetentionDays, days)
 	}
-	if err := c.storage.SetRetentionOverride(ctx, secretID, days); err != nil {
-		return err
-	}
+	// #4718: the override and its row commit together; a refused row changes
+	// nothing. A retention window decides when a secret's history is purged, so a
+	// silent change would quietly shorten (or extend) what an auditor can recover.
 	uid := actorID
 	sid := secretID
-	var desc string
-	if days == 0 {
-		desc = fmt.Sprintf("cleared per-secret retention override on %s (reverts to global policy)", c.auditRef(ctx, c.storage, auditKindSecret, secretID))
-	} else {
-		desc = fmt.Sprintf("set per-secret retention override on %s to %d days", c.auditRef(ctx, c.storage, auditKindSecret, secretID), days)
-	}
-	c.writeAuditEvent(ctx, "secret.retention_override_set", &uid, &sid, desc)
-	return nil
+	return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		if err := tx.SetRetentionOverride(ctx, secretID, days); err != nil {
+			return err
+		}
+		var desc string
+		if days == 0 {
+			desc = fmt.Sprintf("cleared per-secret retention override on %s (reverts to global policy)", c.auditRef(ctx, tx, auditKindSecret, secretID))
+		} else {
+			desc = fmt.Sprintf("set per-secret retention override on %s to %d days", c.auditRef(ctx, tx, auditKindSecret, secretID), days)
+		}
+		c.writeAuditEventDiffOn(ctx, tgt, "secret.retention_override_set", &uid, &sid, nil, "", desc, "")
+		return nil
+	})
 }
 
 // GetEffectiveRetentionDays returns the effective retention window for a
