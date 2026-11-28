@@ -59,6 +59,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -101,7 +102,7 @@ type patLifecycleFixtureEntry struct {
 // (#1944; it formerly soft-failed to an empty role list with a nil error) --
 // is not reachable from this fixture. It is covered directly by
 // validate_roles_unavailable_test.go with an injected storage fault.
-func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixtureEntry) {
+func buildPATLifecycleFixture(t testing.TB) (*KeyorixCore, []patLifecycleFixtureEntry) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -153,7 +154,7 @@ func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixture
 	mustCreate(&models.UserRole{UserID: userA, RoleID: fuzzRoleID})
 
 	c := NewKeyorixCore(ls)
-	fixedNow := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	fixedNow := patLifecycleFixedNow
 	c.now = func() time.Time { return fixedNow }
 	past := fixedNow.Add(-time.Hour)
 
@@ -239,6 +240,82 @@ func buildPATLifecycleFixture(t *testing.T) (*KeyorixCore, []patLifecycleFixture
 	}
 
 	return c, entries
+}
+
+// patLifecycleFixedNow is the pinned clock every core over the fixture uses.
+var patLifecycleFixedNow = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+// patLifecycleShared is the fixture built ONCE per process: the SQLite store
+// and the issued tokens. Building it costs ~1.4 ms (migrate, seed users/roles,
+// seven real CreateOwnPAT calls), about 20x the fuzzed ValidatePATToken call
+// itself, so rebuilding it per input made the fixture the whole cost of an exec.
+//
+// Sharing is sound only because nothing on the fuzzed path writes the
+// fixture's tables. The one write ValidatePATToken makes is the notification
+// row for an expired token (dedup'd by link, so it would silently stop being
+// written on every exec after the first). begin therefore empties notifications
+// and hands out a FRESH LocalStorage + KeyorixCore (their caches, clock
+// watermark and prepared statements are per-process state), and
+// untouchedErr fails the input if anything but notifications changed.
+type patLifecycleShared struct {
+	db      *gorm.DB
+	entries []patLifecycleFixtureEntry
+}
+
+// newPATLifecycleShared builds the shared fixture. Pass the *testing.F (not a
+// per-input *testing.T): the store must outlive every input.
+func newPATLifecycleShared(tb testing.TB) *patLifecycleShared {
+	tb.Helper()
+	c, entries := buildPATLifecycleFixture(tb)
+	ls, ok := c.storage.(*store.LocalStorage)
+	if !ok {
+		tb.Fatalf("fixture storage is %T, want *store.LocalStorage", c.storage)
+	}
+	return &patLifecycleShared{db: ls.DB(), entries: entries}
+}
+
+// newCore returns a core with no state carried over from earlier inputs.
+func (s *patLifecycleShared) newCore() *KeyorixCore {
+	c := NewKeyorixCore(store.NewLocalStorage(s.db))
+	c.now = func() time.Time { return patLifecycleFixedNow }
+	return c
+}
+
+// begin readies the fixture for one input: clears notifications (the only
+// table the fuzzed path may write) and returns a fresh core plus the SQLite
+// total_changes() baseline untouchedErr compares against.
+func (s *patLifecycleShared) begin(tb testing.TB) (*KeyorixCore, int64) {
+	tb.Helper()
+	if err := s.db.Exec("DELETE FROM notifications").Error; err != nil {
+		tb.Fatalf("reset notifications: %v", err)
+	}
+	return s.newCore(), s.totalChanges(tb)
+}
+
+func (s *patLifecycleShared) totalChanges(tb testing.TB) int64 {
+	tb.Helper()
+	var n int64
+	if err := s.db.Raw("SELECT total_changes()").Scan(&n).Error; err != nil {
+		tb.Fatalf("total_changes: %v", err)
+	}
+	return n
+}
+
+// untouchedErr reports nil iff every row change since the baseline is an
+// insert into notifications: SQLite's total_changes() (rows inserted, updated
+// or deleted on this connection; the store uses a single one) must equal the
+// notification row count. An update or delete of any fixture row, or a second
+// write to one notification, makes it larger and is reported.
+func (s *patLifecycleShared) untouchedErr(tb testing.TB, baseline int64) error {
+	tb.Helper()
+	var notifs int64
+	if err := s.db.Raw("SELECT count(*) FROM notifications").Scan(&notifs).Error; err != nil {
+		tb.Fatalf("count notifications: %v", err)
+	}
+	if delta := s.totalChanges(tb) - baseline; delta != notifs {
+		return fmt.Errorf("the shared fixture was written to: %d row changes since the input began, but only %d notification rows exist", delta, notifs)
+	}
+	return nil
 }
 
 // patConfusables are Unicode code points that visually resemble ASCII but are
@@ -348,8 +425,16 @@ func FuzzPATValidateLifecycle(f *testing.F) {
 		f.Add(s.baseSel, s.op, s.p0, s.p1, s.extra)
 	}
 
+	shared := newPATLifecycleShared(f)
+	entries := shared.entries
+
 	f.Fuzz(func(t *testing.T, baseSel, op, p0, p1 byte, extra []byte) {
-		c, entries := buildPATLifecycleFixture(t)
+		c, baseline := shared.begin(t)
+		defer func() {
+			if err := shared.untouchedErr(t, baseline); err != nil {
+				t.Errorf("FIXTURE MUTATED: %v", err)
+			}
+		}()
 		ctx := context.Background()
 
 		base := entries[int(baseSel)%len(entries)]
