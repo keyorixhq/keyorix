@@ -239,6 +239,11 @@ func newUnreachableMongoClient(t *testing.T) *mongo.Client {
 			SetServerSelectionTimeout(timeout),
 	)
 	require.NoError(t, err, "mongo.Connect must succeed for an unreachable address (lazy connect)")
+	// Stop the topology's heartbeat goroutine when the test ends. Left running it keeps
+	// dialing through net.DefaultResolver, which the DNS-rebinding fuzz targets replace
+	// (egressref.RebindDNS.Install), and the race detector flags the overlap. A second
+	// Disconnect after the test closed the client itself is a harmless no-op.
+	t.Cleanup(func() { _ = client.Disconnect(context.Background()) })
 	return client
 }
 
