@@ -52,7 +52,10 @@ What it does and checks:
    refused (from an instance with no keys and from one that holds them) and leaves every
    table unchanged and no key file installed; a restore with a wrong master password is
    refused before the target is touched (no schema, no key file, no journal); a target that
-   already holds its own key set is refused and keeps its `dek.key`.
+   already holds its own key set is refused and keeps its `dek.key`, both when it also has a
+   schema and when its database is empty (then the refusal is the key check alone, naming the
+   existing key file); `--overwrite-existing` against an EMPTY target (no schema, no keys)
+   completes like a plain restore, with equal tables and a VALID chain whose head is unchanged.
 
 ```sh
 # three databases: A (migration target), B (target of the kill legs), C (any database the
@@ -67,17 +70,16 @@ The last line is `SQLITE -> POSTGRESQL MIGRATION CHECK PASSED`. Environment:
 build this checkout), `DRILL_KEEP=1` (keep the work area).
 
 What it does **not** cover: the container variants (`docker compose`, Helm) are pending a
-run on the e2e VM; `--overwrite-existing` against a target that holds real data (the script
-only uses it to replace the empty schema a killed restore leaves); a refusal because the target
-holds a different key set is only exercised together with its non-empty schema, so it does not
-isolate the key check; very large databases (this run is sized for tens of thousands of rows;
+run on the e2e VM; `--overwrite-existing` against a target that holds real data (documented,
+never run: with `--replace-existing-data` it deletes the target's rows by design, so take a backup
+of the target first); very large databases (this run is sized for tens of thousands of rows;
 for millions of rows see [backup-restore-scale.md](backup-restore-scale.md) and
 `scripts/migrate/scale-check.sh`).
 
 ## Verified matrix
 
 Run of `scripts/migrate/sqlite-to-pg-check.sh` with the real `keyorix-server` and `keyorix`
-binaries built from main at commit `f990effc93f3051a15ddf89e7d1595a9c7f0ada1`, against a
+binaries built from main at commit `f843ea087afcb7a6add38ee23925acbec08cc67f`, against a
 local PostgreSQL (native, no containers); result `SQLITE -> POSTGRESQL MIGRATION CHECK PASSED`.
 
 | Check | Result | Evidence |
@@ -95,7 +97,21 @@ local PostgreSQL (native, no containers); result `SQLITE -> POSTGRESQL MIGRATION
 | `kill -9` during restore (while migrating, while loading rows) | pass, 4 legs | no key file installed, no row committed; a re-run is refused until `--recover`; both recoveries finish with equal tables |
 | Non-empty target | refused | tables unchanged, no key file installed |
 | Wrong master password | refused | no schema, no key file, no journal |
+| Target with its own keys and a schema | refused | its `dek.key` is unchanged |
+| Target with its own keys, no schema | refused | non-zero exit, message names the existing key file; `dek.key` unchanged, no journal, no row |
+| `--overwrite-existing` on an empty target | pass | tables equal the source; chain VALID, head unchanged, first new event chains onto it |
+| `--overwrite-existing --replace-existing-data` on a target with data | documented, not run | deletes the target's rows by design |
 | Container and Helm variants | pending e2e VM | not run |
+
+## What to check after a move
+
+1. `keyorix-server admin verify-audit` exits 0 and prints `Verdict: VALID` (give it the
+   checkpoint key if the instance has been through a retention purge).
+2. Events written after the move extend the chain: the newest source row keeps its entry hash and
+   the next event's previous hash equals it. A fresh genesis means the chain was not carried over.
+3. The same logins work (including TOTP), a migrated secret decrypts, and the suspended and
+   soft-deleted secrets behave as before.
+4. Keep the SQLite file untouched until then: pointing the config back at it is the rollback.
 
 ## Findings fixed by this check
 
