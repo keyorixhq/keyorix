@@ -4,9 +4,10 @@
 #
 # It finds the running demo through its state file (default: .demo-native/state.env,
 # written by scripts/demo/native-up.sh; override with KEYORIX_DEMO_DIR) and gives the
-# scenario scripts: a cached admin/alice/officer session (every login AND every MFA verify
-# spends one of the 10-per-15-minute per-IP login attempts, so sessions are cached in the
-# CLI home and reused while they are valid), a CLI wrapper, and anomaly-list helpers.
+# scenario scripts: a cached admin/alice/officer session (a failed login or MFA verify spends
+# one of the 10-per-15-minute per-IP login attempts and a delivered login hands its slot back,
+# #2936; sessions are still cached in the CLI home and reused while they are valid, which
+# saves two round trips and a TOTP step), a CLI wrapper, and anomaly-list helpers.
 #
 # Credentials never reach a command line: passwords and TOTP keys come from the 0600 state
 # file, tokens travel in 0600 header files (`curl -H @file`) or the process environment.
