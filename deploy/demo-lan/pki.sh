@@ -199,11 +199,12 @@ leaf_problem() {
   if [ ! -s "$LEAF_CRT" ] || [ ! -s "$LEAF_KEY" ]; then echo "no certificate yet"; return 0; fi
   [ -s "$CA_CRT" ] || { echo "no CA at $CA_CRT"; return 0; }
   if ! valid_for "$LEAF_CRT" $((RENEW_DAYS * 86400)); then
-    # Re-issue only when that gains at least a day. When the CA ends within a day of this
-    # certificate a new one cannot last longer, and re-issuing on every start would only pile up
-    # old/ copies; ca_expiry_warning says what to do instead.
-    local left; left="$(days_left "$LEAF_CRT" "$RENEW_DAYS")"
-    if [ "$left" -lt 0 ] || valid_for "$CA_CRT" $(((left + 1) * 86400)); then
+    # Re-issue only when that gains at least a day: a new certificate would get CAP whole days
+    # (issue_leaf caps it to the CA), so it is worth it only when this one ends more than a day
+    # before that. Otherwise (the CA bounds both) re-issuing on every start would only pile up
+    # old/ copies; ca_expiry_warning says what to do instead. An expired one is always due.
+    local cap; cap="$(days_left "$CA_CRT" "$LEAF_DAYS")"
+    if ! valid_for "$LEAF_CRT" 0 || { [ "$cap" -ge 1 ] && ! valid_for "$LEAF_CRT" $(((cap - 1) * 86400)); }; then
       echo "fewer than $RENEW_DAYS days left (notAfter $(end_date "$LEAF_CRT"))"; return 0
     fi
   fi
