@@ -93,6 +93,7 @@ func seedProjectEnv(t *testing.T, c *KeyorixCore) (*models.Project, *models.Envi
 var hostZoneCoreTables = []any{
 	&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{},
 	&models.AuditEvent{}, &models.SecretTemplate{}, &models.AnomalyConfigRecord{}, &models.SecretAccessSchedule{},
+	&models.SecretAccessLog{},
 }
 
 func TestHostZoneStamps_CoreWritesStoreUTC(t *testing.T) {

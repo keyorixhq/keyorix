@@ -27,7 +27,7 @@ func newRotateNoopFixture(t *testing.T) (*core.KeyorixCore, uint, *gorm.DB) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessSchedule{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessLog{}, &models.SecretAccessSchedule{}))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "dev"}).Error)
 

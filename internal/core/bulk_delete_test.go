@@ -362,10 +362,21 @@ func (s *slowAuditLogStorage) CreateSecretAccessLog(next coreStorage.Storage, ct
 	return next.CreateSecretAccessLog(ctx, entry)
 }
 
-// wrap returns inner decorated with slowAuditLogStorage's overrides.
+// LogAuditEventWithAccessLog is the same delay on the combined write a delete's
+// in-transaction secret.deleted row and its access-log row go through (#4719).
+func (s *slowAuditLogStorage) LogAuditEventWithAccessLog(next coreStorage.Storage, ctx context.Context, e *models.AuditEvent, l *models.SecretAccessLog) error {
+	time.Sleep(s.delay)
+	s.calls.Add(1)
+	return next.LogAuditEventWithAccessLog(ctx, e, l)
+}
+
+// wrap returns inner decorated with slowAuditLogStorage's overrides, inside
+// transactions too.
 func (s *slowAuditLogStorage) wrap(inner coreStorage.Storage) coreStorage.Storage {
 	return hooked(inner, &storeHooks{
-		CreateSecretAccessLog: s.CreateSecretAccessLog,
+		WrapTx:                     true,
+		CreateSecretAccessLog:      s.CreateSecretAccessLog,
+		LogAuditEventWithAccessLog: s.LogAuditEventWithAccessLog,
 	})
 }
 

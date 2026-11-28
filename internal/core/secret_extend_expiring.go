@@ -50,6 +50,7 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 		return 0, false, err
 	}
 	newExpiry := c.now().Add(time.Duration(newWindowDays) * 24 * time.Hour).UTC()
+	auditCtx := defaultSecretMutationAudit(ctx, SecretMutationAudit{UserID: actorID, Username: actor})
 
 	secrets, truncated, err := c.ListExpiringSecrets(ctx, projectID, withinDays)
 	if err != nil {
@@ -73,15 +74,19 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 		if s.Expiration != nil && !s.Expiration.Before(newExpiry) {
 			continue
 		}
-		// #2695: expiration only — see ClassifySecret's comment.
-		matched, uerr := c.storage.UpdateSecretFields(ctx, s.ID, storage.SecretFieldUpdate{
+		// #2695: expiration only — see ClassifySecret's comment. #4719: committed
+		// with its secret.updated row; a refused row extends nothing (skipped, as
+		// any other per-secret failure).
+		matched, uerr := c.writeSecretFieldsAudited(ctx, s.ID, storage.SecretFieldUpdate{
 			SetExpiration: true, Expiration: &newExpiry,
-		})
+		}, mutationAuditRowFor(auditCtx, evtSecretUpdated, "update", "updated", s.ID, projectID, s.Name))
 		if uerr != nil || !matched {
+			if uerr != nil {
+				log.Printf("bulk extend: secret %d not extended: %v", s.ID, uerr)
+			}
 			continue // best-effort: skip per-secret failures, keep going
 		}
 		s.Expiration = &newExpiry
-		c.LogSecretUpdatedWithProject(ctx, actorID, s.ID, projectID, actor, s.Name, "", "")
 		extended++
 	}
 	// Written unconditionally: each renewal audits as secret.updated, but a

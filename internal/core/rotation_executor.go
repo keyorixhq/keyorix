@@ -418,11 +418,20 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 	if secret.RotationBackend != "" {
 		// ROTATION-001: emit before calling upstream so a crash between upstream success
 		// and Keyorix store is visible in the audit trail as an orphaned "started" event.
+		// Fail closed, as RotateSecretOnDemand does (#4719): the upstream change cannot
+		// share a database transaction, so its record has to exist before it happens. A
+		// started row the audit log refuses leaves the upstream credential untouched and
+		// fails this secret's rotation; the next run retries it.
 		sid := secret.ID
 		pid := secret.ProjectID
-		c.writeAuditEventFull(ctx, EventSecretRotateBackendStarted, nil, &sid, &pid, "",
+		if !c.writeAuditEventFull(ctx, EventSecretRotateBackendStarted, nil, &sid, &pid, "",
 			fmt.Sprintf("auto-rotation: calling upstream backend %q ref %q for secret %q",
-				secret.RotationBackend, secret.RotationRef, secret.Name))
+				secret.RotationBackend, secret.RotationRef, secret.Name)) {
+			log.Printf("auto-rotation: secret %d: %s row not recorded, upstream backend NOT called", secret.ID, EventSecretRotateBackendStarted)
+			failed[secret.ID] = rotationFailureDetail{SecretName: secret.Name, Detail: ErrSecretMutationAuditUnavailable.Error()}
+			c.stampRotationState(ctx, policy.ID, RotationStateFailed, failed[secret.ID].Detail)
+			return false
+		}
 		upstreamVal, err := c.applyBackendRotation(ctx, secret, val)
 		var partial *ports.RotationPartialError
 		switch {
@@ -450,6 +459,9 @@ func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.Secret
 			storeVal = upstreamVal
 		}
 	}
+	// The new version commits with its secret.rotated row (RotateSecret, attributed to
+	// "system:auto-rotation"); a refused row stores nothing and lands in the failure
+	// branch below. The secret.auto_rotated rows after it describe the policy run.
 	if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(storeVal), 0, "system:auto-rotation"); rerr != nil {
 		log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
 		failed[secret.ID] = rotationFailureDetail{SecretName: secret.Name, Detail: fmt.Sprintf("store new version: %v", rerr)}

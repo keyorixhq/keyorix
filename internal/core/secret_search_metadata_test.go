@@ -22,7 +22,7 @@ func TestSecretSearch_NameDescriptionTags(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}, &models.Tag{}, &models.SecretTag{}, &models.AuditEvent{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}, &models.Tag{}, &models.SecretTag{}, &models.AuditEvent{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.SecretAccessLog{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	require.NoError(t, db.AutoMigrate(&models.User{}))
 	ensureActiveActor(t, c.storage, 1) // the acting user (#4159)

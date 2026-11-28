@@ -60,6 +60,8 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 		mockStorage.On("GetSecretByName", ctx, req.Name, req.ProjectID, req.EnvironmentID).Return(nil, storage.ErrSecretNotFound)
 		mockStorage.On("CreateSecret", ctx, mock.AnythingOfType("*models.SecretNode")).Return(expectedSecret, nil)
 		mockStorage.On("CreateSecretVersion", ctx, mock.AnythingOfType("*models.SecretVersion")).Return(expectedVersion, nil)
+		// The secret.created row commits with the secret (#4719).
+		mockStorage.On("LogAuditEventWithAccessLog", ctx, mock.AnythingOfType("*models.AuditEvent"), mock.AnythingOfType("*models.SecretAccessLog")).Return(nil)
 
 		// Execute
 		result, err := core.CreateSecret(ctx, req)

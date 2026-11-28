@@ -58,8 +58,12 @@ func TestCopyEnvironmentSecrets(t *testing.T) {
 		resp, err := c.ListSecretsInScope(ctx, &models.SecretListFilter{ProjectID: &p.ID, EnvironmentID: &prod.ID})
 		require.NoError(t, err)
 		names := map[string]bool{}
+		var apiInProd uint
 		for _, s := range resp.Secrets {
 			names[s.Name] = true
+			if s.Name == "api" {
+				apiInProd = s.ID
+			}
 		}
 		assert.True(t, names["db"] && names["api"])
 
@@ -69,7 +73,8 @@ func TestCopyEnvironmentSecrets(t *testing.T) {
 		var readCount, createCount int64
 		require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "secret.read").Count(&readCount).Error)
 		assert.Equal(t, int64(2), readCount, "both 'db' and 'api' sources were read, even though 'db' was then skipped as a name clash")
-		require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "secret.created").Count(&createCount).Error)
+		// The fixture's own creates are audited too (#4719), so count the copy's row only.
+		require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ? AND secret_node_id = ?", "secret.created", apiInProd).Count(&createCount).Error)
 		assert.Equal(t, int64(1), createCount, "exactly one destination create ('api')")
 	})
 

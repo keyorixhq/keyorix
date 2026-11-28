@@ -137,8 +137,12 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	}
 
 	// CreateSecret re-validates the value policy, the env↔project link, and name
-	// uniqueness within the target environment.
-	created, err := c.CreateSecret(ctx, &CreateSecretRequest{
+	// uniqueness within the target environment. Its secret.created row (and the
+	// access-log row) commits with the copy, attributed to the copier (#4719: it
+	// used to be a post-commit write whose result was discarded).
+	created, err := c.CreateSecret(defaultSecretMutationAudit(ctx, SecretMutationAudit{
+		UserID: actorID, Username: actorUsername, IP: ip, UserAgent: ua,
+	}), &CreateSecretRequest{
 		Name:           name,
 		Value:          value,
 		ProjectID:      source.ProjectID,
@@ -152,6 +156,5 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	if err != nil {
 		return nil, err
 	}
-	c.LogSecretCreatedWithProject(ctx, actorID, created.ID, source.ProjectID, actorUsername, created.Name, ip, ua)
 	return created, nil
 }

@@ -24,7 +24,7 @@ func newPolicyEnforceFixture(t *testing.T) (*KeyorixCore, uint, uint) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{}, &models.SecretAccessLog{}))
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	c.SetSecretValuePolicy(SecretValuePolicy{Enabled: true, RejectCommon: true, MinLength: 6})

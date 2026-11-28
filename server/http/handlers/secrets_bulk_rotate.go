@@ -57,7 +57,10 @@ func (h *SecretHandler) BulkRotateSecrets(w http.ResponseWriter, r *http.Request
 		RotatedBy:      userCtx.Username,
 	}
 
-	result, err := h.coreService.BulkRotateSecrets(r.Context(), userCtx.UserID, req)
+	// Tagged so each rotation's secret.rotated row, committed with its new version,
+	// names the caller's IP and user agent (#4719; core attributes an untagged call to
+	// the actor alone).
+	result, err := h.coreService.BulkRotateSecrets(secretMutationAuditContext(r, userCtx), userCtx.UserID, req)
 	if err != nil {
 		// An inactive acting account is a refusal (403), and a failed read of
 		// that account is a storage fault (503), not a server error.

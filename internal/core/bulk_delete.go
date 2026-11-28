@@ -203,8 +203,12 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 	}
 
 	secretName := secret.Name
-	secretProjectID := secret.ProjectID
 
+	// The secret.deleted row (and its access-log row) commits in the delete's own
+	// transaction. A transport's tag (the HTTP handler's) attributes it; an untagged
+	// caller (the CLI's embedded bulk delete) is attributed to deletedBy here, which
+	// used to be a separate post-commit write whose result was discarded (#4719).
+	ctx = defaultSecretMutationAudit(ctx, SecretMutationAudit{UserID: actorID, Username: deletedBy, IP: ip, UserAgent: ua})
 	if actorID == 0 { // a machine was authorized for this secret above
 		err = c.DeleteSecret(ctx, id)
 	} else {
@@ -223,33 +227,6 @@ func (c *KeyorixCore) bulkDeleteOneSecret(ctx context.Context, id, projectID uin
 			Retryable: code != "",
 		})
 		return
-	}
-
-	// Audit: same event shape as the single-delete handler's post-delete log.
-	// #1600: this used to fire in a detached, un-awaited goroutine
-	// (`go func(...) { ... }(...)`)  — safe in server/HTTP callers (a
-	// long-lived process, so DetachedAuditContext's whole point — surviving
-	// the REQUEST's context cancellation — still lets the goroutine finish
-	// naturally) but not in the CLI's embedded-mode caller
-	// (runBulkDeleteEmbedded, internal/cli/secret/bulk_delete.go): a CLI
-	// invocation is a short-lived PROCESS, and Go does not wait for orphaned
-	// goroutines when main() returns — BulkDeleteSecrets could return, the
-	// command print its results, and the process exit before this goroutine
-	// ever ran, silently dropping the secret_access_logs write (and,
-	// separately, the loud "SECURITY: failed to persist secret access log"
-	// line writeAccessLog emits on failure — see audit.go) with no trace at
-	// all, under ANY storage backend, not just storage.type: remote. Calling
-	// synchronously (still via DetachedAuditContext, so a caller-context
-	// cancellation mid-batch can't truncate later items' audit writes)
-	// guarantees the write is attempted, and any failure logged, before this
-	// function can return.
-	//
-	// A context tagged with WithSecretMutationAudit (the HTTP handler's) already committed
-	// the secret.deleted row and its access-log row inside the delete's transaction, so
-	// the post-commit pair would be a second copy of the same event.
-	if _, tagged := secretMutationAuditFromContext(ctx); !tagged {
-		auditCtx := DetachedAuditContext(ctx)
-		c.LogSecretDeletedWithProject(auditCtx, actorID, id, secretProjectID, deletedBy, secretName, ip, ua)
 	}
 
 	result.Deleted = append(result.Deleted, id)

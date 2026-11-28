@@ -88,7 +88,14 @@ func (c *KeyorixCore) ClassifySecret(ctx context.Context, actorID uint, username
 	// so it resurrected a concurrently deleted secret (shares and ACLs already
 	// revoked, no restore audit) and reverted a concurrent suspend, read-count
 	// increment or ownership clear.
-	matched, err := c.storage.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{Classification: &level})
+	//
+	// #4719: the secret.updated row (with its diff) commits with the label; a
+	// refused row changes nothing. A downgrade from restricted is exactly the
+	// change that must never land unrecorded.
+	row := mutationAuditRowFor(defaultSecretMutationAudit(ctx, SecretMutationAudit{UserID: actorID, Username: username}),
+		evtSecretUpdated, "update", "updated", secret.ID, secret.ProjectID, secret.Name)
+	row.diff = fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)
+	matched, err := c.writeSecretFieldsAudited(ctx, secret.ID, storage.SecretFieldUpdate{Classification: &level}, row)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -96,8 +103,5 @@ func (c *KeyorixCore) ClassifySecret(ctx context.Context, actorID uint, username
 		return nil, errSecretNotFoundText()
 	}
 	secret.Classification = level
-	updated := secret
-	diff := fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)
-	c.LogSecretUpdatedWithDiff(ctx, actorID, secretID, secret.ProjectID, username, secret.Name, "", "", diff)
-	return updated, nil
+	return secret, nil
 }

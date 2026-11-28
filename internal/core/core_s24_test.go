@@ -337,6 +337,8 @@ func TestDeleteSecret_Success(t *testing.T) {
 	ms.On("DeleteSecret", mock.Anything, uint(3)).Return(nil)
 	// emitDependencyLifecycleEvents lists the project's edges after delete.
 	ms.On("ListSecretDependenciesForProject", mock.Anything, uint(1)).Return([]*models.SecretDependency{}, nil)
+	// The secret.deleted row commits in the delete's transaction (#4719).
+	ms.On("LogAuditEventWithAccessLog", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
 	require.NoError(t, c.DeleteSecret(context.Background(), 3))
 }

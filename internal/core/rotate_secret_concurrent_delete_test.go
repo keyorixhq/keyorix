@@ -55,7 +55,7 @@ func TestRotateSecret_ConcurrentDelete_LeavesNoOrphanVersion(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{},
-		&models.SecretVersion{}, &models.AuditEvent{}))
+		&models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessLog{}))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "dev"}).Error)
 	c := NewKeyorixCore(store.NewLocalStorage(db))

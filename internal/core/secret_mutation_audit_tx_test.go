@@ -267,18 +267,3 @@ func TestSecretMutationAudit_RowExistsIffMutationCommitted(t *testing.T) {
 		require.True(t, v.Valid, "the audit chain must verify after every success and every rolled-back attempt: %s", v.Reason)
 	})
 }
-
-// TestSecretMutationAudit_NoContextNoRow: a mutation called without
-// WithSecretMutationAudit (internal callers that audit separately — bulk delete,
-// copy, the rotation scheduler) writes no mutation row of its own, so this
-// change adds no duplicate rows to them.
-func TestSecretMutationAudit_NoContextNoRow(t *testing.T) {
-	f := newCTAReviewSQLite(t)
-	w := newSMAWorld(t, f)
-	s := w.secret("sma-plain")
-	_, err := w.c.RotateSecret(context.Background(), s.ID, []byte("value-plain-2"), f.adminID, "admin")
-	require.NoError(t, err)
-	require.NoError(t, w.c.DeleteSecret(context.Background(), s.ID))
-	require.Zero(t, w.auditRows("secret.rotated", s.ID))
-	require.Zero(t, w.auditRows("secret.deleted", s.ID))
-}

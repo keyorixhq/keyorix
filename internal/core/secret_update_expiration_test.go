@@ -27,6 +27,8 @@ func captureSecretFieldUpdate(store *MockStorage, existing *models.SecretNode) *
 	store.On("UpdateSecretFields", mock.Anything, existing.ID, mock.AnythingOfType("storage.SecretFieldUpdate")).
 		Run(func(args mock.Arguments) { *saved = args.Get(2).(storage.SecretFieldUpdate) }).
 		Return(true, nil)
+	// The secret.updated row commits with the update (#4719).
+	store.On("LogAuditEventWithAccessLog", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	return saved
 }
 

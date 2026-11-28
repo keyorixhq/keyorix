@@ -159,7 +159,12 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 	// column ClearProjectSecretOwnership (offboarding) also writes, so a
 	// full-row write from ANY other caller could hand the owner short-circuit
 	// back to a departed user.
+	//
+	// #4719: the secret.owner_transferred row is the transaction's last statement.
+	// Ownership is an authority grant (see the doc comment), so a refused row
+	// transfers nothing.
 	var sharesReassigned int64
+	sink := &auditForwardSink{}
 	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		matched, uerr := tx.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{OwnerID: &newOwnerID})
 		if uerr != nil {
@@ -173,21 +178,20 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), rerr)
 		}
 		sharesReassigned = n
-		return nil
+		uid := actorID
+		detail, _ := json.Marshal(ownershipTransferDetail{FromUserID: oldOwner, ToUserID: newOwnerID, SharesReassigned: sharesReassigned})
+		return c.writeMutationAuditTx(ctx, tx, sink, mutationAuditRow{
+			eventType: EventSecretOwnerTransferred, userID: &uid, secretID: secretID, projectID: secret.ProjectID,
+			description: fmt.Sprintf("transferred ownership of secret %q from user %d to user %d (%d share record(s) re-owned)", secret.Name, oldOwner, newOwnerID, sharesReassigned),
+			diff:        string(detail),
+		})
 	})
 	if err != nil {
 		return nil, err
 	}
+	sink.Flush(c)
 	secret.OwnerID = newOwnerID
-	updated := secret
-
-	uid := actorID
-	sid := secretID
-	detail, _ := json.Marshal(ownershipTransferDetail{FromUserID: oldOwner, ToUserID: newOwnerID, SharesReassigned: sharesReassigned})
-	c.writeAuditEventDiff(ctx, EventSecretOwnerTransferred, &uid, &sid, nil, "",
-		fmt.Sprintf("transferred ownership of secret %q from user %d to user %d (%d share record(s) re-owned)", updated.Name, oldOwner, newOwnerID, sharesReassigned),
-		string(detail))
-	return updated, nil
+	return secret, nil
 }
 
 // currentOwnerGone reports whether a secret's owner is positively absent: ownerless
