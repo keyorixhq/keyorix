@@ -63,13 +63,19 @@ prefix names (see "How to read an entry"):
 | 75 | The DEK lock is held by another process (a second server, or a rotation) | `failed to initialize core service: ... another process already holds the DEK lock` |
 | 1 | Everything else: a relative key path used from another directory than the config's, the FIPS self-test, logging or memory-hardening setup, a listener port in use, a Postgres connection that fails the TLS check or is closed during login, the server-presence lock held by an admin command, `single_writer` refusals, a lock lost while running | `Refusing to start:`, `Failed to set up logging`, `HTTP server error:`, `single_writer:` |
 
-Two of these are worth knowing before you automate on the status. The DEK lock refusal is 75
-today although the hint line under it talks about a KMS or database: restarting after the other
-process exits is the right action, and under systemd the unit retries it. And the relative key
-path refusal (`Refusing to start: storage.encryption.dek_path ... is relative ...`) is an
-operator fix that exits 1, so a unit that stops on 78 keeps retrying it until the working
-directory or the paths are fixed. `admin` subcommands keep their own exit codes (1 for a
-failure unless an entry says otherwise).
+Two refusals do not follow their class, so check them before you automate on the status. The
+DEK lock refusal is 75 although the hint line under it talks about a KMS or database:
+restarting after the other process exits is the right action, and under systemd the unit
+retries it. And the relative key path refusal (`Refusing to start: storage.encryption.dek_path
+... is relative ...`) is an operator fix that exits 1, so a unit that stops on 78 keeps
+retrying it until the working directory or the paths are fixed.
+
+`keyorix-server admin <command>` exits 1 for a failure unless its entry says otherwise. The
+exceptions: the `session_replication_role` refusal exits 78 there as it does at boot (`admin
+migrate` and the other commands that open the database use the same check), `admin backup`
+exits 4 when a staging file refuses the backup, `admin check-admin-password` exits 2 for a
+rejected password, and `admin verify-audit` has its own documented verdict statuses (3 when
+the verification cannot run).
 
 ---
 
@@ -498,11 +504,12 @@ failed to initialize core service: failed to initialize storage: refusing to sta
 ```
 
 `keyorix-server admin migrate` refuses with the same text (`Error: migration failed: refusing to start: ...`)
-and keeps the `admin` exit code 1.
+and exits 78, like the server.
 
 **Match:** `PostgreSQL session_replication_role is`
 
-**Exit status:** 78 for the server (earlier builds exited 1 and the unit restarted it every 30 s). A
+**Exit status:** 78 for the server and for `admin` commands that open the database (earlier
+builds exited 1, and the unit restarted the server every 30 s). A
 database that is down, or that fails the read of the setting, is not this refusal and keeps its
 status (75 for an unreachable database).
 
