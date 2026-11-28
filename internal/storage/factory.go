@@ -143,8 +143,10 @@ func withMigrationLockPooled(db *gorm.DB, isPostgres, xactLock bool, dbPath stri
 				return fmt.Errorf("acquire migration advisory lock: %w", err)
 			}
 			defer func() {
-				// The lock is session-level: when the unlock fails the connection is
-				// broken and PostgreSQL releases the lock when it closes.
+				// The lock is session-level. The usual reason the unlock fails is
+				// a failed migration statement: the transaction is aborted (25P02)
+				// on a healthy connection, and the lock stays on that pooled
+				// connection until it closes (at process exit for boot and admin).
 				if err := tx.Exec("SELECT pg_advisory_unlock(?)", postgresMigrationLockKey).Error; err != nil {
 					log.Printf("migration advisory lock: pg_advisory_unlock(%d) failed: %v", postgresMigrationLockKey, err)
 				}

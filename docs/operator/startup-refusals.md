@@ -70,9 +70,12 @@ retries it. And the relative key path refusal (`Refusing to start: storage.encry
 ... is relative ...`) is an operator fix that exits 1, so a unit that stops on 78 keeps
 retrying it until the working directory or the paths are fixed.
 
-`keyorix-server admin <command>` exits 1 for a failure, with two kinds of exception: the
-`session_replication_role` refusal exits 78 there as it does at boot (`admin migrate` and the
-other commands that open the database use the same check), and `admin verify-audit` has its own documented verdict statuses.
+`keyorix-server admin <command>` exits 1 for a failure unless its entry says otherwise. The
+exceptions: the `session_replication_role` refusal exits 78 there as it does at boot (`admin
+migrate` and the other commands that open the database use the same check), `admin backup`
+exits 4 when a staging file refuses the backup, `admin check-admin-password` exits 2 for a
+rejected password, and `admin verify-audit` has its own documented verdict statuses (3 when
+the verification cannot run).
 
 ---
 
@@ -501,11 +504,12 @@ failed to initialize core service: failed to initialize storage: refusing to sta
 ```
 
 `keyorix-server admin migrate` refuses with the same text (`Error: migration failed: refusing to start: ...`)
-and keeps the `admin` exit code 1.
+and exits 78, like the server.
 
 **Match:** `PostgreSQL session_replication_role is`
 
-**Exit status:** 78 for the server (earlier builds exited 1 and the unit restarted it every 30 s). A
+**Exit status:** 78 for the server and for `admin` commands that open the database (earlier
+builds exited 1, and the unit restarted the server every 30 s). A
 database that is down, or that fails the read of the setting, is not this refusal and keeps its
 status (75 for an unreachable database).
 
