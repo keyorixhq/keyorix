@@ -16,7 +16,8 @@ package main
 //   - accepted => HTTP 200, the three endpoints are present, the document's issuer
 //     (when it has one) equals the configured issuer, and jwks_uri's host (from
 //     net/url, compared case-insensitively) is the issuer's host: never another
-//     host, including the userinfo trick http://issuer@evil;
+//     host, including the userinfo trick http://issuer@evil; the same holds for
+//     token_endpoint (#4738), which must also be https unless the issuer is http;
 //   - a redirect to another host is never followed: the second server, standing
 //     for any other host, sees zero requests.
 
@@ -48,6 +49,19 @@ func discoveryOracle(issuer string, status int, d *oidcDiscovery) string {
 	iss, _ := url.Parse(issuer)
 	if !strings.EqualFold(jwks.Hostname(), iss.Hostname()) {
 		return "accepted jwks_uri on host " + jwks.Hostname() + ", issuer is " + iss.Hostname()
+	}
+	// #4738: the token_endpoint receives the client credentials. With no
+	// token_endpoint_hosts configured it must be on the issuer's host, and https
+	// unless the issuer itself is http (loopback).
+	tok, err := url.Parse(d.TokenEndpoint)
+	if err != nil {
+		return "accepted an unparseable token_endpoint"
+	}
+	if !strings.EqualFold(tok.Hostname(), iss.Hostname()) {
+		return "accepted token_endpoint on host " + tok.Hostname() + ", issuer is " + iss.Hostname()
+	}
+	if tok.Scheme != "https" && (tok.Scheme != "http" || iss.Scheme != "http") {
+		return "accepted token_endpoint with scheme " + tok.Scheme + " for an " + iss.Scheme + " issuer"
 	}
 	return ""
 }
@@ -85,6 +99,9 @@ func FuzzDiscoverOIDCHostile(f *testing.F) {
 	doc := func(jwks, iss string) []byte {
 		return []byte(`{"issuer":"` + iss + `","authorization_endpoint":"` + issuer + `/a","token_endpoint":"` + issuer + `/t","jwks_uri":"` + jwks + `"}`)
 	}
+	docTok := func(tok string) []byte {
+		return []byte(expand(`{"issuer":"SELF","authorization_endpoint":"SELF/a","token_endpoint":"` + tok + `","jwks_uri":"SELF/jwks"}`))
+	}
 	valid := doc(issuer+"/jwks", issuer)
 	for _, s := range []struct {
 		status uint16
@@ -102,12 +119,21 @@ func FuzzDiscoverOIDCHostile(f *testing.F) {
 		{200, "", doc("SELF/jwks", "https://evil.test")},
 		{200, "", doc("SELF/jwks", "SELF/")},
 		{200, "", doc("%zz", "SELF")},
+		{200, "", docTok("EVIL/t")},
+		{200, "", docTok("http://169.254.169.254/latest/meta-data")},
+		{200, "", docTok("http://HOST@evil.test/t")},
+		{200, "", docTok("http://localhost/t")},
+		{200, "", docTok("ftp://HOST/t")},
+		{200, "", docTok("%zz")},
 		{500, "", valid},
 		{200, "", []byte(`{"authorization_endpoint":1}`)},
 		{200, "", []byte(`null`)},
 		{200, "", nil},
 	} {
-		f.Add(s.status, s.loc, s.body)
+		// The fuzz body serves HTTP 200+st%400, so a seed's status is stored as
+		// its offset from 200. Before #4738 the literal was passed through, and
+		// every "200" seed was served as 400: no seed reached the oracle.
+		f.Add(s.status-200, s.loc, s.body)
 	}
 
 	f.Fuzz(func(t *testing.T, st uint16, loc string, doc []byte) {
@@ -149,6 +175,9 @@ func TestDiscoveryOracle_RedProof(t *testing.T) {
 		"jwks other host":     {200, func(d oidcDiscovery) oidcDiscovery { d.JWKSURI = "http://evil.test/jwks"; return d }},
 		"jwks userinfo trick": {200, func(d oidcDiscovery) oidcDiscovery { d.JWKSURI = "http://127.0.0.1:9@evil.test/jwks"; return d }},
 		"jwks lookalike":      {200, func(d oidcDiscovery) oidcDiscovery { d.JWKSURI = "http://127.0.0.1.evil.test/jwks"; return d }},
+		"token other host":    {200, func(d oidcDiscovery) oidcDiscovery { d.TokenEndpoint = "http://169.254.169.254/t"; return d }},
+		"token userinfo":      {200, func(d oidcDiscovery) oidcDiscovery { d.TokenEndpoint = "http://127.0.0.1:9@evil.test/t"; return d }},
+		"token scheme":        {200, func(d oidcDiscovery) oidcDiscovery { d.TokenEndpoint = "ftp://127.0.0.1:9/t"; return d }},
 	} {
 		d := c.mut(*good)
 		if discoveryOracle(iss, c.status, &d) == "" {

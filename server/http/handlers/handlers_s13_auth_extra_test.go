@@ -307,6 +307,7 @@ func TestListSSOProviders_WithProvider_S13(t *testing.T) {
 		providerName: {
 			Name:        providerName,
 			CompleteURL: "https://app.example.com/sso/complete",
+			HTTPClient:  &http.Client{},
 			OAuth: &oauth2.Config{
 				ClientID:     "cid",
 				ClientSecret: "csec",
@@ -337,6 +338,7 @@ func newRegisteredSSOProvider(name string) *core.SSOProvider {
 		Name:        name,
 		Type:        "oidc",
 		CompleteURL: "https://app.example.com/sso/complete",
+		HTTPClient:  &http.Client{},
 		OAuth: &oauth2.Config{
 			ClientID:     "clientid",
 			ClientSecret: "clientsecret",

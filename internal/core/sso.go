@@ -104,6 +104,12 @@ type SSOProvider struct {
 	CompleteURL string         // <redirect origin>/auth/sso/complete — where the browser lands
 	SAML        SAMLAuthn      // SAML: the Service Provider (nil for OIDC providers)
 
+	// HTTPClient carries the OIDC code exchange. buildSSOProviders (server/wire_sso.go)
+	// sets the guarded IdP client it also uses for discovery. Required for OIDC: with
+	// none, CompleteSSO refuses rather than let x/oauth2 fall back to
+	// http.DefaultClient (#4738).
+	HTTPClient *http.Client
+
 	AutoProvision bool   // JIT-create an account on first login for an unknown identity
 	DefaultRole   string // baseline role for JIT-provisioned users ("" → system_viewer)
 
@@ -127,6 +133,10 @@ type SSOProvider struct {
 	// map are never touched (so manual grants are safe).
 	GroupRoleMap map[string]string
 }
+
+// errSSONoExchangeClient refuses an OIDC code exchange for a provider built
+// without its guarded HTTP client (#4738). A fixed text: the handler masks it.
+var errSSONoExchangeClient = errors.New("SSO provider has no token-exchange client")
 
 // SetSSOProviders wires the configured providers (built from config + discovery at
 // startup) and the JWKS resolver used to verify id_tokens. nil/empty disables SSO.
@@ -252,7 +262,13 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if st.CodeVerifier != "" {
 		exchangeOpts = append(exchangeOpts, oauth2.VerifierOption(st.CodeVerifier))
 	}
-	tok, err := p.OAuth.Exchange(ctx, code, exchangeOpts...)
+	// #4738: the exchange sends the client credentials and the code to the
+	// discovered token_endpoint, so it must run on the provider's guarded client.
+	// x/oauth2 reads it from the context and otherwise uses http.DefaultClient.
+	if p.HTTPClient == nil {
+		return nil, nil, "", errSSONoExchangeClient
+	}
+	tok, err := p.OAuth.Exchange(context.WithValue(ctx, oauth2.HTTPClient, p.HTTPClient), code, exchangeOpts...)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("authorization-code exchange failed: %w", err)
 	}

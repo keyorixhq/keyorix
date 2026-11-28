@@ -92,9 +92,26 @@ func Execute(args []string) int {
 		if ece, ok := errors.AsType[*exitCodeError](err); ok {
 			return ece.code
 		}
-		return 1
+		return adminExitCode(err)
 	}
 	return 0
+}
+
+// ExitOperatorFix is the sysexits EX_CONFIG status the server exits with for a
+// refusal that only an operator can fix (server/boot_exit.go's exitOperatorFix;
+// TestAdminExitOperatorFixMatchesServer keeps the two numbers equal).
+const ExitOperatorFix = 78
+
+// adminExitCode is the exit status for a failed admin command that carries no
+// exitCodeError. A PostgreSQL session_replication_role other than origin is
+// refused by the same storage open the server runs at boot and exits 78 there
+// too: waiting cannot help, only removing the setting does. Everything else
+// stays 1.
+func adminExitCode(err error) int {
+	if _, ok := errors.AsType[*storage.NonOriginReplicationRoleError](err); ok {
+		return ExitOperatorFix
+	}
+	return 1
 }
 
 // loadConfig resolves and loads the config file the same way every other

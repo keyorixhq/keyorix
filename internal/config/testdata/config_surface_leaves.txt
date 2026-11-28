@@ -295,6 +295,7 @@ sso.providers.saml.insecure_allow_idp_initiated_saml
 sso.providers.saml.name_attribute
 sso.providers.saml.sp_entity_id
 sso.providers.scopes
+sso.providers.token_endpoint_hosts
 sso.providers.type
 storage.database.audit_durability
 storage.database.audit_flusher_linger_window

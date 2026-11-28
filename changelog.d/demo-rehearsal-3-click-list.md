@@ -1,0 +1,2 @@
+### Documentation
+- **Demo guide: what the walk will trip over.** `docs/demo.md` now says that the demo's 15-second detector cadence writes an audit heartbeat row every pass (the Audit page shows them, #4807), that the volume rules count every access-log row of a secret, not only reads, with the seed's starting count and the per-visit cost (#4808), and how the Compliance audit-chain tile reconciles with `keyorix audit verify`. `scripts/demo/native-up.sh --help` names the real default port (18490).

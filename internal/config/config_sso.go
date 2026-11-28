@@ -28,6 +28,12 @@ type SSOProviderConfig struct {
 	ClientSecret string   `yaml:"client_secret"` // prefer KEYORIX_SSO_<NAME>_CLIENT_SECRET
 	RedirectURL  string   `yaml:"redirect_url"`  // must equal <public-host>/auth/sso/<name>/callback
 	Scopes       []string `yaml:"scopes"`        // default [openid, profile, email]
+	// TokenEndpointHosts lists extra hosts the discovery document's token_endpoint
+	// may live on, besides the issuer's own host (e.g. an IdP whose token endpoint
+	// is on a separate domain). The endpoint must still be https. Empty (default):
+	// only the issuer's host is accepted, and a provider whose token_endpoint is
+	// elsewhere is skipped at start-up (#4738).
+	TokenEndpointHosts []string `yaml:"token_endpoint_hosts"`
 
 	// AutoProvision JIT-creates a Keyorix account on a first SSO login whose verified
 	// identity matches no existing user — so an IdP that isn't wired for SCIM push can
