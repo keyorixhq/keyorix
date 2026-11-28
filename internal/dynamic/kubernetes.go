@@ -90,7 +90,8 @@ const maxK8sAPIResponseBytes = 5 << 20 // 5MB
 // API server silently bumps anything lower, so we floor it for an honest lease TTL.
 const k8sMinExpirationSeconds = 600
 
-const (
+// Variables, not constants, so a test can point the in-cluster path at temp files.
+var (
 	k8sSATokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" // #nosec G101 -- well-known path, not a credential
 	k8sSACAPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 )
@@ -335,10 +336,12 @@ func newRealK8sMinterWith(cfg k8sConfig, allowPrivateNetwork bool) (*realK8sMint
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
 	}
-	// An explicit api_server is supplied by a project admin and is validated once
-	// at register time; re-validate the resolved address at every dial, as the
-	// other dynamic engines do, so DNS rebinding cannot reach a private or
-	// link-local address the operator disallowed. In-cluster mode targets the
+	// An explicit api_server is supplied by a project admin. The host check core
+	// re-runs on every issue and revoke resolves the name separately from this
+	// transport's own lookup, so a rebound name could differ in between;
+	// re-validate the resolved address at every dial, as the other dynamic
+	// engines do, so DNS rebinding cannot reach a private or link-local address
+	// the operator disallowed. In-cluster mode targets the
 	// pod network from the pod's own environment and is not admin-controlled.
 	if strings.TrimSpace(cfg.APIServer) != "" && !allowPrivateNetwork {
 		tr.DialContext = netutil.Dialer{Disallow: netutil.IsPrivateOrLinkLocal, Resolve: dialResolve}.DialContext

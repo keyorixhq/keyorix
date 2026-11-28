@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -60,7 +61,7 @@ func k8sAdminDSN(t *testing.T, apiServer, caPEM string) string {
 }
 
 // TestKubernetesEngine_DialGuard pins the dial-time egress guard on the Kubernetes
-// engine's explicit api_server (KFZ-2026-187): with allow_private_network_targets
+// engine's explicit api_server (fuzz-corpus KFZ-2026-187, egress inventory finding F1): with allow_private_network_targets
 // off, a private, loopback or link-local destination is refused at dial time, and
 // a hostname that resolves public at registration but private at dial (DNS
 // rebinding) is refused too. The assertions are on the effect, the accept count
@@ -83,9 +84,10 @@ func TestKubernetesEngine_DialGuard(t *testing.T) {
 		orig := dialResolve
 		t.Cleanup(func() { dialResolve = orig })
 		var resolved atomic.Int64
+		var resolvedHost atomic.Value // written on net/http's dial goroutine, asserted below on the test goroutine
 		dialResolve = func(_ context.Context, host string) ([]net.IPAddr, error) {
 			resolved.Add(1)
-			require.Equal(t, "k8s.rebind.test", host)
+			resolvedHost.Store(host)
 			return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil // public at registration, private now
 		}
 		eng, err := New("kubernetes", false, false)
@@ -95,7 +97,32 @@ func TestKubernetesEngine_DialGuard(t *testing.T) {
 		// Without this the subtest would pass vacuously: an unguarded client cannot
 		// resolve the made-up name at all, so zero accepts alone proves nothing.
 		require.Positive(t, resolved.Load(), "the dial path never consulted the guard's resolver")
+		require.Equal(t, "k8s.rebind.test", resolvedHost.Load())
 		require.Zero(t, accepts.n.Load(), "a rebound hostname reached a private destination")
+	})
+
+	t.Run("in-cluster mode is exempt: the pod's own API address is dialled with the guard on", func(t *testing.T) {
+		srv, accepts, ca := newCountingTLSServer(t)
+		host, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "https://"))
+		require.NoError(t, err)
+		dir := t.TempDir()
+		tokenPath, caPath := dir+"/token", dir+"/ca.crt"
+		require.NoError(t, os.WriteFile(tokenPath, []byte("sa-token"), 0o600))
+		require.NoError(t, os.WriteFile(caPath, []byte(ca), 0o600))
+		origTok, origCA := k8sSATokenPath, k8sSACAPath
+		t.Cleanup(func() { k8sSATokenPath, k8sSACAPath = origTok, origCA })
+		k8sSATokenPath, k8sSACAPath = tokenPath, caPath
+		t.Setenv("KUBERNETES_SERVICE_HOST", host)
+		t.Setenv("KUBERNETES_SERVICE_PORT", port)
+		eng, err := New("kubernetes", false, false)
+		require.NoError(t, err)
+		// No api_server: the engine targets the in-cluster address from the pod's own
+		// environment. Real clusters use a private ClusterIP, so guarding this branch
+		// would break every in-cluster deployment that keeps the default policy.
+		_, _, err = eng.Issue(t.Context(), k8sAdminDSN(t, "", ""), "", time.Hour)
+		require.Error(t, err, "the stub API server answers 500, so Issue fails after the dial")
+		require.NotContains(t, err.Error(), "refusing to dial")
+		require.Positive(t, accepts.n.Load(), "in-cluster mode must stay unguarded")
 	})
 
 	t.Run("positive control: the same destination is dialled when private targets are allowed", func(t *testing.T) {
