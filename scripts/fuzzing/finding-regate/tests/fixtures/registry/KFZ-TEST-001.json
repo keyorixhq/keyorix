@@ -1,0 +1,24 @@
+{
+  "id": "KFZ-TEST-001",
+  "title": "FuzzFoo: out-of-bounds read on empty input",
+  "module": "keyorix",
+  "scope": "first-party",
+  "class": "panic-index-out-of-range",
+  "severity": "medium",
+  "disposition": "active",
+  "source": "fuzz",
+  "dates": {
+    "found": "2026-01-01",
+    "reproduced": "2026-01-01",
+    "fixed": "2026-01-02"
+  },
+  "repro": {
+    "private_path": "crashers/keyorix/github.com_keyorixhq_keyorix_internal_foo/FuzzFoo/aabbccddeeff0011"
+  },
+  "crashers": [
+    "crashers/keyorix/github.com_keyorixhq_keyorix_internal_foo/FuzzFoo/aabbccddeeff0011"
+  ],
+  "security": false,
+  "security_note": "Panic in internal parsing helper, not reachable from any network-facing handler.",
+  "notes": "Fixed by adding a len check. Seed committed as testdata/fuzz/FuzzFoo/aabbccddeeff0011."
+}
