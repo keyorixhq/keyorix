@@ -472,8 +472,12 @@ func (h *Harness) handle(w http.ResponseWriter, r *http.Request) {
 		// connector with no hop limit ends in a visible request-count violation
 		// (O8) instead of an endless run that also trips O4 as a side effect.
 		h.mu.Lock()
-		h.hops[rt.Name]++
-		over := h.hops[rt.Name] > 12
+		// Keyed by route AND request URI: following the loop re-requests one URL, whereas
+		// a connector with many independent calls on one route (healthscan's /v1/sys/...
+		// probes) never repeats one.
+		hopKey := rt.Name + " " + r.URL.RequestURI()
+		h.hops[hopKey]++
+		over := h.hops[hopKey] > 12
 		h.mu.Unlock()
 		if over {
 			followed = true

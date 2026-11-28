@@ -191,6 +191,51 @@ func p4Follows(ctx context.Context, base string) (string, error) {
 	return v, nil
 }
 
+// p10LoopsSelf is the planted defect for the self-loop-307 hop bound: it follows a
+// redirect to the same URL by hand with no hop limit.
+func p10LoopsSelf(ctx context.Context, base string) (string, error) {
+	cl := &http.Client{CheckRedirect: refuse}
+	u := base + "/secret"
+	for range 30 {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return "", err
+		}
+		resp, err := cl.Do(req)
+		if err != nil {
+			return "", err
+		}
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusTemporaryRedirect {
+			u = resp.Header.Get("Location") // BUG: follows, unbounded
+			continue
+		}
+		v, _, ok := strict(b)
+		if !ok || v == "" {
+			return "", fmt.Errorf("no value")
+		}
+		return v, nil
+	}
+	return "", fmt.Errorf("too many redirects")
+}
+
+// manyDistinctRequests is the negative control for the same bound: a connector that
+// refuses redirects and legitimately issues many independent calls (different URLs)
+// on one route, as healthscan does with its /v1/sys/... probes.
+func manyDistinctRequests(ctx context.Context, base string) (string, error) {
+	cl := &http.Client{Timeout: 5 * time.Second, CheckRedirect: refuse}
+	for i := range 25 {
+		resp, err := cl.Get(base + "/secret?probe=" + fmt.Sprint(i))
+		if err != nil {
+			return "", err
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+	}
+	return "", fmt.Errorf("probed")
+}
+
 func p5EchoSecret(ctx context.Context, base string) (string, error) {
 	cl := &http.Client{CheckRedirect: refuse}
 	b, code, err := fetch(ctx, cl, base+"/secret", 1<<20)
@@ -259,6 +304,7 @@ var plantedDefects = []planted{
 	{"P2 panic on hostile JSON", "O1", p2Panic, Program{Ops: []Op{{0, 1, 0}}}, Config{}},
 	{"P3 unbounded pagination", "O8", p3Unbounded, Program{Occ: 1, Ops: []Op{{6, 2, 14}}}, Config{}},
 	{"P4 follows redirect", "O9", p4Follows, Program{Redir: 1}, Config{}},
+	{"P10 follows self-loop redirect without a hop limit", "O9", p10LoopsSelf, Program{Occ: 1, Redir: 2}, Config{}},
 	{"P5 error echoes canary", "O7", p5EchoSecret, Program{Ops: []Op{{12, 1, 0}}}, Config{}},
 	{"P6 partial body accepted", "O5", p6PartialOK, Program{Frame: 1}, Config{}},
 	{"P7 ignores context", "O2", p7NoCtx, Program{Fault: 4}, Config{}},
@@ -294,6 +340,18 @@ func TestControlSilentOnDirectedPrograms(t *testing.T) {
 	}
 	if v := run(t, control, Program{}, Config{}); len(v) != 0 {
 		t.Errorf("control not silent on pristine program: %v", v)
+	}
+}
+
+// TestSelfLoopHopBoundCountsRepeatsOfOneURL: the harness bounds a self-loop-307 after 12
+// hops and then flags "followed". The hops must be repeats of one URL, not every request to
+// the route: a connector that makes 25 independent calls on one route never followed
+// anything (found on the healthscan target, 2026-11-28).
+func TestSelfLoopHopBoundCountsRepeatsOfOneURL(t *testing.T) {
+	for _, v := range run(t, manyDistinctRequests, Program{Occ: 1, Redir: 2}, Config{}) {
+		if strings.HasPrefix(v, "O9") {
+			t.Fatalf("independent requests were counted as redirect hops: %v", v)
+		}
 	}
 }
 
