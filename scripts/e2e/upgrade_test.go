@@ -26,12 +26,70 @@ import (
 	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
 
-// upgradeFromReleaseTag is the release this test upgrades FROM. Deliberately
-// the immediately-prior release (not an arbitrarily old one): the point is
-// to catch "the last release's schema, migrated by HEAD," which is what a
-// real operator upgrading one version at a time actually does. Override via
-// KEYORIX_E2E_UPGRADE_FROM_TAG for a manual run against a different release.
-const defaultUpgradeFromReleaseTag = "v0.95.1"
+// defaultUpgradeFromReleaseTag is the release this test upgrades FROM:
+// the last patch of the PREVIOUS minor, the one hop docs/UPGRADING.md §1a
+// supports (a skipped minor is not supported before 1.0). The point is to
+// catch "the last release's schema, migrated by HEAD," which is what a real
+// operator upgrading one version at a time actually does. Move it forward
+// when a new minor ships. Override via KEYORIX_E2E_UPGRADE_FROM_TAG for a
+// manual run against a different release.
+const defaultUpgradeFromReleaseTag = "v0.96.3"
+
+// oldBinaryInitArgs returns the `admin init` arguments for the downloaded
+// OLD binary. This harness drives plain HTTP, and a binary that has --dev
+// (SECURE-DEFAULT-1) writes the TLS baseline without it, so pass --dev when
+// `admin init --help` lists the flag (the same probe scripts/release-qa/
+// scenario1.sh uses). A release that predates the flag already writes the
+// relaxed config.
+func oldBinaryInitArgs(t *testing.T, binary, dir string, env []string, configPath string) []string {
+	t.Helper()
+	help, err := harness.RunAdminCmd(binary, dir, env, "init", "--help")
+	if err != nil {
+		t.Fatalf("%s admin init --help: %v\n%s", filepath.Base(binary), err, help)
+	}
+	return initArgsForHelp(help, configPath)
+}
+
+// optOutRequireMFA rewrites the generated config's `require_mfa: true` to
+// false and reports whether the line existed (a release that predates the
+// key does not write it).
+func optOutRequireMFA(t *testing.T, dir string) bool {
+	t.Helper()
+	path := filepath.Join(dir, "keyorix.yaml")
+	raw, err := os.ReadFile(path) // #nosec G304 -- fixed test-tmpdir path
+	if err != nil {
+		t.Fatalf("read config before require_mfa opt-out: %v", err)
+	}
+	rewritten, ok := disableRequireMFA(string(raw))
+	if !ok {
+		t.Logf("old config has no require_mfa line; leaving it as generated")
+		return false
+	}
+	if err := os.WriteFile(path, []byte(rewritten), 0o600); err != nil { // #nosec G703 -- dir is always t.TempDir()
+		t.Fatalf("write config with require_mfa: false: %v", err)
+	}
+	t.Logf("old config set require_mfa: true; opted this harness out (explicit false) so the old server's admin can create data without TOTP")
+	return true
+}
+
+// disableRequireMFA flips an explicit `require_mfa: true` line to false.
+func disableRequireMFA(cfg string) (string, bool) {
+	const on, off = "\n  require_mfa: true\n", "\n  require_mfa: false\n"
+	if !strings.Contains(cfg, on) {
+		return cfg, false
+	}
+	return strings.Replace(cfg, on, off, 1), true
+}
+
+// initArgsForHelp builds the `admin init` arguments from that binary's own
+// `admin init --help` text.
+func initArgsForHelp(help, configPath string) []string {
+	args := []string{"init"}
+	if strings.Contains(help, "--dev") {
+		args = append(args, "--dev")
+	}
+	return append(args, "--config", configPath)
+}
 
 // downloadReleaseBinary fetches the keyorix-server release binary for tag
 // from GitHub's public release-asset URL (no auth needed for a public repo)
@@ -114,9 +172,15 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 	}
 
 	t.Logf("provisioning with OLD binary (%s, %s)", fromTag, oldBinary)
-	runAdmin(oldBinary, "init", "--config", configPath)
+	runAdmin(oldBinary, oldBinaryInitArgs(t, oldBinary, dir, env, configPath)...)
 	runAdmin(oldBinary, "encryption", "init", "--config", configPath)
 	runAdmin(oldBinary, "migrate", "--config", configPath)
+
+	// A release whose template writes require_mfa: true (v0.96.x) would confine
+	// this harness's admin to MFA enrolment on the OLD server; opt out visibly,
+	// as the fresh-install legs do (harness.Backend.NoMFAReason). An older
+	// release (no such line) keeps its config as is.
+	mfaOptedOut := optOutRequireMFA(t, dir)
 
 	port := harness.FreeTCPPort(t)
 	harness.RewritePort(t, dir, port)
@@ -167,14 +231,22 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 	t.Cleanup(newSrv.Close)
 	harness.WaitHealthy(t, newSrv)
 
-	// ADR-112: the old release's config never set security.require_mfa, and its
-	// database already has users, so HEAD must boot it in the require_mfa grace
+	// ADR-112: if the old release's config never set security.require_mfa and
+	// its database already has users, HEAD must boot it in the require_mfa grace
 	// period (warning, not enforced) rather than confine the existing admin to MFA
-	// enrolment -- the sweep below logs in as that admin without MFA.
-	if logBytes, err := os.ReadFile(newSrv.LogPath); err != nil {
+	// enrolment -- the sweep below logs in as that admin without MFA. When the
+	// old config set it (v0.96.x writes it; the harness turned it off), the
+	// explicit value is honoured and there is no grace period to warn about.
+	logBytes, err := os.ReadFile(newSrv.LogPath)
+	if err != nil {
 		t.Fatalf("read upgraded server log: %v", err)
-	} else if !strings.Contains(string(logBytes), "ADR-112 grace period: security.require_mfa") {
+	}
+	hasGrace := strings.Contains(string(logBytes), "ADR-112 grace period: security.require_mfa")
+	if !mfaOptedOut && !hasGrace {
 		t.Fatalf("expected the ADR-112 require_mfa grace-period warning after upgrade; server log:\n%s", logBytes)
+	}
+	if mfaOptedOut && hasGrace {
+		t.Fatalf("require_mfa was set explicitly in the old config but HEAD logged the grace-period warning; server log:\n%s", logBytes)
 	}
 
 	// The full happy-path sweep, logged in as the admin the OLD binary
