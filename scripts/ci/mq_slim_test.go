@@ -75,7 +75,7 @@ func execSelect(env []string, files []string) (map[string]string, string, error)
 	if err != nil {
 		return nil, "", err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	out := filepath.Join(dir, "github_output")
 	args := append([]string{"scripts/ci/select-affected.py", "--github-output", out, "--changed"}, files...)
 	cmd := exec.Command("python3", args...)
