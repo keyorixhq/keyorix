@@ -6,9 +6,9 @@ import (
 	"net/http"
 )
 
-// V5EXT7 ops: secret.schedule.set, secret.schedule.delete, secret.classify.
+// V5EXT7 ops: secret.schedule.set, secret.schedule.delete.
 //
-// All three are REST-only (no gRPC surface) and have core_refusal="none" in
+// Both are REST-only (no gRPC surface) and have core_refusal="none" in
 // matrix.json, so coreEnforced=false: the route gate is the only authorization
 // layer the oracle compares. The core leg is recorded n/a (errNotAuthzLayer); it
 // is additionally marked coreGateExcluded to document that even if a core gate
@@ -30,29 +30,19 @@ import (
 // DELETE /api/v1/secrets/{id}/schedule: same structure as schedule.set.
 // coreGateExcluded=true. HARDENING-2: same finding.
 //
-// # secret.classify (ClassifySecret)
-//
-// PATCH /api/v1/secrets/{id}/classification:
-//
-//	Route:  RequireScopedSecretPermission(permSecretsWrite, "id", SecretActionClassify)
-//	Core:   ClassifySecret takes actorID but does NOT call requireActorActive or
-//	        Authorize — it validates inputs and writes the field. coreGateExcluded=true.
-//	Model:  atP("secrets.write")
-//	HARDENING-1 (carried from V5EXT7, documented in the report, NOT fixed here):
-//	requireActorActive is missing in ClassifySecret.
+// secret.classify (ClassifySecret) is NOT bound here: ops_v5b1_test.go already binds
+// it (V5 B1 rule 7, with the secretArgs fixtures and a real core leg). A second
+// binding made the sweep run the op twice (subtest "secret.classify#01"), which
+// authzgate's check-log rejects. Only its router-gate anchor test lives in
+// sweep_v5ext7_test.go.
 //
 // What these oracles do NOT verify:
 //   - schedule.set/delete: whether a schedule actually takes effect on reads (the
 //     temporal access window is not modelled); LogSecretScheduleSet/
 //     LogSecretScheduleDeleted audit events; a suspended-actor refusal (HARDENING-2:
 //     there is no actorID to check).
-//   - secret.classify: the restricted-classification downgrade gate
-//     (checkRestrictedSecretReadApproval) — the fixture plainID is not classified
-//     "restricted", so that code path is never exercised; a suspended-actor refusal
-//     (HARDENING-1: ClassifySecret does not call requireActorActive); machine-actor
-//     behaviour (SecretActionClassify is not on the share-elevates allowlist).
 func v5ext7Ops() []opSpec {
-	return append(scheduleOps(), classifyOps()...)
+	return scheduleOps()
 }
 
 // ---- schedule ops ----
@@ -93,31 +83,10 @@ func scheduleOps() []opSpec {
 	}
 }
 
-// ---- classify op ----
-
-func classifyOps() []opSpec {
-	return []opSpec{
-		{
-			name: "secret.classify", row: "ClassifySecret", targets: projTargets,
-			req: atP("secrets.write"),
-			// coreGateExcluded: ClassifySecret does not call Authorize or
-			// requireActorActive. The route gate (RequireScopedSecretPermission with
-			// SecretActionClassify) is the only authorization layer. See HARDENING-1.
-			coreGateExcluded: true,
-			core: func(_ context.Context, _ *leg, _ *principal, _ tgt, _ byte) error {
-				return errNotAuthzLayer
-			},
-			rest: func(fx *fixtures, t tgt, _ byte) restReq {
-				return restReq{http.MethodPatch, fmt.Sprintf("/api/v1/secrets/%d/classification", sxOf(fx, t).plainID), map[string]any{"level": "public"}}
-			},
-		},
-	}
-}
-
 // isV5ext7Op reports whether name is covered by TestV5ext7StrictSweep.
 func isV5ext7Op(name string) bool {
 	switch name {
-	case "secret.schedule.set", "secret.schedule.delete", "secret.classify":
+	case "secret.schedule.set", "secret.schedule.delete":
 		return true
 	}
 	return false

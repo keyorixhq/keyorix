@@ -112,7 +112,7 @@ In scope = mutating or secret-value read (`matrix.json`). Covered = derived: RES
 - [x] `REST GET /api/v1/secrets/{id}` — secret.value.byid, secret.read.env
 - [x] `REST GET /api/v1/secrets/{id}/certificate` — secret.certificate
 - [x] `REST PATCH /api/v1/secrets/{id}/auto-rotate` — secret.autorotate
-- [x] `REST PATCH /api/v1/secrets/{id}/classification` — secret.classify, secret.classify
+- [x] `REST PATCH /api/v1/secrets/{id}/classification` — secret.classify
 - [x] `REST PATCH /api/v1/secrets/{id}/description` — secret.description
 - [x] `REST PATCH /api/v1/secrets/{id}/retention` — secret.retention
 - [x] `REST POST /api/v1/projects/{id}/secrets/bulk-delete` — bulk.delete

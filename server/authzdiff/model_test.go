@@ -291,11 +291,12 @@ func (m model) allowed(p *principal, req requirement) bool {
 		// Only a user with an Activated=false row in mfa_secrets satisfies this.
 		return false
 	}
-	if req.noMFARequired && m.mfaEnabled(p) {
+	if req.noMFARequired && (m.mfaEnabled(p) || p.machineID != 0) {
 		// BeginMFAEnrollment: "MFA already enabled — disable first".
 		// A user with mfa_enabled=true cannot re-enroll without disabling first.
-		// Machines and actor-0 never have MFA enabled, so they pass this check and
-		// are denied (if at all) for another reason.
+		// A machine token has no user account behind it, so core answers 400
+		// "user not found" (the same refusal the other MFA ops give a machine):
+		// an account-state precondition, not an RBAC gate.
 		return false
 	}
 	if req.impersonatingSession && !m.isImpersonatingSession(p) {
@@ -403,9 +404,8 @@ type requirement struct {
 	pendingMFARequired bool
 	// noMFARequired: the op fails if the calling user ALREADY has MFA enrolled and
 	// enabled (BeginMFAEnrollment: "MFA already enabled — disable first"). The check
-	// is on users.mfa_enabled in the grant DB. Machines and actor-0 never have MFA
-	// enabled, so they satisfy this check (and are denied, if at all, for another
-	// reason). Like mfaRequired/pendingMFARequired, this is an account-state
+	// is on users.mfa_enabled in the grant DB. A machine has no user account, so
+	// it fails this check too (400 "user not found"). Like mfaRequired/pendingMFARequired, this is an account-state
 	// precondition, not an RBAC gate: an op carrying it sets accountState so a
 	// caller refused ONLY by it maps to PreconditionFailed, not Denied.
 	noMFARequired bool

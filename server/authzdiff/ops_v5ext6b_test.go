@@ -21,8 +21,9 @@ import (
 //	           client-safe message), which maps to PreconditionFailed.
 //	Model:    noMFARequired:true, accountState:true — only pkMFAUser has mfa_enabled=true
 //	           in the fixture, so only it is refused (PreconditionFailed); every other
-//	           authenticated principal without MFA is Allowed (a pending enrolment does
-//	           NOT disqualify, so pkMFAEnrollee is Allowed too). A restricted PAT is
+//	           authenticated user without MFA is Allowed (a pending enrolment does
+//	           NOT disqualify, so pkMFAEnrollee is Allowed too). A machine token has no
+//	           user account: 400 "user not found" → PreconditionFailed. A restricted PAT is
 //	           Denied (POST /auth/mfa/enroll is in core's restricted-PAT write-refusal
 //	           table), a suspended actor is Denied.
 //	core_refusal: "none" (matrix.json) → coreEnforced=false; coreGateExcluded=true →
@@ -44,7 +45,7 @@ func mfaEnrollOps() []opSpec {
 		{
 			name:             "mfa.enroll",
 			row:              "BeginMFAEnrollment",
-			preconditionMsgs: []string{"MFA is already enabled"},
+			preconditionMsgs: []string{"MFA is already enabled", "user not found"},
 			targets:          []tgt{tA}, // self-service, no project target
 			// controlAs: pkGlobalAdmin has no MFA enabled → BeginMFAEnrollment succeeds.
 			controlAs: []principalKind{pkGlobalAdmin},

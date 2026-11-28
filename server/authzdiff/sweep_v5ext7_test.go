@@ -7,7 +7,7 @@ import (
 )
 
 // TestV5ext7StrictSweep is a deterministic, env-free strict check over the
-// V5EXT7 schedule/classify bindings (ops_v5ext7_test.go):
+// V5EXT7 schedule bindings (ops_v5ext7_test.go):
 //
 //	secret.schedule.set: secrets.manage. Core: coreGateExcluded (SetSecretSchedule has
 //	  no actorID — cannot check actor state; see HARDENING-2). REST only.
@@ -15,17 +15,11 @@ import (
 //
 //	secret.schedule.delete: same as schedule.set.
 //
-//	secret.classify: secrets.write. Core: coreGateExcluded (ClassifySecret does not call
-//	  requireActorActive; see HARDENING-1). REST only.
-//	  Curated: write → allowed; read-only → denied.
-//
 // What this oracle does NOT verify:
 //   - secret.schedule.*: temporal effect (whether the schedule actually restricts
 //     access); LogSecretScheduleSet / LogSecretScheduleDeleted audit events.
-//   - secret.classify: the restricted-classification downgrade gate
-//     (checkRestrictedSecretReadApproval) — fixture plainID is not classified "restricted".
-//   - a suspended-actor refusal on any of these ops (HARDENING-1/-2: no core gate exists).
-//   - WebAuthn or MFA-step-up gate on any of these ops.
+//   - a suspended-actor refusal on either op (HARDENING-2: no core gate exists).
+//   - WebAuthn or MFA-step-up gate on either op.
 //
 // Strict rule: zero uncalibrated cases and zero "unexplained" cases.
 func TestV5ext7StrictSweep(t *testing.T) {
@@ -69,18 +63,14 @@ func TestV5ext7StrictSweep(t *testing.T) {
 	if tally.disBuckets["unexplained"] > 0 || tally.gapBuckets["unexplained"] > 0 {
 		t.Errorf("unexplained V5EXT7 cases present: a disagreement or mapping gap no known waiver absorbs")
 	}
-	if tally.n < 3 {
+	if tally.n < 2 {
 		t.Errorf("only %d cases ran — too few (bug in op list or target selection)", tally.n)
 	}
 }
 
-// curatedV5ext7Variations returns gate-boundary cases for the V5EXT7 schedule/classify ops.
-//
-//   - secret.schedule.set / secret.schedule.delete: route gate secrets.manage.
-//     A user holding secrets.manage → allowed; a user holding secrets.write but not
-//     secrets.manage → denied.
-//   - secret.classify: route gate secrets.write (+ SecretActionClassify). A user
-//     holding secrets.write → allowed; a read-only user → denied.
+// curatedV5ext7Variations returns gate-boundary cases for the V5EXT7 schedule ops:
+// route gate secrets.manage. A user holding secrets.manage → allowed; a user holding
+// secrets.write but not secrets.manage → denied.
 func curatedV5ext7Variations(spec opSpec, t tgt) []struct {
 	pk principalKind
 	v  variation
@@ -100,13 +90,6 @@ func curatedV5ext7Variations(spec opSpec, t tgt) []struct {
 		return []pv{
 			{pkCustom, variation{Mask: manage, Route: "user", Scope: here}},    // manage → allowed
 			{pkCustom, variation{Mask: writeOnly, Route: "user", Scope: here}}, // write-only (no manage) → denied
-		}
-	case "secret.classify":
-		write := maskOf([]string{"secrets.write"})
-		readOnly := maskOf([]string{"secrets.read"})
-		return []pv{
-			{pkCustom, variation{Mask: write, Route: "user", Scope: here}},    // write → allowed
-			{pkCustom, variation{Mask: readOnly, Route: "user", Scope: here}}, // read-only → denied
 		}
 	}
 	return nil
