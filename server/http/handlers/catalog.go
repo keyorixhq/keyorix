@@ -564,6 +564,9 @@ func (h *CatalogHandler) CloneEnvironment(w http.ResponseWriter, r *http.Request
 
 	result, err := h.coreService.CloneEnvironment(r.Context(), uint(projectID), uint(srcEnvID), reqBody.DestinationEnvironmentID, userCtx.Username, userCtx.UserID)
 	if err != nil {
+		if sendAuditUnavailable(w, err) { // #4718: the clone's started row was refused; nothing was cloned
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		if strings.Contains(msg, "must ") || strings.Contains(msg, "required") ||

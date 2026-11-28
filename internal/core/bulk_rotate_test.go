@@ -499,7 +499,8 @@ func TestBulkRotateSecrets_RotateOnDemandError(t *testing.T) {
 		},
 	}, nil)
 	// RotateSecretOnDemand calls GetSecret first — return an error to make it fail.
-	ms.On("GetSecret", ctx, secretID).Return(nil, errors.New("secret locked"))
+	// Its ctx carries the rotation's audit attribution (#4719), so it is not ctx.
+	ms.On("GetSecret", mock.Anything, secretID).Return(nil, errors.New("secret locked"))
 
 	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: projectID,
@@ -587,7 +588,7 @@ func TestBulkRotateSecrets_ProjectWideRotateOnDemandError(t *testing.T) {
 		},
 	}, int64(1), nil)
 	// RotateSecretOnDemand → GetSecret returns error.
-	ms.On("GetSecret", ctx, secretID).Return(nil, errors.New("disk full"))
+	ms.On("GetSecret", mock.Anything, secretID).Return(nil, errors.New("disk full")) // ctx carries the rotation's audit attribution
 
 	result, err := c.BulkRotateSecrets(ctx, 0, BulkRotateRequest{
 		ProjectID: projectID,

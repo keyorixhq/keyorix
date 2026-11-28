@@ -43,6 +43,9 @@ func (h *SecretHandler) SetRetentionOverride(w http.ResponseWriter, r *http.Requ
 	if err := h.coreService.SetSecretRetentionOverride(
 		r.Context(), userCtx.UserID, uint(id), reqBody.RetentionOverrideDays,
 	); err != nil {
+		if sendAuditUnavailable(w, err) { // #4718
+			return
+		}
 		if errors.Is(err, core.ErrInvalidRetentionDays) {
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 			return

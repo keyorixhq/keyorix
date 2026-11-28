@@ -45,7 +45,12 @@ const auditUnavailableReachingMethodsFile = "../../../internal/core/testdata/aud
 // writeSCIMWriteError is the SCIM handlers' mapper: it answers the sentinel through
 // classifySCIMError in an RFC 7644 body (TestSCIM_AuditOutage_Is503RetryAfter,
 // TestSCIMWriteErrorStatus_Classes), so a SCIM handler that calls it is mapped.
-var auditUnavailableMappers = map[string]bool{"sendAuditUnavailable": true, "writeSCIMWriteError": true}
+//
+// sendExportAuditUnavailable is the exports' mapper (#4721): the same 503,
+// Retry-After and code audit_unavailable, with the export's own text ("nothing was
+// exported"), pinned by TestExportAuditLogsCSV_RecordedBeforeDelivery and
+// TestGetComplianceEvidence_RecordedBeforeDelivery.
+var auditUnavailableMappers = map[string]bool{"sendAuditUnavailable": true, "writeSCIMWriteError": true, "sendExportAuditUnavailable": true}
 
 // auditUnavailableMappingExempt names handlers ("file.go:Func") that call a
 // reaching method without mapping the outage, each for a stated reason.

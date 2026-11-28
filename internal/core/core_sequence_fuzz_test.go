@@ -20,7 +20,7 @@ var coreSeqResetTables = []string{
 	"role_permissions", "user_roles", "group_roles", "user_groups",
 	"secret_versions", "secret_access_schedules", "share_records", "secret_acls", "secret_nodes",
 	"environments", "projects",
-	"sod_policies", "audit_events", "sessions",
+	"sod_policies", "audit_events", "secret_access_logs", "sessions",
 	"users", "groups", "roles", "permissions",
 }
 

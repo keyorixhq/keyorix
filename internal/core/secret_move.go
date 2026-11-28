@@ -102,9 +102,19 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 	// #2695: parent_id + updated_at only — see ClassifySecret's comment.
 	// SetParentID is explicit so a move to root (nil) really writes NULL
 	// rather than reading as "leave the parent alone".
+	//
+	// #4719: the move and its secret.moved row commit together. A re-parent
+	// changes which folder ACLs and shares apply, so a refused row moves nothing.
 	now := c.now()
-	matched, err := c.storage.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{
+	parentDesc := "root"
+	if secret.ParentID != nil {
+		parentDesc = fmt.Sprintf("folder %d", *secret.ParentID)
+	}
+	matched, err := c.writeSecretFieldsAudited(ctx, secret.ID, storage.SecretFieldUpdate{
 		SetParentID: true, ParentID: secret.ParentID, UpdatedAt: &now,
+	}, mutationAuditRow{
+		eventType: EventSecretMoved, userID: actorPtr(actorID), secretID: secretID, projectID: secret.ProjectID,
+		description: fmt.Sprintf("moved secret/folder %q to %s", secret.Name, parentDesc),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -113,14 +123,5 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 		return nil, errSecretNotFoundText()
 	}
 	secret.UpdatedAt = now
-	updated := secret
-
-	uid, sid := actorID, secretID
-	parentDesc := "root"
-	if secret.ParentID != nil {
-		parentDesc = fmt.Sprintf("folder %d", *secret.ParentID)
-	}
-	c.writeAuditEvent(ctx, EventSecretMoved, &uid, &sid,
-		fmt.Sprintf("moved secret/folder %q to %s", updated.Name, parentDesc))
-	return updated, nil
+	return secret, nil
 }

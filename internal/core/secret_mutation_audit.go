@@ -39,10 +39,13 @@ import (
 )
 
 // SecretMutationAudit is the attribution a transport attaches to a request
-// context (WithSecretMutationAudit) so the core mutation writes its audit row
-// inside its own transaction. A mutation called without it writes no mutation
-// audit row of its own (internal callers that audit separately, e.g. bulk
-// delete, copy, the rotation scheduler).
+// context (WithSecretMutationAudit) so the core mutation's in-transaction audit
+// row names the caller, their IP and user agent. A mutation called without it
+// still writes that row (AUDIT-FAILCLOSED-SECRETS-1, #4719): core derives it from
+// the attribution the call itself carries (defaultSecretMutationAudit: the
+// rotation's actor and rotatedBy label, a bulk operation's actor), or as
+// "system" when there is none. No caller can commit a secret mutation without
+// its row by forgetting the tag.
 type SecretMutationAudit struct {
 	UserID    uint
 	Username  string
@@ -64,6 +67,21 @@ func WithSecretMutationAudit(ctx context.Context, a SecretMutationAudit) context
 func secretMutationAuditFromContext(ctx context.Context) (SecretMutationAudit, bool) {
 	a, ok := ctx.Value(secretMutationAuditKey{}).(SecretMutationAudit)
 	return a, ok
+}
+
+// untaggedSecretMutationActor is the username on the row of a mutation whose
+// context carries no attribution at all.
+const untaggedSecretMutationActor = "system"
+
+// defaultSecretMutationAudit tags ctx with a unless it already carries a
+// transport's attribution, which always wins (it has the request's IP and user
+// agent). Internal callers that know their actor (bulk operations, copy, the
+// rotation scheduler) use it so the row core writes names that actor.
+func defaultSecretMutationAudit(ctx context.Context, a SecretMutationAudit) context.Context {
+	if _, ok := secretMutationAuditFromContext(ctx); ok {
+		return ctx
+	}
+	return WithSecretMutationAudit(ctx, a)
 }
 
 // ErrSecretMutationAuditUnavailable: the mutation's audit row could not be
@@ -88,17 +106,22 @@ type mutationAuditRow struct {
 	accessAction string
 }
 
-// mutationAuditRowFor builds the row for a mutation tagged with
-// WithSecretMutationAudit; ok is false when ctx carries no attribution.
-func mutationAuditRowFor(ctx context.Context, eventType, accessAction, verb string, secretID, projectID uint, secretName string) (mutationAuditRow, bool) {
+// mutationAuditRowFor builds the in-transaction row of a secret mutation. It is
+// always built: an untagged ctx is attributed to "system" (see
+// SecretMutationAudit). A zero UserID records no user id rather than user 0.
+func mutationAuditRowFor(ctx context.Context, eventType, accessAction, verb string, secretID, projectID uint, secretName string) mutationAuditRow {
 	a, ok := secretMutationAuditFromContext(ctx)
 	if !ok {
-		return mutationAuditRow{}, false
+		a = SecretMutationAudit{Username: untaggedSecretMutationActor}
 	}
-	uid := a.UserID
+	var userID *uint
+	if a.UserID != 0 {
+		uid := a.UserID
+		userID = &uid
+	}
 	return mutationAuditRow{
 		eventType:    eventType,
-		userID:       &uid,
+		userID:       userID,
 		secretID:     secretID,
 		projectID:    projectID,
 		username:     a.Username,
@@ -107,7 +130,28 @@ func mutationAuditRowFor(ctx context.Context, eventType, accessAction, verb stri
 		clientOrigin: a.ClientOrigin,
 		description:  fmt.Sprintf("User %s %s secret %s", a.Username, verb, secretName),
 		accessAction: accessAction,
-	}, true
+	}
+}
+
+// writeSecretFieldsAudited writes fields onto secret id and row in ONE
+// transaction, row last (writeMutationAuditTx), and runs the row's off-box side
+// effects after the commit. matched is false (and nothing is written) when the
+// secret is gone. For the single-column secret updates (classify, rename, extend,
+// move) that used to commit first and audit afterwards (#4719).
+func (c *KeyorixCore) writeSecretFieldsAudited(ctx context.Context, id uint, fields storage.SecretFieldUpdate, row mutationAuditRow) (matched bool, err error) {
+	sink := &auditForwardSink{}
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		m, uerr := tx.UpdateSecretFields(ctx, id, fields)
+		if uerr != nil || !m {
+			return uerr
+		}
+		matched = true
+		return c.writeMutationAuditTx(ctx, tx, sink, row)
+	}); err != nil {
+		return false, err
+	}
+	sink.Flush(c)
+	return matched, nil
 }
 
 // writeMutationAuditTx appends row through tx (the mutation's transaction) and

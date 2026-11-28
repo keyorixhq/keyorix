@@ -12,9 +12,9 @@ import "testing"
 // (TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres)
 // proves the behaviour where a DSN exists; this runs everywhere.
 //
-// Hops checked: SetSecretAutoRotate -> c.storage.UpdateSecretRotationConfig ->
-// its LocalStorage body.
+// Hops checked: SetSecretAutoRotate -> tx.UpdateSecretRotationConfig (the
+// audited transaction handle, #4718) -> its LocalStorage body.
 func TestSetSecretAutoRotate_IsColumnScoped(t *testing.T) {
 	assertColumnScopedStorageWrite(t, "../../storage/store/local_secrets.go", "UpdateSecretRotationConfig")
-	assertCoreWritesOnlyVia(t, "../rotation_executor.go", "SetSecretAutoRotate", "storage", "UpdateSecretRotationConfig", "UpdateSecret", "Save", "TransitionSecretStatus")
+	assertCoreWritesOnlyVia(t, "../rotation_executor.go", "SetSecretAutoRotate", "tx", "UpdateSecretRotationConfig", "UpdateSecret", "Save", "TransitionSecretStatus")
 }

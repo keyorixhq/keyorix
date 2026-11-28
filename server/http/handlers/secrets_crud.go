@@ -223,6 +223,9 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 		Enabled: reqBody.Enabled, Length: reqBody.Length, Charset: reqBody.Charset,
 		Backend: reqBody.Backend, Ref: reqBody.Ref,
 	}, userCtx.UserID); err != nil {
+		if sendAuditUnavailable(w, err) { // #4718
+			return
+		}
 		if sendStorageUnavailable(w, err) {
 			return
 		}

@@ -17,6 +17,10 @@ import (
 
 const copyEnvPageSize = 500
 
+// EventEnvironmentSecretsCopyStarted is written before CopyEnvironmentSecrets copies
+// anything (fail-closed, #4718); environment.secrets_copied summarises the run.
+const EventEnvironmentSecretsCopyStarted = "environment.secrets_copy_started"
+
 // CopyEnvironmentSecrets copies every secret in sourceEnvID into targetEnvID (same
 // project), returning how many were copied and how many were skipped (a name already
 // present in the target, or a per-secret failure). The two environments must belong to
@@ -56,6 +60,15 @@ func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sou
 		return 0, 0, err
 	}
 
+	// #4718: written FIRST, fail-closed, as CloneEnvironment's started row: each
+	// copy commits its own secret.created row (CopySecret), and the summary after the
+	// loop only counts them.
+	pid := projectID
+	if !c.writeAuditEventFull(ctx, EventEnvironmentSecretsCopyStarted, actorPtr(actorID), nil, &pid, ip,
+		fmt.Sprintf("environment %d (%s) secrets copying into %d (%s) by %q", sourceEnvID, srcEnv.Name, targetEnvID, tgtEnv.Name, actorUsername)) {
+		return 0, 0, fmt.Errorf("%w: audit event %q was not recorded; nothing was copied", ErrMutationAuditUnavailable, EventEnvironmentSecretsCopyStarted)
+	}
+
 	// Page through the source environment's secrets.
 	for page := 1; ; page++ {
 		secrets, total, lerr := c.storage.ListSecrets(ctx, &storage.SecretFilter{
@@ -80,7 +93,6 @@ func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sou
 	// Written unconditionally, not just per-secret via CopySecret above: copying
 	// from an empty source environment (zero secrets) would otherwise leave this
 	// whole operation with no audit trail at all (F3, audit-completeness campaign).
-	pid := projectID
 	c.writeAuditEventFull(ctx, "environment.secrets_copied", actorPtr(actorID), nil, &pid, ip,
 		fmt.Sprintf("environment %d (%s) secrets copied into %d (%s): %d copied, %d skipped",
 			sourceEnvID, srcEnv.Name, targetEnvID, tgtEnv.Name, copied, skipped))

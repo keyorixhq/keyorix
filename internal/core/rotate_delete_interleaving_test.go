@@ -73,7 +73,10 @@ type rotateDeleteCase struct {
 
 var rotateDeleteCases = []rotateDeleteCase{
 	{name: "rotate/backend/delete-between-version-and-stamp", op: rotateDeleteOpRotate, backend: "pg", holdAt: rotateDeleteHoldBeforeStamp, sqliteOK: true, stored: true},
-	{name: "rotate/backend/delete-before-version-write", op: rotateDeleteOpRotate, backend: "pg", holdAt: rotateDeleteHoldBeforeVersion, sqliteOK: true, stored: true},
+	// Postgres only since #4719: every rotation's version now commits with its
+	// secret.rotated row in one transaction, so on SQLite A holds the single writer
+	// while it is parked inside it (as the no-backend case below).
+	{name: "rotate/backend/delete-before-version-write", op: rotateDeleteOpRotate, backend: "pg", holdAt: rotateDeleteHoldBeforeVersion, stored: true},
 	{name: "rotate/no-backend/delete-inside-version-tx", op: rotateDeleteOpRotate, backend: "", holdAt: rotateDeleteHoldBeforeStamp},
 	// Item 4 sweep: the other two writers of a new version after reading the
 	// parent. Both commit the version with a row update that matches no row of

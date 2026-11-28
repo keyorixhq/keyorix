@@ -359,11 +359,8 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 			}
 			// AUDIT-MUTATION-TX-1: the secret.created row commits with the secret, as
 			// the transaction's last statement (secret_mutation_audit.go).
-			if row, ok := mutationAuditRowFor(ctx, "secret.created", "create", "created",
-				createdSecret.ID, createdSecret.ProjectID, createdSecret.Name); ok {
-				return c.writeMutationAuditTx(ctx, tx, sink, row)
-			}
-			return nil
+			return c.writeMutationAuditTx(ctx, tx, sink, mutationAuditRowFor(ctx, "secret.created", "create", "created",
+				createdSecret.ID, createdSecret.ProjectID, createdSecret.Name))
 		})
 	}); err != nil {
 		return nil, err
@@ -548,11 +545,9 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	// AUDIT-MUTATION-TX-1: the secret.updated row (with its before/after diff)
 	// commits in the same transaction as the update, on both branches below.
 	sink := &auditForwardSink{}
-	var auditInTx func(tx storage.Storage) error
-	if row, ok := mutationAuditRowFor(ctx, evtSecretUpdated, "update", "updated", secret.ID, secret.ProjectID, secret.Name); ok {
-		row.diff = BuildSecretUpdateDiff(&before, req, len(req.Value) > 0)
-		auditInTx = func(tx storage.Storage) error { return c.writeMutationAuditTx(ctx, tx, sink, row) }
-	}
+	row := mutationAuditRowFor(ctx, evtSecretUpdated, "update", "updated", secret.ID, secret.ProjectID, secret.Name)
+	row.diff = BuildSecretUpdateDiff(&before, req, len(req.Value) > 0)
+	auditInTx := func(tx storage.Storage) error { return c.writeMutationAuditTx(ctx, tx, sink, row) }
 
 	if len(req.Value) == 0 {
 		var matched bool
@@ -561,10 +556,7 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 			if matched, err = tx.UpdateSecretFields(ctx, secret.ID, fields); err != nil || !matched {
 				return err
 			}
-			if auditInTx != nil {
-				return auditInTx(tx)
-			}
-			return nil
+			return auditInTx(tx)
 		})
 		if uerr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
@@ -773,20 +765,24 @@ const EventSecretRotateNoop = "secret.rotate_noop"
 // enforceSecretReadGuards' classification gate already denies restricted
 // reads for.
 //
-// A context tagged with WithSecretMutationAudit gets its secret.rotated row in the
-// same transaction as the new version (AUDIT-MUTATION-TX-1).
+// Every rotation gets its secret.rotated row in the same transaction as the new
+// version (AUDIT-MUTATION-TX-1). A context a transport tagged with
+// WithSecretMutationAudit attributes it; an untagged one (the scheduler, bulk
+// rotate) is attributed to actorID and rotatedBy (#4719: an untagged rotation
+// used to commit with no row at all).
 func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte, actorID uint, rotatedBy string) (*models.SecretNode, error) {
-	return c.rotateSecret(ctx, id, newValue, actorID, rotatedBy, false, func(s *models.SecretNode) (mutationAuditRow, bool) {
+	ctx = defaultSecretMutationAudit(ctx, SecretMutationAudit{UserID: actorID, Username: rotatedBy})
+	return c.rotateSecret(ctx, id, newValue, actorID, rotatedBy, false, func(s *models.SecretNode) mutationAuditRow {
 		return mutationAuditRowFor(ctx, "secret.rotated", "rotate", "rotated", s.ID, s.ProjectID, s.Name)
 	})
 }
 
 // rotateSecret is RotateSecret with the audit row chosen by the caller: auditRow
-// returns the row to commit with the new version, or ok=false for none
-// (RollbackSecret writes secret.rolled_back there instead of secret.rotated).
+// returns the row to commit with the new version (RollbackSecret writes
+// secret.rolled_back there instead of secret.rotated).
 // rollback marks a version rollback, which never follows an upstream rotation, so
 // it is always one transaction (see the comment at the write below).
-func (c *KeyorixCore) rotateSecret(ctx context.Context, id uint, newValue []byte, actorID uint, rotatedBy string, rollback bool, auditRow func(*models.SecretNode) (mutationAuditRow, bool)) (*models.SecretNode, error) {
+func (c *KeyorixCore) rotateSecret(ctx context.Context, id uint, newValue []byte, actorID uint, rotatedBy string, rollback bool, auditRow func(*models.SecretNode) mutationAuditRow) (*models.SecretNode, error) {
 	if err := c.secretValuePolicy.Validate(newValue); err != nil {
 		return nil, secretInvalidInput(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
@@ -859,21 +855,15 @@ func (c *KeyorixCore) rotateSecret(ctx context.Context, id uint, newValue []byte
 	// precisely because that case left it at its prior value.
 	stamp := storage.SecretFieldUpdate{SetLastRotatedAt: true, LastRotatedAt: secret.LastRotatedAt, UpdatedAt: &now}
 	oneTx := secret.RotationBackend == "" || rollback
-	row, audited := auditRow(secret)
+	row := auditRow(secret)
 	sink := &auditForwardSink{}
-	var inTx func(tx storage.Storage) error
-	if oneTx || audited {
-		inTx = func(tx storage.Storage) error {
-			if oneTx {
-				if err := updateRotationStamp(ctx, tx, secret.ID, stamp); err != nil {
-					return err
-				}
+	inTx := func(tx storage.Storage) error {
+		if oneTx {
+			if err := updateRotationStamp(ctx, tx, secret.ID, stamp); err != nil {
+				return err
 			}
-			if audited {
-				return c.writeMutationAuditTx(ctx, tx, sink, row)
-			}
-			return nil
 		}
+		return c.writeMutationAuditTx(ctx, tx, sink, row)
 	}
 	versionNumber, err := c.storeNextSecretVersion(ctx, secret, newValue, inTx)
 	if err != nil {
@@ -929,23 +919,18 @@ func (c *KeyorixCore) DeleteSecret(ctx context.Context, id uint) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
-	// AUDIT-MUTATION-TX-1: a tagged delete (secret or folder) commits its
-	// secret.deleted row in the delete's transaction. The soft-delete note reads
+	// AUDIT-MUTATION-TX-1: a delete (secret or folder) commits its secret.deleted
+	// row in the delete's transaction (tagged or not, #4719). The soft-delete note reads
 	// versions and dependency edges, which the delete does not change, so it is built
 	// before the transaction and the audit append stays its last statement.
 	sink := &auditForwardSink{}
-	row, audited := mutationAuditRowFor(ctx, "secret.deleted", "delete", "deleted", id, secret.ProjectID, secret.Name)
-	if audited {
-		row.description += c.softDeleteNote(ctx, id, secret.ProjectID)
-	}
+	row := mutationAuditRowFor(ctx, "secret.deleted", "delete", "deleted", id, secret.ProjectID, secret.Name)
+	row.description += c.softDeleteNote(ctx, id, secret.ProjectID)
 	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		if err := tx.DeleteSecret(ctx, id); err != nil {
 			return err
 		}
-		if audited {
-			return c.writeMutationAuditTx(ctx, tx, sink, row)
-		}
-		return nil
+		return c.writeMutationAuditTx(ctx, tx, sink, row)
 	}); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -1161,6 +1146,7 @@ func (c *KeyorixCore) CreateFolder(
 	// CreateSecret does -- same lock, same in-lock re-check, same reasoning;
 	// see CreateSecret's own doc comment on this pattern.
 	var created *models.SecretNode
+	sink := &auditForwardSink{}
 	if err := c.withEnvironmentSecretGuard(ctx, envID, func(ctx context.Context, fence txFence) error {
 		// #2711: wrapped in a transaction purely so the project re-check below
 		// can share one with the insert — the insert alone needed none. Same
@@ -1186,14 +1172,17 @@ func (c *KeyorixCore) CreateFolder(
 				return fmt.Errorf("%s: project %d was deleted while this folder was being created",
 					i18n.T("ErrorNotFound", nil), projectID)
 			}
-			return nil
+			// #4719: folder.created commits with the folder, as the transaction's
+			// last statement; a refused append creates nothing.
+			return c.writeMutationAuditTx(ctx, tx, sink, mutationAuditRow{
+				eventType: "folder.created", userID: actorPtr(actorID), secretID: created.ID, projectID: projectID,
+				description: fmt.Sprintf("folder %d (%q) created in project %d environment %d", created.ID, name, projectID, envID),
+			})
 		})
 	}); err != nil {
 		return nil, err
 	}
-	pid := projectID
-	c.writeAuditEventFull(ctx, "folder.created", actorPtr(actorID), nil, &pid, "",
-		fmt.Sprintf("folder %d (%q) created in project %d environment %d", created.ID, name, projectID, envID))
+	sink.Flush(c)
 	return created, nil
 }
 

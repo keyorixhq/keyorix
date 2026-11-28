@@ -34,6 +34,8 @@ Every security-relevant event is written to the audit trail:
 | Account lifecycle | suspend, reactivate, force-password-reset, credential displayed out-of-band |
 | Machine identities | create, activate, suspend, revoke, migrated-from-user |
 | Impersonation | `impersonation.start` / `impersonation.end` (with duration + action count) |
+| Environment promotion | `environment.clone_started` → `environment.cloned`, `environment.secrets_copy_started` → `environment.secrets_copied` (the started row is written before anything is copied, fail-closed) |
+| Bulk exports (recorded before delivery, fail-closed) | `compliance.evidence_exported`, `compliance.evidence_delivery_failed`, `audit.exported` (audit-log CSV), `secret.access_log_exported`; the JSON SIEM pull feed is not audited (ADR-112) |
 
 ## 2. What each record contains
 

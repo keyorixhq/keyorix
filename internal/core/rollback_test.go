@@ -18,7 +18,7 @@ func rollbackCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.User{}, &models.SecretAccessLog{}))
 	// #1632: enforceSecretReadGuards (reached via RotateSecret) now calls
 	// c.now() -- see secret_schedule_test.go's newScheduleCore for the same fix.
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}

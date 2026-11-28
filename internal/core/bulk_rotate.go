@@ -107,13 +107,19 @@ func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, actorID uint, req B
 		return nil, err
 	}
 
+	// Each rotation commits its secret.rotated row in its own transaction
+	// (RotateSecret). A transport's tag attributes it (the REST handler's names the
+	// caller's IP and user agent); otherwise it is the authenticated actor and
+	// req.RotatedBy, never the "no user" sentinel bulkRotateOne passes as actorID.
+	rotCtx := defaultSecretMutationAudit(ctx, SecretMutationAudit{UserID: actorID, Username: req.RotatedBy})
+
 	result := &BulkRotateResult{
 		Triggered: []uint{},
 		Failed:    []BulkRotateError{},
 	}
 
 	if len(req.SecretIDs) > 0 {
-		if err := c.bulkRotateExplicit(ctx, req, result); err != nil {
+		if err := c.bulkRotateExplicit(ctx, rotCtx, req, result); err != nil {
 			return nil, err
 		}
 		c.logBulkRotateAttempted(ctx, req, result)
@@ -153,14 +159,16 @@ func (c *KeyorixCore) BulkRotateSecrets(ctx context.Context, actorID uint, req B
 			})
 			continue
 		}
-		_ = c.bulkRotateOne(ctx, s.ID, s.RotationLength, s.RotationCharset, req.RotatedBy, result)
+		_ = c.bulkRotateOne(rotCtx, s.ID, s.RotationLength, s.RotationCharset, req.RotatedBy, result)
 	}
 	c.logBulkRotateAttempted(ctx, req, result)
 	return result, nil
 }
 
 // logBulkRotateAttempted records that a bulk-rotate call was made, unconditionally.
-// RotateSecretOnDemand/RotateSecret already audit each individual rotation, but a
+// Each individual rotation commits its own secret.rotated row in its transaction
+// (RotateSecret, #4719; a rotation whose row cannot be written is reported in
+// Failed and changes nothing), so this summary is not the record of any change. A
 // call that matched nothing (empty project, all not-rotation-configured, all
 // not-found) would otherwise leave no trail that this bulk operation was attempted
 // (F5, audit-completeness campaign) -- same reasoning as
@@ -173,8 +181,9 @@ func (c *KeyorixCore) logBulkRotateAttempted(ctx context.Context, req BulkRotate
 }
 
 // bulkRotateExplicit processes an explicit list of secret IDs, checking project membership
-// and rotation eligibility before triggering each one.
-func (c *KeyorixCore) bulkRotateExplicit(ctx context.Context, req BulkRotateRequest, result *BulkRotateResult) error {
+// and rotation eligibility before triggering each one. rotCtx carries the rotations'
+// audit attribution; ctx is used for the reads.
+func (c *KeyorixCore) bulkRotateExplicit(ctx, rotCtx context.Context, req BulkRotateRequest, result *BulkRotateResult) error {
 	secrets, err := c.storage.GetSecretsByIDs(ctx, req.SecretIDs)
 	if err != nil {
 		return fmt.Errorf("load secrets: %w", err)
@@ -206,7 +215,7 @@ func (c *KeyorixCore) bulkRotateExplicit(ctx context.Context, req BulkRotateRequ
 			result.Failed = append(result.Failed, BulkRotateError{SecretID: s.ID, Name: s.Name, Error: "no rotation config"})
 			continue
 		}
-		_ = c.bulkRotateOne(ctx, s.ID, s.RotationLength, s.RotationCharset, req.RotatedBy, result)
+		_ = c.bulkRotateOne(rotCtx, s.ID, s.RotationLength, s.RotationCharset, req.RotatedBy, result)
 	}
 	return nil
 }

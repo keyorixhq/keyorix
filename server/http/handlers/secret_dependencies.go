@@ -88,6 +88,9 @@ func (h *SecretHandler) AddSecretDependency(w http.ResponseWriter, r *http.Reque
 	}
 	dep, err := h.coreService.AddSecretDependency(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id), reqBody.DependsOnID, reqBody.Note, machineID(r))
 	if err != nil {
+		if sendAuditUnavailable(w, err) { // #4718
+			return
+		}
 		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
@@ -112,6 +115,9 @@ func (h *SecretHandler) RemoveSecretDependency(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := h.coreService.RemoveSecretDependency(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id), uint(depID)); err != nil {
+		if sendAuditUnavailable(w, err) { // #4718
+			return
+		}
 		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}

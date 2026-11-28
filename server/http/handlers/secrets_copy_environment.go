@@ -47,6 +47,9 @@ func (h *SecretHandler) CopyEnvironmentSecrets(w http.ResponseWriter, r *http.Re
 
 	copied, skipped, err := h.coreService.CopyEnvironmentSecrets(r.Context(), uint(projectID), uint(sourceEnvID), reqBody.TargetEnvironmentID, userCtx.Username, userCtx.UserID, clientIP(r), r.Header.Get("User-Agent"))
 	if err != nil {
+		if sendAuditUnavailable(w, err) { // #4718: the copy's started row was refused; nothing was copied
+			return
+		}
 		if sendStorageUnavailable(w, err) {
 			return
 		}

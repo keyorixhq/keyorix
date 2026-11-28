@@ -15,6 +15,10 @@ import (
 
 const cloneEnvPageSize = 500
 
+// EventEnvironmentCloneStarted is written before CloneEnvironment copies anything
+// (fail-closed, #4718); environment.cloned summarises the run afterwards.
+const EventEnvironmentCloneStarted = "environment.clone_started"
+
 // EnvCloneResult summarises the outcome of a CloneEnvironment call.
 type EnvCloneResult struct {
 	SourceEnv      string
@@ -76,6 +80,17 @@ func (c *KeyorixCore) CloneEnvironment(ctx context.Context, projectID, srcEnvID,
 		return nil, err
 	}
 
+	// #4718: the clone is many transactions (one per copied secret, each committing
+	// its own secret.created row with the copy, CopySecret), so no single transaction
+	// can hold the change and a summary row. The operation's own record is written
+	// FIRST, fail-closed: an audit log that refuses it clones nothing. The counts
+	// summary after the loop describes copies that are each already on record.
+	pid := projectID
+	if !c.writeAuditEventFull(ctx, EventEnvironmentCloneStarted, actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("environment %d (%s) cloning into %d (%s) by %q", srcEnvID, srcEnv.Name, dstEnvID, dstEnv.Name, clonedBy)) {
+		return nil, fmt.Errorf("%w: audit event %q was not recorded; nothing was cloned", ErrMutationAuditUnavailable, EventEnvironmentCloneStarted)
+	}
+
 	result := &EnvCloneResult{
 		SourceEnv: srcEnv.Name,
 		DestEnv:   dstEnv.Name,
@@ -105,7 +120,6 @@ func (c *KeyorixCore) CloneEnvironment(ctx context.Context, projectID, srcEnvID,
 	// of an empty source environment (zero secrets to copy) would otherwise
 	// leave this whole operation with no audit trail at all (F3, audit-
 	// completeness campaign).
-	pid := projectID
 	c.writeAuditEventFull(ctx, "environment.cloned", actorPtr(actorID), nil, &pid, "",
 		fmt.Sprintf("environment %d (%s) cloned into %d (%s): %d secret(s) copied, %d skipped",
 			srcEnvID, srcEnv.Name, dstEnvID, dstEnv.Name, result.SecretsCloned, result.SecretsSkipped))

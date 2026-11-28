@@ -37,6 +37,9 @@ func (h *SecretHandler) ExportAccessLog(w http.ResponseWriter, r *http.Request) 
 
 	data, contentType, err := h.coreService.ExportSecretAccessLog(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), id, format)
 	if err != nil {
+		if sendExportAuditUnavailable(w, err) {
+			return
+		}
 		msg := err.Error()
 		switch {
 		case isSecretNotFound(err):

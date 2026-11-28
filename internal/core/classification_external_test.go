@@ -19,7 +19,7 @@ func TestClassifySecret(t *testing.T) {
 	t.Parallel()
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
-	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.AuditEvent{}))
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.AuditEvent{}, &models.SecretAccessLog{}))
 
 	ctx := context.Background()
 	require.NoError(t, h.DB.Create(&models.SecretNode{

@@ -41,7 +41,7 @@ func TestConcurrency_RotateSecret_NoDuplicateVersionNumbers(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(20)
 
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessLog{}))
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_secret_versions_node_version ON secret_versions (secret_node_id, version_number)").Error)
 
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)

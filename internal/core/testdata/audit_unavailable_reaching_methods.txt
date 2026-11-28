@@ -1,5 +1,6 @@
 ActivateBreakGlass
 AddProjectMember
+AddSecretDependency
 AddUserToGroup
 AddUserToGroupGlobal
 ApproveAccessRequestWithExpiry
@@ -18,11 +19,13 @@ BulkApproveAccessRequests
 BulkDeleteSecrets
 ClassifyMachineIdentity
 ClassifyMachineToken
+CloneEnvironment
 CloseAccessReviewCampaign
 CompleteSAML
 CompleteSSO
 CompleteSetup
 CompleteSetupHoldingLoginSlot
+CopyEnvironmentSecrets
 CreateAlertEscalationPolicy
 CreateEnvironment
 CreateGroup
@@ -45,6 +48,8 @@ DeleteAlertEscalationPolicy
 DeleteNotificationChannel
 DeleteRotationPolicy
 DeleteSoDPolicy
+ExportComplianceEvidence
+ExportSecretAccessLog
 GrantSecretACL
 InviteGlobal
 InviteGlobalWithLink
@@ -55,6 +60,9 @@ IssueLease
 IssueMachineToken
 IssueSetupToken
 LiftLegalHold
+LockedCreateSecretDependencyExclusive
+LogAuditLogExported
+LogComplianceEvidenceExported
 LogCryptoInventoryRead
 MigrateUserToMachine
 OpenAccessReviewCampaign
@@ -67,6 +75,7 @@ ReconcileAlertsWriteRole
 ReconcileRBACPermissions
 ReconcileUserBaselineRoles
 ReissueOneTimePassword
+RemoveSecretDependency
 ReplaceSCIMGroup
 RequestMFAReset
 RequestPasswordReset
@@ -84,6 +93,8 @@ ResumeSecret
 RunScheduledRecertification
 SetNotificationRetryPolicy
 SetProjectMemberRole
+SetSecretAutoRotate
+SetSecretRetentionOverride
 SetUserRoles
 ShareSecret
 ShareSecretWithGroup

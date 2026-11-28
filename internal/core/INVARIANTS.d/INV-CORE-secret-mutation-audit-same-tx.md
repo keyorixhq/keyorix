@@ -26,11 +26,18 @@
   (every REST and gRPC mutation op over the real router, no tolerance), and
   `internal/solewriter` `TestTracker_SecretMutationWithItsAuditRowIsOneFencedWrite`
   (pg-gated).
-  **Not covered**: a caller that reaches these core methods without
-  `WithSecretMutationAudit` writes no mutation row from core (the CLI's embedded bulk
-  delete, copy, bulk rename, the rotation scheduler audit separately and are unchanged), except
-  `RestoreSecret`, which always writes `secret.restored` for its `actorID`, as it did
-  before; the context only adds username, IP and user agent. `RestoreSecret` takes the environment's named lock BEFORE its transaction (the
+  **Untagged callers** (AUDIT-FAILCLOSED-SECRETS-1, #4719): a call without
+  `WithSecretMutationAudit` writes the same in-transaction row. Core derives its
+  attribution (`mutationAuditRowFor` always returns a row): the call's own actor
+  through `defaultSecretMutationAudit` (`RotateSecret`'s actorID and rotatedBy, the
+  bulk rotate / bulk delete / copy actor), or "system" when there is none. The
+  scheduler's and the REST bulk rotate's rotations, copy (and so
+  `CopyEnvironmentSecrets` / `CloneEnvironment`), the CLI's embedded bulk delete and
+  `CreateFolder` (`folder.created`) are covered; none writes a post-commit copy any
+  more. Guard: `TestSecretMutationAudit_UntaggedCallCommitsItsRowOrNothing` (SQLite,
+  PostgreSQL pg-gated) and `server/http` `TestBulkRotate_EachRotationCommitsItsSecretRotatedRow`.
+  `RestoreSecret` always writes `secret.restored` for its `actorID`; the context only
+  adds username, IP and user agent. `RestoreSecret` takes the environment's named lock BEFORE its transaction (the
   storage restore's own order: lock, then transaction) and the nested storage call
   finds it held, so the append can be the transaction's last statement without
   inverting the lock order (RESTORE-SECRET-AUDIT-TX).

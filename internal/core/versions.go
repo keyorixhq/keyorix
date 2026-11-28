@@ -476,7 +476,7 @@ func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetV
 	// AUDIT-MUTATION-TX-1: secret.rolled_back commits with the re-instated version,
 	// always (every caller is a user-initiated rollback), so a rollback never lands
 	// without its row; a failed audit write stores nothing.
-	return c.rotateSecret(ctx, secretID, val, actorID, actorName, true, func(s *models.SecretNode) (mutationAuditRow, bool) {
+	return c.rotateSecret(ctx, secretID, val, actorID, actorName, true, func(s *models.SecretNode) mutationAuditRow {
 		uid := actorID
 		row := mutationAuditRow{
 			eventType:   EventSecretRolledBack,
@@ -488,7 +488,7 @@ func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetV
 		if a, ok := secretMutationAuditFromContext(ctx); ok {
 			row.ip, row.userAgent, row.clientOrigin = a.IP, a.UserAgent, a.ClientOrigin
 		}
-		return row, true
+		return row
 	})
 }
 

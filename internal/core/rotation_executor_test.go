@@ -23,7 +23,7 @@ func rotationExecCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{},
+		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{}, &models.SecretAccessLog{},
 		&models.Project{}, &models.Environment{}, &models.Role{}, &models.UserRole{},
 		&models.GroupRole{}, &models.UserGroup{}, &models.Group{}, &models.User{},
 		&models.Permission{}, &models.RolePermission{}, &models.SecretACL{}, &models.ShareRecord{},
@@ -646,7 +646,7 @@ func TestRunAutoRotation_LogsAndContinuesOnScopedSecretsError(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{},
+		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{}, &models.SecretAccessLog{},
 		&models.Project{}, &models.Environment{},
 	))
 	fixed := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)

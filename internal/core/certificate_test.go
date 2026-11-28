@@ -104,7 +104,7 @@ func newCertCore(t *testing.T, now time.Time) (*KeyorixCore, *gorm.DB) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{},
+		&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessLog{},
 		&models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.UserRole{},
 		&models.SecretAccessSchedule{}, &models.User{},
 	))
@@ -310,7 +310,7 @@ func TestInspectCertificateEnforcesPerSecretPermission(t *testing.T) {
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.SecretAccessSchedule{}, &models.UserRole{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessLog{}, &models.ShareRecord{}, &models.AccessRequest{}, &models.SecretACL{}, &models.Group{}, &models.UserGroup{}, &models.SecretAccessSchedule{}, &models.UserRole{}, &models.User{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
 	for _, actor := range []uint{7, 9, 42} { // active accounts: the refusal under test is the permission one (#4159)
 		ensureActiveActor(t, c.storage, actor)

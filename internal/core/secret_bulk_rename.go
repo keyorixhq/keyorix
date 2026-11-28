@@ -12,6 +12,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -94,6 +95,7 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 
 	report := &BulkRenameReport{DryRun: dryRun, Outcomes: make([]SecretRenameOutcome, 0, len(renames))}
 
+	auditCtx := defaultSecretMutationAudit(ctx, SecretMutationAudit{UserID: actorID, Username: actor, IP: ip, UserAgent: ua})
 	skip := func(id uint, oldName, newName, reason string) {
 		report.Outcomes = append(report.Outcomes, SecretRenameOutcome{
 			ID: id, OldName: oldName, NewName: newName, Status: renameStatusSkipped, Reason: reason,
@@ -203,13 +205,20 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 		// #2695: name only — see ClassifySecret's comment. A rename is the
 		// likeliest of all these callers to run concurrently with something
 		// else (a bulk pass over many secrets), and it owns exactly one column.
-		matched, uerr := c.storage.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{Name: &newName})
+		// #4719: the rename and its secret.updated row commit together; a refused row
+		// renames nothing and is reported for this item.
+		row := mutationAuditRowFor(auditCtx, evtSecretUpdated, "update", "updated", secret.ID, projectID, newName)
+		row.diff = buildNameRenameDiff(oldName, newName)
+		matched, uerr := c.writeSecretFieldsAudited(ctx, secret.ID, storage.SecretFieldUpdate{Name: &newName}, row)
+		if errors.Is(uerr, ErrSecretMutationAuditUnavailable) {
+			skip(rn.ID, oldName, newName, ErrSecretMutationAuditUnavailable.Error())
+			continue
+		}
 		if uerr != nil || !matched {
 			skip(rn.ID, oldName, newName, "storage error")
 			continue
 		}
 		secret.Name = newName
-		c.LogSecretUpdatedWithDiff(ctx, actorID, secret.ID, projectID, actor, newName, ip, ua, buildNameRenameDiff(oldName, newName))
 		report.Outcomes = append(report.Outcomes, SecretRenameOutcome{
 			ID: rn.ID, OldName: oldName, NewName: newName, Status: renameStatusRenamed,
 		})
