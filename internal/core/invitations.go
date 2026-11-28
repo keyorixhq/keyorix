@@ -204,18 +204,17 @@ func (c *KeyorixCore) persistInvitation(ctx context.Context, inv *models.Project
 // working link and no superseded-token side effect that could also block a
 // resend via a duplicate-pending check. mintSetupTokenOn's own WithTransaction
 // nests as a SAVEPOINT inside this one (see its doc comment), so the two
-// writes genuinely commit or roll back together. Neither inv's nor the
-// token's audit event is written here -- both happen only once this whole
-// transaction has actually committed (see provisionInvitationSetupLink).
+// writes genuinely commit or roll back together.
 // invCtx (possibly WithSelfMachineGranter-tagged, see buildProjectInvite/
 // buildGlobalInvite) is used ONLY for the invitation insert, matching
 // pre-refactor behavior exactly; the mint step keeps using the caller's
 // original, untagged ctx (the same one IssueSetupToken was always called
 // with from this flow).
 //
-// AUDIT-TX-3: auditFn (the invitation.created row) is written as the last
-// statement of this same transaction (fail closed). The setup_token.issued row
-// stays after the commit (setup_token.go).
+// AUDIT-TX-3: auditFn (the invitation.created row) and, since
+// AUDIT-DISCLOSURE-NOV-1, the setup_token.issued row are the last statements of
+// this same transaction (fail closed): no link is delivered for a token whose
+// issuance was not recorded.
 func (c *KeyorixCore) createInvitationWithSetupTokenAtomically(ctx, invCtx context.Context, inv *models.ProjectInvitation, auditFn func(auditTarget, *models.ProjectInvitation), req IssueSetupTokenRequest) (*models.ProjectInvitation, *IssueSetupTokenResult, error) {
 	var created *models.ProjectInvitation
 	var issued *IssueSetupTokenResult
@@ -230,6 +229,7 @@ func (c *KeyorixCore) createInvitationWithSetupTokenAtomically(ctx, invCtx conte
 			return cerr
 		}
 		auditFn(tgt, created)
+		c.auditSetupTokenIssuedOn(ctx, tgt, req, issued.Token)
 		return nil
 	})
 	if err != nil {
@@ -291,7 +291,6 @@ func (c *KeyorixCore) provisionInvitationSetupLink(ctx, invCtx context.Context, 
 	if err != nil {
 		return nil, nil, err
 	}
-	c.auditSetupTokenIssued(ctx, req, issued.Token)
 
 	prov, err := c.deliverSetupLink(ctx, issued, req, displayName, assignmentSummary)
 	if err != nil {

@@ -58,8 +58,11 @@ var auditUnavailableMappingExempt = map[string]string{
 	"auth.go:ConsumeSetup": "unauthenticated setup-link endpoint: every refusal is the same generic 400 by design " +
 		"(no internal-error oracle); setup handlers are owned by FIX-3277",
 	"auth.go:UpdateProfile": "auth.go is owned by FIX-3277 while it is in flight; map it there (LEFTOVERS)",
-	"sso.go:CompleteSSO":    "login callback: answers with a redirect, not a status; login handlers are owned by FIX-3277",
-	"saml.go:CompleteSAML":  "login callback: answers with a redirect, not a status; login handlers are owned by FIX-3277",
+	"auth.go:PasswordReset": "RequestPasswordReset always returns nil (enumeration-safe): the reachable IssueSetupToken " +
+		"runs in a detached goroutine whose error is discarded, so the outage never reaches this handler " +
+		"(AUDIT-DISCLOSURE-NOV-1)",
+	"sso.go:CompleteSSO":   "login callback: answers with a redirect, not a status; login handlers are owned by FIX-3277",
+	"saml.go:CompleteSAML": "login callback: answers with a redirect, not a status; login handlers are owned by FIX-3277",
 	// MSG-ACCURACY-1 (#3912): core.BulkDeleteSecrets never returns the sentinel as a request
 	// error; bulkDeleteFailureMessage turns it into a per-item entry with
 	// core.MutationAuditUnavailableMessage and the code audit_unavailable. The handler tags

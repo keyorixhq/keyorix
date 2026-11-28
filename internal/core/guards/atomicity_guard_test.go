@@ -22,7 +22,8 @@
 //     SQLite single-connection deadlock) — always an error, never exempt.
 //   - TestAtomicityGuard_AuditBeforeWrite (AUDIT-BEFORE-WRITE): a SUCCESS
 //     audit event (writeAuditEvent/writeAuditEventFull/Log<X> that is not a
-//     *Denied or writeAuditEventFailed call) that textually precedes a later
+//     *Denied, writeAuditEventFailed or writeAuditEventFailedFull call) that
+//     textually precedes a later
 //     storage write in the same function must move after the write/commit,
 //     or be listed in docs/atomicity-exempt.tsv (keyed "AUDIT:<fn>" to stay
 //     distinct from the write-count exemptions above, since the same
@@ -356,6 +357,20 @@ func TestAtomicityGuard_TransactionEscape(t *testing.T) {
 var atomicityAuditRe = regexp.MustCompile(`^(writeAuditEvent|writeAuditEventFull|Log[A-Z])`)
 var atomicityDenialRe = regexp.MustCompile(`Denied$`)
 
+// atomicityFailureAuditRe names the writers that store an event with
+// Success=false: writeAuditEventFailed and writeAuditEventFailedFull (#3363).
+// atomicityAuditRe matches both by its writeAuditEvent prefix, so without this
+// a failure event was scanned as a SUCCESS claim (R1.17, AUDIT-DISCLOSURE-NOV-1)
+// and needed an AUDIT: row it should never have needed.
+var atomicityFailureAuditRe = regexp.MustCompile(`^writeAuditEventFailed`)
+
+// isAtomicitySuccessAudit reports whether a c.<name>(...) call writes a SUCCESS
+// audit event: an audit writer that is neither a failure writer nor a *Denied one.
+func isAtomicitySuccessAudit(name string) bool {
+	return atomicityAuditRe.MatchString(name) &&
+		!atomicityFailureAuditRe.MatchString(name) && !atomicityDenialRe.MatchString(name)
+}
+
 // auditBeforeWriteHit is one function where an audit call textually precedes
 // a later c.storage.<write> call in the same source.
 type auditBeforeWriteHit struct {
@@ -368,8 +383,9 @@ type auditBeforeWriteHit struct {
 
 // scanAuditBeforeWriteHits mirrors scratch/txscan2/before.go's
 // auditBeforeWrite: for every internal/core function, find an audit call
-// (c.writeAuditEvent*/c.Log<X>, EXCLUDING c.writeAuditEventFailed and any
-// c.Log<X>Denied call — both are denial/failure events, exempt by
+// (c.writeAuditEvent*/c.Log<X>, EXCLUDING c.writeAuditEventFailed,
+// c.writeAuditEventFailedFull and any c.Log<X>Denied call — all are
+// denial/failure events (isAtomicitySuccessAudit), exempt by
 // construction since their entire point is reporting that something did NOT
 // happen) whose source position is earlier than the LAST c.storage.<write>
 // call in the same function body. This is control-flow-blind, same caveat as
@@ -415,9 +431,7 @@ func scanAuditBeforeWriteHits(t *testing.T, files []string) []auditBeforeWriteHi
 				if !ok {
 					return true
 				}
-				if id, ok := s.X.(*ast.Ident); ok && id.Name == "c" &&
-					atomicityAuditRe.MatchString(s.Sel.Name) &&
-					s.Sel.Name != "writeAuditEventFailed" && !atomicityDenialRe.MatchString(s.Sel.Name) {
+				if id, ok := s.X.(*ast.Ident); ok && id.Name == "c" && isAtomicitySuccessAudit(s.Sel.Name) {
 					audits = append(audits, auditCall{pos: call.Pos(), name: s.Sel.Name})
 				}
 				if inner, ok := s.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "storage" && atomicityWriteVerbRe.MatchString(s.Sel.Name) {
