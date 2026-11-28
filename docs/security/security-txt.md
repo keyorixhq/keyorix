@@ -17,8 +17,23 @@ this repository cannot make**. Copy the file unchanged to that path (and
 As of 2026-11-18 nothing in this repository serves the file: `web/public/` has no
 `.well-known/` directory, no route in the product server returns it, and no
 workflow deploys it. Whether the marketing site already carries a copy has not
-been checked from here (the site is outside this repository). To publish it on
-the website:
+been checked from here (the site is outside this repository).
+
+Re-checked on 2026-11-28 against the server built from `origin/main` (`476a87938`, native
+SQLite install, self-signed TLS): `curl -sk -o /dev/null -w '%{http_code} %{content_type}'
+https://localhost:8080/.well-known/security.txt` prints `200 text/html; charset=utf-8`, and
+`/security.txt` prints the same. The product server answers both paths with the dashboard's
+`index.html` (the single-page-app fallback), not with this file. A scanner that fetches the
+path therefore gets a 200 whose body is HTML, which is not a valid security.txt, and not a
+clean 404 either.
+
+**Open decision (Andrei):** keep the file off the product server (the reasons below still
+hold, and the decision stays as it was) or serve it from the product build anyway. If it is
+served from the product, the `Canonical` line cannot name `keyorix.com`, so it needs a
+per-deployment value or an `Expires` the operator renews; neither exists today. Until that
+is decided, publishing is the website task below.
+
+To publish it on the website:
 
 1. Copy `docs/security/security.txt` byte for byte to `/.well-known/security.txt`
    in the site's static root, and to `/security.txt` as RFC 9116 allows.

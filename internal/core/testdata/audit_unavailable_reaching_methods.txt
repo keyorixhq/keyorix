@@ -53,6 +53,7 @@ InviteToProject
 InviteToProjectWithLink
 IssueLease
 IssueMachineToken
+IssueSetupToken
 LiftLegalHold
 LogCryptoInventoryRead
 MigrateUserToMachine
@@ -68,9 +69,12 @@ ReconcileUserBaselineRoles
 ReissueOneTimePassword
 ReplaceSCIMGroup
 RequestMFAReset
+RequestPasswordReset
 RequestProjectAccess
 RequestSecretAccess
 RequirePasswordReset
+ResendAccountSetupLink
+ResendInvitationLink
 RestoreEnvironment
 RestoreGroup
 RestoreProject

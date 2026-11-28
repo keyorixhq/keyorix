@@ -8,7 +8,8 @@ configuration and release artifacts.
 [`docs/SECURITY.md`](docs/SECURITY.md) (the security documentation index) and
 [`web/SECURITY.md`](web/SECURITY.md) link here and state nothing of their own about
 reporting, timelines or support. The RFC 9116 file served from keyorix.com is
-[`docs/security/security.txt`](docs/security/security.txt). Internal handling of a
+[`docs/security/security.txt`](docs/security/security.txt) (hosting and renewal:
+[`docs/security/security-txt.md`](docs/security/security-txt.md)). Internal handling of a
 report or incident is in
 [`docs/security/incident-response-plan.md`](docs/security/incident-response-plan.md).
 

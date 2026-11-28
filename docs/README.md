@@ -19,6 +19,7 @@
 | Key rotation: preflight, verify, rollback, what not to do | [operator/key-rotation-runbook.md](./operator/key-rotation-runbook.md), steps and output in [operator/j6-key-rotation.md](./operator/j6-key-rotation.md) |
 | Lost admin, lost authenticator code (TOTP) | [operator/lost-totp-runbook.md](./operator/lost-totp-runbook.md), [operator/j5-lost-admin.md](./operator/j5-lost-admin.md) |
 | Emergency access (break-glass), including when the audit log is down | [operator/break-glass-runbook.md](./operator/break-glass-runbook.md) |
+| Which runbook gaps are fixed, which remain (status table) | [operator/pilot-runbook-gaps.md](./operator/pilot-runbook-gaps.md) |
 | Audit chain reports BROKEN or INDETERMINATE: triage, evidence | [operator/audit-chain-break-runbook.md](./operator/audit-chain-break-runbook.md) |
 | Troubleshooting | [operator/j7-troubleshooting.md](./operator/j7-troubleshooting.md) |
 | PostgreSQL tuning, audit durability | [PERFORMANCE.md](./PERFORMANCE.md) |

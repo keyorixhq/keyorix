@@ -63,12 +63,20 @@ prefix names (see "How to read an entry"):
 | 75 | The DEK lock is held by another process (a second server, or a rotation) | `failed to initialize core service: ... another process already holds the DEK lock` |
 | 1 | Everything else: a relative key path used from another directory than the config's, the FIPS self-test, logging or memory-hardening setup, a listener port in use, a Postgres connection that fails the TLS check or is closed during login, the server-presence lock held by an admin command, `single_writer` refusals, a lock lost while running | `Refusing to start:`, `Failed to set up logging`, `HTTP server error:`, `single_writer:` |
 
-Two refusals do not follow their class, so check them before you automate on the status. The
-DEK lock refusal is 75 although the hint line under it talks about a KMS or database:
+Three refusals do not follow their class, so check them before you automate on the status.
+The DEK lock refusal is 75 although the hint line under it talks about a KMS or database:
 restarting after the other process exits is the right action, and under systemd the unit
-retries it. And the relative key path refusal (`Refusing to start: storage.encryption.dek_path
-... is relative ...`) is an operator fix that exits 1, so a unit that stops on 78 keeps
-retrying it until the working directory or the paths are fixed.
+retries it. The relative key path refusal (`Refusing to start: storage.encryption.dek_path
+... is relative ...`) and the FIPS 140-only self-test refusal (`Refusing to start: fips140
+self-test failed on ...`) are operator fixes that exit 1 today, because `server/main.go` ends
+both with `log.Fatalf` and not with `bootFatal(operatorFix(...))`. A unit that stops on 78
+therefore keeps retrying them every `RestartSec` until the working directory or the paths are
+fixed (relative key path), or until the build or the `GODEBUG` setting is changed (FIPS).
+
+**Open decision (not made yet):** whether those two should exit 78 like the other
+operator-fix refusals. This page describes what the code does now; if the decision is yes, the
+exit codes change in a separate code change and this paragraph and the matching entries in the
+status-1 row above are removed with it. Until then treat both as exit 1.
 
 `keyorix-server admin <command>` exits 1 for a failure unless its entry says otherwise. The
 exceptions: the `session_replication_role` refusal exits 78 there as it does at boot (`admin

@@ -2,6 +2,9 @@
 
 Gaps the operator runbooks name, kept in one place. Each is a product decision that has not
 been made, not a bug and not a documentation gap. Update this page when a decision lands.
+The status of every runbook gap, with the command or test that proves it, is in
+[pilot-runbook-gaps.md](pilot-runbook-gaps.md); open issues: #4823 (DEK rotation revert),
+#4824 (audit-chain restart after a modified row).
 
 - **No marked chain-segment restart after a verified break.** `admin audit accept-loss` seals rows
   that are gone; a break caused by a modified row stays broken in every report and every
