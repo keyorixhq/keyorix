@@ -404,3 +404,247 @@ a name-derived admin is exactly the shape FIX-1 removed elsewhere and the model 
 | SCIM | already covered | 8 | n/a | n/a | P2 |
 
 Batch op counts: 8+15+6+6+17+34+9+10 = 105, plus the 8 SCIM ops covered by the standalone sweep = 113. Each operation carries exactly one batch (or "covered").
+
+---
+
+# authzdiff: re-ranking the uncovered operations after the ten-op binding (V5-PLAN-2)
+
+Session V5-PLAN-2, 2026-11-27. Docs only: no harness or product code changed. This section does **not** rewrite
+the V5-RANK-1 section above; it re-ranks the operations that are *still* uncovered on this tree and reconciles
+V5-RANK-1's "cannot bind" reasons against what the open `fuzz/v5-ext-authzdiff-1` PR actually bound.
+
+Inputs read this session: `COVERAGE-ALL.md` (current, REST 120/212), the four new `INVARIANTS.d` fragments for the
+stage-2–5 bindings, `server/http/router.go` (the gate for every top-ranked op below), `server/middleware/auth.go`
+(`ScopeFromDynamicSecretConfigParam`, lines 1567–1583), `internal/core/secret_ownership.go:48`
+(`TransferSecretOwnership` signature + its oracle test name), `internal/dynamic/dynamictest/fake_engine.go`
+(`FakeEngine`). Claims about code name the file/symbol read; everything else is marked "not read this session".
+
+## P2.0 Outcome: the five operations to bind next
+
+1. **`POST /api/v1/dynamic-secrets/configs/{id}/issue` + `GRPC DynamicSecretService.IssueLease`** (P1, key-material
+   issuance). Bindable **now, deny-first, with no working backend**: the route gate
+   `RequireScopedPermission(secrets.write, ScopeFromDynamicSecretConfigParam("id"))` (`router.go:924`) resolves scope
+   from a stored config row (`auth.go:1573`, `cs.GetDynamicSecretConfig`), not from an engine, so a seeded
+   `dynamic_secret_configs` row + a principal lacking `secrets.write` at that project → 403 at the gate before any
+   `FakeEngine` is touched. V5-RANK-1's blanket `DYN` reason overstated the blocker for the deny direction.
+2. **`POST /api/v1/connect/{name}/secret:read` + `GRPC ConnectService.ReadSecret`** (P1, secret value through a
+   connector). Gate is a plain `RequirePermission("connect.read")` (`router.go:474`) — global, refuses **before** any
+   connector is consulted, so the deny direction needs no connector fixture. `CONNECT` reason is partial.
+3. **`PUT /api/v1/secret-access-requests/{requestId}`** (approve/reject, P1 — the approval that unlocks a restricted
+   secret read). Highest consequence of all uncovered ops. Genuinely core-modelled: the route has **no gate**
+   (`router.go:575`, bare `r.Put`; the group comment at `router.go:560-571` states approve/reject enforce admin
+   authority at the request's own project inside `ApproveSecretAccessRequest`/`RejectSecretAccessRequest`). Needs
+   reference-model rules from `classification_gate.go` — cost M, but it is the one P1 where "the gate decides" is false
+   and core is the sole arbiter, so it is worth paying for.
+4. **`POST /api/v1/projects/{id}/secrets/render`** (P1). Gate exists
+   (`RequireScopedPermission(secrets.read, projectScope)`, `router.go:632`); core `RenderSecretTemplate` has **no
+   authorization of its own** (V5-RANK-1 §8, `internal/core/secret_render.go:42`, #G10 — not re-read this session).
+   This is the single place where the route gate is the only line of defence, so binding it (deny-first) is the check
+   that matters most. Blocker is a **fixture only** (a template referencing a secret), which holds.
+5. **`POST /api/v1/secrets/{id}/transfer-ownership`** (P2, ownership/authority change). Bindable now like `classify`
+   was: route gate `RequireScopedSecretPermission(secrets.write, "id", SecretActionTransferOwner)` (`router.go:826`),
+   core `TransferSecretOwnership(secretID, newOwnerID, actorID, actorKind)` (`secret_ownership.go:48`) additionally
+   enforces ownership (it has an unauthorized-actor oracle, `secret_ownership_oracle_test.go:23`), so the gate is
+   **looser** than core — a safe-direction route-vs-core gap, exactly the `classify`/`schedule` shape the harness
+   already models route-gate-only (`coreGateExcluded`).
+
+Why these five: all are P1 except #5, and four of the five are bindable **this round** via the deny-first route-gate
+pattern the previous session established — no new backend, connector or ceremony. #3 is the exception (core-modelled)
+and earns its slot on consequence.
+
+## P2.1 What changed since V5-RANK-1, and which of its reasons were stale
+
+`fuzz/v5-ext-authzdiff-1` bound ten ops across five stages (confirmed from the branch commits
+`174e3aca6a`/`145a47fbaa`/`75b172c019`/`e72935ef97` and the four new `INVARIANTS.d` fragments):
+`secret.schedule.set`, `secret.schedule.delete`, `secret.classify` (stage 2); `impersonation.start`,
+`impersonation.end`, `webauthn.deleteCredential` (stage 3); `mfaReset.request/approve/cancel` (stage 4); `mfa.enroll`
+(stage 5). REST moved 110→120, uncovered 102→92; the uncovered total is now **103** (92 REST + 11 gRPC), of which 8
+are the SCIM rows already covered by `TestSCIMStrictSweep`.
+
+Stale/partial reasons this binding falsified (each is a correction to V5-RANK-1's section 3):
+
+| V5-RANK-1 said | reality on this tree | status |
+|---|---|---|
+| `webauthn.deleteCredential` → `WEBAUTHN`, batch B7, "needs a WebAuthn authenticator, do last" | Bound in stage 3 with **no authenticator** (`webauthnRP` is nil in the harness, per `INV-AUTHZDIFF-v5ext8-9-impersonation-webauthn-gates`): the `webauthn_credentials` row is direct-inserted and the op is modelled by `mfaRequired` + reauth. | **STALE.** Credential *delete/management* never needed a ceremony; only the register/login/reauth *finish* ops do. deleteCredential was the one bindable WebAuthn op and it is now done. |
+| `mfa.enroll` → `STRUCT`, "no runtime authorization check; `BeginMFAEnrollment` needs `authEncryptor`, absent in test mode" | Bound in stage 5 "via a wired auth encryptor" (commit `e72935ef97`). | **STALE.** The authEncryptor absence was a harness limitation, not a structural impossibility. |
+| `impersonation.start/end` → `IMPERS`, B5 | Bound in stage 3; `end` uses a real session seeded by `StartImpersonation` (`model.isImpersonatingSession`). | **DONE** (reason was correct that it needs a session; the session was cheap to seed). |
+| `mfaReset.request/approve/cancel` → `MFA`, B5; §9 asked whether to mirror the name-based admin rule | Bound in stage 4 modelling `globalAdminRole` (the name-based rule, as §9 recommended) and documenting **HARDENING-V5EXT8/9-1**: the route gate `users.write@global` is *weaker* than core (admin-named role + second factor), a route-vs-core gap, not a bypass. | **DONE + §9 resolved** (mirror-in-model path taken). |
+| `secret.classify`, `schedule.set/delete` → `MODEL: classification/schedule`, B1 | Bound in stage 2 by the **route gate alone** (`coreGateExcluded=true`); the deep semantics (does a schedule restrict temporal access; the restricted-downgrade gate) were **deferred**, not modelled. | **PARTIAL.** The RBAC gate was bindable without the full model rule. The `MODEL` label conflated the gate with the semantic layer. |
+
+The general lesson, and the engine of this re-rank: **a `MODEL`/`fixture`/`needs-backend` reason usually blocks only the
+*allow* direction and the *semantic* layer, not the *deny*-direction RBAC gate.** Stage 2–4 all used
+`coreEnforced=false` / `coreGateExcluded=true` to bind the route gate deny-first and defer the model. The same move is
+available for most of the remaining ops whose route gate refuses before the expensive dependency runs (verified below
+for dynamic-secrets, connect, sod, legal-hold, transfer-ownership).
+
+## P2.2 Current ranked table (all 103 uncovered)
+
+Impact P1>P2>P3>P4 (same rubric as V5-RANK-1 §2). `G`=gRPC. "reason now" = the committed `COVERAGE-ALL.md` reason;
+"status" = HOLDS / PARTIAL (deny-direction bindable now; dependency only blocks allow/semantics) / STALE. Batches
+(`R*`) defined in P2.3. Large identical-reason clusters are given as grouped rows (counts in the row).
+
+### P1 — 6 ops
+
+| operation | core method (file:sym) | reason now | status | batch |
+|---|---|---|---|---|
+| `PUT /api/v1/secret-access-requests/{requestId}` (approve/reject) | `ApproveSecretAccessRequest`/`RejectSecretAccessRequest` (no route gate, `router.go:575`; comment `router.go:560-571`) — not read this session | model: secret-access | HOLDS (core is sole gate) | R2 |
+| `POST /api/v1/projects/{id}/secrets/render` | `RenderSecretTemplate` (`secret_render.go:42`, no authz, #G10 — not re-read) ; gate `router.go:632` | fixture: template | HOLDS (fixture) | R1 |
+| `POST /api/v1/connect/{name}/secret:read` | `ConnectService`/handler (not read); gate `RequirePermission(connect.read)` `router.go:474` | connect | PARTIAL | R1 |
+| `G ConnectService.ReadSecret` | same gRPC method (not read) | connect | PARTIAL | R1 |
+| `POST /api/v1/dynamic-secrets/configs/{id}/issue` | `IssueLease` handler (not read); gate `router.go:924` → scope from config row `auth.go:1573` | dyn-backend | PARTIAL | R1 |
+| `G DynamicSecretService.IssueLease` | same gRPC method (not read) | dyn-backend | PARTIAL | R1 |
+
+### P2 — ~24 ops (SCIM x8 already covered, listed last)
+
+| operation | reason now | status | batch |
+|---|---|---|---|
+| `POST /api/v1/secrets/{id}/transfer-ownership` (`secret_ownership.go:48`, gate `router.go:826`) | model: ownership | PARTIAL (gate looser than core) | R1 |
+| `POST /api/v1/dynamic-secrets/configs` ; `G CreateConfig` | dyn-backend | PARTIAL (create is core-authorized, no route gate `router.go:917`) | R3 |
+| `PATCH /api/v1/dynamic-secrets/configs/{id}/admin-dsn` ; `G UpdateConfigAdminDSN` | dyn-backend | PARTIAL (scoped gate `router.go:923`, key-material replace) | R3 |
+| `POST /api/v1/connect/ref-grants` ; `DELETE …/{id}` ; `G CreateRefGrant` ; `G DeleteRefGrant` | connect | PARTIAL (gate `RequirePermission(roles.write)` `router.go:479-480`) | R4 |
+| `POST /api/v1/sod/policies` ; `DELETE …/{id}` | model: sod | PARTIAL (gate `RequirePermission(system.write)` `router.go:1279-1280`; SoD *effect* deferred) | R5 |
+| `POST /api/v1/auth/change-password` ; `POST /api/v1/auth/tokens` (PAT mint) | self-service | HOLDS (self) | R8 |
+| `POST /system/init` | bootstrap | HOLDS (template already initialised; constant-deny) | R8 |
+| `POST /api/v1/auth/webauthn/register/finish` ; `reauth/finish` ; `POST /auth/webauthn/login/finish` ; `passwordless/finish` (4) | webauthn | HOLDS (ceremony, no authenticator in harness) | CANNOT |
+| `POST /auth/login` ; `/auth/refresh` ; `/auth/mfa/verify` ; `/auth/password-reset` ; `/auth/setup/consume` (5) | preauth / mfa | HOLDS (authentication, not authzdiff) | CANNOT |
+| `GET /auth/sso/{provider}/callback` ; `POST /auth/saml/{provider}/acs` (2) | idp | HOLDS (needs an IdP) | CANNOT |
+| `POST/PUT/PATCH/DELETE /scim/v2/Users` and `/scim/v2/Groups` (8) | scim | COVERED by `TestSCIMStrictSweep` (`sweep_v5ext4_test.go:175`) | covered |
+
+### P3 — 26 ops
+
+| cluster | reason now | status | batch |
+|---|---|---|---|
+| `DELETE /api/v1/environments/{id}` ; `POST`/`DELETE /api/v1/folders[/{id}]` ; `POST`/`PUT`/`DELETE /api/v1/rotation-policies[/{id}]` (6) | design: OUT | HOLDS (existing scope rules; binding work) | R6 |
+| `PATCH /api/v1/dynamic-secrets/configs/{id}/classification` ; `/enabled` ; `POST …/revoke-all` ; `POST …/leases/{leaseID}/renew` ; `/revoke` ; `G ClassifyConfig`/`RenewLease`/`RevokeAllLeases`/`RevokeLease` (9) | dyn-backend | PARTIAL (scoped gates `router.go:921-928`, deny-direction needs a seeded config/lease row only) | R3 |
+| `POST /api/v1/audit/checkpoint` + `G WriteAuditCheckpoint` ; `/audit/migrate-chain-encoding` ; `/audit/anomalies/{id}/acknowledge` ; `PUT /api/v1/admin/anomaly-config` (5) | design: OUT | HOLDS (plain global gate; 0 new model rules) | R7 |
+| `POST /api/v1/admin/jobs/purge-audit-logs` ; `/suspend-inactive-users` (2) | job | HOLDS (destructive; run on cloned template DB) | R7 |
+| `POST /api/v1/legal-hold` ; `DELETE /api/v1/legal-hold` (2) | model: legal-hold | PARTIAL (gate `RequirePermission(system.write)` `router.go:1238-1239`; hold *effect* on deletes deferred) | R5 |
+| `DELETE /api/v1/auth/sessions/{id}` ; `DELETE /api/v1/auth/tokens/{id}` (2) | self-service | HOLDS (own-target rule) | R8 |
+
+### P4 — 39 ops
+
+| cluster | reason now | status | batch |
+|---|---|---|---|
+| `POST /api/v1/secret-access-requests` ; `…/{requestId}/withdraw` (2) | model: secret-access | HOLDS (core self-service; rides R2) | R2 |
+| `POST /api/v1/admin/jobs/*` (9 remaining: anomaly-alerts, check-read-quotas, compliance-digest, expiry-reminders, record-hygiene-snapshot, role-expiry-check, rotation-reminders, run-alert-escalation, token-expiry-check) | job | HOLDS (`system.write`/`alerts.write` gate; 0 new model rules) | R7 |
+| `alert-escalation-policies` x3 ; `compliance` x3 ; `notification-channels` x4 ; `rejection-reason-templates` x2 ; `secret-templates` x4 (16) | design: OUT | HOLDS (plain global gates) | R7 |
+| `POST /api/v1/notifications/read-all` ; `/{id}/read` (2) | design: OUT | HOLDS (own-target) | R8 |
+| `PUT /api/v1/auth/profile` ; `DELETE /api/v1/auth/tokens/expired` (2) | self-service | HOLDS (self) | R8 |
+| `POST /auth/logout` (1) | design: self-session | HOLDS (not an authz decision) | CANNOT |
+| `webauthn …/begin` x4 (register/reauth/login/passwordless) | webauthn | HOLDS (ceremony) | CANNOT |
+| `GET /auth/sso/{provider}/login` ; `GET /auth/saml/{provider}/login` (2) | idp | HOLDS (needs an IdP) | CANNOT |
+
+Totals: P1 6, P2 24 (incl. 8 covered SCIM, 11 CANNOT), P3 26, P4 39 = 95 genuinely uncovered + 8 covered SCIM = 103.
+If a count here disagrees with `COVERAGE-ALL.md`, the generated file wins.
+
+## P2.3 Revised batches (R1–R8), in model-entry order
+
+These supersede V5-RANK-1's B1–B8 for scheduling purposes (B-numbers there still describe the model rules; the R-batches
+below drop the now-bound ops and re-group around the deny-first-gate insight). "gate-gap?" names the ops where I read
+**both** the route gate and the core method/signature and expect a route-vs-core difference; "(route only read)" means
+I read the gate but not core, so the gap is a hypothesis to check at binding time.
+
+### R1 — P1 secret-disclosure gates, deny-first — size M
+
+Ops: render, connect read (REST+G), dynamic issue (REST+G), transfer-ownership (6). Plumbing: a template-referencing-a-
+secret fixture (render); a seeded `dynamic_secret_configs` row in two projects (issue — no engine for the deny leg,
+`FakeEngine` only for the allow leg later); a seeded connector row or stubbed `connect.read` path (connect — deny leg
+needs no connector); existing `SecretActionTransferOwner` scope (transfer). **Fixture risk: moderate** — adds a
+template and dynamic/connector rows to the shared template DB; a render template referencing a secret value touches the
+secret fixtures the covered reads depend on, so add a *new* dedicated secret, don't repoint `plainID`. **gate-gap?**
+*render* — gate is the **only** defence (core `RenderSecretTemplate` has none, #G10; route+core-note read via V5-RANK-1,
+core not re-read): a new transport reaching core directly bypasses authz — model this as gate-only and flag it;
+*transfer-ownership* — gate `secrets.write` looser than core's ownership check (both read: `router.go:826`,
+`secret_ownership.go:48`); *dynamic issue* — scoped gate read (`router.go:924`), core handler not read (hypothesis:
+core re-checks via `AuthorizePrincipal`); *connect read* — gate read (`router.go:474`), core not read. Direction:
+deny-first on every op; allow direction for issue/connect waits on the backend/connector (R3/R4).
+
+### R2 — secret-scoped access requests (P1 approve/reject, P4 create/withdraw) — size M/L
+
+Ops: #approve/reject, create, withdraw (4). The only P1 cluster with **no route gate** (`router.go:572-576`), so it
+cannot ride a gate — the reference model must reproduce `classification_gate.go`/`secret_access_requests.go` core logic
+(admin authority at the request's own project for approve/reject; requester-only for withdraw; self-service create on a
+readable secret). Plumbing: secret-scoped `AccessRequest` rows (pending/approved/withdrawn), an admin and a non-admin at
+the request's project. **Fixture risk: low** (new rows, own table). **gate-gap?** By construction core is the sole
+arbiter — the risk here is the *inverse* of render: a model that under-approximates core will false-positive on the
+allow direction, so build deny-first and add the allow direction only behind a positive control. This is the one batch
+that genuinely needs new model code, which is why it is M/L despite few ops.
+
+### R3 — dynamic-secrets config/lease, scoped-gate deny-first then FakeEngine — size M
+
+Ops: create (REST+G), admin-dsn (REST+G), classification/enabled/revoke-all + leases renew/revoke + the 4 gRPC (15 total
+minus the 2 issue ops already in R1 = 13). Plumbing: seeded config + lease rows in two projects (deny legs need rows
+only — `ScopeFromDynamicSecretConfigParam`/`…LeaseParam` resolve from storage, `auth.go:1567-1583`); register
+`internal/dynamic/dynamictest.FakeEngine` (`BackendType()=="fake"`, `fake_engine.go:26`) for the allow legs. **Open
+harness question** (unchanged from V5-RANK-1): whether the authzdiff router accepts a registered fake engine — if not,
+that is a harness change, and only the allow direction needs it; deny-first lands regardless. **Fixture risk: low**
+(own tables). **gate-gap?** create (REST, no gate `router.go:917`, core-authorized) vs the gRPC leg — a classic
+route-vs-core parity target for Oracle 1; the scoped-gate ops (`router.go:921-928`) read, core handlers not read.
+
+### R4 — Connect ref-grants — size S/M
+
+Ops: ref-grants create/delete (REST+G, 4). Gate `RequirePermission(roles.write)` global (`router.go:479-480`) — deny
+leg needs no connector. Allow leg + the ref-grant prefix-scoping semantics need a connector fixture and reproduce
+`connect_ref_prefix_boundary_test.go` (not read this session). **Fixture risk: low.** **gate-gap?** gate read, core
+not read; Oracle 1 REST/gRPC parity is the cheap win.
+
+### R5 — SoD policies + legal hold, gate deny-first; effect deferred — size S
+
+Ops: sod create/delete, legal-hold place/lift (4). Both are plain `system.write` gates (`router.go:1279-1280`,
+`1238-1239`) → deny-first bindable now with zero new model rules. The `model: sod` / `model: legal-hold` reasons refer
+to the **effect** (a SoD conflict refusing a *role grant*; a hold refusing a *delete*), which is a product-stricter
+rule behind a model "allow" (V5-RANK-1 §7.2) and stays out of this batch. **Fixture risk: none** for the gate question.
+**gate-gap?** gates read, core `CreateSoDPolicy`/`PlaceLegalHold` not read — hypothesis: core adds no RBAC beyond the
+gate (so gate-only model, like the global ops), to confirm at binding.
+
+### R6 — env/folder/rotation-policy scope bindings (P3) — size S
+
+Ops: env delete, folder create/delete, rotation-policy create/update/delete (6). Unchanged from V5-RANK-1 B4: existing
+scope rules (`ScopeFromEnvParam`, folder scope, `policyScope`), this is binding work, not new model logic — bind
+deny-and-allow. **Fixture risk: low** (one env with no active secrets, one folder, one rotation policy per project).
+**gate-gap?** not surveyed this session.
+
+### R7 — global-admin ops/config/jobs/audit/compliance (P3/P4) — size S, 34 ops
+
+Ops: the OUT/JOB mass (audit checkpoint/migrate/acknowledge +G, anomaly-config, 11 jobs, alert-escalation,
+compliance, notification-channels, rejection/secret templates). **Zero new model rules** — each is
+`requirement{perms, scope:0}` from `matrix.json gate_perms`. Cheapest per-op, lowest impact, so it comes late. Run the
+destructive jobs on the cloned template DB only. **Fixture risk: none.** **gate-gap?** none expected (plain global
+gates); spot-check the audit bundle split (`audit.read`+`system.write`) against `matrix.json` at binding.
+
+### R8 — self-service account & notification ops (P2/P3/P4) — size S/M
+
+Ops: change-password, PAT mint, system/init, sessions/{id} + tokens/{id} delete, profile, tokens/expired, notifications
+read-all/{id}/read (11). Own-target and constant-deny rules (`requesterUserID`-style; `init-closed` is a constant deny
+and the cheapest high-value check). **Fixture risk: low** (a PAT, session, notification owned by each of two users).
+**gate-gap?** V5-RANK-1 §8 already traced `RevokeOwnSession`/`RevokeOwnPAT`/`MarkNotificationRead` and found no
+enforcement gap (not re-traced this session).
+
+## P2.4 Operations that cannot be bound soundly (and the cheapest alternative)
+
+| op(s) | why unbindable in authzdiff | cheapest alternative guard | exists? |
+|---|---|---|---|
+| WebAuthn `register/finish`, `reauth/finish`, `login/finish`, `passwordless/finish` (+ the 4 `begin`) | Needs a software FIDO2 authenticator to produce a valid assertion; `webauthnRP` is nil in the harness (`INV-AUTHZDIFF-v5ext8-9-impersonation-webauthn-gates`). `deleteCredential` was the one bindable WebAuthn op and is done. | A core-level webauthn-ownership test (delete/list only your own credential) + router-anchor tests for the ceremony routes. | Partly: `deleteCredential` has `TestDeleteWebAuthnCredentialRouterGatePresent`; the begin/finish routes have **no** anchor test yet (TODO-ISSUE). |
+| `POST /auth/login`, `/auth/refresh`, `/auth/mfa/verify`, `/auth/password-reset`, `/auth/setup/consume`, `/auth/logout` | Pre-authentication: there is no principal whose grants the layers could disagree on. Oracle 2 starts *after* authentication. | A dedicated authentication oracle (credential in → session out, replay refused, wrong-tenant refused), separate from authzdiff. | No (V5-RANK-1 B8; not built). |
+| `GET /auth/sso/{provider}/callback`, `/login`; `POST /auth/saml/{provider}/acs`, `GET …/login` | Needs a configured OIDC/SAML IdP to mint the assertion. | A stub-IdP integration test asserting the assertion→session binding and tenant pinning. | Not verified this session. |
+| `POST /system/init` | One-time bootstrap; the template DB is already initialised, so there is no uninitialised state to drive. | A constant-deny model rule (`init-closed`) bound as a *deny-only* op (every principal, incl. unauthenticated, is refused post-init) — this **is** bindable deny-only and is scheduled in R8; it is "cannot bind" only for the *allow* (bootstrap) direction. | The deny-only form does not exist yet; it is R8 work. |
+| dynamic `issue`/`renew`/`revoke` **allow** direction; connect **read** allow direction | Needs a real (or fake) backend engine / connector to return a credential; only the allow leg is blocked. | `FakeEngine` (`fake_engine.go:26`) for dynamic; a stub connector for Connect — both deny legs are bindable now (R1/R3/R4). | `FakeEngine` exists; the authzdiff router wiring for it is unverified (R3 open question). |
+| SoD-conflict / legal-hold / break-glass **effect** (product-stricter rules behind a model "allow") | These refuse where the RBAC model allows; the deny-first oracle will not see them and the allow direction false-positives unless modelled. | A core-level test per effect (SoD refuses a conflicting grant; hold refuses a delete). | Not surveyed this session; the gate ops (not the effects) are bound in R5. |
+
+## P2.5 What this plan does NOT verify
+
+1. **Core handlers for the top ops were not read this session** — only the route gates (`router.go`) and, for
+   transfer-ownership, the core *signature* + oracle-test *name*. Every "core re-checks / core is sole gate" claim
+   above marked "(not read)" is a hypothesis to confirm when binding, not an established fact.
+2. **`RenderSecretTemplate` having no authz (#G10)** is carried from V5-RANK-1 §8 (`secret_render.go:42`); I did not
+   re-open that file on this tree, so if a later change added authz there, R1's "gate is sole defence" framing is stale.
+3. **The deny-first-is-cheap claim rests on the scope resolvers reading storage rows, not engines** — verified for
+   `ScopeFromDynamicSecretConfigParam` (`auth.go:1567-1583`); the lease resolver (`auth.go:1590`) I read only the
+   header of and assume analogous, and the connect gate's pre-connector refusal I inferred from the gate being a plain
+   `RequirePermission` (no connector in the middleware), not from reading the handler.
+4. **No red proof** was taken (docs-only task, per brief): none of the "bindable now" claims were demonstrated by
+   actually binding and planting. They are feasibility arguments from the gate shape, not proofs.
+5. **Counts** are read off the committed `COVERAGE-ALL.md`, not a fresh run of the coverage generator; "covered" means
+   the checkbox list, not a re-derivation of which harness op calls which route.
+6. **The SoD/legal-hold/break-glass effects, authentication bypasses, cross-request races, and which-layer-enforces**
+   questions are all out of scope for authzdiff (V5-RANK-1 §7 stands unchanged).

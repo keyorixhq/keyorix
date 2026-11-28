@@ -545,9 +545,11 @@ func loadPostgresRestore(cfg *config.Config, manifest backupfmt.Manifest, stagin
 		return false, err
 	}
 	fmt.Println("Running migrations against the target database...")
-	if _, err := storage.NewStorageFactory().CreateStorage(cfg); err != nil {
+	migrated, err := storage.NewStorageFactory().CreateStorage(cfg)
+	if err != nil {
 		return false, fmt.Errorf("migrate restored database: %w", err)
 	}
+	closeStorage(migrated) // only needed to run the migrations
 	targetDB, err := storage.OpenGormDB(cfg)
 	if err != nil {
 		return false, fmt.Errorf("open freshly-migrated target database: %w", err)
@@ -932,9 +934,11 @@ func runAdminRestoreV1(cfg *config.Config) error {
 	}
 
 	fmt.Println("Applying pending migrations to the restored database (idempotent)...")
-	if _, err := storage.NewStorageFactory().CreateStorage(cfg); err != nil {
+	migrated, err := storage.NewStorageFactory().CreateStorage(cfg)
+	if err != nil {
 		return fmt.Errorf("migrate restored database: %w", err)
 	}
+	closeStorage(migrated) // only needed to run the migrations
 
 	fmt.Printf("Restored database (%d bytes) and %d key file(s) from %s (backup created %s)\n",
 		len(dbBytes), len(manifest.KeyFiles), restoreInput, manifest.CreatedAt.Format(time.RFC3339))

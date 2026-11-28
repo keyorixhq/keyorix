@@ -32,8 +32,10 @@
 //     blocks new ones until commit) and swaps the epoch to the new fingerprint
 //     with a compare-and-set in the same transaction as the re-encryption.
 //
-// PostgreSQL only. SQLite is single-node (one process holds the database and
-// dek.lock), so none of this runs there and its behaviour is unchanged.
+// The watcher, the write fence and the compare-and-set rotation are PostgreSQL
+// only. SQLite is single-node (one process holds the database and dek.lock), so
+// none of that runs there; it only verifies or seeds the epoch once at boot
+// (INV-ENCRYPTION-sqlite-dek-epoch-at-boot).
 //
 // What this does not cover (stated, per this repo's convention): a write
 // whose encryption happened before its replica saw the fence and whose INSERT
@@ -218,33 +220,49 @@ func (w *dekEpochWatch) close() {
 	})
 }
 
+// ownEpochFingerprint returns this initialized Service's DEK fingerprint, the
+// value the DEK epoch records for it. It is the common precondition of both the
+// PostgreSQL and the SQLite boot paths of StartDEKEpochGuard.
+func (s *Service) ownEpochFingerprint() (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.initialized {
+		return "", fmt.Errorf("DEK epoch guard: encryption service not initialized")
+	}
+	return s.encryptionService.Fingerprint()
+}
+
 // StartDEKEpochGuard checks, at server start-up, that this server's DEK is the
-// database's DEK, and then keeps checking it (see the file comment). db is a
-// handle the guard may keep for the server's lifetime; release, if non-nil,
-// is called once the guard stops (Shutdown). When db is not PostgreSQL there
-// is no guard: it only records the rotation protocol (rotation_protocol.go) and
-// returns without calling release; the caller keeps the handle.
+// database's DEK. On PostgreSQL it then keeps checking it with a watcher (see
+// the file comment); db is a handle that guard keeps for the server's lifetime,
+// and release, if non-nil, is called once it stops (Shutdown).
+//
+// On SQLite (single node: one process holds the database and dek.lock) there is
+// no cross-replica race and no write fence, so no watcher runs and the handle is
+// not kept (release is never called; the caller keeps it). The boot-time check
+// still runs (SQLITE-DEK-EPOCH-1, fuzz-corpus#195): a populated database refuses
+// to boot under a wrong-key DEK (wrapping ErrDEKEpochMismatch), as PostgreSQL
+// does, and a database with no epoch yet seeds one only after this DEK decrypts
+// its newest secret version.
 //
 // Must run after Initialize and after the schema is migrated. Returns an
 // error wrapping ErrDEKEpochMismatch when the server must not start.
 func (s *Service) StartDEKEpochGuard(db *gorm.DB, release func()) error {
-	if !dekEpochApplies(db) {
-		if db == nil || db.Dialector == nil {
-			return nil
-		}
-		// SQLite: no epoch, but an older admin binary must still be kept from
-		// rotating or restoring over what this server serves.
-		return recordDEKRotationProtocol(db)
+	if db == nil || db.Dialector == nil {
+		return nil
 	}
-	s.mu.RLock()
-	if !s.initialized {
-		s.mu.RUnlock()
-		return fmt.Errorf("DEK epoch guard: encryption service not initialized")
-	}
-	own, err := s.encryptionService.Fingerprint()
-	s.mu.RUnlock()
+	own, err := s.ownEpochFingerprint()
 	if err != nil {
 		return err
+	}
+	if !dekEpochApplies(db) {
+		// SQLite: verify/seed the epoch at boot (no watcher, no fence), then keep
+		// an older admin binary from rotating or restoring over what this server
+		// serves, exactly as the PostgreSQL branch below records it.
+		if err := s.verifyOrSeedDEKEpoch(db, own); err != nil {
+			return err
+		}
+		return recordDEKRotationProtocol(db)
 	}
 
 	base := time.Now()
@@ -468,6 +486,34 @@ func (f *rotationEpochFence) commitNewEpoch(tx *gorm.DB, newSvc *EncryptionServi
 	}
 	// In the sweep transaction, so the new DEK is dated exactly when it becomes
 	// current; lift never touches this row (dek_created_at.go).
+	if err := recordDEKCreatedAt(tx, next, time.Now()); err != nil {
+		return fmt.Errorf("record the new DEK's creation time: %w", err)
+	}
+	return nil
+}
+
+// setDEKEpochOnSQLiteRotation records the new DEK's fingerprint as the database's
+// epoch inside the sweep transaction, so the boot guard (verifyOrSeedDEKEpoch,
+// now run on SQLite too — SQLITE-DEK-EPOCH-1) still matches after a SQLite DEK
+// rotation. SQLite is single node: the whole sweep is one transaction and there
+// are no replicas to fence, so unlike commitNewEpoch (preceded by a
+// "rotating:<old>" fence and a compare-and-set) this is a plain upsert — the
+// epoch moves from the old DEK to the new one atomically with the re-encryption,
+// never through a fenced state. It also seeds the epoch for a database rotated
+// before it was first booted under the boot guard (no epoch row yet).
+func setDEKEpochOnSQLiteRotation(tx *gorm.DB, newSvc *EncryptionService) error {
+	next, err := newSvc.Fingerprint()
+	if err != nil {
+		return err
+	}
+	if err := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+	}).Create(&models.SystemMetadata{Key: dekEpochKey, Value: next, UpdatedAt: time.Now().UTC()}).Error; err != nil {
+		return fmt.Errorf("set DEK epoch on SQLite rotation: %w", err)
+	}
+	// Date the new DEK exactly when it becomes current, as commitNewEpoch does on
+	// PostgreSQL, so the crypto inventory reports it instead of estimating.
 	if err := recordDEKCreatedAt(tx, next, time.Now()); err != nil {
 		return fmt.Errorf("record the new DEK's creation time: %w", err)
 	}

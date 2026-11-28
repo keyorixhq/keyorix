@@ -25,7 +25,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -83,7 +82,7 @@ func buildRotationMarkerGap(t *testing.T) markerGapState {
 	configPathFlag = writeKeyDirLockDatabaseConfig(t, st.dirA, st.dsn)
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(cfg)
+	_, err = createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 
 	// The first replica's start seeds the epoch; one secret is written under the old DEK.

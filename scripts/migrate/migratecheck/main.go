@@ -41,6 +41,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"math/bits"
 	"os"
 	"sort"
@@ -200,6 +201,7 @@ func seedAudit(cfg *config.Config, n, ageDays int, tag string, restamp int) {
 	if err != nil {
 		fatalf("open storage: %v", err)
 	}
+	defer closeStorage(st)
 	types := []string{"secret.read", "secret.updated", "auth.login", "share.created", "rbac.role_assigned", "project.created"}
 	base := time.Now().UTC().AddDate(0, 0, -ageDays)
 	ctx := context.Background()
@@ -429,5 +431,11 @@ func canon(v any) string {
 		return x
 	default:
 		return fmt.Sprintf("%v", x)
+	}
+}
+
+func closeStorage(st any) {
+	if c, ok := st.(io.Closer); ok {
+		_ = c.Close()
 	}
 }

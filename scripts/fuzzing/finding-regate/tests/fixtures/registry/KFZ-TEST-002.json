@@ -1,0 +1,24 @@
+{
+  "id": "KFZ-TEST-002",
+  "title": "FuzzBar: nil dereference on crafted YAML",
+  "module": "keyorix",
+  "scope": "first-party",
+  "class": "panic-nil-dereference",
+  "severity": "low",
+  "disposition": "active",
+  "source": "fuzz",
+  "dates": {
+    "found": "2026-02-01",
+    "reproduced": "2026-02-01"
+  },
+  "repro": {
+    "private_path": "crashers/keyorix/github.com_keyorixhq_keyorix_internal_bar/FuzzBar/112233445566",
+    "regression_test": "internal/bar FuzzBar"
+  },
+  "crashers": [
+    "crashers/keyorix/github.com_keyorixhq_keyorix_internal_bar/FuzzBar/112233445566"
+  ],
+  "security": false,
+  "security_note": "Nil dereference in YAML parser; not network-reachable.",
+  "notes": "No seed committed yet."
+}

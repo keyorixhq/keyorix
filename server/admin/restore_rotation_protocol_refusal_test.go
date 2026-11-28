@@ -101,7 +101,7 @@ func TestAdminRestore_Postgres_TargetRecordsNewerRotationProtocol_Refused(t *tes
 	configPathFlag = writePostgresBackupRestoreTestConfig(t, dstDir, dstDSN)
 	dstCfg, err := loadConfig()
 	require.NoError(t, err)
-	st, err := storage.NewStorageFactory().CreateStorage(dstCfg)
+	st, err := createStorageClosedAtCleanup(t, dstCfg)
 	require.NoError(t, err)
 	closeTestStorage(st)
 	raw := pgAdminRawOpen(t, dstDSN)

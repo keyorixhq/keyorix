@@ -21,7 +21,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage"
 )
 
 // resetBackupRestoreFlags saves and restores every package-level cobra flag
@@ -101,7 +100,7 @@ func TestAdminBackupRestore_RoundTrip(t *testing.T) {
 	configPathFlag = writeBackupRestoreTestConfig(t, srcDir, srcDBPath)
 	srcCfg, err := loadConfig()
 	require.NoError(t, err)
-	_, err = storage.NewStorageFactory().CreateStorage(srcCfg) // creates + migrates the source DB
+	_, err = createStorageClosedAtCleanup(t, srcCfg) // creates + migrates the source DB
 	require.NoError(t, err)
 
 	archivePath := filepath.Join(t.TempDir(), "backup.tar.gz")

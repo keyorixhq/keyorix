@@ -47,7 +47,7 @@ func wiredCore(t *testing.T, dir, cfgPath, passphrase string) (*core.KeyorixCore
 	configPathFlag = cfgPath
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	store, err := storage.NewStorageFactory().CreateStorage(cfg)
+	store, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	gdb, err := storage.OpenGormDB(cfg)
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ func runContinuation(t *testing.T, backend string) {
 	configPathFlag = cfgS
 	cfg, err := loadConfig()
 	require.NoError(t, err)
-	storeS, err := storage.NewStorageFactory().CreateStorage(cfg)
+	storeS, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	gdbS, err := storage.OpenGormDB(cfg)
 	require.NoError(t, err)

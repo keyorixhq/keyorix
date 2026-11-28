@@ -19,7 +19,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/backupfmt"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage"
 )
 
 const unusedSaltKEKVar = "KEYORIX_TEST_UNUSED_SALT_KEK"
@@ -69,7 +68,7 @@ func TestAdminRestore_ArchivedUnusedSalt_RestoresIntoSaltlessProviderConfig(t *t
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "kek.salt"), make([]byte, 32), 0o600))
 	require.NoError(t, encryption.NewService(&srcCfg.Storage.Encryption, srcDir).Initialize(""))
-	_, err = storage.NewStorageFactory().CreateStorage(srcCfg)
+	_, err = createStorageClosedAtCleanup(t, srcCfg)
 	require.NoError(t, err)
 
 	archivePath := filepath.Join(t.TempDir(), "backup.tar.gz")

@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"time"
@@ -55,6 +56,7 @@ func run(cfgPath string, secrets, versions, audits, valueBytes int) error {
 	if err != nil {
 		return err
 	}
+	defer closeStorage(st)
 	db, err := storage.OpenGormDB(cfg)
 	if err != nil {
 		return err
@@ -132,4 +134,10 @@ func run(cfgPath string, secrets, versions, audits, valueBytes int) error {
 	}
 	fmt.Fprintf(os.Stderr, "scalegen: done in %s\n", time.Since(start).Round(time.Second))
 	return nil
+}
+
+func closeStorage(st any) {
+	if c, ok := st.(io.Closer); ok {
+		_ = c.Close()
+	}
 }

@@ -23,35 +23,42 @@ func TestAuthLane_GetUserReadFault_IsUnavailableNotNotFound(t *testing.T) {
 	ops := []struct {
 		name     string
 		webauthn bool
-		call     func(c *KeyorixCore, userID uint) error
+		// skipNotFoundMsg: requireActorActive runs first and intercepts a missing
+		// userID with the generic "invalid code or password" refusal (via
+		// mfaActiveGuardRefusal) before the function's own "user not found" message;
+		// skip the message assertion for ops guarded by requireActorActive. The
+		// IsStorageReadUnavailable=false check still holds (a permission verdict is
+		// not a storage fault).
+		skipNotFoundMsg bool
+		call            func(c *KeyorixCore, userID uint) error
 	}{
-		{"BeginMFAEnrollment", false, func(c *KeyorixCore, id uint) error {
+		{"BeginMFAEnrollment", false, false, func(c *KeyorixCore, id uint) error {
 			_, _, err := c.BeginMFAEnrollment(context.Background(), id)
 			return err
 		}},
-		{"ActivateMFA", false, func(c *KeyorixCore, id uint) error {
+		{"ActivateMFA", false, true, func(c *KeyorixCore, id uint) error {
 			_, err := c.ActivateMFA(context.Background(), id, "123456", mfaTestPassword, "")
 			return err
 		}},
-		{"DisableMFA", false, func(c *KeyorixCore, id uint) error {
+		{"DisableMFA", false, true, func(c *KeyorixCore, id uint) error {
 			return c.DisableMFA(context.Background(), id, "", mfaTestPassword, "")
 		}},
-		{"RegenerateMFARecoveryCodes", false, func(c *KeyorixCore, id uint) error {
+		{"RegenerateMFARecoveryCodes", false, true, func(c *KeyorixCore, id uint) error {
 			_, err := c.RegenerateMFARecoveryCodes(context.Background(), id, "", mfaTestPassword)
 			return err
 		}},
-		{"MFARecoveryCodesRemaining", false, func(c *KeyorixCore, id uint) error {
+		{"MFARecoveryCodesRemaining", false, false, func(c *KeyorixCore, id uint) error {
 			_, _, err := c.MFARecoveryCodesRemaining(context.Background(), id)
 			return err
 		}},
-		{"FinishWebAuthnRegistration", true, func(c *KeyorixCore, id uint) error {
+		{"FinishWebAuthnRegistration", true, false, func(c *KeyorixCore, id uint) error {
 			_, err := c.FinishWebAuthnRegistration(context.Background(), id, "sess", "key", webauthnTestPassword, nil)
 			return err
 		}},
-		{"DeleteWebAuthnCredential", true, func(c *KeyorixCore, id uint) error {
+		{"DeleteWebAuthnCredential", true, false, func(c *KeyorixCore, id uint) error {
 			return c.DeleteWebAuthnCredential(context.Background(), id, 1, webauthnTestPassword)
 		}},
-		{"FinishWebAuthnReauth", true, func(c *KeyorixCore, id uint) error {
+		{"FinishWebAuthnReauth", true, false, func(c *KeyorixCore, id uint) error {
 			return c.FinishWebAuthnReauth(context.Background(), id, "sess", nil)
 		}},
 	}
@@ -81,12 +88,31 @@ func TestAuthLane_GetUserReadFault_IsUnavailableNotNotFound(t *testing.T) {
 				assert.NotContains(t, err.Error(), assert.AnError.Error(), "the driver text stays out of the caller-visible error")
 			})
 
+			// For the requireActorActive-guarded ops, GetUser call 1 is the guard's
+			// pre-check, so the "fault" subtest above stops there. Call 2 is the op's
+			// own account read (its classifyReadError site), which must classify a
+			// fault the same way.
+			if op.skipNotFoundMsg {
+				t.Run("fault on the op's own read", func(t *testing.T) {
+					c, faulty := build()
+					faulty.Arm(&faultstorage.FaultSpec{Method: "GetUser", NthCall: 2, Kind: faultstorage.KindError, Err: assert.AnError})
+					err := op.call(c, 1)
+					require.True(t, faulty.Fired(), "the op's own GetUser read must be reached")
+					require.Error(t, err, "a faulted account read must refuse (fail closed)")
+					assert.True(t, IsStorageReadUnavailable(err), "want the storage-read-unavailable class, got %v", err)
+					assert.NotContains(t, err.Error(), "not found", "a fault must not read as a deleted account")
+					assert.NotContains(t, err.Error(), assert.AnError.Error(), "the driver text stays out of the caller-visible error")
+				})
+			}
+
 			t.Run("not found stays a refusal", func(t *testing.T) {
 				c, _ := build()
 				err := op.call(c, 999)
 				require.Error(t, err)
 				assert.False(t, IsStorageReadUnavailable(err), "a positive not-found is a verdict, got %v", err)
-				assert.Contains(t, err.Error(), "user not found")
+				if !op.skipNotFoundMsg {
+					assert.Contains(t, err.Error(), "user not found")
+				}
 			})
 		})
 	}

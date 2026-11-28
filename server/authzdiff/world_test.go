@@ -21,6 +21,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -40,8 +42,12 @@ import (
 // Synthetic only: every name, email, password and secret value below is
 // made up for this harness; secret values are never printed.
 //
-// Encryption is not wired (core's dev/test plaintext mode), so a copied file
-// decrypts under any core instance. Authorization does not depend on it.
+// Secret-VALUE storage is not encrypted (core's dev/test plaintext mode), so a
+// copied file's secrets decrypt under any core instance; authorization does not
+// depend on it. The AUTH encryptor (TOTP/MFA secrets) IS wired since V5EXT6B,
+// because BeginMFAEnrollment (mfa.enroll) refuses without one: every leg shares
+// the one fixtures.enc instance (newCore(ls, fx.enc)), its DEK held in memory, and
+// all seeded MFA secrets are encrypted under it (ports.MFASecretAAD).
 
 const fxPassword = "Az9!synthetic-only-Q7"
 
@@ -70,6 +76,15 @@ const (
 	// probed principal: it is the positive control for requester-only ops
 	// (accessrequest.withdraw), whose rule no other principal can satisfy.
 	pkRequester principalKind = "requester-A"
+
+	// pkImpersonating is a session started by adminID over targetUserID (V5EXT8/9).
+	// Not in namedPrincipalKinds — used only as controlAs for impersonation.end.
+	pkImpersonating principalKind = "impersonating-session"
+
+	// pkMFAResetActor is a global admin with TOTP enrolled and enabled (V5EXT9).
+	// Not in namedPrincipalKinds — used only as controlAs for mfaReset.request and
+	// mfaReset.approve.
+	pkMFAResetActor principalKind = "mfa-reset-actor"
 
 	// pkMFAUser is a user with MFA enrolled and enabled in the fixture (TOTP).
 	// It is the positive control for mfa.stepup (VerifyMFAStepUp), which
@@ -240,6 +255,44 @@ type fixtures struct {
 	// scimGroupID is a pre-provisioned SCIM group for PUT/PATCH/DELETE /scim/v2/Groups/{id}.
 	scimUserID  uint
 	scimGroupID uint
+
+	// V5EXT8/9: impersonation.end fixture.
+	// impersonationEndToken is the plain session token for the impersonation session
+	// (adminID impersonating targetUserID). Used as the token argument to
+	// EndImpersonation in the core leg for all principals, and as bearer for
+	// pkImpersonating (the controlAs positive control for impersonation.end).
+	impersonationEndToken string
+
+	// V5EXT9: WebAuthn credential fixture (webauthn.deleteCredential).
+	// webAuthnCredentialID is the row id of a WebAuthnCredential for pkMFAUser,
+	// inserted directly (placeholder blob; no real passkey crypto — pkMFAUser's TOTP
+	// is the requireReauth proof). The DELETE /auth/webauthn/credentials/{id}
+	// binding targets this row.
+	webAuthnCredentialID uint
+
+	// V5EXT8/9: MFA-reset fixtures.
+	// mfaResetRequestID is a pending request (target=targetUserID, requester=a
+	// non-probed global admin) for mfaReset.cancel — inserted directly, bypassing
+	// RequestMFAReset's requireReauth TOTP gate.
+	mfaResetRequestID uint
+	// mfaResetActorUserID / mfaResetActorTOTPSecret belong to u-v9-mfa-admin-a, a
+	// global admin with TOTP enrolled and enabled, used as pkMFAResetActor (controlAs
+	// for mfaReset.request and mfaReset.approve). The TOTP secret is stored plaintext
+	// (decryptAuthSecret is a passthrough in test mode), same pattern as pkMFAUser.
+	mfaResetActorUserID     uint
+	mfaResetActorTOTPSecret string
+	// mfaResetRequestV9ID is a pending request (requester=u-v9-mfa-admin-b, a second
+	// global admin; target=u-v9-mfa-reset-target) for the mfaReset.approve binding;
+	// pkMFAResetActor (admin A) approves it so dual-control (requester != approver)
+	// always holds.
+	mfaResetRequestV9ID uint
+
+	// V5EXT6B: the shared auth encryptor. BeginMFAEnrollment (mfa.enroll) refuses
+	// unless an at-rest encryptor is enabled, so the harness wires one; every leg
+	// shares THIS instance (newCore(ls, fx.enc)) so its core decrypts the template's
+	// encrypted MFA secrets with the same DEK (held in memory after Initialize). All
+	// MFA TOTP secrets in the seed are written encrypted under it (ports.MFASecretAAD).
+	enc *encryption.Service
 }
 
 func (f *fixtures) proj(sel byte) *perProject {
@@ -286,10 +339,25 @@ func buildTemplate(tb testing.TB) ([]byte, *fixtures, error) {
 		return nil, nil, err
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
+
+	// The shared auth encryptor. Keys are initialised into memory here; every leg
+	// shares this instance (via fixtures.enc) so its core decrypts the template's
+	// encrypted MFA secrets. The key files live under dir and are removed with it
+	// after buildTemplate returns — safe because encryption.Service holds the DEK in
+	// memory after Initialize.
+	encKeyDir := filepath.Join(dir, "enckeys")
+	if err := os.MkdirAll(encKeyDir, 0o700); err != nil {
+		return nil, nil, fmt.Errorf("enc key dir: %w", err)
+	}
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, encKeyDir)
+	if err := enc.Initialize("authzdiff-test-passphrase"); err != nil {
+		return nil, nil, fmt.Errorf("enc.Initialize: %w", err)
+	}
+
 	path := filepath.Join(dir, "template.db")
 	db := fuzzworld.OpenSQLite(tb, path, 1)
 	fuzzworld.Bootstrap(tb, db)
-	fx, err := seed(context.Background(), db)
+	fx, err := seed(context.Background(), db, enc)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -308,19 +376,19 @@ func must[T any](v T, err error) T {
 	return v
 }
 
-func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
+func seed(ctx context.Context, db *gorm.DB, enc *encryption.Service) (fx *fixtures, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("seed: %v", r)
 		}
 	}()
 	ls := store.NewLocalStorage(db)
-	c := newCore(ls)
+	c := newCore(ls, enc)
 	c.SetBootstrapToken("authzdiff-bootstrap")
 	must(c.BootstrapSystem(ctx, &core.BootstrapRequest{
 		Username: "kxadmin", Email: "kxadmin@example.invalid", Password: fxPassword, DisplayName: "Admin", Token: "authzdiff-bootstrap",
 	}))
-	fx = &fixtures{roleIDs: map[string]uint{}, permIDs: map[string]uint{}, principals: map[principalKind]*principal{}}
+	fx = &fixtures{roleIDs: map[string]uint{}, permIDs: map[string]uint{}, principals: map[principalKind]*principal{}, enc: enc}
 	adminSess, admin := mustLogin(ctx, c, "kxadmin")
 	fx.adminID = admin.ID
 	fx.principals[pkGlobalAdmin] = &principal{kind: pkGlobalAdmin, userID: admin.ID, token: adminSess, username: "kxadmin"}
@@ -765,9 +833,9 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	// BeginMFAEnrollment is not used because it checks c.authEncryptor != nil,
 	// which always fails in test mode (no encryptor configured). Instead:
 	//   1. Generate a standard TOTP secret key (issuer+account are cosmetic only).
-	//   2. Write models.MFASecret{Activated: true, SecretEnc: []byte(base32)} directly
-	//      to the DB — decryptAuthSecret is a passthrough when encryption is off, so
-	//      loadTOTPSecret reads the base32 back without change.
+	//   2. Write models.MFASecret{Activated: true, SecretEnc: <enc>} directly to the
+	//      DB, the TOTP secret encrypted under the shared enc (ports.MFASecretAAD),
+	//      so loadTOTPSecret decrypts it with the same DEK in every leg.
 	//   3. Set users.mfa_enabled = true so VerifyMFAStepUp's MFAEnabled guard passes.
 	mfaUser := mkUser("p-mfa-user")
 	mfaTok, _ := mustLogin(ctx, c, "p-mfa-user")
@@ -775,7 +843,11 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("seed: totp.Generate: %w", err)
 	}
-	if e := db.Create(&models.MFASecret{UserID: mfaUser.ID, SecretEnc: []byte(mfaKey.Secret()), Activated: true}).Error; e != nil {
+	mfaSecretEnc, _, err := enc.EncryptSecretWithAAD([]byte(mfaKey.Secret()), ports.MFASecretAAD(mfaUser.ID))
+	if err != nil {
+		return nil, fmt.Errorf("seed: encrypt mfa user secret: %w", err)
+	}
+	if e := db.Create(&models.MFASecret{UserID: mfaUser.ID, SecretEnc: mfaSecretEnc, Activated: true}).Error; e != nil {
 		return nil, fmt.Errorf("seed: create MFASecret: %w", e)
 	}
 	db.Exec("UPDATE users SET mfa_enabled = true WHERE id = ?", mfaUser.ID)
@@ -798,23 +870,131 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 
 	// ---- V5EXT5 fixtures (mfa.activate with pkMFAEnrollee) ----
 	//
-	// pkMFAEnrollee has a PENDING (not yet activated) MFA enrollment.
-	// BeginMFAEnrollment cannot be used in test mode (requires authEncryptor); the
-	// mfa_secrets row is written directly with Activated=false. users.mfa_enabled
-	// stays false (not yet activated), so mfaEnabled(pkMFAEnrollee)=false —
-	// only pendingMFAEnrollment(pkMFAEnrollee)=true (mfa.activate's model gate).
+	// pkMFAEnrollee has a PENDING (not yet activated) MFA enrollment. The
+	// mfa_secrets row is written directly with Activated=false, the secret encrypted
+	// under the shared enc. users.mfa_enabled stays false (not yet activated), so
+	// mfaEnabled(pkMFAEnrollee)=false — only pendingMFAEnrollment(pkMFAEnrollee)=true
+	// (mfa.activate's model gate).
 	mfaEnrollee := mkUser("p-mfa-enrollee")
 	mfaEnrolleeTok, _ := mustLogin(ctx, c, "p-mfa-enrollee")
 	mfaEnrolleeKey, err := totp.Generate(totp.GenerateOpts{Issuer: "keyorix-authzdiff-test", AccountName: mfaEnrollee.Email})
 	if err != nil {
 		return nil, fmt.Errorf("seed: totp.Generate (enrollee): %w", err)
 	}
-	if e := db.Create(&models.MFASecret{UserID: mfaEnrollee.ID, SecretEnc: []byte(mfaEnrolleeKey.Secret()), Activated: false}).Error; e != nil {
+	mfaEnrolleeSecretEnc, _, err := enc.EncryptSecretWithAAD([]byte(mfaEnrolleeKey.Secret()), ports.MFASecretAAD(mfaEnrollee.ID))
+	if err != nil {
+		return nil, fmt.Errorf("seed: encrypt mfa enrollee secret: %w", err)
+	}
+	if e := db.Create(&models.MFASecret{UserID: mfaEnrollee.ID, SecretEnc: mfaEnrolleeSecretEnc, Activated: false}).Error; e != nil {
 		return nil, fmt.Errorf("seed: create pending MFASecret: %w", e)
 	}
 	// mfa_enabled stays false: enrollment is pending, not complete.
 	fx.mfaEnrolleeTOTPSecret = mfaEnrolleeKey.Secret()
 	fx.principals[pkMFAEnrollee] = &principal{kind: pkMFAEnrollee, userID: mfaEnrollee.ID, token: mfaEnrolleeTok, username: "p-mfa-enrollee"}
+
+	// ---- V5EXT8/9 impersonation + WebAuthn fixtures ----
+	//
+	// impersonation.end: start a real impersonation session so EndImpersonation has
+	// a valid session to end. adminID impersonates targetUserID. The plain session
+	// token is stored in impersonationEndToken for the core leg (used for all
+	// principals, since coreEnforced=false); pkImpersonating uses it as bearer (the
+	// positive control). The returned session carries the plaintext token; the DB
+	// stores only its SHA-256 hash (model.isImpersonatingSession hashes to match).
+	impersonateSess, _, err := c.StartImpersonation(ctx, fx.adminID, fx.targetUserID, "127.0.0.1")
+	if err != nil {
+		return nil, fmt.Errorf("seed: StartImpersonation for V5EXT8/9: %w", err)
+	}
+	fx.impersonationEndToken = impersonateSess.SessionToken
+	fx.principals[pkImpersonating] = &principal{
+		kind:     pkImpersonating,
+		userID:   fx.targetUserID,
+		token:    impersonateSess.SessionToken,
+		username: "u-target",
+	}
+
+	// webauthn.deleteCredential: a placeholder WebAuthn credential row for pkMFAUser.
+	// The core's requireReauth is satisfied by pkMFAUser's TOTP code
+	// (mfaUserTOTPSecret) — no real passkey crypto is exercised here.
+	webauthnCred := models.WebAuthnCredential{
+		UserID:         fx.principals[pkMFAUser].userID,
+		CredentialID:   []byte("v5ext9-fixture-credential-id"),
+		Name:           "fixture-passkey",
+		CredentialBlob: []byte(`{"id":"djVleHQ5","rawId":"djVleHQ5","type":"public-key"}`),
+		CreatedAt:      time.Now().UTC(),
+	}
+	if err := db.Create(&webauthnCred).Error; err != nil {
+		return nil, fmt.Errorf("seed: create WebAuthnCredential: %w", err)
+	}
+	fx.webAuthnCredentialID = webauthnCred.ID
+
+	// ---- V5EXT8/9 MFA-reset fixtures ----
+	//
+	// enrollTOTPAdmin creates a global admin with a TOTP secret seeded directly,
+	// encrypted under the shared enc (ports.MFASecretAAD) so loadTOTPSecret can
+	// decrypt it. Login is obtained BEFORE mfa_enabled is set, mirroring the
+	// pkMFAUser/pkMFAEnrollee seed order.
+	enrollTOTPAdmin := func(uname string) (*models.User, string, string, error) {
+		u := mkUser(uname)
+		grant(u.ID, fx.roleIDs["admin"], 0, nil)
+		tok, _ := mustLogin(ctx, c, uname)
+		key, kerr := totp.Generate(totp.GenerateOpts{Issuer: "keyorix-authzdiff-test", AccountName: u.Email})
+		if kerr != nil {
+			return nil, "", "", fmt.Errorf("totp.Generate (%s): %w", uname, kerr)
+		}
+		secretEnc, _, eerr := enc.EncryptSecretWithAAD([]byte(key.Secret()), ports.MFASecretAAD(u.ID))
+		if eerr != nil {
+			return nil, "", "", fmt.Errorf("encrypt TOTP secret (%s): %w", uname, eerr)
+		}
+		if e := db.Create(&models.MFASecret{UserID: u.ID, SecretEnc: secretEnc, Activated: true}).Error; e != nil {
+			return nil, "", "", fmt.Errorf("create MFASecret (%s): %w", uname, e)
+		}
+		db.Exec("UPDATE users SET mfa_enabled = true WHERE id = ?", u.ID)
+		return u, tok, key.Secret(), nil
+	}
+
+	// mfaReset.cancel: a pending request for targetUserID. The requester is a
+	// dedicated non-probed admin (never a sweep principal) so CancelMFAReset's
+	// self-cancel check never fires. Direct insert bypasses requireReauth.
+	mfaResetRequester := mkUser("u-mfa-reset-requester")
+	grant(mfaResetRequester.ID, fx.roleIDs["admin"], 0, nil)
+	mfaResetReq := models.MFAResetRequest{
+		TargetUserID: fx.targetUserID, RequestedBy: mfaResetRequester.ID,
+		Reason: "fixture: authorized test request", VerifiedBy: "ticket",
+		Evidence: "fixture-ticket-v5ext8", Status: models.MFAResetStatusPending,
+		CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+	}
+	if err := db.Create(&mfaResetReq).Error; err != nil {
+		return nil, fmt.Errorf("seed: create mfa reset request fixture: %w", err)
+	}
+	fx.mfaResetRequestID = mfaResetReq.ID
+
+	// mfaReset.request / mfaReset.approve: two TOTP-enrolled global admins. Admin A
+	// is pkMFAResetActor (the requester/approver positive control); admin B provides
+	// the second eligible approver for RequestMFAReset and is the requester of the
+	// pre-seeded approve target (dual control: A != B).
+	mfaResetActorA, mfaResetActorATok, mfaResetActorASecret, err := enrollTOTPAdmin("u-v9-mfa-admin-a")
+	if err != nil {
+		return nil, fmt.Errorf("seed: %w", err)
+	}
+	fx.mfaResetActorUserID = mfaResetActorA.ID
+	fx.mfaResetActorTOTPSecret = mfaResetActorASecret
+	fx.principals[pkMFAResetActor] = &principal{kind: pkMFAResetActor, userID: mfaResetActorA.ID, token: mfaResetActorATok, username: "u-v9-mfa-admin-a"}
+
+	mfaResetActorB, _, _, err := enrollTOTPAdmin("u-v9-mfa-admin-b")
+	if err != nil {
+		return nil, fmt.Errorf("seed: %w", err)
+	}
+	mfaResetTarget := mkUser("u-v9-mfa-reset-target")
+	mfaResetReqV9 := models.MFAResetRequest{
+		TargetUserID: mfaResetTarget.ID, RequestedBy: mfaResetActorB.ID,
+		Reason: "fixture: authorized test request v9", VerifiedBy: "ticket",
+		Evidence: "fixture-ticket-v5ext9", Status: models.MFAResetStatusPending,
+		CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
+	}
+	if err := db.Create(&mfaResetReqV9).Error; err != nil {
+		return nil, fmt.Errorf("seed: create mfa reset request V9: %w", err)
+	}
+	fx.mfaResetRequestV9ID = mfaResetReqV9.ID
 
 	// Resend is throttled per (purpose, email) on setup-token age; backdate the
 	// seeded tokens so the copies are never inside the 60s window.
@@ -828,8 +1008,13 @@ func seed(ctx context.Context, db *gorm.DB) (fx *fixtures, err error) {
 // returned, never sent) and a synthetic base URL, which invitation and
 // setup-link creation require (server/wire_credential_delivery.go does this
 // at startup in production).
-func newCore(ls *store.LocalStorage) *core.KeyorixCore {
+func newCore(ls *store.LocalStorage, enc *encryption.Service) *core.KeyorixCore {
 	c := core.NewKeyorixCore(ls)
+	if enc != nil {
+		// Auth encryptor only (TOTP/MFA secrets); secret VALUES stay in plaintext
+		// storage mode. BeginMFAEnrollment (mfa.enroll) refuses without this.
+		c.SetAuthEncryptor(enc)
+	}
 	c.SetCredentialDelivery(nil, "https://keyorix.example.invalid")
 	// Self-service emergency access, wired the way the server does from config
 	// (server start → SetBreakGlassPolicy). Enabled with a CONTAINED emergency
@@ -898,7 +1083,7 @@ func newLeg(tb testing.TB, l layer) *leg {
 	// thousands of database copies accumulate at once.
 	db := fuzzworld.OpenSQLiteFromImage(tb, b)
 	ls := store.NewLocalStorage(db)
-	c := newCore(ls)
+	c := newCore(ls, fx.enc)
 	lg := &leg{db: db, ls: ls, c: c, fx: fx}
 	lg.closers = append(lg.closers, func() {
 		if s, e := db.DB(); e == nil {
