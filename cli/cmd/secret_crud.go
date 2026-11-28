@@ -626,8 +626,12 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 	if secretDeleteID != 0 {
 		t := false
 		resp, gerr := client.GetSecretWithResponse(ctx, secretDeleteID, &apiclient.GetSecretParams{IncludeValue: &t})
-		if gerr != nil || resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("secret not found: %w", gerr)
+		if gerr != nil {
+			return gerr
+		}
+		if resp.JSON200 == nil || resp.JSON200.Data == nil {
+			// A 403/404 carries no transport error: say what the server said, with its exit code.
+			return httpStatusError(fmt.Sprintf("could not look up secret %d", secretDeleteID), resp.StatusCode(), resp.Body)
 		}
 		secretID = secretDeleteID
 		secretName = derefStr(resp.JSON200.Data.Name)
